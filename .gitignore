@@ -1,0 +1,61 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+env/
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+
+# Node
+node_modules/
+.vite/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Project specific
+vmtools-next/data/
+vmtools-next/logs/
+*.db
+*.db-journal
+
+# Large reference repos (not part of vmtools-next)
+baritone-1.21.11/
+litematica-LTS-1.21.11/
+malilib-LTS-1.21.11/
+minihud-LTS-1.21.11/
+litematica-printer3-master-master/
+superwy-master/
+Minecraft-Console-Client-master/
+ContainerLib/
+
+# Large archives and logs
+*.zip
+*.log
+*.jar
+hs_err_pid*.log
+replay_pid*.log
+uvicorn.*.log
+
+# Old mod project (not vmtools-next)
+VMTools-v3/
+vmtools-backend/
+vmtools-backend.zip
+
+# WorkBuddy internal
+.workbuddy/
+CLAUDE.md
+
+# Temp files
+*.tmp

@@ -1,0 +1,91 @@
+sequenceDiagram
+    actor User
+    participant UI as WarehouseEditScreen
+    participant WS as WarehouseScanner
+    participant Executor as ExecutorService
+    participant Loop as ScanLoop (Thread)
+    participant World as Minecraft Level
+    participant CU as ContainerUtils
+    participant MH as MiniHudAdapter
+    participant W as Warehouse
+    participant L as ScanProgressListener
+
+    User->>UI: click "扫描"
+    UI->>WS: startScan(warehouse)
+
+    Note over WS: Phase 1: 预计算总数
+    WS->>WS: validate(warehouse)
+    WS->>WS: preComputeTotal(range)
+    loop XYZ (仅 isContainerBlock)
+        WS->>CU: isContainerBlock(world, pos)
+    end
+    WS->>WS: create ScanContext(total=N)
+
+    Note over WS: Phase 2: 更新状态
+    WS->>W: scanState="SCANNING", scanProgressPercent=0
+    WS->>UI: onStateChanged(IDLE→SCANNING)
+
+    Note over WS: Phase 3: 提交异步任务
+    WS->>Executor: submit(scanTask)
+
+    Note over Loop: ─── 异步扫描循环 ───
+    loop XYZ (从 resumePos 开始)
+        Loop->>Loop: check cancelRequested → break
+        Loop->>Loop: check pauseRequested → pauseLock.wait()
+
+        Loop->>CU: isContainerBlock(world, pos)
+        alt 是容器
+            Loop->>MH: getContainerItems(world, pos)
+            Loop->>Loop: addToSnapshot(items)
+            Loop->>Loop: scannedContainers++
+
+            alt 潜影盒递归
+                Loop->>CU: isShulkerBoxItem(stack)
+                Loop->>Loop: recurseShulker(snapshot, stack, ...)
+            end
+
+            Loop->>W: scanProgressPercent, scannedContainers, currentScannedPos
+            Loop->>UI: onProgress(scanned, total, %, pos)
+        end
+
+        Loop->>Loop: Thread.sleep(scanDelayMs)
+    end
+
+    Note over Loop: 扫描完成
+    Loop-->>WS: Future complete
+    WS->>W: scanState="FINISHED", scanStatus="success"
+    WS->>UI: onScanComplete(snapshot)
+
+    rect rgb(255, 240, 220)
+        Note over User,WS: ─── 暂停流程 ───
+        User->>UI: click "暂停"
+        UI->>WS: pauseScan(warehouseId)
+        WS->>ScanContext: pauseRequested = true
+        Loop->>Loop: save resumePos = currentPos
+        Loop->>Loop: pauseLock.wait()
+        WS->>W: scanState="PAUSED"
+        WS->>UI: onStateChanged(SCANNING→PAUSED)
+    end
+
+    rect rgb(220, 255, 220)
+        Note over User,WS: ─── 恢复流程 ───
+        User->>UI: click "恢复"
+        UI->>WS: resumeScan(warehouseId)
+        WS->>ScanContext: pauseRequested = false
+        WS->>ScanContext: pauseLock.notifyAll()
+        WS->>W: scanState="SCANNING"
+        WS->>UI: onStateChanged(PAUSED→SCANNING)
+        Loop->>Loop: continue from resumePos
+    end
+
+    rect rgb(255, 220, 220)
+        Note over User,WS: ─── 取消流程 ───
+        User->>UI: click "取消"
+        UI->>WS: cancelScan(warehouseId)
+        WS->>ScanContext: cancelRequested = true
+        WS->>ScanContext: pauseLock.notifyAll()
+        Loop->>Loop: break out of loop
+        WS->>Executor: future.cancel(true)
+        WS->>W: scanState="CANCELLED"
+        WS->>UI: onStateChanged(→CANCELLED)
+    end

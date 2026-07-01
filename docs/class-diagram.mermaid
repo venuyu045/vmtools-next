@@ -1,0 +1,135 @@
+classDiagram
+    direction TB
+
+    class ScanState {
+        <<enumeration>>
+        IDLE
+        SCANNING
+        PAUSED
+        FINISHED
+        CANCELLED
+    }
+
+    class ScanProgressListener {
+        <<interface>>
+        +onProgress(String warehouseId, int scanned, int total, int percent, BlockPos currentPos) void
+        +onStateChanged(String warehouseId, ScanState oldState, ScanState newState) void
+        +onScanComplete(String warehouseId, WarehouseMaterialSnapshot snapshot) void
+        +onScanError(String warehouseId, String error) void
+    }
+
+    class WarehouseScanner {
+        -ExecutorService executor$
+        -Map~String,ScanContext~ activeScans$
+        -List~ScanProgressListener~ listeners$
+        +getInstance()$ WarehouseScanner
+        +startScan(Warehouse warehouse) void
+        +pauseScan(String warehouseId) void
+        +resumeScan(String warehouseId) void
+        +cancelScan(String warehouseId) void
+        +getState(String warehouseId) ScanState
+        +getProgress(String warehouseId) ScanProgress
+        +addListener(ScanProgressListener listener) void
+        +removeListener(ScanProgressListener listener) void
+        -preComputeTotal(Warehouse w, Level world) int
+        -scanLoop(ScanContext ctx) void
+        -notifyProgress(ScanContext ctx) void
+        -notifyStateChange(ScanContext ctx, ScanState old, ScanState new) void
+    }
+
+    class ScanContext {
+        +Warehouse warehouse
+        +ScanState state
+        +int totalContainers
+        +int scannedContainers
+        +int failedContainers
+        +int shulkerCount
+        +BlockPos currentPos
+        +BlockPos resumePos
+        +long startTimeMs
+        +WarehouseMaterialSnapshot snapshot
+        +volatile boolean pauseRequested
+        +volatile boolean cancelRequested
+        +final Object pauseLock
+    }
+
+    class Warehouse {
+        +String warehouseId
+        +String name
+        +String serverProfileId
+        +String dimension
+        +WarehouseRange range
+        +int entryX, entryY, entryZ
+        +String teleportTemplate
+        +int priority
+        +boolean enabled
+        +List~String~ tags
+        +List~String~ containerPositions
+        +boolean allowAutoRestock
+        +boolean allowReadOnly
+        +long lastScanTime
+        +String scanStatus
+        +int accessFailures
+        +int scanProgressPercent
+        +int totalContainers
+        +int scannedContainers
+        +String currentScannedPos
+        +String scanState
+    }
+
+    class ContainerUtils {
+        -ContainerUtils()$
+        +isContainerBlock(Level, BlockPos)$ boolean
+        +getContainer(Level, BlockPos)$ Container
+        +readContainerItems(Level, BlockPos)$ List~ItemStack~
+        +isShulkerBoxItem(ItemStack)$ boolean
+        +readShulkerContents(ItemStack)$ List~ItemStack~
+        -CONTAINER_CHECKS$ List~BiPredicate~
+    }
+
+    class WarehouseMaterialSnapshot {
+        +String snapshotId
+        +String warehouseId
+        +long scanTime
+        +List~MaterialStack~ materials
+        +int containerCount
+        +int scannedContainerCount
+        +int failedContainerCount
+        +boolean scanSuccess
+        +String scanError
+    }
+
+    class VMToolsConfigs {
+        +SCAN_DELAY_MS$ ConfigInteger
+        +SCAN_SHULKER_CONTENTS$ ConfigBoolean
+        +SHULKER_RECURSION_DEPTH$ ConfigInteger
+    }
+
+    class WarehouseEditScreen {
+        -Warehouse warehouse
+        -ScanProgressListener scanListener
+        -boolean confirmDelete
+        +initGui() void
+        -handleScanButton() void
+        -updateScanButtonLabel() String
+        -onScanProgress(int scanned, int total, int pct) void
+    }
+
+    class WarehouseConfigScreen {
+        -int scrollOffset
+        +initGui() void
+    }
+
+    WarehouseScanner "1" --> "0..*" ScanContext : manages
+    WarehouseScanner "1" --> "0..*" ScanProgressListener : notifies
+    WarehouseScanner --> ScanState : uses
+    WarehouseScanner --> ContainerUtils : uses
+    ScanContext --> Warehouse : references
+    ScanContext --> WarehouseMaterialSnapshot : builds
+    ScanContext --> ScanState : holds
+    Warehouse --> ScanState : persists as String
+    WarehouseEditScreen --> WarehouseScanner : calls
+    WarehouseEditScreen ..|> ScanProgressListener : implements
+    WarehouseEditScreen --> Warehouse : displays
+    WarehouseConfigScreen --> Warehouse : lists
+    VMToolsConfigs ..> WarehouseScanner : configures

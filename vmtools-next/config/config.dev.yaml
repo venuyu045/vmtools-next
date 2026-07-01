@@ -1,0 +1,10 @@
+# 开发环境覆盖配置
+server:
+  port: 8080
+  debug: true
+
+mcc:
+  working_dir: "F:\\Traedocument\\Qlaw\\VMTools-v2\\Minecraft-Console-Client-master\\MinecraftClient"
+
+generic:
+  debug_logging: true

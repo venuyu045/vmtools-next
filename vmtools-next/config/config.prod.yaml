@@ -1,0 +1,13 @@
+# 生产环境覆盖配置
+server:
+  host: "0.0.0.0"
+  port: 8080
+  workers: 4
+  debug: false
+
+generic:
+  debug_logging: false
+
+safety:
+  pause_on_nearby_player: true
+  auto_pause_on_disconnect: true

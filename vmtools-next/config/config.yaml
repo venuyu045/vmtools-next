@@ -1,0 +1,83 @@
+# VMTools Next 主配置
+# 对应 VMToolsConfigs 31 项 + 服务器新增配置
+# 环境变量 VMT_* 可覆盖任意配置项 (如 VMT_SERVER_PORT=9090)
+
+generic:
+  enabled: true
+  debug_logging: false
+  hud_refresh_interval: 20  # 服务器端仅用于日志频率
+
+safety:
+  max_ops_per_tick: 1
+  place_interval_ticks: 3
+  container_interact_interval: 10
+  teleport_cooldown_seconds: 5
+  max_pathing_distance: 500
+  max_failures_before_stop: 3
+  pause_on_nearby_player: true
+  nearby_player_radius: 10
+  auto_pause_on_disconnect: true
+
+warehouse:
+  default_scan_range_x: 16
+  default_scan_range_y: 8
+  default_scan_range_z: 16
+  cache_validity_minutes: 5
+  max_scan_containers: 0  # 0 = unlimited
+  scan_shulker_contents: true
+  shulker_recursion_depth: 3
+  servux_direct_scan: true
+  navigate_on_read_fail: false
+  servux_read_timeout_ms: 800
+  servux_prefetch_window: 8
+  scan_progress_interval: 25
+
+build:
+  default_layer_height: 6
+  printer_range: 6
+  printer_blocks_per_tick: 1
+  layer_verify_retry_count: 3
+  auto_continue_next_layer: true
+
+travel:
+  teleport_threshold: 200
+  arrival_verify_radius: 3
+  arrival_timeout_seconds: 10
+  max_teleports_per_minute: 6
+  fallback_to_baritone: true
+
+server:
+  host: "0.0.0.0"
+  port: 8080
+  workers: 1
+  database_url: "sqlite:///vmtools-next.db"
+  secret_key: "change-in-production"
+  jwt_algorithm: "HS256"
+  cors_origins: ["*"]
+  api_token: "vmtools-next-token-2026"
+
+mcc:
+  protocol: "mcp"  # mcp | ws
+  mcp_endpoint: "http://127.0.0.1:33333/mcp"
+  mcp_auth_token_env: "MCC_MCP_AUTH_TOKEN"
+  ws_timeout: 10
+  reconnect_base_delay: 1.0
+  reconnect_max_delay: 60.0
+  command_timeout: 30
+  working_dir: "/opt/mcc"
+
+monitor:
+  enabled: true
+  collect_interval_seconds: 10
+  alert_check_interval_seconds: 30
+  webhook_url: ""
+  email_smtp_host: ""
+
+plugins:
+  enabled: true
+  builtin:
+    auto_restock:
+      enabled: true
+    discord_notify:
+      enabled: false
+      webhook: ""
