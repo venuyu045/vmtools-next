@@ -1,11 +1,11 @@
 <template>
   <div class="bot-card pixel-card">
     <div class="bot-header">
-      <span :class="['status-dot', bot.status === 'online' ? 'online' : bot.status === 'offline' ? 'offline' : 'warning']"></span>
+      <span :class="['status-dot', statusClass]"></span>
       <span class="bot-name pixel">{{ bot.name || bot.bot_id }}</span>
-      <span :class="['pixel-badge', bot.status === 'online' ? 'green' : bot.status === 'offline' ? 'red' : 'yellow']">
+      <span :class="['pixel-badge', statusBadgeClass]">
         <span class="badge-dot"></span>
-        {{ bot.status === 'online' ? 'ONLINE' : bot.status === 'offline' ? 'OFFLINE' : 'IDLE' }}
+        {{ statusLabel }}
       </span>
     </div>
 
@@ -50,8 +50,31 @@
 </template>
 
 <script setup lang="ts">
-defineProps<{ bot: any }>()
+import { computed } from 'vue'
+
+const props = defineProps<{ bot: any }>()
 defineEmits(['connect', 'disconnect', 'delete'])
+
+const statusClass = computed(() => {
+  const map: Record<string, string> = {
+    online: 'online', connecting: 'warning', error: 'error', offline: 'offline'
+  }
+  return map[props.bot.status] || 'warning'
+})
+
+const statusBadgeClass = computed(() => {
+  const map: Record<string, string> = {
+    online: 'green', connecting: 'yellow', error: 'red', offline: 'red'
+  }
+  return map[props.bot.status] || 'yellow'
+})
+
+const statusLabel = computed(() => {
+  const map: Record<string, string> = {
+    online: 'ONLINE', connecting: 'CONNECTING', error: 'ERROR', offline: 'OFFLINE'
+  }
+  return map[props.bot.status] || 'IDLE'
+})
 </script>
 
 <style scoped>

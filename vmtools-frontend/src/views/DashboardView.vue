@@ -92,15 +92,15 @@
           <h3 class="pixel section-title">系统状态</h3>
           <div class="mon-row">
             <span class="mon-label">CPU</span>
-            <span class="mono mon-val">{{ latestMetrics.cpu_percent }}%</span>
+            <span class="mono mon-val">{{ latestMetrics.cpu_percent.toFixed(1) }}%</span>
           </div>
           <div class="mon-row">
             <span class="mon-label">内存</span>
-            <span class="mono mon-val" style="color: #ffff00">{{ latestMetrics.memory_used }}MB / {{ latestMetrics.memory_total }}MB</span>
+            <span class="mono mon-val" style="color: #ffff00">{{ latestMetrics.memory_percent.toFixed(1) }}% · {{ fmtGB(latestMetrics.memory_used) }} / {{ fmtGB(latestMetrics.memory_total) }} GB</span>
           </div>
           <div class="mon-row">
             <span class="mon-label">磁盘</span>
-            <span class="mono mon-val">{{ latestMetrics.disk_used }}GB / {{ latestMetrics.disk_total }}GB</span>
+            <span class="mono mon-val">{{ latestMetrics.disk_percent.toFixed(1) }}% · {{ fmtGB(latestMetrics.disk_used) }} / {{ fmtGB(latestMetrics.disk_total) }} GB</span>
           </div>
           <div class="mon-row">
             <span class="mon-label">运行时间</span>
@@ -130,13 +130,20 @@ const runningTasks = computed(() => buildStore.tasks.filter(t => t.status === 'r
 const totalItems = computed(() => warehouseStore.warehouses.reduce((sum, w) => sum + (w.total_items || 0), 0))
 const latestMetrics = computed(() => monitorStore.metrics?.[monitorStore.metrics.length - 1])
 const uptime = computed(() => {
-  const s = latestMetrics.value?.disk_used || 0
+  if (!latestMetrics.value) return '--'
+  const s = (Date.now() / 1000 - latestMetrics.value.timestamp) || 0
+  if (s < 60) return `${Math.floor(s)}s`
+  if (s < 3600) return `${Math.floor(s / 60)}m`
   const d = Math.floor(s / 86400)
   const h = Math.floor((s % 86400) / 3600)
   return `${d}d ${h}h`
 })
 function taskPct(task: any): number {
   return task.total_layers > 0 ? Math.round(task.current_layer / task.total_layers * 100) : 0
+}
+function fmtGB(bytes: number): string {
+  if (!bytes) return '0'
+  return (bytes / 1024 / 1024 / 1024).toFixed(1)
 }
 
 onMounted(async () => {

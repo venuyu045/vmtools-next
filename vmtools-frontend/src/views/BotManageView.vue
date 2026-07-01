@@ -56,8 +56,15 @@ async function handleCreate() {
 }
 
 async function handleConnect(bot: any) {
-  await botStore.connectBot(bot.bot_id)
-  ElMessage.success('连接成功')
+  const result = await botStore.connectBot(bot.bot_id)
+  const newStatus = result?.status || ''
+  if (newStatus === 'online') {
+    ElMessage.success('Bot 已连接')
+  } else if (newStatus === 'error') {
+    ElMessage.error('连接失败：MCC MCP 服务器未响应。请确认 MCC 已进入 MC 游戏且 MCP 已启用')
+  } else {
+    ElMessage.warning('连接状态：' + newStatus)
+  }
 }
 
 async function handleDisconnect(bot: any) {
