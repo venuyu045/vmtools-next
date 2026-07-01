@@ -10,6 +10,7 @@ COPY frontend/package.json frontend/package-lock.json* ./
 RUN npm ci --legacy-peer-deps 2>/dev/null || npm install --legacy-peer-deps
 
 COPY frontend/ ./
+ENV VITE_OUT_DIR=dist
 RUN npm run build
 
 # ── Stage 1: Python FastAPI backend ──
