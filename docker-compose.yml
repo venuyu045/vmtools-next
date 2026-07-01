@@ -1,0 +1,57 @@
+# VMTools Next — Docker Compose
+# 快速部署：docker compose up -d
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: vmtools-next
+    restart: unless-stopped
+    ports:
+      - "${VMT_PORT:-8080}:8080"
+      - "${MCC_PORT_RANGE:-33333-33352}:33333-33352"
+    volumes:
+      - vmtools-data:/app/data
+      - vmtools-logs:/app/logs
+      - ${MCC_INSTANCE_ROOT:-/opt/vmtools/mcc-instances}:/opt/vmtools/mcc-instances
+      - ${MCC_RUNTIME_PATH:-/opt/vmtools/mcc-runtime}:/opt/vmtools/mcc-runtime:ro
+    environment:
+      - VMT_ENV=prod
+      - VMT_SERVER__HOST=0.0.0.0
+      - VMT_SERVER__PORT=8080
+      - VMT_SERVER__DATABASE_URL=sqlite:///data/vmtools-next.db
+      - VMT_SERVER__SECRET_KEY=${VMT_SECRET_KEY?请设置 VMT_SECRET_KEY 环境变量}
+      - VMT_SERVER__JWT_ALGORITHM=HS256
+      - SITE_ADMIN_GAME_ID=${SITE_ADMIN_GAME_ID:-admin}
+      - SITE_ADMIN_PASSWORD=${SITE_ADMIN_PASSWORD:-}
+      - VMT_MCC__INSTANCE_ROOT=/opt/vmtools/mcc-instances
+      - VMT_MCC__BINARY_PATH=/opt/vmtools/mcc-runtime/MinecraftClient.dll
+      - VMT_MCC__INSTANCE_START_PORT=33333
+      - VMT_MCC__INSTANCE_END_PORT=33352
+      - VMT_MCC__MAX_INSTANCES=20
+      - VMT_MCC__LOG_RETENTION_DAYS=14
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/api/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # 可选：Nginx 反向代理（支持 HTTPS）
+  # nginx:
+  #   image: nginx:alpine
+  #   container_name: vmtools-nginx
+  #   restart: unless-stopped
+  #   ports:
+  #     - "80:80"
+  #     - "443:443"
+  #   volumes:
+  #     - ./backend/deploy/nginx/vmtools-next.conf:/etc/nginx/conf.d/default.conf
+  #     - ./ssl:/etc/nginx/ssl:ro
+  #   depends_on:
+  #     - app
+
+volumes:
+  vmtools-data:
+  vmtools-logs:

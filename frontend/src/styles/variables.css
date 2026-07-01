@@ -1,0 +1,45 @@
+:root {
+  /* Background - CRT pixel terminal */
+  --bg-primary: #000000;
+  --bg-card: #0a0a0a;
+  --bg-elevated: #0a0a0a;
+  --bg-input: #0a0a0a;
+
+  /* Neon green palette */
+  --green-primary: #00ff00;
+  --green-bright: #00ff00;
+  --green-dim: #00cc00;
+  --green-dark: #00aa00;
+  --green-faded: #006600;
+  --green-glow: rgba(0, 255, 0, 0.1);
+
+  /* Text */
+  --text-primary: #00ff00;
+  --text-secondary: #00cc00;
+  --text-muted: #008800;
+
+  /* Status colors */
+  --color-success: #00ff00;
+  --color-warning: #ffff00;
+  --color-error: #ff0000;
+  --color-info: #1890ff;
+
+  /* Border */
+  --border-subtle: rgba(0, 255, 0, 0.15);
+  --border-card: rgba(0, 255, 0, 0.2);
+  --border-active: #00ff00;
+
+  /* Shadow - hard pixel shadows */
+  --shadow-card: 3px 3px 0 rgba(0, 255, 0, 0.15);
+  --shadow-button: 3px 3px 0 rgba(0, 255, 0, 0.4);
+  --shadow-glow: 0 0 40px rgba(0, 255, 0, 0.2);
+
+  /* Typography */
+  --font-pixel: 'Press Start 2P', 'Courier New', monospace;
+  --font-mono: 'VT323', 'Courier New', monospace;
+  --font-body: 'Arial', 'Microsoft YaHei', sans-serif;
+
+  /* Spacing - 8px base unit for pixel grid */
+  --radius-none: 0px;
+  --radius-btn: 0px;
+}
