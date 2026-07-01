@@ -45,9 +45,10 @@ class MccMcpClient:
         self._client: Optional[httpx.AsyncClient] = None
         self._request_id = 0
         self._connected = False
+        self._session_id: Optional[str] = None
 
     async def connect(self) -> bool:
-        """Initialize the HTTP client and verify connectivity."""
+        """Initialize the HTTP client, perform MCP handshake, and verify connectivity."""
         if self._client is not None:
             return True
         headers = {"Content-Type": "application/json"}
@@ -59,6 +60,8 @@ class MccMcpClient:
             timeout=self._timeout,
         )
         try:
+            # MCP initialize handshake (required for newer MCC MCP SDK)
+            await self._initialize()
             result = await self.get_session_status()
             self._connected = True
             logger.info("MCC MCP connected: %s:%d", self._host, self._port)
@@ -66,6 +69,36 @@ class MccMcpClient:
         except Exception as e:
             logger.warning("MCC MCP connection failed: %s", e)
             self._connected = False
+            return False
+
+    async def _initialize(self) -> None:
+        """Send MCP initialize request and capture session ID."""
+        resp = await self._client.post("", json={
+            "jsonrpc": "2.0",
+            "id": 0,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {},
+                "clientInfo": {"name": "vmtools-next", "version": "0.1.0"},
+            },
+        })
+        data = resp.json()
+        if "error" in data:
+            logger.warning("MCP initialize failed: %s", data["error"].get("message", ""))
+            # Some servers don't require initialize — try stateless
+            return
+        # Extract session ID from response headers
+        sid = resp.headers.get("mcp-session-id")
+        if sid:
+            self._session_id = sid
+            self._client.headers["mcp-session-id"] = sid
+            logger.info("MCP session established: %s", sid)
+        # Send initialized notification
+        await self._client.post("", json={
+            "jsonrpc": "2.0",
+            "method": "notifications/initialized",
+        })
             return False
 
     async def disconnect(self) -> None:
