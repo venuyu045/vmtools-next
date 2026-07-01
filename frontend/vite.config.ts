@@ -24,7 +24,7 @@ export default defineConfig({
     },
   },
   build: {
-    outDir: path.resolve(__dirname, '../backend/static'),
+    outDir: process.env.VITE_OUT_DIR || path.resolve(__dirname, '../backend/static'),
     emptyOutDir: true,
   },
   base: '/static/',
