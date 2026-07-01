@@ -51,7 +51,7 @@ class MccMcpClient:
         """Initialize the HTTP client, perform MCP handshake, and verify connectivity."""
         if self._client is not None:
             return True
-        headers = {"Content-Type": "application/json"}
+        headers = {"Content-Type": "application/json", "Accept": "application/json, text/event-stream"}
         if self._auth_token:
             headers["Authorization"] = f"Bearer {self._auth_token}"
         self._client = httpx.AsyncClient(
@@ -83,10 +83,9 @@ class MccMcpClient:
                 "clientInfo": {"name": "vmtools-next", "version": "0.1.0"},
             },
         })
-        data = resp.json()
+        data = self._parse_mcp_response(resp)
         if "error" in data:
             logger.warning("MCP initialize failed: %s", data["error"].get("message", ""))
-            # Some servers don't require initialize — try stateless
             return
         # Extract session ID from response headers
         sid = resp.headers.get("mcp-session-id")
@@ -99,7 +98,6 @@ class MccMcpClient:
             "jsonrpc": "2.0",
             "method": "notifications/initialized",
         })
-            return False
 
     async def disconnect(self) -> None:
         """Close the HTTP client."""
@@ -114,6 +112,86 @@ class MccMcpClient:
 
     # ── Low-level RPC ────────────────────────────────────────────────────
 
+    _TOOL_NAME_MAP: dict[str, str] = {
+        "GetSessionStatus": "mcc_session_status",
+        "GetServerInfo": "mcc_server_info",
+        "GetPlayerState": "mcc_player_state",
+        "GetWorldState": "mcc_world_state",
+        "GetChunkStatus": "mcc_chunk_status",
+        "GetRecentEvents": "mcc_recent_events",
+        "GetChatHistory": "mcc_chat_history",
+        "GetStatusEffects": "mcc_status_effects",
+        "GetPlayerStats": "mcc_player_stats",
+        "MoveTo": "mcc_move_to",
+        "MoveToPlayer": "mcc_move_to_player",
+        "CanReachPosition": "mcc_can_reach_position",
+        "PreviewPath": "mcc_path_preview",
+        "LookAt": "mcc_look_at",
+        "LookDirection": "mcc_look_direction",
+        "LookAngles": "mcc_look_angles",
+        "PlaceBlock": "mcc_place_block",
+        "DigBlock": "mcc_dig_block",
+        "UseItemOnBlock": "mcc_use_item_on_block",
+        "UseItemOnHand": "mcc_use_item_on_hand",
+        "GetWorldBlockAt": "mcc_world_block_at",
+        "ScanNearbyBlocks": "mcc_block_scan",
+        "ListInventories": "mcc_inventories_list",
+        "GetInventorySnapshot": "mcc_inventory_snapshot",
+        "SearchInventories": "mcc_inventory_search",
+        "OpenContainerAt": "mcc_container_open_at",
+        "CloseContainer": "mcc_container_close",
+        "InventoryWindowAction": "mcc_inventory_window_action",
+        "WithdrawContainerItem": "mcc_container_withdraw_item",
+        "DepositContainerItem": "mcc_container_deposit_item",
+        "ChangeHotbarSlot": "mcc_change_hotbar_slot",
+        "SelectHotbarItem": "mcc_select_item",
+        "ToggleSneak": "mcc_toggle_sneak",
+        "ToggleSprint": "mcc_toggle_sprint",
+        "PlayAnimation": "mcc_animation",
+        "SendChat": "mcc_send_chat",
+        "RunInternalCommand": "mcc_run_internal_command",
+        "Respawn": "mcc_respawn",
+        "DisconnectClient": "mcc_disconnect",
+        "ListEntities": "mcc_entities_list",
+        "GetEntityInfo": "mcc_entity_info",
+        "AttackEntity": "mcc_entity_attack",
+        "InteractEntity": "mcc_entity_interact",
+        "PickupItems": "mcc_items_pickup",
+        "FindBlocks": "mcc_blocks_find",
+        "FindNearestEntity": "mcc_entity_nearest",
+        "IsPlayerNearby": "mcc_player_nearby",
+        "LocatePlayer": "mcc_player_locate",
+        "FindSigns": "mcc_signs_find",
+        "ListItemEntities": "mcc_items_list",
+        "GetMaterialsList": "mcc_materials_list",
+        "GetBlockTypesList": "mcc_block_types_list",
+        "GetEntityTypesList": "mcc_entity_types_list",
+        "GetPlayersList": "mcc_players_list",
+        "GetPlayersDetailed": "mcc_players_detailed",
+        "RaycastBlock": "mcc_raycast_block",
+        "GetInternalCommands": "mcc_internal_commands_list",
+        "QuitClient": "mcc_quit_client",
+        "DropInventoryItem": "mcc_inventory_drop_item",
+        "QueryEntities": "mcc_entities_query",
+        "GetLoadedBots": "mcc_loaded_bots",
+    }
+    # end class-level TOOL_NAME_MAP
+
+    def _map_tool_name(self, name: str) -> str:
+        """Map old PascalCase tool names to new mcc_ snake_case names."""
+        return self._TOOL_NAME_MAP.get(name, name)
+
+    def _parse_mcp_response(self, resp: httpx.Response) -> dict:
+        """Parse MCP response, handling both SSE and JSON formats."""
+        ct = resp.headers.get("content-type", "")
+        if "text/event-stream" in ct:
+            text = resp.text
+            for line in text.split("\n"):
+                if line.startswith("data: "):
+                    return json.loads(line[6:])
+            raise MccMcpError("No data field in SSE response")
+        return resp.json()
+
     async def _call_tool(self, tool_name: str, arguments: Optional[dict] = None,
                          timeout_override: Optional[float] = None) -> dict:
         """Call a single MCP tool and return the parsed result.
@@ -124,12 +202,13 @@ class MccMcpClient:
             raise MccMcpError("Client not connected", code=-1)
 
         self._request_id += 1
+        mapped_name = self._map_tool_name(tool_name)
         payload = {
             "jsonrpc": "2.0",
             "id": self._request_id,
             "method": "tools/call",
             "params": {
-                "name": tool_name,
+                "name": mapped_name,
                 "arguments": arguments or {},
             },
         }
@@ -150,7 +229,7 @@ class MccMcpClient:
                 if resp.status_code >= 400:
                     raise MccMcpError(f"Client error {resp.status_code}: {resp.text}", code=resp.status_code)
 
-                data = resp.json()
+                data = self._parse_mcp_response(resp)
                 if "error" in data:
                     err = data["error"]
                     raise MccMcpError(
