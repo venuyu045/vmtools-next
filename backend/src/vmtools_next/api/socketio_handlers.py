@@ -84,7 +84,7 @@ async def connect(sid, environ, auth):
     await sio.save_session(sid, {"user": user_info})
     logger.info("Socket.IO client connected: {} user={}", sid, user_info["user_id"])
     try:
-        payload = _build_initial_payload()
+        payload = _build_initial_payload(user_info)
         await sio.emit("sync_update", payload, to=sid)
     except Exception as e:
         logger.warning("Failed to send initial sync: {}", e)
@@ -98,8 +98,11 @@ async def disconnect(sid):
 @sio.on("mcc_join_instance")
 async def mcc_join_instance(sid, data):
     """Subscribe a socket to one MCC instance terminal room."""
-    instance_id = (data or {}).get("instance_id")
-    tail_lines = int((data or {}).get("tail_lines", 300))
+    if not isinstance(data, dict):
+        await sio.emit("mcc_terminal_error", {"message": "Invalid data format"}, to=sid)
+        return
+    instance_id = data.get("instance_id")
+    tail_lines = int(data.get("tail_lines", 300))
     if not instance_id:
         await sio.emit("mcc_terminal_error", {"message": "instance_id required"}, to=sid)
         return
@@ -135,15 +138,18 @@ async def mcc_join_instance(sid, data):
 
 @sio.on("mcc_leave_instance")
 async def mcc_leave_instance(sid, data):
-    instance_id = (data or {}).get("instance_id")
+    instance_id = data.get("instance_id") if isinstance(data, dict) else None
     if instance_id:
         await sio.leave_room(sid, f"mcc:{instance_id}")
 
 
 @sio.on("mcc_terminal_input")
 async def mcc_terminal_input(sid, data):
-    instance_id = (data or {}).get("instance_id")
-    input_text = (data or {}).get("input", "")
+    if not isinstance(data, dict):
+        await sio.emit("mcc_terminal_error", {"message": "Invalid data format"}, to=sid)
+        return
+    instance_id = data.get("instance_id")
+    input_text = data.get("input", "")
     append_newline = bool((data or {}).get("append_newline", True))
     if not instance_id or not input_text:
         await sio.emit("mcc_terminal_error", {"instance_id": instance_id, "message": "instance_id and input required"}, to=sid)
@@ -172,6 +178,9 @@ async def scan_control(sid, data):
     Required data: action, warehouse_id
     Optional data: bot_id (for start)
     """
+    if not isinstance(data, dict):
+        await sio.emit("scan_alert", {"type": "error", "message": "Invalid data format"}, to=sid)
+        return
     action = data.get("action", "")
     warehouse_id = data.get("warehouse_id", "")
     bot_id = data.get("bot_id", "")
@@ -204,11 +213,24 @@ async def scan_control(sid, data):
                 ).all()
 
                 container_positions = []
+                max_positions = 10000  # Safety limit
                 for zone in zones:
                     for x in range(zone.range_min_x, zone.range_max_x + 1):
                         for y in range(zone.range_min_y, zone.range_max_y + 1):
                             for z in range(zone.range_min_z, zone.range_max_z + 1):
                                 container_positions.append((x, y, z))
+                                if len(container_positions) >= max_positions:
+                                    break
+                            if len(container_positions) >= max_positions:
+                                break
+                        if len(container_positions) >= max_positions:
+                            break
+                    if len(container_positions) >= max_positions:
+                        break
+
+                if len(container_positions) >= max_positions:
+                    logger.warning("Container positions truncated to %d for warehouse %s",
+                                   max_positions, warehouse_id)
 
                 if not container_positions:
                     await sio.emit("scan_alert", {"type": "error", "message": "No containers found in warehouse zones"}, to=sid)
@@ -258,6 +280,9 @@ async def scan_control(sid, data):
 @sio.on("logistics_control")
 async def logistics_control(sid, data):
     """Handle logistics task control commands."""
+    if not isinstance(data, dict):
+        await sio.emit("logistics_alert", {"type": "error", "message": "Invalid data format"}, to=sid)
+        return
     action = data.get("action", "")
     run_id = data.get("run_id")
     template_id = data.get("template_id")
@@ -292,6 +317,9 @@ async def logistics_control(sid, data):
 @sio.on("build_control")
 async def build_control(sid, data):
     """Handle build task control commands."""
+    if not isinstance(data, dict):
+        await sio.emit("build_alert", {"type": "error", "message": "Invalid data format"}, to=sid)
+        return
     action = data.get("action", "")
     task_id = data.get("task_id")
     logger.info("Build control from {}: {} task={}", sid, action, task_id)
@@ -328,16 +356,34 @@ async def build_control(sid, data):
         await sio.emit("build_alert", {"type": "error", "message": str(e)}, to=sid)
 
 
-def _build_initial_payload() -> dict:
-    """Build initial sync payload for newly connected client."""
+def _build_initial_payload(user_info: dict | None = None) -> dict:
+    """Build initial sync payload for newly connected client.
+
+    Scoped to the user's organization. Site admins see all data.
+    """
+    org_id = (user_info or {}).get("organization_id")
+    user_id = (user_info or {}).get("user_id")
+
     Session = get_session_factory()
     db = Session()
     try:
         from vmtools_next.data.models.logistics import MccBotModel, LogisticsTaskRunModel
         from vmtools_next.data.models.warehouse import WarehouseModel
 
+        # Build bot query, scoped by org
+        bot_query = db.query(MccBotModel)
+        warehouse_query = db.query(WarehouseModel)
+        run_query = db.query(LogisticsTaskRunModel).filter(
+            LogisticsTaskRunModel.status.in_(["running", "paused"])
+        )
+
+        # For non-site-admin users, filter by organization
+        if org_id:
+            bot_query = bot_query.filter(MccBotModel.organization_id == org_id)
+            warehouse_query = warehouse_query.filter(WarehouseModel.organization_id == org_id)
+
         bots = []
-        for b in db.query(MccBotModel).all():
+        for b in bot_query.all():
             bots.append({
                 "bot_id": b.bot_id,
                 "name": b.name,
@@ -348,7 +394,7 @@ def _build_initial_payload() -> dict:
             })
 
         warehouses = []
-        for w in db.query(WarehouseModel).all():
+        for w in warehouse_query.all():
             warehouses.append({
                 "warehouse_id": w.warehouse_id,
                 "name": w.name,
@@ -357,9 +403,7 @@ def _build_initial_payload() -> dict:
             })
 
         active_runs = []
-        for r in db.query(LogisticsTaskRunModel).filter(
-            LogisticsTaskRunModel.status.in_(["running", "paused"])
-        ).all():
+        for r in run_query.all():
             active_runs.append({
                 "run_id": r.run_id,
                 "template_id": r.template_id,

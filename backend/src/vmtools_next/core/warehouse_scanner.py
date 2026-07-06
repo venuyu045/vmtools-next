@@ -14,10 +14,9 @@ import time
 from enum import Enum, auto
 from typing import Callable, Optional, Awaitable
 
-from vmtools_next.adapters.mcc.mcc_mcp_client import MccMcpClient, MccMcpError
+from vmtools_next.adapters.mcc.mcc_mcp_client import MccMcpClient
 from vmtools_next.adapters.abstract.minihud import AbstractMiniHudAdapter, ReadResult
 from vmtools_next.core.dataclasses import MaterialStack, ContainerSnapshot
-from vmtools_next.core.container_utils import is_container_block
 
 logger = logging.getLogger("vmtools.warehouse_scanner")
 
@@ -75,6 +74,7 @@ class WarehouseScanner:
         self._scan_results: dict[str, ContainerSnapshot] = {}
         self._scan_queue: list[tuple[int, int, int]] = []
         self._current_index: int = 0
+        self._scan_task: Optional[asyncio.Task] = None
 
     @property
     def state(self) -> ScanState:
@@ -107,6 +107,8 @@ class WarehouseScanner:
         self._cancel_requested = True
         self._pause_event.set()  # Unblock if paused
         self._state = ScanState.CANCELED
+        if self._scan_task and not self._scan_task.done():
+            self._scan_task.cancel()
         logger.info("Scan canceled")
 
     def build_scan_queue(self, container_positions: list[tuple[int, int, int]],
@@ -173,9 +175,20 @@ class WarehouseScanner:
         logger.info("Starting scan: %d containers (from index %d)",
                      len(self._scan_queue), start_index)
 
-        # Run scan in background
-        asyncio.create_task(self._scan_loop())
+        # Run scan in background, store task for exception tracking
+        self._scan_task = asyncio.create_task(self._scan_loop())
+        self._scan_task.add_done_callback(self._on_scan_done)
         return True
+
+    def _on_scan_done(self, task: asyncio.Task) -> None:
+        """Handle scan task completion — log any unhandled exceptions."""
+        try:
+            exc = task.exception()
+            if exc and self._state not in (ScanState.CANCELED, ScanState.COMPLETED):
+                logger.error("Scan task failed with unhandled exception: %s", exc)
+                self._state = ScanState.FAILED
+        except asyncio.CancelledError:
+            pass
 
     async def _scan_loop(self) -> None:
         """Main scan loop with backpressure control."""

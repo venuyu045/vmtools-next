@@ -14,6 +14,10 @@ SENSITIVE_KEY_RE = re.compile(
     re.IGNORECASE,
 )
 
+SECRET_VALUE_RE = re.compile(
+    r"(?im)^([\w.\-]*(?:password|passwd|pwd|token|secret|access_token|refresh_token|client_secret)[\w.\-]*\s*[:=]\s*)(.*)$"
+)
+
 
 def hash_secret(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
@@ -66,10 +70,7 @@ def mask_text(text: str) -> str:
     def repl(match: re.Match[str]) -> str:
         return f"{match.group(1)}******"
 
-    pattern = re.compile(
-        r"(?im)^([\w.\-]*(?:password|passwd|pwd|token|secret|access_token|refresh_token|client_secret)[\w.\-]*\s*[:=]\s*)(.*)$"
-    )
-    return pattern.sub(repl, text)
+    return SECRET_VALUE_RE.sub(repl, text)
 
 
 def mask_mapping(value: Any) -> Any:
