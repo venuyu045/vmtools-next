@@ -127,6 +127,7 @@ class BuildStateMachine:
         self._error_message: str = ""
         self._loop_task: Optional[asyncio.Task] = None
         self._travel_purpose: str = ""
+        self._verify_retry_count: int = 0
 
     @property
     def state(self) -> BuildState:
@@ -668,25 +669,36 @@ class BuildStateMachine:
 
     async def _do_verify_layer(self) -> None:
         """VERIFY_LAYER: Verify that blocks were placed correctly."""
+        # Tell the Litematica adapter which layer we're on
+        self._litematica.set_current_layer(self._current_layer, self._layer_height)
+
         missing = await self._litematica.get_missing_block_count()
         if missing == 0:
+            self._verify_retry_count = 0  # Reset for next layer
             logger.info("Layer %d: verification passed", self._current_layer)
             await self._transition(BuildState.NEXT_LAYER)
         else:
-            logger.warning("Layer %d: %d blocks missing", self._current_layer, missing)
+            self._verify_retry_count += 1
+            logger.warning("Layer %d: %d blocks missing (retry %d/3)",
+                         self._current_layer, missing, self._verify_retry_count)
             # Retry up to 3 times
-            if self._state_ticks < 3:
+            if self._verify_retry_count < 3:
                 await self._transition(BuildState.BUILD_LAYER)
             else:
                 logger.error("Layer %d: verification failed after 3 retries", self._current_layer)
+                self._verify_retry_count = 0
                 await self._transition(BuildState.NEXT_LAYER)  # Continue anyway
 
     async def _do_next_layer(self) -> None:
         """NEXT_LAYER: Move to the next layer or finish."""
         self._current_layer += 1
+        self._verify_retry_count = 0  # Reset retry counter for new layer
         if self._current_layer >= self._total_layers:
             await self._transition(BuildState.DONE)
             return
+
+        # Update the Litematica adapter with the new layer
+        self._litematica.set_current_layer(self._current_layer, self._layer_height)
 
         logger.info("Moving to layer %d/%d", self._current_layer, self._total_layers)
         # Move up to next layer height

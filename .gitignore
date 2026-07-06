@@ -19,7 +19,7 @@ node_modules/
 frontend/node_modules/
 
 # MCC binaries and user config (download separately per deployment)
-mcc/
+/mcc/
 
 # Environment
 .env

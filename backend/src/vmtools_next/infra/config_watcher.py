@@ -13,7 +13,7 @@ logger = logging.getLogger("vmtools.config_watcher")
 
 try:
     from watchdog.observers import Observer
-    from watchdog.events import FileSystemEventHandler, FileModifiedEvent
+    from watchdog.events import FileSystemEventHandler
     HAS_WATCHDOG = True
 except ImportError:
     HAS_WATCHDOG = False
@@ -34,7 +34,11 @@ class ConfigChangeHandler(FileSystemEventHandler if HAS_WATCHDOG else object):
         if not event.is_directory and event.src_path.endswith(('.yaml', '.yml')):
             logger.info("Config file changed: %s", event.src_path)
             if self._loop and self._callback:
-                asyncio.run_coroutine_threadsafe(self._callback(), self._loop)
+                future = asyncio.run_coroutine_threadsafe(self._callback(), self._loop)
+                future.add_done_callback(
+                    lambda f: logger.warning("Config change callback failed for: %s", event.src_path)
+                    if f.exception() else None
+                )
 
 
 class ConfigWatcher:
@@ -55,7 +59,7 @@ class ConfigWatcher:
             return
 
         handler = ConfigChangeHandler(self._on_change)
-        handler.set_loop(asyncio.get_event_loop())
+        handler.set_loop(asyncio.get_running_loop())
 
         self._observer = Observer()
         self._observer.schedule(handler, str(self._config_dir), recursive=False)
@@ -65,6 +69,9 @@ class ConfigWatcher:
 
     async def stop(self) -> None:
         if self._observer:
-            self._observer.stop()
-            self._observer.join(timeout=5)
-            logger.info("Config watcher stopped")
+            try:
+                self._observer.stop()
+                self._observer.join(timeout=5)
+                logger.info("Config watcher stopped")
+            except Exception as e:
+                logger.warning("Error stopping config watcher: %s", e)

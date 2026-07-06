@@ -21,7 +21,7 @@ from vmtools_next.api.schemas.mcc_instance import (
     MccFileRenameRequest,
     MccFileWriteRequest,
 )
-from vmtools_next.core.mcc_security import mask_text
+from vmtools_next.core.mcc_security import mask_text, SECRET_VALUE_RE
 from vmtools_next.data.models.auth import UserModel
 from vmtools_next.data.models.mcc_remote import MccFileSnapshotModel, MccInstanceModel
 
@@ -40,9 +40,6 @@ TEXT_EXTENSIONS = {
     ".xml",
     ".toml",
 }
-SECRET_VALUE_RE = re.compile(
-    r"(?im)^([\w.\-]*(?:password|passwd|pwd|token|secret|access_token|refresh_token|client_secret)[\w.\-]*\s*[:=]\s*)(.*)$"
-)
 
 
 @dataclass

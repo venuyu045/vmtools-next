@@ -6,12 +6,21 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import time
+from collections import deque
 from typing import Optional
 
 import psutil
 
 logger = logging.getLogger("vmtools.monitor")
+
+
+def _get_disk_path() -> str:
+    """Get the appropriate disk path for the current OS."""
+    if os.name == "nt":
+        return os.environ.get("SYSTEMDRIVE", "C:\\")
+    return "/"
 
 
 class MonitorCollector:
@@ -21,8 +30,9 @@ class MonitorCollector:
         self._interval = interval_seconds
         self._running = False
         self._task: Optional[asyncio.Task] = None
-        self._metrics: list[dict] = []
+        self._disk_path = _get_disk_path()
         self._max_metrics = 10000
+        self._metrics: deque[dict] = deque(maxlen=self._max_metrics)
 
     async def start(self) -> None:
         if self._running:
@@ -35,9 +45,14 @@ class MonitorCollector:
         self._running = False
         if self._task:
             self._task.cancel()
+            try:
+                await self._task
+            except asyncio.CancelledError:
+                pass
 
     def get_metrics(self, count: int = 100) -> list[dict]:
-        return self._metrics[-count:]
+        items = list(self._metrics)
+        return items[-count:]
 
     def get_latest(self) -> Optional[dict]:
         return self._metrics[-1] if self._metrics else None
@@ -47,8 +62,6 @@ class MonitorCollector:
             try:
                 metrics = self._collect_system_metrics()
                 self._metrics.append(metrics)
-                if len(self._metrics) > self._max_metrics:
-                    self._metrics = self._metrics[-self._max_metrics:]
             except Exception as e:
                 logger.warning("Metrics collection error: %s", e)
             await asyncio.sleep(self._interval)
@@ -57,9 +70,9 @@ class MonitorCollector:
         """Collect current system metrics."""
         cpu_percent = psutil.cpu_percent(interval=0)
         memory = psutil.virtual_memory()
-        disk = psutil.disk_usage("/")
+        disk = psutil.disk_usage(self._disk_path)
 
-        # Network I/O (delta since last call)
+        # Network I/O (delta since last call — psutil tracks internally)
         net = psutil.net_io_counters()
 
         return {

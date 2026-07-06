@@ -77,3 +77,8 @@ class AbstractPrinterAdapter(ABC):
     def get_status(self) -> PrinterStatus:
         """Get the current printer status."""
         ...
+
+    @abstractmethod
+    def set_status(self, status: PrinterStatus) -> None:
+        """Set the current printer status."""
+        ...

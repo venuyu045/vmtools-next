@@ -7,8 +7,17 @@ from typing import Optional, Any
 
 from vmtools_next.api.deps import get_current_user
 from vmtools_next.config import get_config, reload_config, save_mcc_config
+from vmtools_next.infra.logging import get_logger
 
+logger = get_logger("api.config")
 router = APIRouter(prefix="/api/config", tags=["config"])
+
+
+def _require_site_admin(user=Depends(get_current_user)):
+    """Dependency that requires site_admin role for config mutations."""
+    if user.role != "site_admin":
+        raise HTTPException(status_code=403, detail="Only site admin can modify configuration")
+    return user
 
 
 class MccConfigUpdate(BaseModel):
@@ -36,8 +45,8 @@ def get_mcc_config(user=Depends(get_current_user)):
 
 
 @router.put("/mcc")
-def update_mcc_config(data: MccConfigUpdate, user=Depends(get_current_user)):
-    """Update MCC section in config.yaml."""
+def update_mcc_config(data: MccConfigUpdate, user=Depends(_require_site_admin)):
+    """Update MCC section in config.yaml. Requires site_admin."""
     try:
         config = save_mcc_config(
             instance_root=data.instance_root,
@@ -50,14 +59,16 @@ def update_mcc_config(data: MccConfigUpdate, user=Depends(get_current_user)):
         )
         return {"status": "saved", "mcc": config.mcc.model_dump()}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error("Failed to update MCC config: %s", e)
+        raise HTTPException(status_code=500, detail="Failed to save configuration")
 
 
 @router.post("/reload")
-def reload(user=Depends(get_current_user)):
-    """Reload configuration from files."""
+def reload(user=Depends(_require_site_admin)):
+    """Reload configuration from files. Requires site_admin."""
     try:
         new_config = reload_config()
         return {"status": "reloaded", "config": new_config.model_dump()}
     except Exception as e:
-        return {"status": "error", "error": str(e)}
+        logger.error("Failed to reload config: %s", e)
+        raise HTTPException(status_code=500, detail="Failed to reload configuration")

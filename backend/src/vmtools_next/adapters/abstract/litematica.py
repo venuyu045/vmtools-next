@@ -16,6 +16,10 @@ from vmtools_next.core.dataclasses import (
 class AbstractLitematicaAdapter(ABC):
     """Interface for projection reading and block verification."""
 
+    def set_current_layer(self, layer_index: int, layer_height: int = 6) -> None:
+        """Set the current layer for block verification. Override if needed."""
+        pass
+
     @abstractmethod
     async def get_projection_info(self) -> Optional[ProjectionInfo]:
         """Get metadata about the current projection."""

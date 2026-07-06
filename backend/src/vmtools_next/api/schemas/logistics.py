@@ -230,10 +230,3 @@ class TaskLogResponse(BaseModel):
 class TaskStartRequest(BaseModel):
     template_id: str
     bot_id: str
-
-
-class TaskControlRequest(BaseModel):
-    action: str = Field(..., description="start | stop | pause | resume")
-    run_id: Optional[str] = None
-    template_id: Optional[str] = None
-    bot_id: Optional[str] = None
