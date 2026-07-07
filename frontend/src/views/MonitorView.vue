@@ -25,16 +25,25 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted } from 'vue'
+import { onBeforeUnmount, onMounted } from 'vue'
 import { useMonitorStore } from '@/stores/monitor'
 import MetricsChart from '@/components/monitor/MetricsChart.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
 
 const monitorStore = useMonitorStore()
 
+let metricsInterval: ReturnType<typeof setInterval> | undefined
+
 onMounted(async () => {
   await monitorStore.fetchMetrics(50)
   await monitorStore.fetchAlerts()
+  metricsInterval = setInterval(() => {
+    monitorStore.fetchMetrics(50)
+  }, 5000)
+})
+
+onBeforeUnmount(() => {
+  if (metricsInterval) clearInterval(metricsInterval)
 })
 </script>
 

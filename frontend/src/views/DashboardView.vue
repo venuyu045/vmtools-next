@@ -113,7 +113,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted } from 'vue'
+import { computed, onBeforeUnmount, onMounted } from 'vue'
 import { useBotStore } from '@/stores/bot'
 import { useWarehouseStore } from '@/stores/warehouse'
 import { useBuildStore } from '@/stores/build'
@@ -146,6 +146,8 @@ function fmtGB(bytes: number): string {
   return (bytes / 1024 / 1024 / 1024).toFixed(1)
 }
 
+let metricsInterval: ReturnType<typeof setInterval> | undefined
+
 onMounted(async () => {
   await Promise.all([
     botStore.fetchBots(),
@@ -154,6 +156,13 @@ onMounted(async () => {
     monitorStore.fetchAlerts(),
     monitorStore.fetchMetrics(),
   ])
+  metricsInterval = setInterval(() => {
+    monitorStore.fetchMetrics(50)
+  }, 5000)
+})
+
+onBeforeUnmount(() => {
+  if (metricsInterval) clearInterval(metricsInterval)
 })
 </script>
 
