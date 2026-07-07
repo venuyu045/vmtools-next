@@ -1,11 +1,11 @@
 <template>
   <div class="app-layout">
-    <aside class="app-sidebar">
-      <AppSidebar />
+    <aside class="app-sidebar" :class="{ collapsed: isCollapsed }">
+      <AppSidebar :collapsed="isCollapsed" @toggle="isCollapsed = !isCollapsed" />
     </aside>
     <div class="app-body">
       <header class="app-header">
-        <AppHeader />
+        <AppHeader @toggle-sidebar="isCollapsed = !isCollapsed" />
       </header>
       <main class="app-main">
         <router-view />
@@ -15,8 +15,11 @@
 </template>
 
 <script setup lang="ts">
+import { ref } from 'vue'
 import AppSidebar from './AppSidebar.vue'
 import AppHeader from './AppHeader.vue'
+
+const isCollapsed = ref(false)
 </script>
 
 <style scoped>
@@ -30,6 +33,12 @@ import AppHeader from './AppHeader.vue'
   width: 220px;
   flex-shrink: 0;
   overflow-y: auto;
+  overflow-x: hidden;
+  transition: width 0.25s ease;
+}
+
+.app-sidebar.collapsed {
+  width: 60px;
 }
 
 .app-body {

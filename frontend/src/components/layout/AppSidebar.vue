@@ -1,7 +1,10 @@
 <template>
-  <div class="sidebar">
+  <div class="sidebar" :class="{ collapsed }">
     <div class="sidebar-logo">
-      <span class="logo-text">VMTools</span>
+      <button class="collapse-btn" @click="emit('toggle')" :title="collapsed ? '展开' : '收起'">
+        <span class="collapse-icon">{{ collapsed ? '▶' : '◀' }}</span>
+      </button>
+      <span class="logo-text" v-show="!collapsed">VMTools</span>
     </div>
 
     <nav class="sidebar-nav">
@@ -11,15 +14,16 @@
         :to="item.path"
         class="nav-item"
         :class="{ active: isActive(item) }"
+        :title="item.label"
       >
         <span class="nav-dot"></span>
-        <span class="nav-label">{{ item.label }}</span>
+        <span class="nav-label" v-show="!collapsed">{{ item.label }}</span>
       </router-link>
     </nav>
 
     <div class="sidebar-status">
       <span class="status-dot online"></span>
-      <span class="status-text">{{ botStore.onlineCount }} Bots 在线</span>
+      <span class="status-text" v-show="!collapsed">{{ botStore.onlineCount }} Bots 在线</span>
     </div>
   </div>
 </template>
@@ -28,6 +32,9 @@
 import { computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { useBotStore } from '@/stores/bot'
+
+defineProps<{ collapsed?: boolean }>()
+const emit = defineEmits<{ toggle: [] }>()
 
 const route = useRoute()
 const botStore = useBotStore()
@@ -61,15 +68,40 @@ function isActive(item: { path: string }): boolean {
 }
 
 .sidebar-logo {
-  padding: 20px;
+  padding: 16px 14px;
   border-bottom: 1px solid var(--border-subtle);
-  text-align: center;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 56px;
+}
+
+.collapse-btn {
+  background: none;
+  border: 1px solid var(--border-card);
+  color: var(--green-primary);
+  width: 30px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-size: 12px;
+  flex-shrink: 0;
+}
+
+.collapse-btn:hover {
+  border-color: var(--border-active);
+  background: var(--green-glow);
+  color: var(--text-primary);
 }
 
 .logo-text {
   font-family: var(--font-pixel);
   font-size: 14px;
   color: var(--green-primary);
+  white-space: nowrap;
+  transition: opacity 0.2s ease;
 }
 
 .sidebar-nav {
@@ -91,6 +123,11 @@ function isActive(item: { path: string }): boolean {
   font-size: 14px;
   transition: all 0.1s;
   cursor: pointer;
+}
+
+.sidebar.collapsed .nav-item {
+  padding: 10px 0;
+  justify-content: center;
 }
 
 .nav-item:hover {
@@ -120,6 +157,8 @@ function isActive(item: { path: string }): boolean {
 
 .nav-label {
   flex: 1;
+  white-space: nowrap;
+  transition: opacity 0.2s ease;
 }
 
 .sidebar-status {
@@ -128,6 +167,12 @@ function isActive(item: { path: string }): boolean {
   display: flex;
   align-items: center;
   gap: 10px;
+  min-height: 50px;
+}
+
+.sidebar.collapsed .sidebar-status {
+  padding: 16px 0;
+  justify-content: center;
 }
 
 .status-text {
@@ -135,5 +180,13 @@ function isActive(item: { path: string }): boolean {
   font-size: 14px;
   color: var(--green-primary);
   opacity: 0.7;
+  white-space: nowrap;
+}
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  background: var(--green-primary);
+  flex-shrink: 0;
 }
 </style>
