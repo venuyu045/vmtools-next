@@ -89,7 +89,7 @@ export function useSocketIO() {
     socket.on('mcc_terminal_snapshot', (payload) => {
       const mccStore = useMccInstanceStore()
       if (payload?.instance_id && Array.isArray(payload.items)) {
-        mccStore.terminalLines[payload.instance_id] = payload.items
+        mccStore.mergeTerminalLines(payload.instance_id, payload.items)
       }
     })
 

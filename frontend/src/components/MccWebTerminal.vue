@@ -136,6 +136,7 @@ const commandDictionary = [
 
 function initTerminal() {
   if (!terminalContainer.value || terminal) return
+  console.log('[Terminal] initTerminal: creating xterm instance')
   fitAddon = new FitAddon()
   searchAddon = new SearchAddon()
   terminal = new Terminal({
@@ -175,6 +176,7 @@ function initTerminal() {
   terminal.loadAddon(new Unicode11Addon())
   terminal.unicode.activeVersion = '11'
   terminal.open(terminalContainer.value)
+  console.log('[Terminal] initTerminal: xterm opened on container', terminalContainer.value)
   terminal.onData(handleTerminalInput)
   terminal.writeln('\x1b[32mVMTools MCC Web Terminal\x1b[0m')
   terminal.writeln('\x1b[90mCommand mode sends MCC/internal commands. Chat mode prefixes text with say.\x1b[0m')
@@ -301,7 +303,9 @@ function formatLine(line: MccTerminalLine): string {
 }
 
 function renderAllLines() {
-  if (!terminal) return
+  if (!terminal) { console.warn('[Terminal] renderAllLines: terminal is null'); return }
+  const count = terminalLines.value.length
+  console.log('[Terminal] renderAllLines: rendering', count, 'lines, lastSeq was', lastSeq)
   terminal.clear()
   lastSeq = 0
   for (const line of terminalLines.value) {
@@ -310,14 +314,18 @@ function renderAllLines() {
   }
   terminal.write('\r\n\x1b[32m> \x1b[0m' + commandBuffer)
   if (autoScroll.value) terminal.scrollToBottom()
+  console.log('[Terminal] renderAllLines: done, lastSeq =', lastSeq)
 }
 
 function appendNewLines(lines: MccTerminalLine[]) {
-  if (!terminal) return
+  if (!terminal) {
+    console.warn('[Terminal] appendNewLines: terminal is null, queueing', lines.length, 'lines')
+    return
+  }
   const nextLines = lines.filter(line => line.seq > lastSeq)
   if (!nextLines.length) return
+  console.log('[Terminal] appendNewLines: writing', nextLines.length, 'new lines (seq >', lastSeq, ')')
   for (const line of nextLines) {
-    terminal.writeln('')
     terminal.writeln(formatLine(line))
     lastSeq = Math.max(lastSeq, line.seq)
   }
@@ -336,8 +344,15 @@ function leaveTerminalRoom() {
 }
 
 async function reloadHistory() {
+  console.log('[Terminal] reloadHistory: fetching history...')
   await store.fetchTerminalHistory(props.instanceId)
-  renderAllLines()
+  const count = terminalLines.value.length
+  console.log('[Terminal] reloadHistory: received', count, 'lines')
+  if (count > 0) {
+    renderAllLines()
+  } else {
+    console.warn('[Terminal] reloadHistory: no lines to render')
+  }
   connectionHint.value = 'history reloaded'
 }
 
@@ -391,7 +406,16 @@ async function sendQuickCommand(command: string) {
   terminal.write('\x1b[32m> \x1b[0m')
 }
 
-watch(terminalLines, (lines) => appendNewLines(lines), { deep: true })
+watch(terminalLines, (lines) => {
+  const newLines = lines.filter(l => l.seq > lastSeq)
+  // If a large batch arrived at once (snapshot or history), do a full re-render
+  if (newLines.length > 10 && terminal) {
+    console.log('[Terminal] watch: large batch detected (', newLines.length, 'lines), re-rendering all')
+    renderAllLines()
+  } else {
+    appendNewLines(lines)
+  }
+}, { deep: true })
 watch(() => props.instanceId, async () => {
   lastSeq = 0
   commandBuffer = ''

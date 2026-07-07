@@ -81,7 +81,21 @@ export const useMccInstanceStore = defineStore('mccInstance', {
     },
     async fetchTerminalHistory(instanceId: string) {
       const { data } = await mccInstanceApi.history(instanceId)
-      this.terminalLines[instanceId] = data.items
+      this.mergeTerminalLines(instanceId, data.items)
+    },
+    mergeTerminalLines(instanceId: string, items: MccTerminalLine[]) {
+      if (!Array.isArray(items) || !items.length) return
+      const existing = this.terminalLines[instanceId] || []
+      const existingSeqs = new Set(existing.map(l => l.seq))
+      const merged = existing.filter(l => existingSeqs.has(l.seq))
+      for (const line of items) {
+        if (!existingSeqs.has(line.seq)) {
+          existingSeqs.add(line.seq)
+          merged.push({ seq: line.seq, stream: line.stream, content: line.content, created_at: line.created_at })
+        }
+      }
+      merged.sort((a, b) => a.seq - b.seq)
+      this.terminalLines[instanceId] = merged.slice(-800)
     },
     async sendInput(instanceId: string, input: string) {
       await mccInstanceApi.input(instanceId, input)
@@ -157,14 +171,17 @@ export const useMccInstanceStore = defineStore('mccInstance', {
       }
     },
     pushTerminalLine(payload: MccTerminalLine & { instance_id: string }) {
-      const lines = this.terminalLines[payload.instance_id] || []
-      lines.push({
-        seq: payload.seq,
-        stream: payload.stream,
-        content: payload.content,
-        created_at: payload.created_at,
-      })
-      this.terminalLines[payload.instance_id] = lines.slice(-500)
+      const existing = this.terminalLines[payload.instance_id] || []
+      if (existing.some(l => l.seq === payload.seq)) return
+      this.terminalLines[payload.instance_id] = [
+        ...existing,
+        {
+          seq: payload.seq,
+          stream: payload.stream,
+          content: payload.content,
+          created_at: payload.created_at,
+        },
+      ].slice(-500)
     },
   },
 })
