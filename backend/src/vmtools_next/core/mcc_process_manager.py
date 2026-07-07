@@ -284,7 +284,7 @@ class MccProcessManager:
         await self._append_line(instance_id, "stdin", f"> {text}")
 
     async def _send_via_mcp(self, instance_id: str, command: str) -> None:
-        """Send an MCC internal command via MCP HTTP API when stdin is not available."""
+        """Send an MCC command via MCP HTTP API. Handles chat vs internal command routing."""
         Session = get_session_factory()
         db = Session()
         try:
@@ -302,13 +302,21 @@ class MccProcessManager:
             )
             connected = await client.connect()
             if not connected:
-                # Some MCC versions don't implement get_session_status; try raw tool call anyway
-                logger.info("MCP connect() returned false for {}, trying raw tool call", instance_id)
-                await self._send_via_mcp_raw(instance, command)
-                return
+                raise RuntimeError("MCC MCP not reachable")
 
-            logger.info("Sending command via MCP for {}: {}", instance_id, command)
-            result = await client.run_internal_command(command)
+            # Route: "say xxx" → SendChat; everything else → RunInternalCommand
+            if command.lower().startswith("say "):
+                chat_text = command[4:].strip()
+                logger.info("Sending chat via MCP for {}: {}", instance_id, chat_text)
+                result = await client.send_chat(chat_text)
+            else:
+                logger.info("Sending command via MCP for {}: {}", instance_id, command)
+                result = await client.run_internal_command(command)
+                # If command not recognized, fall back to sending as chat
+                if isinstance(result, dict) and not result.get("success", True):
+                    logger.info("Command not recognized, falling back to SendChat for {}: {}", instance_id, command)
+                    result = await client.send_chat(command)
+
             logger.info("MCP command result for {}: {}", instance_id, result)
             await client.disconnect()
         except Exception as exc:
