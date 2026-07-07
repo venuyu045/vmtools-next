@@ -34,7 +34,8 @@ class ProcessHandle:
 
 def _is_async_proc(proc) -> bool:
     """Check if a process object is an asyncio subprocess (has async stdout)."""
-    return hasattr(proc.stdout, "readline") and hasattr(proc.stdout.readline, "__await__")
+    import asyncio as _asyncio
+    return hasattr(proc.stdout, "readline") and _asyncio.iscoroutinefunction(proc.stdout.readline)
 
 
 class MccProcessManager:
