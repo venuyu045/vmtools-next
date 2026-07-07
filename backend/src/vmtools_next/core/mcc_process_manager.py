@@ -125,17 +125,24 @@ class MccProcessManager:
                     )
                     logger.info("MCC started on Windows with DEVNULL stdin (pid={})", process.pid)
                 else:
-                    # Linux: DEVNULL stdin prevents MCC Mono from blocking on pipe input.
-                    # Commands are sent via MCP HTTP API instead of stdin.
+                    # Linux: use PIPE so commands can be sent via stdin.
+                    # MCC may block on Console.ReadLine() until we write something,
+                    # so we immediately write a newline to kick-start the read loop.
                     process = await asyncio.create_subprocess_exec(
                         *command,
                         cwd=instance.instance_dir,
                         env=env,
-                        stdin=asyncio.subprocess.DEVNULL,
+                        stdin=asyncio.subprocess.PIPE,
                         stdout=asyncio.subprocess.PIPE,
                         stderr=asyncio.subprocess.STDOUT,
                     )
-                    logger.info("MCC started on Linux with DEVNULL stdin (pid={})", process.pid)
+                    # Kick-start stdin read loop so MCC doesn't block on startup
+                    try:
+                        process.stdin.write(b"\n")
+                        await process.stdin.drain()
+                    except Exception:
+                        pass
+                    logger.info("MCC started on Linux with PIPE stdin (pid={})", process.pid)
 
                 instance.status = "running"
                 instance.desired_state = "running"
