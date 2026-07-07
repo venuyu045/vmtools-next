@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
+from vmtools_next.adapters.mcc.mcc_mcp_client import MccMcpClient
 from vmtools_next.config import get_config
 from vmtools_next.core.mcc_security import mask_text
 from vmtools_next.core.terminal_log_buffer import TerminalLogBuffer, TerminalLine
@@ -284,7 +285,6 @@ class MccProcessManager:
 
     async def _send_via_mcp(self, instance_id: str, command: str) -> None:
         """Send an MCC internal command via MCP HTTP API when stdin is not available."""
-        import httpx
         Session = get_session_factory()
         db = Session()
         try:
@@ -295,26 +295,54 @@ class MccProcessManager:
             if not instance:
                 raise RuntimeError("MCC instance not found")
 
-            url = f"http://{instance.mcp_host}:{instance.mcp_port}/mcp"
-            headers = {"Content-Type": "application/json"}
-            if instance.mcp_auth_token_secret:
-                headers["Authorization"] = f"Bearer {instance.mcp_auth_token_secret}"
+            client = MccMcpClient(
+                host=instance.mcp_host,
+                port=instance.mcp_port,
+                auth_token=instance.mcp_auth_token_secret or None,
+            )
+            connected = await client.connect()
+            if not connected:
+                # Some MCC versions don't implement get_session_status; try raw tool call anyway
+                logger.info("MCP connect() returned false for {}, trying raw tool call", instance_id)
+                await self._send_via_mcp_raw(instance, command)
+                return
 
-            payload = {
-                "jsonrpc": "2.0",
-                "id": 1,
-                "method": "tools/call",
-                "params": {"name": "RunInternalCommand", "arguments": {"command": command}},
-            }
-            async with httpx.AsyncClient(timeout=httpx.Timeout(10.0)) as client:
-                resp = await client.post(url, json=payload, headers=headers)
-                if resp.status_code != 200:
-                    logger.warning("MCP command failed for {}: HTTP {} {}", instance_id, resp.status_code, resp.text[:200])
+            logger.info("Sending command via MCP for {}: {}", instance_id, command)
+            result = await client.run_internal_command(command)
+            logger.info("MCP command result for {}: {}", instance_id, result)
+            await client.disconnect()
         except Exception as exc:
             logger.error("MCP command failed for {}: {}", instance_id, exc)
             raise RuntimeError(f"Failed to send command via MCP: {exc}") from exc
         finally:
             db.close()
+
+    async def _send_via_mcp_raw(self, instance: MccInstanceModel, command: str) -> None:
+        """Fallback raw HTTP call for older MCC versions that don't need full handshake."""
+        import httpx
+        url = f"http://{instance.mcp_host}:{instance.mcp_port}/mcp"
+        headers = {"Content-Type": "application/json"}
+        if instance.mcp_auth_token_secret:
+            headers["Authorization"] = f"Bearer {instance.mcp_auth_token_secret}"
+
+        for tool_name in ("mcc_run_internal_command", "RunInternalCommand"):
+            payload = {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/call",
+                "params": {"name": tool_name, "arguments": {"command": command}},
+            }
+            async with httpx.AsyncClient(timeout=httpx.Timeout(10.0)) as client:
+                resp = await client.post(url, json=payload, headers=headers)
+                if resp.status_code >= 500:
+                    continue
+                if resp.status_code == 200:
+                    logger.info("Raw MCP command sent with tool {}: {} -> {}", tool_name, command, resp.text[:200])
+                    return
+                if resp.status_code >= 400 and "tool" not in resp.text.lower() and "not found" not in resp.text.lower():
+                    raise RuntimeError(f"MCP command failed: HTTP {resp.status_code} {resp.text[:200]}")
+
+        raise RuntimeError("MCP RunInternalCommand not available")
 
     def tail_logs(self, instance_id: str, tail: int = 500, after_seq: int | None = None) -> list[TerminalLine]:
         lines = self.buffer.tail(instance_id, tail, after_seq)
