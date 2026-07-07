@@ -34,7 +34,8 @@ class ProcessHandle:
 
 def _is_async_proc(proc) -> bool:
     """Check if a process object is an asyncio subprocess (has async stdout)."""
-    return hasattr(proc.stdout, "readline") and hasattr(proc.stdout.readline, "__await__")
+    import asyncio as _asyncio
+    return hasattr(proc.stdout, "readline") and _asyncio.iscoroutinefunction(proc.stdout.readline)
 
 
 class MccProcessManager:
@@ -123,14 +124,17 @@ class MccProcessManager:
                     )
                     logger.info("MCC started on Windows with DEVNULL stdin (pid={})", process.pid)
                 else:
+                    # Linux: DEVNULL stdin prevents MCC Mono from blocking on pipe input.
+                    # Commands are sent via MCP HTTP API instead of stdin.
                     process = await asyncio.create_subprocess_exec(
                         *command,
                         cwd=instance.instance_dir,
                         env=env,
-                        stdin=asyncio.subprocess.PIPE,
+                        stdin=asyncio.subprocess.DEVNULL,
                         stdout=asyncio.subprocess.PIPE,
                         stderr=asyncio.subprocess.STDOUT,
                     )
+                    logger.info("MCC started on Linux with DEVNULL stdin (pid={})", process.pid)
 
                 instance.status = "running"
                 instance.desired_state = "running"
