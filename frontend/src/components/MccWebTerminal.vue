@@ -22,14 +22,6 @@
       <button class="pixel-btn outline" @click="reloadHistory">重载历史</button>
     </div>
 
-    <div class="quick-commands">
-      <span class="mono quick-title">快捷命令</span>
-      <button v-for="command in quickCommands" :key="command" class="quick-chip" @click="sendQuickCommand(command)">
-        {{ command }}
-      </button>
-      <span class="mono quick-help">Tab 自动补全，上下键历史，Enter 发送</span>
-    </div>
-
     <div ref="terminalContainer" class="xterm-shell" :style="{ height }"></div>
 
     <div class="terminal-status mono">
@@ -87,52 +79,10 @@ let commandBuffer = ''
 let historyCursor = -1
 let commandHistory: string[] = []
 
-const quickCommands = [
-  'help',
-  'status',
-  'exit',
-  'connect',
-  'disconnect',
-  'respawn',
-  'inventory',
-  'move',
-]
-
 const commandDictionary = [
-  ...quickCommands,
-  'login',
-  'logout',
-  'reco',
-  'script',
-  'send',
-  'say',
-  'msg',
-  'list',
-  'look',
-  'dig',
-  'place',
-  'useitem',
-  'drop',
-  'dropall',
-  'hotbar',
-  'health',
-  'food',
-  'position',
-  'players',
-  'terrain',
-  'help settings',
-  'set',
-  'reload',
-  'quit',
-  '/help',
-  '/list',
-  '/tell',
-  '/msg',
-  '/tpaccept',
-  '/spawn',
-  '/home',
-  '/back',
-]
+  'help', 'status', 'exit', 'connect', 'disconnect', 'respawn', 'inventory', 'move',
+  'login', 'logout', 'reco', 'script', 'send', 'say', 'list', 'look', 'dig', 'place', 'useitem', 'drop', 'dropall', 'hotbar', 'health', 'food', 'position', 'players', 'terrain', 'help settings', 'set', 'reload', 'quit', '/help', '/list', '/tell', '/msg', '/tpaccept', '/spawn', '/home', '/back']
+
 
 function initTerminal() {
   if (!terminalContainer.value || terminal) return
@@ -397,16 +347,6 @@ function downloadLog() {
   URL.revokeObjectURL(url)
 }
 
-async function sendQuickCommand(command: string) {
-  if (!terminal) return
-  replaceInputBuffer(command)
-  terminal.write('\r\n')
-  await submitCommand(command)
-  commandBuffer = ''
-  historyCursor = -1
-  terminal.write('\x1b[32m> \x1b[0m')
-}
-
 watch(terminalLines, (lines) => {
   const newLines = lines.filter(l => l.seq > lastSeq)
   // If a large batch arrived at once (snapshot or history), do a full re-render
@@ -447,15 +387,9 @@ onBeforeUnmount(() => {
 .terminal-toolbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 .search-input { width: 220px; }
 .terminal-toolbar .pixel-btn { padding: 8px 14px; }
-.quick-commands { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 8px 10px; background: rgba(0, 255, 65, .05); border: 1px solid var(--border-subtle); }
-.quick-title { color: var(--text-muted); font-size: 12px; margin-right: 4px; }
-.quick-help { color: var(--text-muted); font-size: 12px; margin-left: auto; }
-.quick-chip { color: var(--green-primary); background: #000; border: 1px solid var(--border-subtle); padding: 5px 8px; font-family: var(--font-mono); cursor: pointer; }
-.quick-chip:hover { background: var(--green-glow); border-color: var(--green-primary); }
 .xterm-shell { width: 100%; min-height: 260px; padding: 8px; background: #000; border: 1px solid var(--border-card); overflow: hidden; }
 .terminal-status { display: flex; justify-content: space-between; gap: 12px; color: var(--text-muted); font-size: 12px; }
 :deep(.xterm) { height: 100%; }
 :deep(.xterm-viewport) { scrollbar-color: var(--green-primary) #000; }
 :deep(.xterm-screen) { text-shadow: 0 0 6px rgba(0, 255, 65, .28); }
-@media (max-width: 900px) { .quick-help { width: 100%; margin-left: 0; } }
 </style>
