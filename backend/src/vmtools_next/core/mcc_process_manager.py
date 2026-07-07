@@ -260,18 +260,61 @@ class MccProcessManager:
 
     async def write_stdin(self, instance_id: str, text: str, append_newline: bool = True) -> None:
         handle = self._processes.get(instance_id)
-        if not handle or handle.process.returncode is not None or not handle.process.stdin:
+        if not handle or handle.process.returncode is not None:
             raise RuntimeError("MCC process is not running")
-        payload = text + ("\n" if append_newline else "")
-        proc = handle.process
-        if _is_async_proc(proc):
-            proc.stdin.write(payload.encode("utf-8"))
-            await proc.stdin.drain()
+
+        command = text.strip()
+
+        # If stdin is available (Windows subprocess.Popen), write directly
+        if handle.process.stdin:
+            payload = text + ("\n" if append_newline else "")
+            proc = handle.process
+            if _is_async_proc(proc):
+                proc.stdin.write(payload.encode("utf-8"))
+                await proc.stdin.drain()
+            else:
+                loop = asyncio.get_event_loop()
+                await loop.run_in_executor(None, proc.stdin.write, payload.encode("utf-8"))
+                await loop.run_in_executor(None, proc.stdin.flush)
         else:
-            loop = asyncio.get_event_loop()
-            await loop.run_in_executor(None, proc.stdin.write, payload.encode("utf-8"))
-            await loop.run_in_executor(None, proc.stdin.flush)
+            # Linux: stdin is DEVNULL, send via MCP HTTP API instead
+            await self._send_via_mcp(instance_id, command)
+
         await self._append_line(instance_id, "stdin", f"> {text}")
+
+    async def _send_via_mcp(self, instance_id: str, command: str) -> None:
+        """Send an MCC internal command via MCP HTTP API when stdin is not available."""
+        import httpx
+        Session = get_session_factory()
+        db = Session()
+        try:
+            instance = db.query(MccInstanceModel).filter(
+                MccInstanceModel.instance_id == instance_id,
+                MccInstanceModel.deleted_at.is_(None),
+            ).first()
+            if not instance:
+                raise RuntimeError("MCC instance not found")
+
+            url = f"http://{instance.mcp_host}:{instance.mcp_port}/mcp"
+            headers = {"Content-Type": "application/json"}
+            if instance.mcp_auth_token_secret:
+                headers["Authorization"] = f"Bearer {instance.mcp_auth_token_secret}"
+
+            payload = {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/call",
+                "params": {"name": "RunInternalCommand", "arguments": {"command": command}},
+            }
+            async with httpx.AsyncClient(timeout=httpx.Timeout(10.0)) as client:
+                resp = await client.post(url, json=payload, headers=headers)
+                if resp.status_code != 200:
+                    logger.warning("MCP command failed for {}: HTTP {} {}", instance_id, resp.status_code, resp.text[:200])
+        except Exception as exc:
+            logger.error("MCP command failed for {}: {}", instance_id, exc)
+            raise RuntimeError(f"Failed to send command via MCP: {exc}") from exc
+        finally:
+            db.close()
 
     def tail_logs(self, instance_id: str, tail: int = 500, after_seq: int | None = None) -> list[TerminalLine]:
         lines = self.buffer.tail(instance_id, tail, after_seq)
