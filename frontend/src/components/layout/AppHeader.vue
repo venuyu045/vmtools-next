@@ -1,10 +1,13 @@
 <template>
   <div class="header">
-    <div class="page-title" v-if="route.meta.title">
-      > {{ route.meta.title }}
-    </div>
-    <div class="page-title" v-else>
-      > VMTools
+    <div class="header-left">
+      <button class="sidebar-toggle" @click="emit('toggleSidebar')" title="切换侧边栏">☰</button>
+      <div class="page-title" v-if="route.meta.title">
+        > {{ route.meta.title }}
+      </div>
+      <div class="page-title" v-else>
+        > VMTools
+      </div>
     </div>
     <div class="header-right">
       <span class="user-dot"></span>
@@ -18,6 +21,7 @@
 import { useRoute } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 
+const emit = defineEmits<{ toggleSidebar: [] }>()
 const route = useRoute()
 const authStore = useAuthStore()
 </script>
@@ -32,6 +36,31 @@ const authStore = useAuthStore()
   padding: 0 28px;
   background: #0a0a0a;
   border-bottom: 1px solid var(--border-subtle);
+}
+
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.sidebar-toggle {
+  background: none;
+  border: 1px solid var(--border-card);
+  color: var(--green-primary);
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-size: 14px;
+}
+
+.sidebar-toggle:hover {
+  border-color: var(--border-active);
+  background: var(--green-glow);
+  color: var(--text-primary);
 }
 
 .page-title {
