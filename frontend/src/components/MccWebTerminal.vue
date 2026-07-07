@@ -140,6 +140,7 @@ function initTerminal() {
   fitAddon = new FitAddon()
   searchAddon = new SearchAddon()
   terminal = new Terminal({
+    allowProposedApi: true,
     convertEol: true,
     cursorBlink: true,
     disableStdin: false,
