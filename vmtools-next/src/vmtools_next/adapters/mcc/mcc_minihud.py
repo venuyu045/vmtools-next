@@ -22,11 +22,12 @@ class MccMiniHudAdapter(AbstractMiniHudAdapter):
         self._mcc = mcc
 
     def is_available(self) -> bool:
-        return self._mcc.is_connected
+        return bool(self._mcc.is_connected)
 
     async def read_container_items(self, x: int, y: int, z: int,
                                     timeout_ms: int = 5000) -> ReadResult:
         """Open, read, and close a container at (x, y, z)."""
+        inv_id = 0
         try:
             # 1. Open container
             open_result = await self._mcc.open_container_at(x, y, z, timeout_ms=timeout_ms)
@@ -35,7 +36,7 @@ class MccMiniHudAdapter(AbstractMiniHudAdapter):
 
             inv_id = open_result.get("inventoryId", 0)
 
-            # 2. Read inventory snapshot
+            # 2. Read inventory snapshot (with timeout matching the caller's intent)
             snapshot = await self._mcc.get_inventory_snapshot(inv_id)
             items = []
             for slot in snapshot.get("items", []):
@@ -47,9 +48,6 @@ class MccMiniHudAdapter(AbstractMiniHudAdapter):
                 )
                 items.append(item)
 
-            # 3. Close container
-            await self._mcc.close_container(inv_id, timeout_ms=3000)
-
             return ReadResult.ok(items, source="mcc_mcp")
 
         except MccMcpError as e:
@@ -58,6 +56,13 @@ class MccMiniHudAdapter(AbstractMiniHudAdapter):
         except Exception as e:
             logger.error("Unexpected error reading container at (%d,%d,%d): %s", x, y, z, e)
             return ReadResult.failed(str(e))
+        finally:
+            # Always close container to avoid leaving it open in-game
+            if inv_id > 0:
+                try:
+                    await self._mcc.close_container(inv_id, timeout_ms=3000)
+                except MccMcpError:
+                    pass  # Best effort close, already returning the read result
 
     async def prefetch_container(self, x: int, y: int, z: int) -> None:
         """No-op in MCC mode (no prefetch concept)."""

@@ -54,6 +54,7 @@ class OperationLogger:
 
     def _persist_to_db(self, entry: OperationLogEntry) -> None:
         """Persist a log entry to the database."""
+        db = None
         try:
             from vmtools_next.data.models.logistics import OperationLogModel
             db = self._db_factory()
@@ -66,10 +67,17 @@ class OperationLogger:
                 duration_ms=entry.duration_ms,
             ))
             db.commit()
-            db.close()
         except Exception as e:
-            # Don't let DB errors break the logger
+            # Rollback on error, don't let DB errors break the logger
+            if db:
+                try:
+                    db.rollback()
+                except Exception:
+                    pass
             logger.debug("Failed to persist operation log to DB: %s", e)
+        finally:
+            if db:
+                db.close()
 
     def get_recent(self, count: int = 100,
                     operation_type: Optional[OperationType] = None) -> list[OperationLogEntry]:

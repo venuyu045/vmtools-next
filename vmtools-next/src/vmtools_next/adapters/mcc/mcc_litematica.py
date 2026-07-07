@@ -25,6 +25,8 @@ class MccLitematicaAdapter(AbstractLitematicaAdapter):
         self._mcc = mcc
         self._file_path: Optional[str] = None
         self._projection_info: Optional[ProjectionInfo] = None
+        self._current_layer: int = 0
+        self._layer_height: int = 6
 
     async def load_projection(self, file_path: str,
                                 origin_x: int = 0, origin_y: int = 0,
@@ -41,6 +43,11 @@ class MccLitematicaAdapter(AbstractLitematicaAdapter):
         except Exception as e:
             logger.error("Failed to load projection %s: %s", file_path, e)
             return False
+
+    def set_current_layer(self, layer_index: int, layer_height: int = 6) -> None:
+        """Set the current layer for block verification context."""
+        self._current_layer = layer_index
+        self._layer_height = layer_height
 
     async def get_projection_info(self) -> Optional[ProjectionInfo]:
         return self._projection_info
@@ -71,11 +78,11 @@ class MccLitematicaAdapter(AbstractLitematicaAdapter):
             return True  # No projection loaded, assume correct
 
         try:
-            # Get expected block from projection
+            # Get expected block from projection for current layer
             layer_blocks = await LitematicaParser.get_layer_blocks(
                 self._file_path,
-                layer_index=0,  # Will need proper layer calculation
-                layer_height=6,
+                layer_index=self._current_layer,
+                layer_height=self._layer_height,
                 origin_x=self._projection_info.origin_x,
                 origin_y=self._projection_info.origin_y,
                 origin_z=self._projection_info.origin_z,
@@ -110,8 +117,8 @@ class MccLitematicaAdapter(AbstractLitematicaAdapter):
 
         layer_blocks = await LitematicaParser.get_layer_blocks(
             self._file_path,
-            layer_index=0,
-            layer_height=6,
+            layer_index=self._current_layer,
+            layer_height=self._layer_height,
             origin_x=self._projection_info.origin_x,
             origin_y=self._projection_info.origin_y,
             origin_z=self._projection_info.origin_z,
@@ -124,7 +131,63 @@ class MccLitematicaAdapter(AbstractLitematicaAdapter):
         return missing
 
     async def get_extra_block_count(self) -> int:
-        """Count extra blocks not in the projection."""
-        # This requires scanning the world, which is expensive
-        # For now, return 0 (can be implemented later)
-        return 0
+        """Count extra blocks in the build area not in the projection.
+
+        Checks world blocks in the current layer's projection bounding box
+        that are NOT expected by the projection. Limited to 256 lookups
+        per call for performance.
+        """
+        if not self._file_path or not self._projection_info:
+            return 0
+
+        try:
+            layer_blocks = await LitematicaParser.get_layer_blocks(
+                self._file_path,
+                layer_index=self._current_layer,
+                layer_height=self._layer_height,
+                origin_x=self._projection_info.origin_x,
+                origin_y=self._projection_info.origin_y,
+                origin_z=self._projection_info.origin_z,
+            )
+
+            expected_positions = {(wx, wy, wz) for (wx, wy, wz, _) in layer_blocks}
+            if not expected_positions:
+                return 0
+
+            # Calculate the bounding box of expected positions
+            xs = [p[0] for p in expected_positions]
+            zs = [p[2] for p in expected_positions]
+            base_y = self._projection_info.origin_y + self._current_layer * self._layer_height
+
+            extra = 0
+            checked = 0
+            max_checks = 256
+
+            for x in range(min(xs), max(xs) + 1):
+                if checked >= max_checks:
+                    break
+                for z in range(min(zs), max(zs) + 1):
+                    if checked >= max_checks:
+                        break
+                    for dy in range(self._layer_height):
+                        if checked >= max_checks:
+                            break
+                        wy = base_y + dy
+                        if (x, wy, z) in expected_positions:
+                            continue
+                        checked += 1
+                        try:
+                            block = await self._mcc.get_world_block_at(x, wy, z)
+                            if block.get("success", False):
+                                bname = block.get("name", "")
+                                if bname and bname != "minecraft:air":
+                                    extra += 1
+                        except MccMcpError:
+                            pass
+
+            logger.debug("Extra blocks in layer %d: %d (checked %d)",
+                         self._current_layer, extra, checked)
+            return extra
+        except Exception as e:
+            logger.warning("get_extra_block_count error: %s", e)
+            return 0

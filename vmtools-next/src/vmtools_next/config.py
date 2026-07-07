@@ -88,6 +88,16 @@ class MccConfig(BaseModel):
     command_timeout: float = 30.0
     working_dir: str = "/opt/mcc"
 
+    # Remote process management
+    instance_root: str = "/opt/vmtools/mcc-instances"
+    binary_path: str = "/opt/vmtools/mcc-runtime/MinecraftClient.exe"
+    launch_command: list[str] = Field(default_factory=list)
+    instance_start_port: int = 33333
+    instance_end_port: int = 33352
+    max_instances: int = 20
+    terminal_buffer_lines: int = 2000
+    log_retention_days: int = 14
+
 
 class MonitorConfig(BaseModel):
     enabled: bool = True
@@ -170,6 +180,35 @@ def _load_yaml(path: pathlib.Path) -> dict:
     return data
 
 
+def _parse_env_value(value: str) -> Any:
+    try:
+        parsed = yaml.safe_load(value)
+        return value if parsed is None else parsed
+    except yaml.YAMLError:
+        return value
+
+
+def _apply_env_overrides(config: dict) -> dict:
+    """Apply VMT_* env vars after YAML merge so env wins over files."""
+    result = dict(config)
+    prefix = "VMT_"
+    for raw_key, raw_value in os.environ.items():
+        if not raw_key.startswith(prefix) or raw_key in {"VMT_ENV", "VMT_CONFIG_PATH"}:
+            continue
+        path = raw_key.removeprefix(prefix).lower().split("__")
+        if not path or len(path) < 2:
+            continue
+        cursor = result
+        for part in path[:-1]:
+            node = cursor.get(part)
+            if not isinstance(node, dict):
+                node = {}
+                cursor[part] = node
+            cursor = node
+        cursor[path[-1]] = _parse_env_value(raw_value)
+    return result
+
+
 def load_config() -> AppConfig:
     """Load merged configuration from YAML files + environment variables.
 
@@ -184,8 +223,8 @@ def load_config() -> AppConfig:
     env = os.getenv("VMT_ENV", "dev")
     overlay = _load_yaml(config_dir / f"config.{env}.yaml")
     merged = _deep_merge(base, overlay)
+    merged = _apply_env_overrides(merged)
 
-    # pydantic-settings will apply VMT_* env var overrides on top
     return AppConfig(**merged)
 
 
@@ -193,6 +232,39 @@ def load_config() -> AppConfig:
 def get_config() -> AppConfig:
     """Cached singleton config accessor."""
     return load_config()
+
+
+def save_mcc_config(instance_root: str | None = None, binary_path: str | None = None,
+                    launch_command: list[str] | None = None, instance_start_port: int | None = None,
+                    instance_end_port: int | None = None, max_instances: int | None = None,
+                    log_retention_days: int | None = None) -> AppConfig:
+    """Update MCC section in config.yaml and reload."""
+    import yaml
+
+    config_dir = _find_config_dir()
+    config_path = config_dir / "config.yaml"
+    with open(config_path, "r", encoding="utf-8") as fh:
+        data = yaml.safe_load(fh) or {}
+
+    mcc = data.setdefault("mcc", {})
+    updates = {
+        "instance_root": instance_root,
+        "binary_path": binary_path,
+        "launch_command": launch_command,
+        "instance_start_port": instance_start_port,
+        "instance_end_port": instance_end_port,
+        "max_instances": max_instances,
+        "log_retention_days": log_retention_days,
+    }
+    for key, value in updates.items():
+        if value is not None:
+            mcc[key] = value
+
+    with open(config_path, "w", encoding="utf-8") as fh:
+        yaml.safe_dump(data, fh, allow_unicode=True, default_flow_style=False, sort_keys=False)
+
+    get_config.cache_clear()
+    return get_config()
 
 
 def reload_config() -> AppConfig:

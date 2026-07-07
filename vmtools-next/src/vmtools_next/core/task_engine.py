@@ -260,35 +260,73 @@ class TaskEngine:
         return False
 
     async def pause_task(self, task_id: str) -> bool:
+        """Pause a task (build or logistics)."""
         sm = self._build_tasks.get(task_id)
         if sm:
             await sm.pause()
             return True
+        runner = self._logistics_tasks.get(task_id)
+        if runner:
+            await runner.pause()
+            return True
         return False
 
     async def resume_task(self, task_id: str) -> bool:
+        """Resume a task (build or logistics)."""
         sm = self._build_tasks.get(task_id)
         if sm:
             await sm.resume()
             return True
+        runner = self._logistics_tasks.get(task_id)
+        if runner:
+            await runner.resume()
+            return True
         return False
 
     def get_task_status(self, task_id: str) -> Optional[dict]:
-        """Get the status of a task."""
+        """Get the status of a task (build or logistics)."""
         sm = self._build_tasks.get(task_id)
         if sm:
             return {
+                "type": "build",
                 "task_id": task_id,
                 "state": sm.state.name,
                 "current_layer": sm.current_layer,
                 "total_layers": sm.total_layers,
                 "is_running": sm.is_running,
             }
+        runner = self._logistics_tasks.get(task_id)
+        if runner:
+            return {
+                "type": "logistics",
+                "task_id": task_id,
+                "state": runner.state.name,
+                "loop_count": runner.loop_count,
+                "is_running": runner.is_running,
+            }
         return None
 
     def get_all_tasks(self) -> list[dict]:
-        """Get status of all tasks."""
-        return [s for tid in self._build_tasks if (s := self.get_task_status(tid))]
+        """Get status of all tasks (build + logistics)."""
+        tasks = []
+        for tid, sm in self._build_tasks.items():
+            tasks.append({
+                "type": "build",
+                "task_id": tid,
+                "state": sm.state.name,
+                "current_layer": sm.current_layer,
+                "total_layers": sm.total_layers,
+                "is_running": sm.is_running,
+            })
+        for tid, runner in self._logistics_tasks.items():
+            tasks.append({
+                "type": "logistics",
+                "task_id": tid,
+                "state": runner.state.name,
+                "loop_count": runner.loop_count,
+                "is_running": runner.is_running,
+            })
+        return tasks
 
     def get_bot_task(self, bot_id: str) -> Optional[str]:
         """Get the task_id for a bot."""

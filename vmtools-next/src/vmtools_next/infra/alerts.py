@@ -56,7 +56,7 @@ class AlertEngine:
         self._running = False
         self._task: Optional[asyncio.Task] = None
         self._callback: Optional[AlertCallback] = None
-        self._metrics_provider: Optional[Callable] = None
+        self._metrics_provider: Optional[Callable[[], dict]] = None
 
     def set_callback(self, callback: AlertCallback) -> None:
         self._callback = callback
@@ -67,6 +67,20 @@ class AlertEngine:
     def add_rule(self, rule: AlertRule) -> None:
         self._rules.append(rule)
         logger.info("Added alert rule: %s (%s %s %.1f)", rule.name, rule.metric_name, rule.operator, rule.threshold)
+
+    def remove_rule(self, name: str) -> bool:
+        """Remove an alert rule by name. Returns True if removed."""
+        for i, rule in enumerate(self._rules):
+            if rule.name == name:
+                self._rules.pop(i)
+                logger.info("Removed alert rule: %s", name)
+                return True
+        return False
+
+    def clear_rules(self) -> None:
+        """Remove all alert rules."""
+        self._rules.clear()
+        logger.info("All alert rules cleared")
 
     def add_default_rules(self) -> None:
         """Add default system alert rules."""
@@ -106,11 +120,15 @@ class AlertEngine:
             if value is None:
                 continue
             if rule.evaluate(value) and not rule.is_on_cooldown():
-                rule.last_triggered = time.time()
                 message = f"{rule.name}: {rule.metric_name}={value:.1f} {rule.operator} {rule.threshold}"
                 logger.warning("ALERT [%s]: %s", rule.severity, message)
+                callback_ok = True
                 if self._callback:
                     try:
                         await self._callback(rule.name, rule.severity, message, value)
                     except Exception as e:
                         logger.warning("Alert callback error: %s", e)
+                        callback_ok = False
+                # Only start cooldown if callback succeeded (or no callback)
+                if callback_ok:
+                    rule.last_triggered = time.time()

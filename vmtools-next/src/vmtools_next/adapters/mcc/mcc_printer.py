@@ -69,9 +69,9 @@ class MccPrinterAdapter(AbstractPrinterAdapter):
 
     def apply_build_defaults(self, range: int, speed: int) -> None:
         """Apply build defaults from configuration."""
-        self._range = range
-        self._blocks_per_tick = speed
-        logger.info("Build defaults applied: range=%d, speed=%d", range, speed)
+        self._range = max(1, min(16, range))
+        self._blocks_per_tick = max(1, min(64, speed))
+        logger.info("Build defaults applied: range=%d, speed=%d", self._range, self._blocks_per_tick)
 
     def get_status(self) -> PrinterStatus:
         return self._status

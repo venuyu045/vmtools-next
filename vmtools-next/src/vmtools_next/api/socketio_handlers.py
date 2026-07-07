@@ -1,7 +1,8 @@
 """Socket.IO event handlers for vmtools-next.
 
 Registers event handlers on the shared `sio` instance from data.db.
-Provides: connect/disconnect, scan_control, logistics_control, build_control.
+Provides: connect/disconnect, scan_control, logistics_control, build_control,
+MCC terminal rooms with JWT authentication.
 """
 from __future__ import annotations
 
@@ -11,12 +12,79 @@ from vmtools_next.infra.logging import get_logger
 logger = get_logger("socketio")
 
 
+async def _verify_socketio_token(sid: str, auth: dict | None) -> dict | None:
+    """Validate JWT token from Socket.IO auth handshake.
+
+    Returns {"user_id": ..., "organization_id": ...} on success, None on failure.
+    """
+    token = (auth or {}).get("token", "")
+    if not token:
+        logger.warning("Socket.IO connect rejected: missing token sid={}", sid)
+        return None
+    try:
+        import jwt
+        from vmtools_next.config import get_config
+
+        config = get_config()
+        payload = jwt.decode(token, config.server.secret_key, algorithms=[config.server.jwt_algorithm])
+        user_id = payload.get("sub")
+        if not user_id:
+            return None
+        Session = get_session_factory()
+        db = Session()
+        try:
+            from vmtools_next.data.models.auth import UserModel
+            user = db.query(UserModel).filter(UserModel.id == user_id).first()
+            if not user or user.status != "approved":
+                return None
+            return {"user_id": user_id, "organization_id": user.organization_id}
+        finally:
+            db.close()
+    except Exception:
+        logger.warning("Socket.IO token validation failed sid={}", sid)
+        return None
+
+
+async def _check_mcc_permission(sid: str, instance_id: str) -> bool:
+    """Check if the connected user has permission to access the MCC instance."""
+    session = await sio.get_session(sid)
+    user = session.get("user")
+    if not user:
+        return False
+    try:
+        Session = get_session_factory()
+        db = Session()
+        try:
+            from vmtools_next.data.models.mcc_remote import MccInstanceModel
+            instance = db.query(MccInstanceModel).filter(
+                MccInstanceModel.instance_id == instance_id,
+                MccInstanceModel.deleted_at.is_(None),
+            ).first()
+            if not instance:
+                return False
+            if instance.created_by == user["user_id"]:
+                return True
+            if instance.organization_id and instance.organization_id == user["organization_id"]:
+                return True
+            return False
+        finally:
+            db.close()
+    except Exception:
+        return False
+
+
 @sio.event
 async def connect(sid, environ, auth):
-    """Client connected — push initial sync data."""
-    logger.info("Socket.IO client connected: {}", sid)
+    """Client connected — validate JWT and push initial sync data."""
+    user_info = await _verify_socketio_token(sid, auth)
+    if not user_info:
+        logger.warning("Socket.IO connect rejected: invalid token sid={}", sid)
+        await sio.disconnect(sid)
+        return
+    await sio.save_session(sid, {"user": user_info})
+    logger.info("Socket.IO client connected: {} user={}", sid, user_info["user_id"])
     try:
-        payload = _build_initial_payload()
+        payload = _build_initial_payload(user_info)
         await sio.emit("sync_update", payload, to=sid)
     except Exception as e:
         logger.warning("Failed to send initial sync: {}", e)
@@ -27,6 +95,81 @@ async def disconnect(sid):
     logger.info("Socket.IO client disconnected: {}", sid)
 
 
+@sio.on("mcc_join_instance")
+async def mcc_join_instance(sid, data):
+    """Subscribe a socket to one MCC instance terminal room."""
+    if not isinstance(data, dict):
+        await sio.emit("mcc_terminal_error", {"message": "Invalid data format"}, to=sid)
+        return
+    instance_id = data.get("instance_id")
+    tail_lines = int(data.get("tail_lines", 300))
+    if not instance_id:
+        await sio.emit("mcc_terminal_error", {"message": "instance_id required"}, to=sid)
+        return
+    if not await _check_mcc_permission(sid, instance_id):
+        await sio.emit("mcc_terminal_error", {"instance_id": instance_id, "message": "Permission denied"}, to=sid)
+        return
+    try:
+        from vmtools_next.main import get_mcc_process_manager
+
+        manager = get_mcc_process_manager()
+        if not manager:
+            await sio.emit("mcc_terminal_error", {"instance_id": instance_id, "message": "MCC process manager not initialized"}, to=sid)
+            return
+        await sio.enter_room(sid, f"mcc:{instance_id}")
+        lines = manager.tail_logs(instance_id, tail=max(1, min(tail_lines, 1000)))
+        await sio.emit("mcc_terminal_snapshot", {
+            "instance_id": instance_id,
+            "items": [
+                {
+                    "seq": line.seq,
+                    "stream": line.stream,
+                    "content": line.content,
+                    "created_at": line.created_at.isoformat(),
+                }
+                for line in lines
+            ],
+            "last_seq": lines[-1].seq if lines else 0,
+        }, to=sid)
+    except Exception as e:
+        logger.error("MCC join instance error: {}", e)
+        await sio.emit("mcc_terminal_error", {"instance_id": instance_id, "message": str(e)}, to=sid)
+
+
+@sio.on("mcc_leave_instance")
+async def mcc_leave_instance(sid, data):
+    instance_id = data.get("instance_id") if isinstance(data, dict) else None
+    if instance_id:
+        await sio.leave_room(sid, f"mcc:{instance_id}")
+
+
+@sio.on("mcc_terminal_input")
+async def mcc_terminal_input(sid, data):
+    if not isinstance(data, dict):
+        await sio.emit("mcc_terminal_error", {"message": "Invalid data format"}, to=sid)
+        return
+    instance_id = data.get("instance_id")
+    input_text = data.get("input", "")
+    append_newline = bool((data or {}).get("append_newline", True))
+    if not instance_id or not input_text:
+        await sio.emit("mcc_terminal_error", {"instance_id": instance_id, "message": "instance_id and input required"}, to=sid)
+        return
+    if not await _check_mcc_permission(sid, instance_id):
+        await sio.emit("mcc_terminal_error", {"instance_id": instance_id, "message": "Permission denied"}, to=sid)
+        return
+    try:
+        from vmtools_next.main import get_mcc_process_manager
+
+        manager = get_mcc_process_manager()
+        if not manager:
+            await sio.emit("mcc_terminal_error", {"instance_id": instance_id, "message": "MCC process manager not initialized"}, to=sid)
+            return
+        await manager.write_stdin(instance_id, input_text, append_newline=append_newline)
+    except Exception as e:
+        logger.error("MCC terminal input error: {}", e)
+        await sio.emit("mcc_terminal_error", {"instance_id": instance_id, "message": str(e)}, to=sid)
+
+
 @sio.on("scan_control")
 async def scan_control(sid, data):
     """Handle scan_control from web UI.
@@ -35,6 +178,9 @@ async def scan_control(sid, data):
     Required data: action, warehouse_id
     Optional data: bot_id (for start)
     """
+    if not isinstance(data, dict):
+        await sio.emit("scan_alert", {"type": "error", "message": "Invalid data format"}, to=sid)
+        return
     action = data.get("action", "")
     warehouse_id = data.get("warehouse_id", "")
     bot_id = data.get("bot_id", "")
@@ -67,11 +213,24 @@ async def scan_control(sid, data):
                 ).all()
 
                 container_positions = []
+                max_positions = 10000  # Safety limit
                 for zone in zones:
                     for x in range(zone.range_min_x, zone.range_max_x + 1):
                         for y in range(zone.range_min_y, zone.range_max_y + 1):
                             for z in range(zone.range_min_z, zone.range_max_z + 1):
                                 container_positions.append((x, y, z))
+                                if len(container_positions) >= max_positions:
+                                    break
+                            if len(container_positions) >= max_positions:
+                                break
+                        if len(container_positions) >= max_positions:
+                            break
+                    if len(container_positions) >= max_positions:
+                        break
+
+                if len(container_positions) >= max_positions:
+                    logger.warning("Container positions truncated to %d for warehouse %s",
+                                   max_positions, warehouse_id)
 
                 if not container_positions:
                     await sio.emit("scan_alert", {"type": "error", "message": "No containers found in warehouse zones"}, to=sid)
@@ -121,6 +280,9 @@ async def scan_control(sid, data):
 @sio.on("logistics_control")
 async def logistics_control(sid, data):
     """Handle logistics task control commands."""
+    if not isinstance(data, dict):
+        await sio.emit("logistics_alert", {"type": "error", "message": "Invalid data format"}, to=sid)
+        return
     action = data.get("action", "")
     run_id = data.get("run_id")
     template_id = data.get("template_id")
@@ -155,6 +317,9 @@ async def logistics_control(sid, data):
 @sio.on("build_control")
 async def build_control(sid, data):
     """Handle build task control commands."""
+    if not isinstance(data, dict):
+        await sio.emit("build_alert", {"type": "error", "message": "Invalid data format"}, to=sid)
+        return
     action = data.get("action", "")
     task_id = data.get("task_id")
     logger.info("Build control from {}: {} task={}", sid, action, task_id)
@@ -191,16 +356,34 @@ async def build_control(sid, data):
         await sio.emit("build_alert", {"type": "error", "message": str(e)}, to=sid)
 
 
-def _build_initial_payload() -> dict:
-    """Build initial sync payload for newly connected client."""
+def _build_initial_payload(user_info: dict | None = None) -> dict:
+    """Build initial sync payload for newly connected client.
+
+    Scoped to the user's organization. Site admins see all data.
+    """
+    org_id = (user_info or {}).get("organization_id")
+    user_id = (user_info or {}).get("user_id")
+
     Session = get_session_factory()
     db = Session()
     try:
         from vmtools_next.data.models.logistics import MccBotModel, LogisticsTaskRunModel
         from vmtools_next.data.models.warehouse import WarehouseModel
 
+        # Build bot query, scoped by org
+        bot_query = db.query(MccBotModel)
+        warehouse_query = db.query(WarehouseModel)
+        run_query = db.query(LogisticsTaskRunModel).filter(
+            LogisticsTaskRunModel.status.in_(["running", "paused"])
+        )
+
+        # For non-site-admin users, filter by organization
+        if org_id:
+            bot_query = bot_query.filter(MccBotModel.organization_id == org_id)
+            warehouse_query = warehouse_query.filter(WarehouseModel.organization_id == org_id)
+
         bots = []
-        for b in db.query(MccBotModel).all():
+        for b in bot_query.all():
             bots.append({
                 "bot_id": b.bot_id,
                 "name": b.name,
@@ -211,7 +394,7 @@ def _build_initial_payload() -> dict:
             })
 
         warehouses = []
-        for w in db.query(WarehouseModel).all():
+        for w in warehouse_query.all():
             warehouses.append({
                 "warehouse_id": w.warehouse_id,
                 "name": w.name,
@@ -220,9 +403,7 @@ def _build_initial_payload() -> dict:
             })
 
         active_runs = []
-        for r in db.query(LogisticsTaskRunModel).filter(
-            LogisticsTaskRunModel.status.in_(["running", "paused"])
-        ).all():
+        for r in run_query.all():
             active_runs.append({
                 "run_id": r.run_id,
                 "template_id": r.template_id,

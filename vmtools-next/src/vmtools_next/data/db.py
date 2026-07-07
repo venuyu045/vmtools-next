@@ -88,13 +88,27 @@ def init_db() -> None:
 
     # Import all model modules so Base.metadata knows about every table
     from vmtools_next.data.models import (  # noqa: F401
-        warehouse, auth, logistics, build, mcc_session, plugin, monitor,
+        warehouse, auth, logistics, build, mcc_session, mcc_remote, plugin, monitor,
     )
 
     Base.metadata.create_all(bind=engine)
+    _run_lightweight_migrations(engine)
     _create_indexes(engine)
     _ensure_site_admin(Session)
     logger.info("Database initialized: {}", _DATABASE_URL)
+
+
+def _run_lightweight_migrations(engine) -> None:
+    """Apply tiny SQLite-compatible additive migrations for pre-Alembic tables."""
+    try:
+        with engine.connect() as conn:
+            if _DATABASE_URL and _DATABASE_URL.startswith("sqlite"):
+                columns = {row[1] for row in conn.execute(text("PRAGMA table_info(mcc_instances)")).fetchall()}
+                if "account_profile_id" not in columns:
+                    conn.execute(text("ALTER TABLE mcc_instances ADD COLUMN account_profile_id VARCHAR"))
+            conn.commit()
+    except Exception as e:
+        logger.warning("Lightweight migration check: {}", e)
 
 
 def _create_indexes(engine) -> None:
@@ -105,6 +119,9 @@ def _create_indexes(engine) -> None:
                 "CREATE INDEX IF NOT EXISTS idx_build_tasks_status ON build_tasks (status)",
                 "CREATE INDEX IF NOT EXISTS idx_build_tasks_bot ON build_tasks (bot_id)",
                 "CREATE INDEX IF NOT EXISTS idx_metrics_snapshot_ts ON metrics_snapshot (timestamp, metric_name)",
+                "CREATE INDEX IF NOT EXISTS idx_mcc_instances_status ON mcc_instances (status)",
+                "CREATE INDEX IF NOT EXISTS idx_mcc_instances_account_profile ON mcc_instances (account_profile_id)",
+                "CREATE INDEX IF NOT EXISTS idx_mcc_terminal_logs_instance_seq ON mcc_terminal_logs (instance_id, seq)",
             ):
                 conn.execute(text(sql))
             conn.commit()

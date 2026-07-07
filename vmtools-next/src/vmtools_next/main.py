@@ -23,6 +23,7 @@ from vmtools_next.api.routers.auth import router as auth_router
 from vmtools_next.api.routers.warehouse import router as warehouse_router
 from vmtools_next.api.routers.build import router as build_router
 from vmtools_next.api.routers.mcc_bot import router as mcc_bot_router
+from vmtools_next.api.routers.mcc_instances import router as mcc_instances_router
 from vmtools_next.api.routers.config import router as config_router
 from vmtools_next.api.routers.plugin import router as plugin_router
 from vmtools_next.api.routers.monitor import router as monitor_router
@@ -31,6 +32,7 @@ from vmtools_next.api.routers.logistics import router as logistics_router
 from vmtools_next.api.routers.projection import router as projection_router
 from vmtools_next.adapters.mcc.mcc_session_pool import MccSessionPool
 from vmtools_next.core.task_engine import TaskEngine
+from vmtools_next.core.mcc_process_manager import MccProcessManager
 from vmtools_next.plugins.base import PluginContext
 from vmtools_next.plugins.manager import PluginManager
 from vmtools_next.infra.monitor import MonitorCollector
@@ -45,6 +47,7 @@ _task_engine: TaskEngine = None
 _plugin_manager: PluginManager = None
 _monitor: MonitorCollector = None
 _alert_engine: AlertEngine = None
+_mcc_process_manager: MccProcessManager = None
 
 
 def get_pool() -> MccSessionPool:
@@ -67,10 +70,14 @@ def get_plugin_manager() -> PluginManager:
     return _plugin_manager
 
 
+def get_mcc_process_manager() -> MccProcessManager:
+    return _mcc_process_manager
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application startup & shutdown lifecycle."""
-    global _pool, _task_engine, _plugin_manager, _monitor, _alert_engine
+    global _pool, _task_engine, _plugin_manager, _monitor, _alert_engine, _mcc_process_manager
     config = get_config()
 
     # 1. Logging
@@ -85,6 +92,11 @@ async def lifespan(app: FastAPI):
     _pool = MccSessionPool()
     await _pool.start()
     logger.info("MCC Session Pool started")
+
+    # 3.5 MCC Process Manager
+    _mcc_process_manager = MccProcessManager()
+    await _mcc_process_manager.start()
+    logger.info("MCC Process Manager started")
 
     # 4. Task Engine
     _task_engine = TaskEngine(_pool)
@@ -146,6 +158,8 @@ async def lifespan(app: FastAPI):
         await _alert_engine.stop()
     if _plugin_manager:
         await _plugin_manager.stop_all()
+    if _mcc_process_manager:
+        await _mcc_process_manager.stop()
     if _pool:
         await _pool.stop()
 
@@ -225,6 +239,7 @@ def create_app() -> FastAPI:
     app.include_router(warehouse_router)
     app.include_router(build_router)
     app.include_router(mcc_bot_router)
+    app.include_router(mcc_instances_router)
     app.include_router(config_router)
     app.include_router(plugin_router)
     app.include_router(monitor_router)
