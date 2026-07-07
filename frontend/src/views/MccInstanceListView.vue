@@ -25,23 +25,13 @@
           </span>
         </div>
 
-        <div class="meta-grid mono">
-          <div><span>PID</span><strong>{{ instance.pid || '--' }}</strong></div>
-          <div><span>MCP</span><strong>{{ instance.mcp_port }}</strong></div>
-          <div><span>账号</span><strong>{{ instance.mc_username || '--' }}</strong></div>
-          <div><span>服务器</span><strong>{{ serverLabel(instance) }}</strong></div>
-        </div>
-
         <div class="instance-dir mono" :title="instance.instance_dir">{{ instance.instance_dir }}</div>
 
         <div class="actions">
           <button class="pixel-btn" :disabled="instance.status === 'running' || isBusy(instance.instance_id)" @click="handleStart(instance)">启动</button>
           <button class="pixel-btn warning" :disabled="instance.status !== 'running' || isBusy(instance.instance_id)" @click="handleStop(instance)">停止</button>
-          <button class="pixel-btn outline" @click="openInstance(instance, 'terminal')">终端</button>
           <router-link :to="{ name: 'MccTerminal', params: { id: instance.instance_id } }" class="pixel-btn outline terminal-link">全屏终端</router-link>
           <router-link :to="{ name: 'MccFiles', params: { id: instance.instance_id } }" class="pixel-btn outline terminal-link">全屏文件</router-link>
-          <button class="pixel-btn outline" @click="openInstance(instance, 'account')">账号/配置</button>
-          <button class="pixel-btn outline" @click="openInstance(instance, 'files')">文件</button>
           <button class="pixel-btn danger" :disabled="instance.status === 'running'" @click="handleDelete(instance)">删除</button>
         </div>
       </div>
