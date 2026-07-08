@@ -30,8 +30,8 @@
         <div class="actions">
           <button class="pixel-btn" :disabled="instance.status === 'running' || isBusy(instance.instance_id)" @click="handleStart(instance)">启动</button>
           <button class="pixel-btn warning" :disabled="instance.status !== 'running' || isBusy(instance.instance_id)" @click="handleStop(instance)">停止</button>
-          <router-link :to="{ name: 'MccTerminal', params: { id: instance.instance_id } }" class="pixel-btn outline terminal-link">全屏终端</router-link>
-          <router-link :to="{ name: 'MccFiles', params: { id: instance.instance_id } }" class="pixel-btn outline terminal-link">全屏文件</router-link>
+          <router-link :to="{ name: 'MccTerminal', params: { id: instance.instance_id } }" class="pixel-btn outline terminal-link">终端</router-link>
+          <router-link :to="{ name: 'MccFiles', params: { id: instance.instance_id } }" class="pixel-btn outline terminal-link">文件</router-link>
           <button class="pixel-btn danger" :disabled="instance.status === 'running'" @click="handleDelete(instance)">删除</button>
         </div>
       </div>
@@ -357,4 +357,36 @@ onMounted(() => refreshAll())
 .account-toolbar { margin-bottom: 16px; }
 .account-toolbar .el-select { width: 360px; }
 .account-form { max-width: 760px; }
+
+/* ============ RESPONSIVE ============ */
+@media (max-width: 1024px) {
+  .instance-grid { grid-template-columns: 1fr; }
+  .detail-panel .el-drawer { --el-drawer-size: 90% !important; }
+}
+
+@media (max-width: 768px) {
+  .mcc-page { gap: 16px; }
+  .page-header { flex-direction: column; align-items: stretch; gap: 12px; }
+  .page-title { font-size: 14px; }
+  .page-subtitle { font-size: 14px; }
+  .header-actions { justify-content: flex-start; }
+  .header-actions .pixel-btn { flex: 1; text-align: center; }
+
+  .instance-name { font-size: 14px; }
+  .instance-slug { font-size: 12px; }
+  .instance-dir { font-size: 12px; }
+
+  .actions { gap: 8px; }
+  .actions .pixel-btn { font-size: 12px; padding: 6px 12px; min-height: 40px; }
+
+  .account-toolbar { flex-direction: column; align-items: stretch; }
+  .account-toolbar .el-select { width: 100%; }
+  .account-form { max-width: 100%; }
+
+  .terminal-meta { font-size: 12px; gap: 10px; }
+}
+
+@media (max-width: 480px) {
+  .actions .pixel-btn { flex: 1 1 45%; font-size: 11px; }
+}
 </style>
