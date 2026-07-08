@@ -6,14 +6,17 @@
         <div class="mono page-subtitle">{{ mccStore.runningCount }} running / {{ mccStore.totalCount }} instances</div>
       </div>
       <div class="header-actions">
+        <button class="pixel-btn outline" :class="{ active: sortMode === 'name' }" @click="sortMode = 'name'">按名称</button>
+        <button class="pixel-btn outline" :class="{ active: sortMode === 'running' }" @click="sortMode = 'running'">运行优先</button>
+        <button class="pixel-btn warning" :disabled="mccStore.runningCount === 0" @click="stopAll">一键停止</button>
         <button class="pixel-btn outline" @click="refreshAll">刷新</button>
         <button class="pixel-btn" @click="showCreate = true">+ 新建实例</button>
       </div>
     </div>
 
     <div v-loading="mccStore.loading" class="instance-grid">
-      <div v-if="mccStore.instances.length === 0" class="empty-text mono">-- 暂无 MCC 实例，点击右上角新建 --</div>
-      <div v-for="instance in mccStore.instances" :key="instance.instance_id" class="pixel-card instance-card">
+      <div v-if="sortedInstances.length === 0" class="empty-text mono">-- 暂无 MCC 实例，点击右上角新建 --</div>
+      <div v-for="instance in sortedInstances" :key="instance.instance_id" class="pixel-card instance-card">
         <div class="instance-head">
           <div>
             <div class="instance-name">{{ instance.display_name || instance.slug }}</div>
@@ -175,6 +178,20 @@ const activeTab = ref<'terminal' | 'account' | 'files'>('terminal')
 const selectedInstance = ref<MccInstance | null>(null)
 const selectedProfileId = ref('')
 const lastDiff = ref('')
+const sortMode = ref<'name' | 'running'>('running')
+
+const sortedInstances = computed(() => {
+  const items = [...mccStore.instances]
+  if (sortMode.value === 'name') {
+    return items.sort((a, b) => (a.display_name || a.slug).localeCompare(b.display_name || b.slug))
+  }
+  // running first, then by name
+  return items.sort((a, b) => {
+    if (a.status === 'running' && b.status !== 'running') return -1
+    if (a.status !== 'running' && b.status === 'running') return 1
+    return (a.display_name || a.slug).localeCompare(b.display_name || b.slug)
+  })
+})
 
 const createForm = reactive({
   slug: '',
@@ -263,6 +280,19 @@ async function handleStop(instance: MccInstance) {
   ElMessage.success('停止命令已发送')
 }
 
+async function stopAll() {
+  try {
+    await ElMessageBox.confirm(`确认停止所有 ${mccStore.runningCount} 个运行中的实例？`, '一键停止', { type: 'warning' })
+  } catch { return }
+  const running = sortedInstances.value.filter(i => i.status === 'running')
+  for (const instance of running) {
+    try {
+      await mccStore.stopInstance(instance.instance_id)
+    } catch { /* skip individual errors */ }
+  }
+  ElMessage.success(`已停止 ${running.length} 个实例`)
+}
+
 async function handleRestart(instance: MccInstance) {
   await ElMessageBox.confirm('配置已保存后通常需要重启 MCC 才会生效，确认重启？', '重启确认', { type: 'warning' })
   await handleStop(instance)
@@ -349,6 +379,7 @@ onMounted(() => refreshAll())
 .actions { display: flex; flex-wrap: wrap; gap: 10px; }
 .actions .pixel-btn { padding: 8px 14px; }
 .terminal-link { text-decoration: none; display: inline-flex; align-items: center; }
+.pixel-btn.outline.active { border-color: var(--green-primary); color: var(--green-primary); background: var(--green-glow); }
 .pixel-btn:disabled { opacity: .45; cursor: not-allowed; }
 .empty-text { grid-column: 1 / -1; color: var(--text-muted); text-align: center; padding: 60px 0; font-size: 18px; }
 .detail-panel { height: 100%; display: flex; flex-direction: column; gap: 12px; }
