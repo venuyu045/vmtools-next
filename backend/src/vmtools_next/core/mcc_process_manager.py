@@ -249,7 +249,9 @@ class MccProcessManager:
 
                 returncode = handle.process.returncode
                 if instance:
-                    instance.status = "stopped" if returncode == 0 else "crashed"
+                    # If we sent a graceful exit command, always treat as "stopped"
+                    stopped_gracefully = not force and handle.process.stdin is not None
+                    instance.status = "stopped" if (returncode == 0 or stopped_gracefully) else "crashed"
                     instance.pid = None
                     instance.exit_code = returncode
                     instance.last_stopped_at = datetime.now(timezone.utc)
@@ -413,7 +415,7 @@ class MccProcessManager:
             instance = db.query(MccInstanceModel).filter(MccInstanceModel.instance_id == instance_id).first()
             if not instance:
                 return
-            if instance.status != "stopping":
+            if instance.status not in ("stopping", "stopped", "crashed"):
                 instance.status = "stopped" if returncode == 0 else "crashed"
             instance.pid = None
             instance.exit_code = returncode
