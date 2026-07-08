@@ -37,7 +37,7 @@ async def _verify_socketio_token(sid: str, auth: dict | None) -> dict | None:
             user = db.query(UserModel).filter(UserModel.id == user_id).first()
             if not user or user.status != "approved":
                 return None
-            return {"user_id": user_id, "organization_id": user.organization_id}
+            return {"user_id": user_id, "organization_id": user.organization_id, "role": user.role}
         finally:
             db.close()
     except Exception:
@@ -46,7 +46,10 @@ async def _verify_socketio_token(sid: str, auth: dict | None) -> dict | None:
 
 
 async def _check_mcc_permission(sid: str, instance_id: str) -> bool:
-    """Check if the connected user has permission to access the MCC instance."""
+    """Check if the connected user has permission to access the MCC instance terminal.
+
+    All authenticated users in the same organization can access the terminal.
+    """
     session = await sio.get_session(sid)
     user = session.get("user")
     if not user:
@@ -62,9 +65,11 @@ async def _check_mcc_permission(sid: str, instance_id: str) -> bool:
             ).first()
             if not instance:
                 return False
-            if instance.created_by == user["user_id"]:
+            # Site admin can access everything
+            if user.get("role") == "site_admin":
                 return True
-            if instance.organization_id and instance.organization_id == user["organization_id"]:
+            # Same org: allow (including both None = no org restriction)
+            if instance.organization_id == user.get("organization_id"):
                 return True
             return False
         finally:

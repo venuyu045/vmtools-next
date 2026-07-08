@@ -60,6 +60,14 @@ def _process_manager():
     return manager
 
 
+def _check_file_permission(instance: MccInstanceModel, user: UserModel) -> None:
+    """Raise 403 if the user is not the instance creator (and not site_admin)."""
+    if user.role == "site_admin":
+        return
+    if instance.created_by != user.id:
+        raise HTTPException(status_code=403, detail="只有实例创建者才能访问文件")
+
+
 def _status_response(instance: MccInstanceModel, result: dict, message: str = "") -> MccStartStopResponse:
     return MccStartStopResponse(
         instance_id=instance.instance_id,
@@ -338,6 +346,7 @@ def list_files(
     user: UserModel = Depends(get_current_user),
 ):
     instance = service.get_instance(db, user, instance_id)
+    _check_file_permission(instance, user)
     items = file_service.list_files(instance, relative_path=path)
     return MccFileListResponse(
         path=path,
@@ -354,6 +363,7 @@ def file_tree(
     user: UserModel = Depends(get_current_user),
 ):
     instance = service.get_instance(db, user, instance_id)
+    _check_file_permission(instance, user)
     return MccFileTreeResponse(items=file_service.list_tree(instance, relative_path=path))
 
 
@@ -365,6 +375,7 @@ def download_file(
     user: UserModel = Depends(get_current_user),
 ):
     instance = service.get_instance(db, user, instance_id)
+    _check_file_permission(instance, user)
     result = file_service.read_binary(instance, path)
     audit.log(db, user=user, action="file.download", resource_type="file", instance_id=instance_id, resource_path=result["path"])
     db.commit()
@@ -379,6 +390,7 @@ def read_file(
     user: UserModel = Depends(get_current_user),
 ):
     instance = service.get_instance(db, user, instance_id)
+    _check_file_permission(instance, user)
     content = file_service.read_file(instance, path)
     audit.log(db, user=user, action="file.read", resource_type="file", instance_id=instance_id, resource_path=content.relative_path)
     db.commit()
@@ -401,6 +413,7 @@ def save_file(
     user: UserModel = Depends(get_current_user),
 ):
     instance = service.get_instance(db, user, instance_id)
+    _check_file_permission(instance, user)
     try:
         result = file_service.write_file(db, instance, user, data)
         audit.log(db, user=user, action="file.write", resource_type="file", instance_id=instance_id, resource_path=result["path"])
@@ -423,6 +436,7 @@ def create_file(
     user: UserModel = Depends(get_current_user),
 ):
     instance = service.get_instance(db, user, instance_id)
+    _check_file_permission(instance, user)
     result = file_service.create_file(instance, data)
     audit.log(db, user=user, action="file.create", resource_type="file", instance_id=instance_id, resource_path=result["path"])
     db.commit()
@@ -437,6 +451,7 @@ def create_directory(
     user: UserModel = Depends(get_current_user),
 ):
     instance = service.get_instance(db, user, instance_id)
+    _check_file_permission(instance, user)
     result = file_service.create_directory(instance, data)
     audit.log(db, user=user, action="file.mkdir", resource_type="file", instance_id=instance_id, resource_path=result["path"])
     db.commit()
@@ -451,6 +466,7 @@ def upload_file(
     user: UserModel = Depends(get_current_user),
 ):
     instance = service.get_instance(db, user, instance_id)
+    _check_file_permission(instance, user)
     result = file_service.upload_base64(instance, data)
     audit.log(db, user=user, action="file.upload", resource_type="file", instance_id=instance_id, resource_path=result["path"])
     db.commit()
@@ -465,6 +481,7 @@ def delete_file(
     user: UserModel = Depends(get_current_user),
 ):
     instance = service.get_instance(db, user, instance_id)
+    _check_file_permission(instance, user)
     result = file_service.delete_file(instance, path)
     audit.log(db, user=user, action="file.delete", resource_type="file", instance_id=instance_id, resource_path=path)
     db.commit()
@@ -479,6 +496,7 @@ def rename_file(
     user: UserModel = Depends(get_current_user),
 ):
     instance = service.get_instance(db, user, instance_id)
+    _check_file_permission(instance, user)
     result = file_service.rename_file(instance, data)
     audit.log(db, user=user, action="file.rename", resource_type="file", instance_id=instance_id, resource_path=data.source_path, after=result)
     db.commit()
