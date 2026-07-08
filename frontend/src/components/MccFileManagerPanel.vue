@@ -18,7 +18,13 @@
       </div>
     </div>
 
-    <div class="file-layout">
+    <div v-if="permissionDenied" class="permission-deny mono">
+      <div class="deny-icon">🔒</div>
+      <div class="deny-msg">你没有权限访问此实例的文件</div>
+      <div class="deny-hint">只有实例创建者才能查看和管理文件，你可以联系创建者添加权限</div>
+    </div>
+
+    <div v-else class="file-layout">
       <div class="file-tree-panel">
         <div class="tree-title mono">目录</div>
         <div class="file-tree">
@@ -119,6 +125,7 @@ const contextMenuVisible = ref(false)
 const contextMenuX = ref(0)
 const contextMenuY = ref(0)
 const contextFile = ref<MccFileEntry | null>(null)
+const permissionDenied = ref(false)
 
 const fileList = computed(() => store.fileLists[props.instanceId] || [])
 const crumbs = computed<MccFileBreadcrumb[]>(() => store.fileBreadcrumbs[props.instanceId] || [])
@@ -130,17 +137,33 @@ function formatSize(size: number): string {
 }
 
 async function refreshFiles() {
-  await loadFiles(currentPath.value)
-  await store.fetchFileTree(props.instanceId)
-  treeData.value = store.fileTrees[props.instanceId] || []
+  try {
+    permissionDenied.value = false
+    await loadFiles(currentPath.value)
+    await store.fetchFileTree(props.instanceId)
+    treeData.value = store.fileTrees[props.instanceId] || []
+  } catch (err: any) {
+    if (err?.response?.status === 403) {
+      permissionDenied.value = true
+    }
+  }
 }
 
 async function loadFiles(path = '') {
+  permissionDenied.value = false
   currentPath.value = path
   navigatingPath.value = path
-  const resp = await store.fetchFiles(props.instanceId, path)
-  if (resp) {
-    store.fileBreadcrumbs[props.instanceId] = (resp as any).breadcrumbs || []
+  try {
+    const resp = await store.fetchFiles(props.instanceId, path)
+    if (resp) {
+      store.fileBreadcrumbs[props.instanceId] = (resp as any).breadcrumbs || []
+    }
+  } catch (err: any) {
+    if (err?.response?.status === 403) {
+      permissionDenied.value = true
+      throw err
+    }
+    throw err
   }
 }
 
@@ -320,5 +343,9 @@ onMounted(() => refreshFiles())
 .context-item:hover { background: var(--green-glow); color: var(--text-primary); }
 .context-item.danger { color: var(--danger); }
 .context-item.danger:hover { background: rgba(255, 77, 79, .15); }
+.permission-deny { text-align: center; padding: 60px 20px; color: var(--text-secondary); }
+.deny-icon { font-size: 40px; margin-bottom: 16px; }
+.deny-msg { font-size: 20px; color: var(--text-primary); margin-bottom: 8px; }
+.deny-hint { font-size: 14px; color: var(--text-muted); max-width: 420px; margin: 0 auto; }
 @media (max-width: 900px) { .file-layout { grid-template-columns: 1fr; } .file-tree-panel { max-height: 200px; } }
 </style>
