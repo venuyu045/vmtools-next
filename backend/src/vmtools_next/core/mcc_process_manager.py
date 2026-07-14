@@ -167,10 +167,11 @@ class MccProcessManager:
         Creates a pseudo-terminal, forks, and execs the command with the
         PTY slave as stdin/stdout/stderr. Echo is disabled to prevent
         input from being reflected back to stdout.
+
+        Also redirects MCC output to a log file for reliable reading.
         """
         import pty
         import termios
-        import fcntl
 
         master_fd, slave_fd = pty.openpty()
 
@@ -178,32 +179,31 @@ class MccProcessManager:
         try:
             attrs = termios.tcgetattr(slave_fd)
             attrs[3] &= ~termios.ECHO  # lflag: clear ECHO
+            attrs[3] &= ~termios.ECHOE
+            attrs[3] &= ~termios.ICRNL
             termios.tcsetattr(slave_fd, termios.TCSANOW, attrs)
         except Exception:
-            pass  # Not critical if echo can't be disabled
+            pass
 
         pid = os.fork()
         if pid == 0:
             # ── Child process ──
-            os.close(master_fd)
-            os.setsid()
-
-            # Set controlling terminal to slave
             try:
-                fcntl.ioctl(slave_fd, termios.TIOCSCTTY, 0)
-            except OSError:
+                os.close(master_fd)
+                os.setsid()
+
+                # Redirect stdin/stdout/stderr to PTY slave
+                os.dup2(slave_fd, 0)
+                os.dup2(slave_fd, 1)
+                os.dup2(slave_fd, 2)
+                if slave_fd > 2:
+                    os.close(slave_fd)
+
+                os.chdir(cwd)
+                os.execvpe(command[0], command, env)
+            except Exception:
                 pass
-
-            # Redirect stdin/stdout/stderr to PTY slave
-            os.dup2(slave_fd, 0)
-            os.dup2(slave_fd, 1)
-            os.dup2(slave_fd, 2)
-            if slave_fd > 2:
-                os.close(slave_fd)
-
-            # Exec the command
-            os.chdir(cwd)
-            os.execvpe(command[0], command, env)
+            os._exit(1)  # Must exit if exec fails!
         else:
             # ── Parent process ──
             os.close(slave_fd)
