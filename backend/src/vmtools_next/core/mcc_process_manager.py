@@ -125,12 +125,14 @@ class MccProcessManager:
                     )
                     logger.info("MCC started on Windows with DEVNULL stdin (pid={})", process.pid)
                 else:
-                    # Linux: wrap command in `script` to allocate a PTY.
-                    # This makes MCC think it's running in a real terminal and
-                    # flushes stdout line-by-line. Without PTY, Mono buffers
-                    # all output until the 64KB pipe buffer fills up.
+                    # Linux: wrap in `script -f` for PTY + flush.
+                    # -f: flush after each read (script buffers otherwise)
+                    # -q: quiet (no "Script started" header)
+                    # stty -echo: prevent PTY from echoing stdin back to stdout
+                    #   (echo causes MCC to read its own input twice → garbled chat)
                     import shlex
-                    wrapped = ["script", "-q", "-c", shlex.join(command), "/dev/null"]
+                    inner_cmd = f"stty -echo; exec {shlex.join(command)}"
+                    wrapped = ["script", "-q", "-f", "-c", inner_cmd, "/dev/null"]
                     process = await asyncio.create_subprocess_exec(
                         *wrapped,
                         cwd=instance.instance_dir,
@@ -139,9 +141,7 @@ class MccProcessManager:
                         stdout=asyncio.subprocess.PIPE,
                         stderr=asyncio.subprocess.STDOUT,
                     )
-                    # No kick-start write: sending raw text to MCC stdin would
-                    # cause unrecognized text to be treated as in-game chat.
-                    logger.info("MCC started on Linux with PIPE stdin (pid={})", process.pid)
+                    logger.info("MCC started on Linux with script -f PTY (pid={})", process.pid)
 
                 instance.status = "running"
                 instance.desired_state = "running"

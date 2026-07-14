@@ -111,20 +111,22 @@ class QqBotClient:
         await self._ensure_token()
         async with self._rate_sem:
             if mention_openids:
-                # QQ Bot @mention: <@openid> renders user name in message body.
-                # <@!openid> requires special "群聊@所有人" permission which
-                # this bot may not have. Fall back to <@openid> in text mode.
-                mentions = "".join(f"<@{oid}>" for oid in mention_openids)
+                # QQ Bot API: msg_type=2 is markdown (NOT 1).
+                # <@!openid> in markdown content triggers real @mention.
+                # If bot lacks markdown capability, fall back to text.
+                mentions = "".join(f"<@!{oid}>" for oid in mention_openids)
+                md_content = f"{mentions} {content}"
                 payload = {
-                    "msg_type": 0,
-                    "content": f"{mentions} {content}",
+                    "msg_type": 2,
+                    "content": "",
+                    "markdown": {"content": md_content},
                 }
             else:
                 payload = {
                     "msg_type": msg_type,
                     "content": content,
                 }
-                if markdown and msg_type == 1:
+                if markdown and msg_type == 2:
                     payload["markdown"] = markdown
                     payload["content"] = ""
 
@@ -136,9 +138,27 @@ class QqBotClient:
             data = resp.json() if resp.text else {}
             if resp.status_code != 200:
                 logger.warning(
-                    "QQ send_group_message failed: HTTP %d body=%s",
-                    resp.status_code, resp.text[:300],
+                    "QQ send_group_message failed: HTTP %d body=%s payload=%s",
+                    resp.status_code, resp.text[:300], payload,
                 )
+                # If markdown failed, retry as plain text
+                if mention_openids and resp.status_code != 200:
+                    mentions = "".join(f"<@!{oid}>" for oid in mention_openids)
+                    text_payload = {
+                        "msg_type": 0,
+                        "content": f"{mentions} {content}",
+                    }
+                    resp2 = await self._client.post(
+                        f"{self._base}/v2/groups/{group_openid}/messages",
+                        headers=self._headers,
+                        json=text_payload,
+                    )
+                    data = resp2.json() if resp2.text else {}
+                    if resp2.status_code != 200:
+                        logger.warning(
+                            "QQ text fallback also failed: HTTP %d body=%s",
+                            resp2.status_code, resp2.text[:300],
+                        )
             return data
 
     async def send_private_message(
