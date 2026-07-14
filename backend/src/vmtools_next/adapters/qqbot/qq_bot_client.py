@@ -74,10 +74,12 @@ class QqBotClient:
             "https://bots.qq.com/app/getAppAccessToken",
             json={"appId": self._app_id, "clientSecret": self._app_secret},
         )
-        resp.raise_for_status()
         data = resp.json()
+        if resp.status_code != 200 or "access_token" not in data:
+            raise RuntimeError(f"Token fetch failed: HTTP {resp.status_code} {resp.text[:300]}")
         self._token = data["access_token"]
-        self._token_expires_at = time.time() + data.get("expires_in", 7200)
+        expires_in = data.get("expires_in", 7200)
+        self._token_expires_at = time.time() + int(expires_in)
 
     @property
     def _headers(self) -> dict:
