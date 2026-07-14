@@ -39,6 +39,98 @@ def _is_async_proc(proc) -> bool:
     return hasattr(proc.stdout, "readline") and _asyncio.iscoroutinefunction(proc.stdout.readline)
 
 
+class _PtyStdout:
+    """Async reader wrapper for PTY master fd."""
+
+    def __init__(self, fd: int):
+        self._fd = fd
+
+    async def read(self, n: int = 4096) -> bytes:
+        loop = asyncio.get_event_loop()
+        try:
+            return await loop.run_in_executor(None, os.read, self._fd, n)
+        except OSError:
+            return b""
+
+    async def readline(self) -> bytes:
+        loop = asyncio.get_event_loop()
+        try:
+            return await loop.run_in_executor(None, self._blocking_readline)
+        except OSError:
+            return b""
+
+    def _blocking_readline(self) -> bytes:
+        buf = b""
+        while True:
+            ch = os.read(self._fd, 1)
+            if not ch:
+                break
+            buf += ch
+            if ch == b"\n":
+                break
+        return buf
+
+
+class _PtyStdin:
+    """Async writer wrapper for PTY master fd."""
+
+    def __init__(self, fd: int):
+        self._fd = fd
+
+    def write(self, data: bytes):
+        os.write(self._fd, data)
+
+    async def drain(self):
+        pass
+
+
+class PtyProcess:
+    """Mimics asyncio.subprocess.Process but backed by a PTY."""
+
+    def __init__(self, master_fd: int, pid: int):
+        self._master_fd = master_fd
+        self.pid = pid
+        self.returncode: int | None = None
+        self.stdout = _PtyStdout(master_fd)
+        self.stdin = _PtyStdin(master_fd)
+
+    def terminate(self):
+        import signal
+        try:
+            os.kill(self.pid, signal.SIGTERM)
+        except OSError:
+            pass
+
+    def kill(self):
+        import signal
+        try:
+            os.kill(self.pid, signal.SIGKILL)
+        except OSError:
+            pass
+
+    async def wait(self, timeout=None):
+        import signal
+        loop = asyncio.get_event_loop()
+        try:
+            if timeout:
+                pid, status = await asyncio.wait_for(
+                    loop.run_in_executor(None, os.waitpid, self.pid, 0),
+                    timeout=timeout,
+                )
+            else:
+                pid, status = await loop.run_in_executor(None, os.waitpid, self.pid, 0)
+            self.returncode = os.waitstatus_to_exitcode(status)
+        except asyncio.TimeoutError:
+            os.kill(self.pid, signal.SIGKILL)
+            pid, status = await loop.run_in_executor(None, os.waitpid, self.pid, 0)
+            self.returncode = os.waitstatus_to_exitcode(status)
+        try:
+            os.close(self._master_fd)
+        except OSError:
+            pass
+        return self.returncode
+
+
 class MccProcessManager:
     """Manage MCC child processes and stream their terminal output."""
 
@@ -68,6 +160,54 @@ class MccProcessManager:
             return False
         proc = handle.process
         return proc.returncode is None
+
+    async def _spawn_pty(self, command: list[str], cwd: str, env: dict) -> PtyProcess:
+        """Spawn process with PTY for line-buffered output.
+
+        Creates a pseudo-terminal, forks, and execs the command with the
+        PTY slave as stdin/stdout/stderr. Echo is disabled to prevent
+        input from being reflected back to stdout.
+        """
+        import pty
+        import termios
+        import fcntl
+
+        master_fd, slave_fd = pty.openpty()
+
+        # Disable echo on the PTY slave
+        try:
+            attrs = termios.tcgetattr(slave_fd)
+            attrs[3] &= ~termios.ECHO  # lflag: clear ECHO
+            termios.tcsetattr(slave_fd, termios.TCSANOW, attrs)
+        except Exception:
+            pass  # Not critical if echo can't be disabled
+
+        pid = os.fork()
+        if pid == 0:
+            # ── Child process ──
+            os.close(master_fd)
+            os.setsid()
+
+            # Set controlling terminal to slave
+            try:
+                fcntl.ioctl(slave_fd, termios.TIOCSCTTY, 0)
+            except OSError:
+                pass
+
+            # Redirect stdin/stdout/stderr to PTY slave
+            os.dup2(slave_fd, 0)
+            os.dup2(slave_fd, 1)
+            os.dup2(slave_fd, 2)
+            if slave_fd > 2:
+                os.close(slave_fd)
+
+            # Exec the command
+            os.chdir(cwd)
+            os.execvpe(command[0], command, env)
+        else:
+            # ── Parent process ──
+            os.close(slave_fd)
+            return PtyProcess(master_fd, pid)
 
     async def start_instance(self, instance_id: str, extra_env: dict[str, str] | None = None) -> dict:
         lock = self._locks.setdefault(instance_id, asyncio.Lock())
@@ -125,23 +265,11 @@ class MccProcessManager:
                     )
                     logger.info("MCC started on Windows with DEVNULL stdin (pid={})", process.pid)
                 else:
-                    # Linux: wrap in `script -f` for PTY + flush.
-                    # -f: flush after each read (script buffers otherwise)
-                    # -q: quiet (no "Script started" header)
-                    # stty -echo: prevent PTY from echoing stdin back to stdout
-                    #   (echo causes MCC to read its own input twice → garbled chat)
-                    import shlex
-                    inner_cmd = f"stty -echo; exec {shlex.join(command)}"
-                    wrapped = ["script", "-q", "-f", "-c", inner_cmd, "/dev/null"]
-                    process = await asyncio.create_subprocess_exec(
-                        *wrapped,
-                        cwd=instance.instance_dir,
-                        env=env,
-                        stdin=asyncio.subprocess.PIPE,
-                        stdout=asyncio.subprocess.PIPE,
-                        stderr=asyncio.subprocess.STDOUT,
-                    )
-                    logger.info("MCC started on Linux with script -f PTY (pid={})", process.pid)
+                    # Linux: use Python pty module for full PTY control.
+                    # script(1) has its own buffering issues. Direct PTY
+                    # gives us: line-buffered MCC output + echo control.
+                    process = await self._spawn_pty(command, instance.instance_dir, env)
+                    logger.info("MCC started on Linux with PTY (pid={})", process.pid)
 
                 instance.status = "running"
                 instance.desired_state = "running"
