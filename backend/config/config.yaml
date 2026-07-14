@@ -96,7 +96,7 @@ qqbot:
   app_secret: "REDACTED_QQ_APP_SECRET"
   sandbox: false
   notify_groups: ["35C2735DF6D9C0F7D1208A330D62873F"]  # 游戏通知群
-  mention_openids: ["E3D613A55099F0BEE950577A928EFC37", "9E63282A5F57B6846F1F8E3C602A1A82", "589CF71DEDFBCD86B7F60C62DDE49F20"]  # Venus_Yu, gxko, happyzhou
+  mention_openids: ["E3D613A55099F0BEE950577A928EFC37"]  # Venus_Yu
   notify_on_start: true      # Bot 启动时通知
   notify_on_stop: true       # Bot 停止时通知
   notify_on_crash: true      # Bot 崩溃时通知
