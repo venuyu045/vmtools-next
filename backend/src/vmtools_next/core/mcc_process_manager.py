@@ -125,11 +125,14 @@ class MccProcessManager:
                     )
                     logger.info("MCC started on Windows with DEVNULL stdin (pid={})", process.pid)
                 else:
-                    # Linux: use PIPE so commands can be sent via stdin.
-                    # Note: stdbuf doesn't work well with Mono, so we rely on
-                    # chunked reading in _read_output_loop instead.
+                    # Linux: wrap command in `script` to allocate a PTY.
+                    # This makes MCC think it's running in a real terminal and
+                    # flushes stdout line-by-line. Without PTY, Mono buffers
+                    # all output until the 64KB pipe buffer fills up.
+                    import shlex
+                    wrapped = ["script", "-q", "-c", shlex.join(command), "/dev/null"]
                     process = await asyncio.create_subprocess_exec(
-                        *command,
+                        *wrapped,
                         cwd=instance.instance_dir,
                         env=env,
                         stdin=asyncio.subprocess.PIPE,
@@ -403,16 +406,15 @@ class MccProcessManager:
             else:
                 chunk = await loop.run_in_executor(None, process.stdout.read, 4096)
             if not chunk:
-                # Flush any remaining buffered data
                 tail = decoder.decode(b"", final=True)
                 if tail:
                     for line in tail.splitlines():
-                        if line:
+                        if line and not line.startswith("Script "):
                             await self._append_line(instance_id, "stdout", line)
                 break
             text = decoder.decode(chunk)
             for line in text.splitlines():
-                if line:
+                if line and not line.startswith("Script "):
                     await self._append_line(instance_id, "stdout", line)
 
     async def _watch_exit_loop(self, instance_id: str, process: asyncio.subprocess.Process | subprocess.Popen) -> None:
