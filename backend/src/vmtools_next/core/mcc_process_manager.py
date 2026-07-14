@@ -139,12 +139,8 @@ class MccProcessManager:
                         stdout=asyncio.subprocess.PIPE,
                         stderr=asyncio.subprocess.STDOUT,
                     )
-                    # Kick-start stdin read loop so MCC doesn't block on startup
-                    try:
-                        process.stdin.write(b"\n")
-                        await process.stdin.drain()
-                    except Exception:
-                        pass
+                    # No kick-start write: sending raw text to MCC stdin would
+                    # cause unrecognized text to be treated as in-game chat.
                     logger.info("MCC started on Linux with PIPE stdin (pid={})", process.pid)
 
                 instance.status = "running"
@@ -267,12 +263,27 @@ class MccProcessManager:
             finally:
                 db.close()
 
+    # Safe MCC internal commands (won't be sent as in-game chat)
+    _SAFE_COMMANDS: set[str] = {
+        "help", "status", "quit", "exit", "reco", "connect",
+        "disconnect", "respawn", "login", "logout", "reconnect",
+        "inventory", "move", "list",
+    }
+
     async def write_stdin(self, instance_id: str, text: str, append_newline: bool = True) -> None:
         handle = self._processes.get(instance_id)
         if not handle or handle.process.returncode is not None:
             raise RuntimeError("MCC process is not running")
 
         command = text.strip()
+        first_word = command.split()[0].lower() if command else ""
+
+        # Whitelist: MCC sends ANY unrecognized text as in-game chat.
+        # Only allow /commands, say chat, or known MCC internal commands.
+        if command and not command.startswith("/") and not command.startswith("say ") and first_word not in self._SAFE_COMMANDS:
+            raise RuntimeError(
+                "拒绝发送: 此文本会被MCC当作游戏聊天发出。请以 / 开头发送指令, 或以 say 开头发送聊天。"
+            )
 
         # If stdin is available (Windows subprocess.Popen), write directly
         if handle.process.stdin:
