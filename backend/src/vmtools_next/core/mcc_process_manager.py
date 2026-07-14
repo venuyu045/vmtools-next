@@ -565,37 +565,6 @@ class MccProcessManager:
                 except Exception:
                     pass
                 break  # Only trigger once per line
-        masked = mask_text(content)
-        line = self.buffer.append(instance_id, stream, masked)
-        Session = get_session_factory()
-        db = Session()
-        try:
-            db.add(MccTerminalLogModel(
-                instance_id=instance_id,
-                stream=stream,
-                seq=line.seq,
-                content=content,
-                content_masked=masked,
-                created_at=line.created_at,
-            ))
-            db.commit()
-        except Exception as exc:
-            db.rollback()
-            logger.debug("Failed to persist MCC terminal line: {}", exc)
-        finally:
-            db.close()
-
-        # Detect disconnect patterns in MCC output
-        if stream == "stdout":
-            await self._detect_disconnect(instance_id, content)
-        await sio.emit("mcc_terminal_output", {
-            "instance_id": instance_id,
-            "seq": line.seq,
-            "stream": stream,
-            "content": masked,
-            "created_at": line.created_at.isoformat(),
-        }, room=f"mcc:{instance_id}")
-        return line
 
     async def _get_instance_name(self, instance_id: str) -> str:
         """Get display name or slug for notifications."""
