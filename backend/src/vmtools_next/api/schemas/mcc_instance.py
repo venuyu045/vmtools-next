@@ -44,6 +44,7 @@ class MccInstanceUpdate(BaseModel):
     mc_server_host: Optional[str] = None
     mc_server_port: Optional[int] = None
     mc_version: Optional[str] = None
+    auto_reconnect: Optional[bool] = None
 
 
 class MccInstanceStartRequest(BaseModel):
@@ -263,6 +264,7 @@ class MccInstanceResponse(BaseModel):
     last_started_at: Optional[datetime] = None
     last_stopped_at: Optional[datetime] = None
     last_heartbeat_at: Optional[datetime] = None
+    auto_reconnect: bool = False
     created_at: datetime
     updated_at: datetime
 

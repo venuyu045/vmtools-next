@@ -1,8 +1,8 @@
 <template>
-  <div class="sidebar" :class="{ collapsed }">
+  <div class="sidebar" :class="{ collapsed, 'is-mobile': isMobile }">
     <div class="sidebar-logo">
-      <button class="collapse-btn" @click="emit('toggle')" :title="collapsed ? '展开' : '收起'">
-        <span class="collapse-icon">{{ collapsed ? '▶' : '◀' }}</span>
+      <button class="collapse-btn" @click="emit('toggle')" :title="collapseTitle">
+        <span class="collapse-icon">{{ collapseIcon }}</span>
       </button>
       <span class="logo-text" v-show="!collapsed">VMTools</span>
     </div>
@@ -15,6 +15,7 @@
         class="nav-item"
         :class="{ active: isActive(item) }"
         :title="item.label"
+        @click="onNavClick"
       >
         <span class="nav-dot"></span>
         <span class="nav-label" v-show="!collapsed">{{ item.label }}</span>
@@ -33,11 +34,33 @@ import { computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { useBotStore } from '@/stores/bot'
 
-defineProps<{ collapsed?: boolean }>()
-const emit = defineEmits<{ toggle: [] }>()
+const props = defineProps<{
+  collapsed?: boolean
+  isMobile?: boolean
+}>()
+const emit = defineEmits<{
+  toggle: []
+}>()
 
 const route = useRoute()
 const botStore = useBotStore()
+
+const collapseIcon = computed(() => {
+  if (props.isMobile) return '✕'
+  return props.collapsed ? '▶' : '◀'
+})
+
+const collapseTitle = computed(() => {
+  if (props.isMobile) return '关闭菜单'
+  return props.collapsed ? '展开' : '收起'
+})
+
+function onNavClick() {
+  if (props.isMobile) {
+    // Close drawer after navigation on mobile
+    emit('toggle')
+  }
+}
 
 const navItems = [
   { path: '/dashboard', label: '仪表盘' },
@@ -96,6 +119,13 @@ function isActive(item: { path: string }): boolean {
   color: var(--text-primary);
 }
 
+/* Mobile close button: make it bigger for touch */
+.is-mobile .collapse-btn {
+  width: 36px;
+  height: 36px;
+  font-size: 16px;
+}
+
 .logo-text {
   font-family: var(--font-pixel);
   font-size: 14px;
@@ -110,6 +140,8 @@ function isActive(item: { path: string }): boolean {
   display: flex;
   flex-direction: column;
   gap: 2px;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
 .nav-item {
@@ -123,6 +155,8 @@ function isActive(item: { path: string }): boolean {
   font-size: 14px;
   transition: all 0.1s;
   cursor: pointer;
+  /* Touch-friendly: min 44px height */
+  min-height: 44px;
 }
 
 .sidebar.collapsed .nav-item {
@@ -188,5 +222,10 @@ function isActive(item: { path: string }): boolean {
   height: 8px;
   background: var(--green-primary);
   flex-shrink: 0;
+}
+
+/* Mobile drawer: no right border, full border on right for shadow depth */
+.is-mobile {
+  border-right: 1px solid var(--border-subtle);
 }
 </style>

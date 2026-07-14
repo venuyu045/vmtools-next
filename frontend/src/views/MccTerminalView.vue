@@ -90,4 +90,15 @@ onMounted(() => refreshInstance())
 .terminal-meta { display: flex; flex-wrap: wrap; gap: 18px; color: var(--text-secondary); font-size: 13px; }
 .empty-state { color: var(--text-muted); text-align: center; padding: 80px 0; }
 .pixel-btn:disabled { opacity: .45; cursor: not-allowed; }
+
+/* ============ RESPONSIVE ============ */
+@media (max-width: 768px) {
+  .terminal-page { gap: 12px; }
+  .page-header { flex-direction: column; gap: 10px; }
+  .page-title { font-size: 14px; }
+  .page-subtitle { font-size: 12px; max-width: 100%; }
+  .header-actions .pixel-btn { font-size: 12px; padding: 6px 10px; }
+  .terminal-meta { font-size: 11px; gap: 10px; }
+  .terminal-card { min-height: calc(100dvh - 200px); }
+}
 </style>

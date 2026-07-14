@@ -93,6 +93,7 @@ async function handleLogin() {
 
 .login-card {
   width: 400px;
+  max-width: calc(100vw - 32px);
   padding: 48px 40px;
 }
 
@@ -119,5 +120,33 @@ async function handleLogin() {
   margin-top: 24px;
   color: var(--text-muted);
   font-size: 14px;
+}
+
+/* ============ RESPONSIVE ============ */
+@media (max-width: 480px) {
+  .login-card {
+    width: 100%;
+    max-width: 100%;
+    padding: 36px 20px;
+    border-left: none;
+    border-right: none;
+  }
+
+  .login-header h1 {
+    font-size: 20px;
+  }
+
+  .login-header p {
+    font-size: 12px;
+  }
+
+  .login-header {
+    margin-bottom: 24px;
+  }
+
+  .login-footer {
+    font-size: 12px;
+    margin-top: 20px;
+  }
 }
 </style>

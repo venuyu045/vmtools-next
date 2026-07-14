@@ -36,6 +36,10 @@
           <router-link :to="{ name: 'MccTerminal', params: { id: instance.instance_id } }" class="pixel-btn outline terminal-link">终端</router-link>
           <router-link :to="{ name: 'MccFiles', params: { id: instance.instance_id } }" class="pixel-btn outline terminal-link">文件</router-link>
           <button class="pixel-btn danger" :disabled="instance.status === 'running'" @click="handleDelete(instance)">删除</button>
+          <label class="reconnect-toggle" :title="instance.auto_reconnect ? '已开启自动重连' : '开启自动重连'">
+            <input type="checkbox" :checked="instance.auto_reconnect" @change="toggleReconnect(instance, $event)" />
+            <span class="mono toggle-label">自动重连</span>
+          </label>
         </div>
       </div>
     </div>
@@ -169,6 +173,7 @@ import MccWebTerminal from '@/components/MccWebTerminal.vue'
 import MccFileManagerPanel from '@/components/MccFileManagerPanel.vue'
 import { useMccInstanceStore } from '@/stores/mccInstance'
 import type { MccAccountConfig, MccAuthType, MccInstance } from '@/api/mccInstance'
+import { mccInstanceApi } from '@/api/mccInstance'
 
 const mccStore = useMccInstanceStore()
 const showCreate = ref(false)
@@ -293,6 +298,16 @@ async function stopAll() {
   ElMessage.success(`已停止 ${running.length} 个实例`)
 }
 
+async function toggleReconnect(instance: MccInstance, event: Event) {
+  const checked = (event.target as HTMLInputElement).checked
+  try {
+    await mccInstanceApi.update(instance.instance_id, { auto_reconnect: checked })
+    instance.auto_reconnect = checked
+  } catch {
+    ElMessage.error('更新失败')
+  }
+}
+
 async function handleRestart(instance: MccInstance) {
   await ElMessageBox.confirm('配置已保存后通常需要重启 MCC 才会生效，确认重启？', '重启确认', { type: 'warning' })
   await handleStop(instance)
@@ -381,6 +396,9 @@ onMounted(() => refreshAll())
 .terminal-link { text-decoration: none; display: inline-flex; align-items: center; }
 .pixel-btn.outline.active { border-color: var(--green-primary); color: var(--green-primary); background: var(--green-glow); }
 .pixel-btn:disabled { opacity: .45; cursor: not-allowed; }
+.reconnect-toggle { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; padding: 4px 8px; border: 1px solid var(--border-subtle); background: #000; }
+.reconnect-toggle input { accent-color: var(--green-primary); }
+.toggle-label { font-size: 12px; color: var(--text-secondary); }
 .empty-text { grid-column: 1 / -1; color: var(--text-muted); text-align: center; padding: 60px 0; font-size: 18px; }
 .detail-panel { height: 100%; display: flex; flex-direction: column; gap: 12px; }
 .terminal-meta { display: flex; flex-wrap: wrap; gap: 20px; color: var(--text-secondary); font-size: 14px; margin-bottom: 12px; }
