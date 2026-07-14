@@ -509,6 +509,7 @@ class MccProcessManager:
         # Detect disconnect patterns in MCC output
         if stream == "stdout":
             await self._detect_disconnect(instance_id, content)
+            await self._detect_player_events(instance_id, content)
 
         await sio.emit("mcc_terminal_output", {
             "instance_id": instance_id,
@@ -576,6 +577,39 @@ class MccProcessManager:
                 except Exception:
                     pass
                 break  # Only trigger once per line
+
+    # ── Player join/leave detection (for sentinel bots) ──────────────
+    _PLAYER_EVENT_PATTERNS: list[tuple[str, str]] = [
+        # (regex pattern, event type)
+        (r"(\w+) left the game", "leave"),
+        (r"(\w+) joined the game", "join"),
+        (r"(\S+) 离开了游戏", "leave"),
+        (r"(\S+) 加入了游戏", "join"),
+    ]
+
+    async def _detect_player_events(self, instance_id: str, content: str) -> None:
+        """Detect player join/leave from terminal output and forward to QQ."""
+        import re
+        import asyncio as _asyncio
+        from vmtools_next.core.qqbot_notify import broadcast, notify_mcc_event
+
+        for pattern, event_type in self._PLAYER_EVENT_PATTERNS:
+            m = re.search(pattern, content)
+            if m:
+                player = m.group(1)
+                # Skip system/bot names
+                if player.lower() in ("server", "console", "system"):
+                    continue
+                emoji = "👋" if event_type == "leave" else "👤"
+                label = "离开了服务器" if event_type == "leave" else "加入了服务器"
+                msg = f"{emoji} {player} {label}"
+                logger.info("Player event: %s %s", player, event_type)
+                try:
+                    name = await self._get_instance_name(instance_id)
+                    _asyncio.ensure_future(broadcast(f"[{name}] {msg}"))
+                except Exception:
+                    pass
+                break
 
     async def _get_instance_name(self, instance_id: str) -> str:
         """Get display name or slug for notifications."""
