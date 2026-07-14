@@ -52,14 +52,29 @@ async def stop():
     logger.info("QQ Bot notification service stopped")
 
 
-async def broadcast(message: str) -> None:
-    """Send a message to all configured QQ groups."""
+async def broadcast(message: str, mention_openids: list[str] | None = None) -> None:
+    """Send a message to all configured QQ groups.
+
+    Args:
+        message: Message text
+        mention_openids: List of QQ openids to @mention in the message.
+            If None, uses config.mention_openids.
+    """
     if not _qq_client:
         return
     config = get_config().qqbot
+    targets = mention_openids if mention_openids is not None else config.mention_openids
+
+    # Build mention prefix if any openids are configured
+    if targets:
+        mention_prefix = "".join(f"<@{oid}>" for oid in targets) + " "
+        full_message = mention_prefix + message
+    else:
+        full_message = message
+
     for group_id in config.notify_groups:
         try:
-            await _qq_client.send_group_message(group_id, message)
+            await _qq_client.send_group_message(group_id, full_message)
         except Exception as exc:
             logger.warning("QQ broadcast failed for group %s: %s", group_id, exc)
 
