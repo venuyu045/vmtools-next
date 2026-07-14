@@ -95,7 +95,7 @@ qqbot:
   app_id: "1905191614"
   app_secret: "REDACTED_QQ_APP_SECRET"
   sandbox: false
-  notify_groups: []  # 填入要推送的群 openid，如 ["ABC123"]
+  notify_groups: ["35C2735DF6D9C0F7D1208A330D62873F"]  # 游戏通知群
   notify_on_start: true      # Bot 启动时通知
   notify_on_stop: true       # Bot 停止时通知
   notify_on_crash: true      # Bot 崩溃时通知
