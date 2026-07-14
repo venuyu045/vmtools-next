@@ -465,6 +465,20 @@ class MccProcessManager:
         }, room=f"mcc:{instance_id}")
         return line
 
+    async def _get_instance_name(self, instance_id: str) -> str:
+        """Get display name or slug for notifications."""
+        Session = get_session_factory()
+        db = Session()
+        try:
+            instance = db.query(MccInstanceModel).filter(
+                MccInstanceModel.instance_id == instance_id
+            ).first()
+            if instance:
+                return instance.display_name or instance.slug
+            return instance_id
+        finally:
+            db.close()
+
     async def _emit_status(
         self,
         instance_id: str,
@@ -480,6 +494,16 @@ class MccProcessManager:
             "mcp_port": mcp_port,
             "message": message,
         }, room=f"mcc:{instance_id}")
+
+        # QQ Bot notification for status changes
+        if status in ("running", "stopped", "crashed", "error"):
+            try:
+                import asyncio as _asyncio
+                from vmtools_next.core.qqbot_notify import notify_mcc_event
+                name = await self._get_instance_name(instance_id)
+                _asyncio.ensure_future(notify_mcc_event(name, status, message))
+            except Exception:
+                pass
         await sio.emit("mcc_instance_status", {
             "instance_id": instance_id,
             "status": status,
