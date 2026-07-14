@@ -37,6 +37,7 @@ export interface MccInstance {
   last_started_at: string | null
   last_stopped_at: string | null
   last_heartbeat_at: string | null
+  auto_reconnect: boolean
   created_at: string
   updated_at: string
 }
@@ -172,7 +173,7 @@ export const mccInstanceApi = {
   get(instanceId: string) {
     return client.get<MccInstance>(`/mcc/instances/${instanceId}`)
   },
-  update(instanceId: string, data: Partial<MccInstanceCreatePayload>) {
+  update(instanceId: string, data: Record<string, any>) {
     return client.patch<MccInstance>(`/mcc/instances/${instanceId}`, data)
   },
   delete(instanceId: string) {

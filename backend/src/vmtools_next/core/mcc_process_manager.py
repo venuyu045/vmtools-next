@@ -427,8 +427,32 @@ class MccProcessManager:
                 message=f"MCC process exited with code {returncode}",
             ))
             db.commit()
+
+            # Auto-reconnect: if enabled and crashed, restart
+            should_reconnect = (
+                instance.auto_reconnect
+                and instance.status == "crashed"
+                and instance.desired_state == "running"
+            )
+            if should_reconnect:
+                db.refresh(instance)
+                logger.info("Auto-reconnect: restarting crashed instance %s", instance_id)
+                await self._append_system_line(instance_id, "Auto-reconnect: restarting...")
+                # Reset status for restart
+                instance.status = "created"
+                instance.pid = None
+                db.commit()
+
             await self._append_system_line(instance_id, f"MCC exited with code {returncode}")
             await self._emit_status(instance_id, instance.status, pid=None, mcp_port=instance.mcp_port)
+
+            # Trigger actual restart in background
+            if should_reconnect:
+                try:
+                    import asyncio as _asyncio
+                    _asyncio.ensure_future(self.start_instance(instance_id))
+                except Exception:
+                    pass
         finally:
             db.close()
             self._processes.pop(instance_id, None)
@@ -510,6 +534,20 @@ class MccProcessManager:
                     _asyncio.ensure_future(
                         notify_mcc_event(name, "crashed", f"🔌 {label}\n{content.strip()[:200]}")
                     )
+
+                    # Auto-reconnect: if enabled, restart the instance
+                    Session = get_session_factory()
+                    db2 = Session()
+                    try:
+                        inst = db2.query(MccInstanceModel).filter(
+                            MccInstanceModel.instance_id == instance_id
+                        ).first()
+                        if inst and inst.auto_reconnect and inst.desired_state == "running":
+                            logger.info("Auto-reconnect triggered by disconnect: %s", instance_id)
+                            await self._append_system_line(instance_id, "检测到断联，自动重连...")
+                            _asyncio.ensure_future(self.start_instance(instance_id))
+                    finally:
+                        db2.close()
                 except Exception:
                     pass
                 break  # Only trigger once per line

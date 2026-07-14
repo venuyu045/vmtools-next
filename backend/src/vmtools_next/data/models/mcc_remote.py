@@ -53,6 +53,7 @@ class MccInstanceModel(Base):
     last_started_at = Column(DateTime, nullable=True)
     last_stopped_at = Column(DateTime, nullable=True)
     last_heartbeat_at = Column(DateTime, nullable=True)
+    auto_reconnect = Column(Boolean, default=False, nullable=False)
     deleted_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=utc_now, nullable=False)
     updated_at = Column(DateTime, default=utc_now, onupdate=utc_now, nullable=False)
