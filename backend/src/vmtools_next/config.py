@@ -123,6 +123,7 @@ class QqBotConfig(BaseModel):
     app_secret: str = ""
     sandbox: bool = False
     notify_groups: list[str] = Field(default_factory=list)
+    mention_openids: list[str] = Field(default_factory=list)  # @提醒的 openid 列表
     notify_on_start: bool = True
     notify_on_stop: bool = True
     notify_on_crash: bool = True
