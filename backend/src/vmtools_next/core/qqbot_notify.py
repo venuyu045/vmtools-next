@@ -67,7 +67,7 @@ async def broadcast(message: str, mention_openids: list[str] | None = None) -> N
 
     # Build mention prefix if any openids are configured
     if targets:
-        mention_prefix = "".join(f"<@{oid}>" for oid in targets) + " "
+        mention_prefix = "".join(f"<@!{oid}>" for oid in targets) + " "
         full_message = mention_prefix + message
     else:
         full_message = message
