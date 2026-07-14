@@ -161,3 +161,16 @@ class QqBotClient:
         )
         data = resp.json() if resp.text else []
         return data if isinstance(data, list) else []
+
+    async def list_group_members(self, group_openid: str) -> list[dict]:
+        """Get all members of a group.
+
+        Returns list of {member_openid, nickname, role, ...}
+        """
+        await self._ensure_token()
+        resp = await self._client.get(
+            f"{self._base}/v2/groups/{group_openid}/members",
+            headers=self._headers,
+        )
+        data = resp.json() if resp.text else []
+        return data if isinstance(data, list) else []
