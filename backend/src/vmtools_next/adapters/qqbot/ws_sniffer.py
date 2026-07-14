@@ -63,15 +63,17 @@ async def main():
             d = event.get("d", {})
             t = event.get("t")
 
-            # Log group-related events
+            # Log group-related events - extract sender openid, NOT bot openid
             if t in ("GROUP_AT_MESSAGE_CREATE", "GROUP_MESSAGE_CREATE", "MESSAGE_CREATE"):
-                gid = d.get("group_openid", d.get("group_id", "??"))
-                gname = d.get("group_name", "??")
-                content = d.get("content", "") or str(d.get("event_id", ""))
-                print(f"🟢 群消息! group_openid={gid} content={content[:50]}")
+                author = d.get("author", {})
+                sender_id = author.get("id") or author.get("member_openid") or author.get("user_openid", "??")
+                sender_name = author.get("username", "") or author.get("nick", "") or "??"
+                content = d.get("content", "")
+                print(f"🟢 发送者 openid={sender_id} 名称={sender_name} 消息={content[:60]}")
+                print(f"   (内容中 <@xxx> 是机器人的 openid，忽略它)")
             
-            if "group_openid" in str(d).lower() and d.get("group_openid"):
-                print(f"🔍 group_openid: {d['group_openid']}")
+            if d.get("author", {}).get("id"):
+                print(f"🔍 发送者 openid: {d['author']['id']}")
                 
             # Log ready event
             if t == "READY":
