@@ -88,3 +88,15 @@ plugins:
     discord_notify:
       enabled: false
       webhook: ""
+
+# QQ Bot — send notifications to QQ groups
+qqbot:
+  enabled: true
+  app_id: "1905191614"
+  app_secret: "REDACTED_QQ_APP_SECRET"
+  sandbox: false
+  notify_groups: []  # 填入要推送的群 openid，如 ["ABC123"]
+  notify_on_start: true      # Bot 启动时通知
+  notify_on_stop: true       # Bot 停止时通知
+  notify_on_crash: true      # Bot 崩溃时通知
+  notify_on_chat: false      # 转发游戏聊天消息

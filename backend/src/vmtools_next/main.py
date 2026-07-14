@@ -142,7 +142,11 @@ async def lifespan(app: FastAPI):
     import vmtools_next.api.socketio_handlers  # noqa: F401
     logger.info("Socket.IO event handlers registered")
 
-    # 8. Periodic broadcast task
+    # 8. QQ Bot notification service
+    from vmtools_next.core.qqbot_notify import start as qqbot_start
+    await qqbot_start()
+
+    # 9. Periodic broadcast task
     import asyncio
     broadcast_task = asyncio.create_task(_periodic_broadcast())
 
@@ -151,6 +155,8 @@ async def lifespan(app: FastAPI):
 
     # Shutdown
     logger.info("VMTools Next shutting down...")
+    from vmtools_next.core.qqbot_notify import stop as qqbot_stop
+    await qqbot_stop()
     broadcast_task.cancel()
     if _monitor:
         await _monitor.stop()
