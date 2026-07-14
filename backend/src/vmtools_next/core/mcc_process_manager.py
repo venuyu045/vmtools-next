@@ -126,11 +126,10 @@ class MccProcessManager:
                     logger.info("MCC started on Windows with DEVNULL stdin (pid={})", process.pid)
                 else:
                     # Linux: use PIPE so commands can be sent via stdin.
-                    # Use stdbuf to force line-buffered output (Mono buffers stdout with pipe).
-                    # Also write a newline to kick-start MCC's stdin read loop.
-                    linux_cmd = ["stdbuf", "-oL"] + list(command)
+                    # Note: stdbuf doesn't work well with Mono, so we rely on
+                    # chunked reading in _read_output_loop instead.
                     process = await asyncio.create_subprocess_exec(
-                        *linux_cmd,
+                        *command,
                         cwd=instance.instance_dir,
                         env=env,
                         stdin=asyncio.subprocess.PIPE,
@@ -386,19 +385,35 @@ class MccProcessManager:
             db.close()
 
     async def _read_output_loop(self, instance_id: str, process: asyncio.subprocess.Process | subprocess.Popen) -> None:
+        """Read process stdout in chunks and split into lines.
+
+        Using readline() can block on Mono processes because they buffer stdout
+        heavily when writing to a PIPE. Reading in fixed-size chunks and splitting
+        on newlines is more reliable.
+        """
         if process.stdout is None:
             return
+        import codecs
+        decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
         loop = asyncio.get_event_loop()
         while True:
-            raw: bytes | None
+            chunk: bytes
             if _is_async_proc(process):
-                raw = await process.stdout.readline()
+                chunk = await process.stdout.read(4096)
             else:
-                raw = await loop.run_in_executor(None, process.stdout.readline)
-            if not raw:
+                chunk = await loop.run_in_executor(None, process.stdout.read, 4096)
+            if not chunk:
+                # Flush any remaining buffered data
+                tail = decoder.decode(b"", final=True)
+                if tail:
+                    for line in tail.splitlines():
+                        if line:
+                            await self._append_line(instance_id, "stdout", line)
                 break
-            content = raw.decode("utf-8", errors="replace").rstrip("\r\n")
-            await self._append_line(instance_id, "stdout", content)
+            text = decoder.decode(chunk)
+            for line in text.splitlines():
+                if line:
+                    await self._append_line(instance_id, "stdout", line)
 
     async def _watch_exit_loop(self, instance_id: str, process: asyncio.subprocess.Process | subprocess.Popen) -> None:
         if _is_async_proc(process):
