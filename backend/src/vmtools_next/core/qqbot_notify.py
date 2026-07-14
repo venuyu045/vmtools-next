@@ -63,14 +63,9 @@ async def broadcast(message: str, mention_openids: list[str] | None = None) -> N
     if not _qq_client:
         return
     config = get_config().qqbot
-    targets = mention_openids if mention_openids is not None else config.mention_openids
-
-    # Build mention prefix if any openids are configured
-    if targets:
-        mention_prefix = "".join(f"<@!{oid}>" for oid in targets) + " "
-        full_message = mention_prefix + message
-    else:
-        full_message = message
+    # Note: this bot's QQ client renders <@!openid> as raw text, so we
+    # don't use QQ's @mention feature. Names are in the message body instead.
+    full_message = message
 
     for group_id in config.notify_groups:
         try:
