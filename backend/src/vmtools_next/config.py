@@ -123,11 +123,22 @@ class QqBotConfig(BaseModel):
     app_secret: str = ""
     sandbox: bool = False
     notify_groups: list[str] = Field(default_factory=list)
-    mention_openids: list[str] = Field(default_factory=list)  # @提醒的 openid 列表
+    mention_openids: list[str] = Field(default_factory=list)
     notify_on_start: bool = True
     notify_on_stop: bool = True
     notify_on_crash: bool = True
     notify_on_chat: bool = False
+
+
+class TrackedPlayer(BaseModel):
+    name: str
+    qq_openid: str = ""
+
+
+class PlayerTrackingConfig(BaseModel):
+    enabled: bool = False
+    sentinel_instance: str = ""
+    players: list[TrackedPlayer] = Field(default_factory=list)
 
 
 class AppConfig(BaseSettings):
@@ -149,6 +160,7 @@ class AppConfig(BaseSettings):
     monitor: MonitorConfig = Field(default_factory=MonitorConfig)
     plugins: PluginsConfig = Field(default_factory=PluginsConfig)
     qqbot: QqBotConfig = Field(default_factory=QqBotConfig)
+    player_tracking: PlayerTrackingConfig = Field(default_factory=PlayerTrackingConfig)
 
 
 # ── Loader ──────────────────────────────────────────────────────────────

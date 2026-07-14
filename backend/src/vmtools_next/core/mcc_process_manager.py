@@ -588,27 +588,47 @@ class MccProcessManager:
     ]
 
     async def _detect_player_events(self, instance_id: str, content: str) -> None:
-        """Detect player join/leave from terminal output and forward to QQ."""
+        """Detect player join/leave from terminal output and notify QQ.
+
+        Only triggers for players configured in player_tracking.players.
+        Each tracked player gets a separate @mention with their qq_openid.
+        """
+        from vmtools_next.config import get_config
+        cfg = get_config().player_tracking
+        if not cfg.enabled:
+            return
+
+        # Only the sentinel instance tracks players
+        Session = get_session_factory()
+        db = Session()
+        try:
+            sentinel = db.query(MccInstanceModel).filter(
+                MccInstanceModel.slug == cfg.sentinel_instance
+            ).first()
+            if not sentinel or sentinel.instance_id != instance_id:
+                return
+        finally:
+            db.close()
+
         import re
         import asyncio as _asyncio
-        from vmtools_next.core.qqbot_notify import broadcast, notify_mcc_event
+        from vmtools_next.core.qqbot_notify import broadcast
+
+        # Build lookup: player name → qq_openid
+        tracked: dict[str, str] = {p.name: p.qq_openid for p in cfg.players}
 
         for pattern, event_type in self._PLAYER_EVENT_PATTERNS:
             m = re.search(pattern, content)
             if m:
                 player = m.group(1)
-                # Skip system/bot names
-                if player.lower() in ("server", "console", "system"):
+                if player not in tracked:
                     continue
                 emoji = "👋" if event_type == "leave" else "👤"
                 label = "离开了服务器" if event_type == "leave" else "加入了服务器"
+                qq = tracked[player]
                 msg = f"{emoji} {player} {label}"
-                logger.info("Player event: %s %s", player, event_type)
-                try:
-                    name = await self._get_instance_name(instance_id)
-                    _asyncio.ensure_future(broadcast(f"[{name}] {msg}"))
-                except Exception:
-                    pass
+                logger.info("Tracked player event: %s %s → QQ %s", player, event_type, qq)
+                _asyncio.ensure_future(broadcast(msg, mention_openids=[qq] if qq else None))
                 break
 
     async def _get_instance_name(self, instance_id: str) -> str:
