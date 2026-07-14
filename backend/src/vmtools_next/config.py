@@ -117,6 +117,18 @@ class PluginsConfig(BaseModel):
     builtin: PluginBuiltinConfig = Field(default_factory=PluginBuiltinConfig)
 
 
+class QqBotConfig(BaseModel):
+    enabled: bool = False
+    app_id: str = ""
+    app_secret: str = ""
+    sandbox: bool = False
+    notify_groups: list[str] = Field(default_factory=list)
+    notify_on_start: bool = True
+    notify_on_stop: bool = True
+    notify_on_crash: bool = True
+    notify_on_chat: bool = False
+
+
 class AppConfig(BaseSettings):
     """Top-level application configuration."""
 
@@ -135,6 +147,7 @@ class AppConfig(BaseSettings):
     mcc: MccConfig = Field(default_factory=MccConfig)
     monitor: MonitorConfig = Field(default_factory=MonitorConfig)
     plugins: PluginsConfig = Field(default_factory=PluginsConfig)
+    qqbot: QqBotConfig = Field(default_factory=QqBotConfig)
 
 
 # ── Loader ──────────────────────────────────────────────────────────────
