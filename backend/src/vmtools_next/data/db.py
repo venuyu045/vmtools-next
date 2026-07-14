@@ -106,6 +106,8 @@ def _run_lightweight_migrations(engine) -> None:
                 columns = {row[1] for row in conn.execute(text("PRAGMA table_info(mcc_instances)")).fetchall()}
                 if "account_profile_id" not in columns:
                     conn.execute(text("ALTER TABLE mcc_instances ADD COLUMN account_profile_id VARCHAR"))
+                if "auto_reconnect" not in columns:
+                    conn.execute(text("ALTER TABLE mcc_instances ADD COLUMN auto_reconnect BOOLEAN DEFAULT 0"))
             conn.commit()
     except Exception as e:
         logger.warning("Lightweight migration check: {}", e)

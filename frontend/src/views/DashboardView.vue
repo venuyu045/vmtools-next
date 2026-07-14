@@ -169,10 +169,10 @@ onBeforeUnmount(() => {
 <style scoped>
 .dashboard { display: flex; flex-direction: column; gap: 24px; }
 
-.stats-row { display: flex; gap: 16px; }
+.stats-row { display: flex; gap: 16px; flex-wrap: wrap; }
 
 .content-row { display: flex; gap: 24px; }
-.left-col { flex: 1; display: flex; flex-direction: column; gap: 24px; }
+.left-col { flex: 1; display: flex; flex-direction: column; gap: 24px; min-width: 0; }
 .right-col { width: 360px; flex-shrink: 0; display: flex; flex-direction: column; gap: 24px; }
 
 .section-title { font-size: 14px; color: var(--green-primary); margin-bottom: 16px; }
@@ -182,28 +182,134 @@ onBeforeUnmount(() => {
 .view-all { font-size: 14px; color: var(--green-primary); opacity: 0.6; text-decoration: none; }
 .view-all:hover { opacity: 1; }
 
-.action-btns { display: flex; gap: 12px; }
+.action-btns { display: flex; gap: 12px; flex-wrap: wrap; }
 
 .empty-text { color: var(--text-muted); text-align: center; padding: 20px; font-size: 16px; }
 
 /* Build task rows */
 .task-row { display: flex; align-items: center; gap: 16px; padding: 12px 0; border-bottom: 1px solid var(--border-subtle); }
 .task-row:last-child { border-bottom: none; }
-.task-info { flex: 1; }
-.task-name { color: var(--text-primary); font-size: 14px; margin-bottom: 4px; font-weight: bold; }
+.task-info { flex: 1; min-width: 0; }
+.task-name { color: var(--text-primary); font-size: 14px; margin-bottom: 4px; font-weight: bold; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .task-meta { color: var(--text-secondary); font-size: 14px; margin-bottom: 8px; }
 .task-pct { font-size: 12px; color: var(--green-primary); white-space: nowrap; }
 
 /* Alert rows */
 .alert-row { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--border-subtle); }
 .alert-row:last-child { border-bottom: none; }
-.alert-info { flex: 1; }
-.alert-text { font-size: 13px; color: var(--text-primary); }
+.alert-info { flex: 1; min-width: 0; }
+.alert-text { font-size: 13px; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .alert-time { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
 
 /* Monitor rows */
-.mon-row { display: flex; justify-content: space-between; align-items: center; padding: 10px 0; border-bottom: 1px solid var(--border-subtle); }
+.mon-row { display: flex; justify-content: space-between; align-items: center; padding: 10px 0; border-bottom: 1px solid var(--border-subtle); gap: 8px; }
 .mon-row:last-child { border-bottom: none; }
-.mon-label { font-size: 13px; color: var(--text-secondary); }
-.mon-val { font-size: 16px; color: var(--text-primary); }
+.mon-label { font-size: 13px; color: var(--text-secondary); flex-shrink: 0; }
+.mon-val { font-size: 16px; color: var(--text-primary); text-align: right; word-break: break-all; }
+
+/* ============ RESPONSIVE ============ */
+@media (max-width: 1024px) {
+  .content-row {
+    flex-direction: column;
+  }
+  .right-col {
+    width: 100%;
+    flex-shrink: 1;
+  }
+}
+
+@media (max-width: 768px) {
+  .dashboard {
+    gap: 16px;
+  }
+
+  .stats-row {
+    gap: 10px;
+  }
+
+  .stats-row .stat-item {
+    flex: 1 1 calc(50% - 10px);
+    min-width: 140px;
+    padding: 16px;
+    gap: 10px;
+  }
+
+  .content-row {
+    gap: 16px;
+  }
+
+  .left-col,
+  .right-col {
+    gap: 16px;
+  }
+
+  .action-btns {
+    gap: 8px;
+  }
+
+  .task-row {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .task-pct {
+    font-size: 11px;
+  }
+
+  .mon-val {
+    font-size: 14px;
+  }
+}
+
+@media (max-width: 480px) {
+  .dashboard {
+    gap: 12px;
+  }
+
+  .stats-row {
+    gap: 8px;
+  }
+
+  .stats-row .stat-item {
+    padding: 12px;
+    gap: 8px;
+  }
+
+  .stat-value {
+    font-size: 16px;
+  }
+  .stat-label {
+    font-size: 11px;
+  }
+  .stat-sub {
+    font-size: 12px;
+  }
+
+  .pixel-card {
+    padding: 16px;
+  }
+
+  .section-title {
+    font-size: 12px;
+    margin-bottom: 12px;
+  }
+
+  .action-btns .pixel-btn {
+    flex: 1;
+    padding: 10px 12px;
+    font-size: 12px;
+    min-width: 0;
+  }
+
+  .task-name {
+    font-size: 13px;
+  }
+  .task-meta {
+    font-size: 12px;
+  }
+
+  .mon-val {
+    font-size: 13px;
+  }
+}
 </style>

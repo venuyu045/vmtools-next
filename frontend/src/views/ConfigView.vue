@@ -135,4 +135,18 @@ onMounted(() => {
 .cfg-json { color: var(--text-secondary); white-space: pre-wrap; font-size: 13px; max-height: 600px; overflow: auto; background: #000; padding: 12px; border: 1px solid var(--border-card); }
 .field-hint { color: var(--text-muted); font-size: 12px; margin-top: 3px; }
 .range-sep { margin: 0 8px; color: var(--text-muted); }
+
+/* ============ RESPONSIVE ============ */
+@media (max-width: 768px) {
+  .config-page { max-width: 100%; }
+
+  /* Reduce form label width on mobile */
+  .cfg-card :deep(.el-form-item__label) {
+    width: auto !important;
+    padding-bottom: 4px;
+  }
+  .cfg-card :deep(.el-form-item__content) {
+    margin-left: 0 !important;
+  }
+}
 </style>

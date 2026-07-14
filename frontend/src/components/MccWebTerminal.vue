@@ -392,4 +392,14 @@ onBeforeUnmount(() => {
 :deep(.xterm) { height: 100%; }
 :deep(.xterm-viewport) { scrollbar-color: var(--green-primary) #000; }
 :deep(.xterm-screen) { text-shadow: 0 0 6px rgba(0, 255, 65, .28); }
+
+/* ============ RESPONSIVE ============ */
+@media (max-width: 768px) {
+  .terminal-toolbar { gap: 6px; }
+  .search-input { width: 100%; flex-basis: 100%; }
+  .terminal-toolbar .pixel-btn { font-size: 12px; padding: 6px 10px; min-height: 36px; }
+  .terminal-toolbar .mode-select { width: 110px; }
+  .terminal-status { font-size: 10px; gap: 6px; flex-wrap: wrap; }
+  .xterm-shell { min-height: 200px; }
+}
 </style>
