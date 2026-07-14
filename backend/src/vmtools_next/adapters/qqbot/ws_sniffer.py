@@ -44,7 +44,7 @@ async def main():
             "op": 2,
             "d": {
                 "token": f"QQBot {token}",
-                "intents": 0xFFFF,
+                "intents": 1 | (1 << 25),  # GUILDS + GROUP_AT_MESSAGE
                 "shard": [0, 1],
                 "properties": {
                     "$os": "linux",
