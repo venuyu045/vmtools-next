@@ -111,14 +111,13 @@ class QqBotClient:
         await self._ensure_token()
         async with self._rate_sem:
             if mention_openids:
-                # Use markdown for @mention support
-                mentions = "".join(f"<@!{oid}>" for oid in mention_openids)
+                # QQ Bot @mention: <@openid> renders user name in message body.
+                # <@!openid> requires special "群聊@所有人" permission which
+                # this bot may not have. Fall back to <@openid> in text mode.
+                mentions = "".join(f"<@{oid}>" for oid in mention_openids)
                 payload = {
-                    "msg_type": 1,
-                    "content": "",
-                    "markdown": {
-                        "content": f"{mentions} {content}",
-                    },
+                    "msg_type": 0,
+                    "content": f"{mentions} {content}",
                 }
             else:
                 payload = {
