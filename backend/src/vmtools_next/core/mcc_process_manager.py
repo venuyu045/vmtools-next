@@ -456,6 +456,86 @@ class MccProcessManager:
             logger.debug("Failed to persist MCC terminal line: {}", exc)
         finally:
             db.close()
+
+        # Detect disconnect patterns in MCC output
+        if stream == "stdout":
+            await self._detect_disconnect(instance_id, content)
+
+        await sio.emit("mcc_terminal_output", {
+            "instance_id": instance_id,
+            "seq": line.seq,
+            "stream": stream,
+            "content": masked,
+            "created_at": line.created_at.isoformat(),
+        }, room=f"mcc:{instance_id}")
+        return line
+
+    # ── Disconnect detection patterns (from MCC source) ──────────────
+    _DISCONNECT_PATTERNS: list[tuple[str, str]] = [
+        # (pattern, category)
+        ("Disconnected by Server", "kicked"),
+        ("Connection has been lost", "connection_lost"),
+        ("Connection Timeout", "timeout"),
+        ("Login failed", "login_rejected"),
+        ("Failed to connect to this IP", "connect_failed"),
+        ("timeout occured while attempting to connect", "connect_timeout"),
+        ("Got disconnected with message", "kicked"),
+        ("Forge Login Handshake did not complete", "forge_error"),
+        ("Server does not report its protocol version", "protocol_error"),
+        ("Invalid response to StartEncryption", "encrypt_error"),
+    ]
+
+    async def _detect_disconnect(self, instance_id: str, content: str) -> None:
+        """Check terminal output for known MCC disconnect patterns and trigger alerts."""
+        for pattern, category in self._DISCONNECT_PATTERNS:
+            if pattern.lower() in content.lower():
+                logger.warning("MCC disconnect detected: instance=%s category=%s pattern=%s",
+                               instance_id, category, pattern)
+                try:
+                    import asyncio as _asyncio
+                    from vmtools_next.core.qqbot_notify import notify_mcc_event
+                    name = await self._get_instance_name(instance_id)
+                    labels = {
+                        "kicked": "被服务器踢出",
+                        "connection_lost": "连接丢失",
+                        "timeout": "连接超时",
+                        "login_rejected": "登录被拒",
+                        "connect_failed": "连接失败",
+                        "connect_timeout": "连接超时",
+                        "forge_error": "Forge 握手失败",
+                        "protocol_error": "协议错误",
+                        "encrypt_error": "加密错误",
+                    }
+                    label = labels.get(category, category)
+                    _asyncio.ensure_future(
+                        notify_mcc_event(name, "crashed", f"🔌 {label}\n{content.strip()[:200]}")
+                    )
+                except Exception:
+                    pass
+                break  # Only trigger once per line
+        masked = mask_text(content)
+        line = self.buffer.append(instance_id, stream, masked)
+        Session = get_session_factory()
+        db = Session()
+        try:
+            db.add(MccTerminalLogModel(
+                instance_id=instance_id,
+                stream=stream,
+                seq=line.seq,
+                content=content,
+                content_masked=masked,
+                created_at=line.created_at,
+            ))
+            db.commit()
+        except Exception as exc:
+            db.rollback()
+            logger.debug("Failed to persist MCC terminal line: {}", exc)
+        finally:
+            db.close()
+
+        # Detect disconnect patterns in MCC output
+        if stream == "stdout":
+            await self._detect_disconnect(instance_id, content)
         await sio.emit("mcc_terminal_output", {
             "instance_id": instance_id,
             "seq": line.seq,
