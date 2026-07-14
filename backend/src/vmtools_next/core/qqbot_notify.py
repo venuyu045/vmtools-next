@@ -63,13 +63,11 @@ async def broadcast(message: str, mention_openids: list[str] | None = None) -> N
     if not _qq_client:
         return
     config = get_config().qqbot
-    # Note: this bot's QQ client renders <@!openid> as raw text, so we
-    # don't use QQ's @mention feature. Names are in the message body instead.
-    full_message = message
+    targets = mention_openids if mention_openids is not None else config.mention_openids
 
     for group_id in config.notify_groups:
         try:
-            await _qq_client.send_group_message(group_id, full_message)
+            await _qq_client.send_group_message(group_id, message, mention_openids=targets)
         except Exception as exc:
             logger.warning("QQ broadcast failed for group %s: %s", group_id, exc)
 

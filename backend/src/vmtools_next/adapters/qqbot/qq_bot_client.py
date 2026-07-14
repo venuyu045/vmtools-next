@@ -96,23 +96,38 @@ class QqBotClient:
         content: str,
         msg_type: int = 0,
         markdown: Optional[dict] = None,
+        mention_openids: list[str] | None = None,
     ) -> dict:
         """Send a message to a QQ group.
 
         Args:
             group_openid: Group ID from QQ platform
-            content: Plain text message
-            msg_type: 0=text, 1=markdown, 2=ark, 3=embed, 4=media
-            markdown: Markdown message object if msg_type=1
+            content: Message text
+            msg_type: 0=text, 1=markdown
+            markdown: Markdown object if msg_type=1
+            mention_openids: If set, wraps message as markdown with <@!openid>
+                to trigger QQ @mention notifications.
         """
         await self._ensure_token()
         async with self._rate_sem:
-            payload: dict = {
-                "msg_type": msg_type,
-                "content": content,
-            }
-            if markdown and msg_type == 1:
-                payload["markdown"] = markdown
+            if mention_openids:
+                # Use markdown for @mention support
+                mentions = "".join(f"<@!{oid}>" for oid in mention_openids)
+                payload = {
+                    "msg_type": 1,
+                    "content": "",
+                    "markdown": {
+                        "content": f"{mentions} {content}",
+                    },
+                }
+            else:
+                payload = {
+                    "msg_type": msg_type,
+                    "content": content,
+                }
+                if markdown and msg_type == 1:
+                    payload["markdown"] = markdown
+                    payload["content"] = ""
 
             resp = await self._client.post(
                 f"{self._base}/v2/groups/{group_openid}/messages",
