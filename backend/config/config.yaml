@@ -101,3 +101,15 @@ qqbot:
   notify_on_stop: true       # Bot 停止时通知
   notify_on_crash: true      # Bot 崩溃时通知
   notify_on_chat: false      # 转发游戏聊天消息
+
+# 玩家进出追踪 — 监控特定玩家的登录/登出并推送到 QQ
+player_tracking:
+  enabled: true
+  sentinel_instance: "bot-001"  # 用哪个实例来监听
+  players:
+    - name: "Venus_Yu"
+      qq_openid: "E3D613A55099F0BEE950577A928EFC37"
+    - name: "gxko"
+      qq_openid: "9E63282A5F57B6846F1F8E3C602A1A82"
+    - name: "happyzhou"
+      qq_openid: "589CF71DEDFBCD86B7F60C62DDE49F20"
