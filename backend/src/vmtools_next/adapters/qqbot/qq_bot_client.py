@@ -146,3 +146,16 @@ class QqBotClient:
                     resp.status_code, resp.text[:300],
                 )
             return data
+
+    async def list_groups(self) -> list[dict]:
+        """Get all groups the bot has joined.
+
+        Returns list of {group_openid, group_name, member_count, ...}
+        """
+        await self._ensure_token()
+        resp = await self._client.get(
+            f"{self._base}/users/@me/groups",
+            headers=self._headers,
+        )
+        data = resp.json() if resp.text else []
+        return data if isinstance(data, list) else []
