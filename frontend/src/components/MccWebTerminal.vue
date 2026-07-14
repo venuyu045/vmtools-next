@@ -361,6 +361,12 @@ watch(() => props.instanceId, async () => {
   lastSeq = 0
   commandBuffer = ''
   loadCommandHistory()
+  // Clear terminal display for new instance
+  if (terminal) {
+    terminal.clear()
+    terminal.writeln('\x1b[32mVMTools MCC Web Terminal\x1b[0m')
+    terminal.write('\r\n' + promptText())
+  }
   await joinTerminalRoom()
   await reloadHistory()
 })

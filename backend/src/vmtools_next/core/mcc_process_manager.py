@@ -126,10 +126,11 @@ class MccProcessManager:
                     logger.info("MCC started on Windows with DEVNULL stdin (pid={})", process.pid)
                 else:
                     # Linux: use PIPE so commands can be sent via stdin.
-                    # MCC may block on Console.ReadLine() until we write something,
-                    # so we immediately write a newline to kick-start the read loop.
+                    # Use stdbuf to force line-buffered output (Mono buffers stdout with pipe).
+                    # Also write a newline to kick-start MCC's stdin read loop.
+                    linux_cmd = ["stdbuf", "-oL"] + list(command)
                     process = await asyncio.create_subprocess_exec(
-                        *command,
+                        *linux_cmd,
                         cwd=instance.instance_dir,
                         env=env,
                         stdin=asyncio.subprocess.PIPE,
@@ -213,17 +214,13 @@ class MccProcessManager:
                     return {"status": "stopped", "pid": None, "message": "already stopped"}
 
                 await self._append_system_line(instance_id, "Stopping MCC process")
-                if not force and handle.process.stdin:
+                # Use force stop (SIGTERM) instead of sending "exit" via stdin
+                # to avoid MCC sending "exit" as a chat message to the server
+                if not force and _is_async_proc(handle.process):
                     try:
-                        if _is_async_proc(handle.process):
-                            handle.process.stdin.write(b"exit\n")
-                            await handle.process.stdin.drain()
-                        else:
-                            loop = asyncio.get_event_loop()
-                            await loop.run_in_executor(None, handle.process.stdin.write, b"exit\n")
-                            await loop.run_in_executor(None, handle.process.stdin.flush)
-                    except Exception as exc:
-                        logger.debug("Failed to write graceful stop command: {}", exc)
+                        handle.process.terminate()
+                    except Exception:
+                        pass
 
                 try:
                     if _is_async_proc(handle.process):
