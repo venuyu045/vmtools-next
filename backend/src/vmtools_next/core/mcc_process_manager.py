@@ -144,6 +144,7 @@ class MccProcessManager:
         self.config = get_config().mcc
         self.buffer = buffer or TerminalLogBuffer()
         self._processes: dict[str, ProcessHandle] = {}
+        self._pending_disconnect: dict[str, str] = {}  # instance_id → disconnect line
         self._locks: dict[str, asyncio.Lock] = {}
         self._started = False
 
@@ -694,6 +695,22 @@ class MccProcessManager:
         return line
 
     # ── Disconnect detection patterns (from MCC source) ──────────────
+
+    async def _check_auto_reconnect(self, instance_id: str) -> None:
+        """Trigger auto-reconnect if enabled for this instance."""
+        import asyncio as _asyncio
+        Session = get_session_factory()
+        db2 = Session()
+        try:
+            inst = db2.query(MccInstanceModel).filter(
+                MccInstanceModel.instance_id == instance_id
+            ).first()
+            if inst and inst.auto_reconnect and inst.desired_state == "running":
+                logger.info("Auto-reconnect triggered by disconnect: %s", instance_id)
+                await self._append_system_line(instance_id, "检测到断联，自动重连...")
+                _asyncio.ensure_future(self.start_instance(instance_id))
+        finally:
+            db2.close()
     _DISCONNECT_PATTERNS: list[tuple[str, str]] = [
         # (pattern, category)
         ("Disconnected by Server", "kicked"),
@@ -710,16 +727,37 @@ class MccProcessManager:
 
     async def _detect_disconnect(self, instance_id: str, content: str) -> None:
         """Check terminal output for known MCC disconnect patterns and trigger alerts."""
+        # If we have a pending disconnect, this line is the kick reason
+        pending = self._pending_disconnect.pop(instance_id, None)
+        if pending:
+            import asyncio as _asyncio
+            from vmtools_next.core.qqbot_notify import notify_mcc_event
+            try:
+                name = await self._get_instance_name(instance_id)
+                reason = content.strip()
+                # Strip ANSI color codes
+                import re
+                reason = re.sub(r"\x1b\[[0-9;]*m", "", reason)
+                reason = re.sub(r"\d{1,2}:\d{2}:\d{2}\s*\[.*?\]\s*", "", reason).strip()
+                if reason:
+                    msg = f"因为「{reason[:100]}」似了喵"
+                else:
+                    msg = "似了喵（原因未知）"
+                _asyncio.ensure_future(notify_mcc_event(name, "crashed", msg))
+                self._check_auto_reconnect(instance_id)
+            except Exception:
+                pass
+            return
+
         for pattern, category in self._DISCONNECT_PATTERNS:
             if pattern.lower() in content.lower():
                 logger.warning("MCC disconnect detected: instance=%s category=%s pattern=%s",
                                instance_id, category, pattern)
-                try:
-                    import asyncio as _asyncio
-                    from vmtools_next.core.qqbot_notify import notify_mcc_event
-                    name = await self._get_instance_name(instance_id)
+                if category == "kicked":
+                    # Wait for next line to get the real kick reason
+                    self._pending_disconnect[instance_id] = content
+                else:
                     labels = {
-                        "kicked": "被服务器踢出",
                         "connection_lost": "连接丢失",
                         "timeout": "连接超时",
                         "login_rejected": "登录被拒",
@@ -730,26 +768,17 @@ class MccProcessManager:
                         "encrypt_error": "加密错误",
                     }
                     label = labels.get(category, category)
-                    _asyncio.ensure_future(
-                        notify_mcc_event(name, "crashed", f"{label}\n{content.strip()[:200]}")
-                    )
-
-                    # Auto-reconnect: if enabled, restart the instance
-                    Session = get_session_factory()
-                    db2 = Session()
+                    import asyncio as _asyncio
+                    from vmtools_next.core.qqbot_notify import notify_mcc_event
                     try:
-                        inst = db2.query(MccInstanceModel).filter(
-                            MccInstanceModel.instance_id == instance_id
-                        ).first()
-                        if inst and inst.auto_reconnect and inst.desired_state == "running":
-                            logger.info("Auto-reconnect triggered by disconnect: %s", instance_id)
-                            await self._append_system_line(instance_id, "检测到断联，自动重连...")
-                            _asyncio.ensure_future(self.start_instance(instance_id))
-                    finally:
-                        db2.close()
-                except Exception:
-                    pass
-                break  # Only trigger once per line
+                        name = await self._get_instance_name(instance_id)
+                        _asyncio.ensure_future(
+                            notify_mcc_event(name, "crashed", f"因为「{label}」似了喵")
+                        )
+                    except Exception:
+                        pass
+                    self._check_auto_reconnect(instance_id)
+                break
 
     # ── Player join/leave detection (for sentinel bots) ──────────────
     _PLAYER_EVENT_PATTERNS: list[tuple[str, str]] = [
