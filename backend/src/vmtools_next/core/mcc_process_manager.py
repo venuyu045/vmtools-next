@@ -122,8 +122,14 @@ class PtyProcess:
             self.returncode = os.waitstatus_to_exitcode(status)
         except asyncio.TimeoutError:
             os.kill(self.pid, signal.SIGKILL)
-            pid, status = await loop.run_in_executor(None, os.waitpid, self.pid, 0)
-            self.returncode = os.waitstatus_to_exitcode(status)
+            try:
+                pid, status = await loop.run_in_executor(None, os.waitpid, self.pid, 0)
+                self.returncode = os.waitstatus_to_exitcode(status)
+            except (ChildProcessError, ProcessLookupError):
+                self.returncode = -9  # killed
+        except (ChildProcessError, ProcessLookupError):
+            # Process already reaped (e.g. auto-reconnect restarted it)
+            self.returncode = self.returncode or 0
         try:
             os.close(self._master_fd)
         except OSError:
@@ -286,6 +292,12 @@ class MccProcessManager:
                     message="MCC process started",
                 ))
                 db.commit()
+
+                # Cancel old tasks if restarting (auto-reconnect)
+                old = self._processes.pop(instance_id, None)
+                if old:
+                    old.output_task.cancel()
+                    old.exit_task.cancel()
 
                 output_task = asyncio.create_task(self._read_output_loop(instance_id, process))
                 exit_task = asyncio.create_task(self._watch_exit_loop(instance_id, process))
