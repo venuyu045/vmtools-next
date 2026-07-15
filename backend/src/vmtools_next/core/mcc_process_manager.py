@@ -181,14 +181,13 @@ class MccProcessManager:
 
         master_fd, slave_fd = pty.openpty()
 
-        # Disable echo + line processing tweaks on PTY slave.
-        # Keep cooked mode so MCC's Console.ReadLine() works correctly.
-        import termios
+        # Disable echo only — keep cooked mode so Console.ReadLine() works.
+        # Re-enable ONLCR: MCC writes \n, PTY outputs \r\n (normal terminal).
         try:
             attrs = termios.tcgetattr(slave_fd)
             attrs[3] &= ~termios.ECHO   # don't echo input back
             attrs[3] &= ~termios.ECHOE  # don't echo erase
-            attrs[1] &= ~termios.ONLCR  # don't map NL → CR-NL on output
+            # Keep ONLCR enabled (default): NL → CR-NL on output
             termios.tcsetattr(slave_fd, termios.TCSANOW, attrs)
         except Exception:
             pass
@@ -199,6 +198,13 @@ class MccProcessManager:
             try:
                 os.close(master_fd)
                 os.setsid()
+
+                # Set controlling terminal (required for Console.ReadLine on some Mono versions)
+                try:
+                    import fcntl
+                    fcntl.ioctl(slave_fd, termios.TIOCSCTTY, 0)
+                except OSError:
+                    pass
 
                 # Redirect stdin/stdout/stderr to PTY slave
                 os.dup2(slave_fd, 0)
@@ -567,7 +573,7 @@ class MccProcessManager:
                             await self._append_line(instance_id, "stdout", line)
                 logger.info("PTY read loop ended for %s: %d lines total", instance_id, line_count)
                 break
-            text = decoder.decode(chunk)
+            text = decoder.decode(chunk).replace("\r", "\n")
             for line in text.splitlines():
                 if line and not line.startswith("Script "):
                     try:
