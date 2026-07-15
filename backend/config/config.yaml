@@ -107,9 +107,10 @@ player_tracking:
   enabled: true
   sentinel_instance: "bot-001"  # 用哪个实例来监听
   players:
-    - name: "Venus_Yu"
+    - name: "Venus_Yu002"
       qq_openid: "E3D613A55099F0BEE950577A928EFC37"
     - name: "gxko"
       qq_openid: "9E63282A5F57B6846F1F8E3C602A1A82"
     - name: "happyzhou"
+      qq_openid: "589CF71DEDFBCD86B7F60C62DDE49F20"
       qq_openid: "589CF71DEDFBCD86B7F60C62DDE49F20"
