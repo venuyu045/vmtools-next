@@ -85,7 +85,7 @@ const form = reactive({ name: '' })
 
 onMounted(async () => {
   try {
-    const { data } = await client.get('/api/player-tracking')
+    const { data } = await client.get('/player-tracking')
     config.enabled = data.enabled
     config.sentinel_instance = data.sentinel_instance
     config.owners = data.owners || []
@@ -96,7 +96,7 @@ onMounted(async () => {
 
 async function save() {
   try {
-    await client.put('/api/player-tracking', {
+    await client.put('/player-tracking', {
       enabled: config.enabled,
       sentinel_instance: config.sentinel_instance,
       owners: config.owners,
