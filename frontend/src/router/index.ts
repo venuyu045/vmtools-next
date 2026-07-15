@@ -18,6 +18,7 @@ const routes = [
       { path: 'mcc/instances', name: 'MccInstances', component: () => import('@/views/MccInstanceListView.vue'), meta: { title: 'MCC 管理' } },
       { path: 'mcc/instances/:id/terminal', name: 'MccTerminal', component: () => import('@/views/MccTerminalView.vue'), meta: { title: 'MCC 终端' } },
       { path: 'mcc/instances/:id/files', name: 'MccFiles', component: () => import('@/views/MccFileManagerView.vue'), meta: { title: 'MCC 文件' } },
+      { path: 'player-tracking', name: 'PlayerTracking', component: () => import('@/views/PlayerTrackingView.vue'), meta: { title: '玩家追踪' } },
       { path: 'warehouses', name: 'Warehouses', component: () => import('@/views/WarehouseListView.vue'), meta: { title: '仓库管理' } },
       { path: 'warehouses/:id', name: 'WarehouseDetail', component: () => import('@/views/WarehouseDetailView.vue'), meta: { title: '仓库详情' } },
       { path: 'build', name: 'BuildTasks', component: () => import('@/views/BuildTaskListView.vue'), meta: { title: '建造任务' } },
