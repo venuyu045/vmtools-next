@@ -9,7 +9,7 @@ from pydantic import BaseModel
 
 from vmtools_next.config import _find_config_dir, get_config, reload_config
 from vmtools_next.data.models.auth import UserModel
-from vmtools_next.deps import get_current_user
+from vmtools_next.api.deps import get_current_user
 
 router = APIRouter(prefix="/api/player-tracking", tags=["player-tracking"])
 
