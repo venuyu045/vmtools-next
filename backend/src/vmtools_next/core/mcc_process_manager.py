@@ -309,29 +309,18 @@ class MccProcessManager:
                     )
                     logger.info("MCC started on Windows with DEVNULL stdin (pid={})", process.pid)
                 else:
-                    # Linux: script -f writes MCC output to a log file.
-                    # We tail the log file to read stdout. This avoids all
-                    # PTY buffering issues. stdin PIPE still works for commands.
-                    import shlex
-                    log_path = os.path.join(instance.instance_dir, "mcc-output.log")
-                    try:
-                        os.remove(log_path)
-                    except OSError:
-                        pass
-                    wrapped = shlex.join(command)
-                    cmd = ["script", "-q", "-f", log_path,
-                           "sh", "-c", f"exec {wrapped}"]
-                    process = subprocess.Popen(
-                        cmd,
+                    # Linux: simple asyncio PIPE. readline() handles line
+                    # buffering fine — Mono may buffer output on a PIPE,
+                    # but the network thread is separate from Console.ReadLine.
+                    process = await asyncio.create_subprocess_exec(
+                        *command,
                         cwd=instance.instance_dir,
                         env=env,
-                        stdin=subprocess.PIPE,
-                        stdout=subprocess.DEVNULL,
-                        stderr=subprocess.DEVNULL,
+                        stdin=asyncio.subprocess.PIPE,
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.STDOUT,
                     )
-                    logger.info("MCC started on Linux via script: log=%s pid=%d", log_path, process.pid)
-                    # Start tailing the log file
-                    asyncio.create_task(self._tail_log(instance_id, log_path))
+                    logger.info("MCC started on Linux with PIPE stdin (pid={})", process.pid)
 
                 instance.status = "running"
                 instance.desired_state = "running"
@@ -593,40 +582,24 @@ class MccProcessManager:
             db.close()
 
     async def _read_output_loop(self, instance_id: str, process: asyncio.subprocess.Process | subprocess.Popen) -> None:
-        """Read process stdout in chunks and split into lines.
-
-        Using readline() can block on Mono processes because they buffer stdout
-        heavily when writing to a PIPE. Reading in fixed-size chunks and splitting
-        on newlines is more reliable.
-        """
+        """Read process stdout line by line."""
         if process.stdout is None:
             return
-        import codecs
-        decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
         loop = asyncio.get_event_loop()
-        line_count = 0
         while True:
-            chunk: bytes
+            raw: bytes | None
             if _is_async_proc(process):
-                chunk = await process.stdout.read(4096)
+                raw = await process.stdout.readline()
             else:
-                chunk = await loop.run_in_executor(None, process.stdout.read, 4096)
-            if not chunk:
-                tail = decoder.decode(b"", final=True)
-                if tail:
-                    for line in tail.splitlines():
-                        if line and not line.startswith("Script "):
-                            await self._append_line(instance_id, "stdout", line)
-                logger.info("PTY read loop ended for %s: %d lines total", instance_id, line_count)
+                raw = await loop.run_in_executor(None, process.stdout.readline)
+            if not raw:
                 break
-            text = decoder.decode(chunk).replace("\r\n", "\n").replace("\r", "\n")
-            for line in text.splitlines():
-                if line and not line.startswith("Script "):
-                    try:
-                        await self._append_line(instance_id, "stdout", line)
-                        line_count += 1
-                    except Exception:
-                        pass  # don't crash read loop on single line failure
+            content = raw.decode("utf-8", errors="replace").rstrip("\r\n")
+            if content:
+                try:
+                    await self._append_line(instance_id, "stdout", content)
+                except Exception:
+                    pass
 
     async def _watch_exit_loop(self, instance_id: str, process: asyncio.subprocess.Process | subprocess.Popen) -> None:
         if _is_async_proc(process):
@@ -706,10 +679,10 @@ class MccProcessManager:
         finally:
             db.close()
 
-        # Detect disconnect patterns in MCC output
+        # Fire-and-forget: don't block the read loop
         if stream == "stdout":
-            await self._detect_disconnect(instance_id, content)
-            await self._detect_player_events(instance_id, content)
+            asyncio.create_task(self._detect_disconnect(instance_id, content))
+            asyncio.create_task(self._detect_player_events(instance_id, content))
 
         await sio.emit("mcc_terminal_output", {
             "instance_id": instance_id,
