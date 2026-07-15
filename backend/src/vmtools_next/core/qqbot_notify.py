@@ -33,7 +33,7 @@ async def start() -> bool:
     if ok:
         logger.info("QQ Bot notification service started, groups=%s", config.notify_groups)
         # Send startup notification
-        await broadcast("🟢 VMTools Next 后端已启动")
+        await broadcast("VMTools Next 后端已启动")
     return ok
 
 
@@ -42,7 +42,7 @@ async def stop():
     global _qq_client, _broadcast_task
     config = get_config().qqbot
     if _qq_client and _broadcast_task is None:
-        await broadcast("🔴 VMTools Next 后端已停止")
+        await broadcast("VMTools Next 后端已停止")
     if _qq_client:
         await _qq_client.stop()
         _qq_client = None
@@ -82,11 +82,10 @@ async def notify_mcc_event(
     if not config.enabled:
         return
 
-    emoji = {"started": "🟢", "stopped": "⏹", "crashed": "💥"}.get(event, "📢")
     labels = {"started": "已启动", "stopped": "已停止", "crashed": "已崩溃"}
     label = labels.get(event, event)
 
-    msg = f"{emoji} MCC [{instance_name}] {label}"
+    msg = f"MCC [{instance_name}] {label}"
     if extra:
         msg += f"\n{extra}"
     await broadcast(msg)
@@ -97,4 +96,4 @@ async def notify_mcc_chat(instance_name: str, player: str, message: str) -> None
     config = get_config().qqbot
     if not config.enabled or not config.notify_on_chat:
         return
-    await broadcast(f"💬 [{instance_name}] {player}: {message}")
+    await broadcast(f"[{instance_name}] {player}: {message}")
