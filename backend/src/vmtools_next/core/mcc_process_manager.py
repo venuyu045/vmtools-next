@@ -573,7 +573,7 @@ class MccProcessManager:
                             await self._append_line(instance_id, "stdout", line)
                 logger.info("PTY read loop ended for %s: %d lines total", instance_id, line_count)
                 break
-            text = decoder.decode(chunk).replace("\r", "\n")
+            text = decoder.decode(chunk).replace("\r\n", "\n").replace("\r", "\n")
             for line in text.splitlines():
                 if line and not line.startswith("Script "):
                     try:
