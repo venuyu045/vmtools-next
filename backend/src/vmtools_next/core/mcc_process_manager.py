@@ -834,18 +834,20 @@ class MccProcessManager:
                 logger.warning("Player event: matched={} player={} type={} tracked={}",
                                pattern, player, event_type, player in tracked)
                 # Allow partial match: "Venus_Yu002" should match "93mVenus_Yu002"
-                qq = None
+                qq: str | None = None
+                display = player
                 if player in tracked:
                     qq = tracked[player]
                 else:
                     for tname, tqq in tracked.items():
                         if tname in player:
                             qq = tqq
+                            display = tname  # use clean config name
                             break
                 if not qq:
                     continue
                 label = "离线了喵" if event_type == "leave" else "上线了喵"
-                msg = f"{player} {label}"
+                msg = f"{display} {label}"
                 logger.info("Tracked player event: {} {} -> QQ {}", player, event_type, qq)
                 _asyncio.ensure_future(broadcast(msg, mention_openids=[qq] if qq else None))
                 break
