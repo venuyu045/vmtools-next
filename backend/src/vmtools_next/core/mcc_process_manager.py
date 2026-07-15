@@ -831,7 +831,7 @@ class MccProcessManager:
                 player = m.group(1)
                 if player not in tracked:
                     continue
-                label = "离开了服务器" if event_type == "leave" else "加入了服务器"
+                label = "离线了喵" if event_type == "leave" else "上线了喵"
                 qq = tracked[player]
                 msg = f"{player} {label}"
                 logger.info("Tracked player event: %s %s → QQ %s", player, event_type, qq)
