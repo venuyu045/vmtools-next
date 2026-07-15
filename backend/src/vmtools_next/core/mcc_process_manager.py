@@ -793,17 +793,13 @@ class MccProcessManager:
     ]
 
     async def _detect_player_events(self, instance_id: str, content: str) -> None:
-        """Detect player join/leave from terminal output and notify QQ.
-
-        Only triggers for players configured in player_tracking.players.
-        Each tracked player gets a separate @mention with their qq_openid.
-        """
+        """Detect player join/leave from terminal output and notify QQ."""
         from vmtools_next.config import get_config
         cfg = get_config().player_tracking
         if not cfg.enabled or not cfg.sentinel_instance:
             return
 
-        # Lazy cache sentinel instance_id — avoid DB query on every stdout line
+        # Lazy cache sentinel instance_id
         if self._sentinel_id is None:
             Session = get_session_factory()
             db = Session()
@@ -812,6 +808,8 @@ class MccProcessManager:
                     MccInstanceModel.slug == cfg.sentinel_instance
                 ).first()
                 self._sentinel_id = sentinel.instance_id if sentinel else ""
+                logger.warning("Sentinel cached: slug=%s → instance_id=%s",
+                               cfg.sentinel_instance, self._sentinel_id)
             finally:
                 db.close()
 
@@ -827,13 +825,14 @@ class MccProcessManager:
         for owner in cfg.owners:
             for pname in owner.track_players:
                 tracked[pname] = owner.qq_openid
+        logger.warning("Tracked players: %s", tracked)
 
         for pattern, event_type in self._PLAYER_EVENT_PATTERNS:
             m = re.search(pattern, content)
             if m:
                 player = m.group(1)
-                logger.debug("Player event matched: pattern=%s player=%s tracked=%s",
-                             pattern, player, player in tracked)
+                logger.warning("Player event: matched=%s player=%s type=%s tracked=%s",
+                               pattern, player, event_type, player in tracked)
                 if player not in tracked:
                     continue
                 label = "离线了喵" if event_type == "leave" else "上线了喵"
