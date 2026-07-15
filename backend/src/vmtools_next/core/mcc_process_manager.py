@@ -788,6 +788,8 @@ class MccProcessManager:
         (r"(\w+) joined the game", "join"),
         (r"(\S+) 离开了游戏", "leave"),
         (r"(\S+) 加入了游戏", "join"),
+        (r"▌(\w+?)离开了服务器", "leave"),    # 芒果服中文格式
+        (r"▌(\w+?)加入了服务器", "join"),
     ]
 
     async def _detect_player_events(self, instance_id: str, content: str) -> None:
