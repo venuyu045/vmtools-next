@@ -808,7 +808,7 @@ class MccProcessManager:
                     MccInstanceModel.slug == cfg.sentinel_instance
                 ).first()
                 self._sentinel_id = sentinel.instance_id if sentinel else ""
-                logger.warning("Sentinel cached: slug=%s → instance_id=%s",
+                logger.warning("Sentinel cached: slug={} -> instance_id={}",
                                cfg.sentinel_instance, self._sentinel_id)
             finally:
                 db.close()
@@ -825,13 +825,13 @@ class MccProcessManager:
         for owner in cfg.owners:
             for pname in owner.track_players:
                 tracked[pname] = owner.qq_openid
-        logger.warning("Tracked players: %s", tracked)
+        logger.warning("Tracked players: {}", tracked)
 
         for pattern, event_type in self._PLAYER_EVENT_PATTERNS:
             m = re.search(pattern, content)
             if m:
                 player = m.group(1)
-                logger.warning("Player event: matched=%s player=%s type=%s tracked=%s",
+                logger.warning("Player event: matched={} player={} type={} tracked={}",
                                pattern, player, event_type, player in tracked)
                 if player not in tracked:
                     continue
