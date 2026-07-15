@@ -167,6 +167,36 @@ class MccProcessManager:
         proc = handle.process
         return proc.returncode is None
 
+    async def _tail_log(self, instance_id: str, log_path: str) -> None:
+        """Tail the MCC output log file and feed lines to the terminal."""
+        import time as _time
+        # Wait for log file to appear and have content
+        waited = 0
+        while not os.path.exists(log_path) or os.path.getsize(log_path) == 0:
+            if waited > 30:
+                logger.warning("Log file %s never appeared", log_path)
+                return
+            await asyncio.sleep(0.5)
+            waited += 0.5
+
+        with open(log_path, "r", encoding="utf-8", errors="replace") as fh:
+            fh.seek(0, 2)  # start at end
+            while True:
+                line = fh.readline()
+                if line:
+                    line = line.rstrip("\r\n")
+                    # Skip script(1) header if present
+                    if line and not line.startswith("Script "):
+                        try:
+                            await self._append_line(instance_id, "stdout", line)
+                        except Exception:
+                            pass
+                else:
+                    await asyncio.sleep(0.1)
+                    # Check if log file was rotated/deleted
+                    if not os.path.exists(log_path):
+                        break
+
     async def _spawn_pty(self, command: list[str], cwd: str, env: dict) -> PtyProcess:
         """Spawn process with PTY for line-buffered output.
 
@@ -279,11 +309,29 @@ class MccProcessManager:
                     )
                     logger.info("MCC started on Windows with DEVNULL stdin (pid={})", process.pid)
                 else:
-                    # Linux: use Python pty module for full PTY control.
-                    # script(1) has its own buffering issues. Direct PTY
-                    # gives us: line-buffered MCC output + echo control.
-                    process = await self._spawn_pty(command, instance.instance_dir, env)
-                    logger.info("MCC started on Linux with PTY (pid={})", process.pid)
+                    # Linux: script -f writes MCC output to a log file.
+                    # We tail the log file to read stdout. This avoids all
+                    # PTY buffering issues. stdin PIPE still works for commands.
+                    import shlex
+                    log_path = os.path.join(instance.instance_dir, "mcc-output.log")
+                    try:
+                        os.remove(log_path)
+                    except OSError:
+                        pass
+                    wrapped = shlex.join(command)
+                    cmd = ["script", "-q", "-f", log_path,
+                           "sh", "-c", f"exec {wrapped}"]
+                    process = subprocess.Popen(
+                        cmd,
+                        cwd=instance.instance_dir,
+                        env=env,
+                        stdin=subprocess.PIPE,
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                    )
+                    logger.info("MCC started on Linux via script: log=%s pid=%d", log_path, process.pid)
+                    # Start tailing the log file
+                    asyncio.create_task(self._tail_log(instance_id, log_path))
 
                 instance.status = "running"
                 instance.desired_state = "running"
@@ -360,9 +408,7 @@ class MccProcessManager:
                     return {"status": "stopped", "pid": None, "message": "already stopped"}
 
                 await self._append_system_line(instance_id, "Stopping MCC process")
-                # Use force stop (SIGTERM) instead of sending "exit" via stdin
-                # to avoid MCC sending "exit" as a chat message to the server
-                if not force and _is_async_proc(handle.process):
+                if not force:
                     try:
                         handle.process.terminate()
                     except Exception:
