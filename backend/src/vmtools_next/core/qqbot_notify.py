@@ -82,12 +82,12 @@ async def notify_mcc_event(
     if not config.enabled:
         return
 
-    labels = {"started": "已启动", "stopped": "已停止", "crashed": "已崩溃"}
+    labels = {"started": "上线了喵", "stopped": "下线了喵", "crashed": "似了喵"}
     label = labels.get(event, event)
 
-    msg = f"MCC [{instance_name}] {label}"
+    msg = f"[{instance_name}] {label}"
     if extra:
-        msg += f"\n{extra}"
+        msg = f"[{instance_name}] {extra}"
     await broadcast(msg)
 
 
