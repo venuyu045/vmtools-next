@@ -822,8 +822,11 @@ class MccProcessManager:
         import asyncio as _asyncio
         from vmtools_next.core.qqbot_notify import broadcast
 
-        # Build lookup: player name → qq_openid
-        tracked: dict[str, str] = {p.name: p.qq_openid for p in cfg.players}
+        # Build lookup: player_name → qq_openid from all owners
+        tracked: dict[str, str] = {}
+        for owner in cfg.owners:
+            for pname in owner.track_players:
+                tracked[pname] = owner.qq_openid
 
         for pattern, event_type in self._PLAYER_EVENT_PATTERNS:
             m = re.search(pattern, content)

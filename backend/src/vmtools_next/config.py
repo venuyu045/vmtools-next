@@ -135,10 +135,16 @@ class TrackedPlayer(BaseModel):
     qq_openid: str = ""
 
 
+class TrackOwner(BaseModel):
+    name: str
+    qq_openid: str = ""
+    track_players: list[str] = Field(default_factory=list)
+
+
 class PlayerTrackingConfig(BaseModel):
     enabled: bool = False
     sentinel_instance: str = ""
-    players: list[TrackedPlayer] = Field(default_factory=list)
+    owners: list[TrackOwner] = Field(default_factory=list)
 
 
 class AppConfig(BaseSettings):
