@@ -757,6 +757,9 @@ class MccProcessManager:
                 if category == "kicked":
                     # Wait for next line to get the real kick reason
                     self._pending_disconnect[instance_id] = content
+                elif category in ("login_rejected", "connect_failed", "connect_timeout"):
+                    # Temporary — MCC's AutoRelog handles these. Don't spam QQ.
+                    pass
                 else:
                     labels = {
                         "connection_lost": "连接丢失",
