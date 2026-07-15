@@ -175,15 +175,18 @@ class MccProcessManager:
 
         master_fd, slave_fd = pty.openpty()
 
-        # Disable echo on the PTY slave
+        # Disable echo and set raw mode on PTY slave
         try:
-            attrs = termios.tcgetattr(slave_fd)
-            attrs[3] &= ~termios.ECHO  # lflag: clear ECHO
-            attrs[3] &= ~termios.ECHOE
-            attrs[3] &= ~termios.ICRNL
-            termios.tcsetattr(slave_fd, termios.TCSANOW, attrs)
+            import termios
+            import tty
+            tty.setraw(slave_fd)  # no buffering, no echo, pass through everything
         except Exception:
-            pass
+            try:
+                attrs = termios.tcgetattr(slave_fd)
+                attrs[3] &= ~termios.ECHO
+                termios.tcsetattr(slave_fd, termios.TCSANOW, attrs)
+            except Exception:
+                pass
 
         pid = os.fork()
         if pid == 0:
@@ -538,6 +541,7 @@ class MccProcessManager:
         import codecs
         decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
         loop = asyncio.get_event_loop()
+        line_count = 0
         while True:
             chunk: bytes
             if _is_async_proc(process):
@@ -550,11 +554,16 @@ class MccProcessManager:
                     for line in tail.splitlines():
                         if line and not line.startswith("Script "):
                             await self._append_line(instance_id, "stdout", line)
+                logger.info("PTY read loop ended for %s: %d lines total", instance_id, line_count)
                 break
             text = decoder.decode(chunk)
             for line in text.splitlines():
                 if line and not line.startswith("Script "):
-                    await self._append_line(instance_id, "stdout", line)
+                    try:
+                        await self._append_line(instance_id, "stdout", line)
+                        line_count += 1
+                    except Exception:
+                        pass  # don't crash read loop on single line failure
 
     async def _watch_exit_loop(self, instance_id: str, process: asyncio.subprocess.Process | subprocess.Popen) -> None:
         if _is_async_proc(process):
