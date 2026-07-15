@@ -128,6 +128,12 @@ function initTerminal() {
   terminal.unicode.activeVersion = '11'
   terminal.open(terminalContainer.value)
   console.log('[Terminal] initTerminal: xterm opened on container', terminalContainer.value)
+
+  // Prevent touch scrolling from propagating to the page
+  terminalContainer.value.addEventListener('touchmove', (e) => {
+    e.stopPropagation()
+  }, { passive: false })
+
   terminal.onData(handleTerminalInput)
   terminal.writeln('\x1b[32mVMTools MCC Web Terminal\x1b[0m')
   terminal.writeln('\x1b[90mCommand mode sends MCC/internal commands. Chat mode prefixes text with say.\x1b[0m')
@@ -393,7 +399,7 @@ onBeforeUnmount(() => {
 .terminal-toolbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 .search-input { width: 220px; }
 .terminal-toolbar .pixel-btn { padding: 8px 14px; }
-.xterm-shell { width: 100%; min-height: 260px; padding: 8px; background: #000; border: 1px solid var(--border-card); overflow: hidden; }
+.xterm-shell { width: 100%; min-height: 260px; padding: 8px; background: #000; border: 1px solid var(--border-card); overflow: hidden; touch-action: none; }
 .terminal-status { display: flex; justify-content: space-between; gap: 12px; color: var(--text-muted); font-size: 12px; }
 :deep(.xterm) { height: 100%; }
 :deep(.xterm-viewport) { scrollbar-color: var(--green-primary) #000; }
