@@ -136,6 +136,13 @@ async function confirmPlayer() {
 .owner-name { font-size: 16px; font-weight: 600; }
 .owner-id { font-size: 11px; color: var(--text-disabled); background: rgba(0,0,0,0.3); padding: 2px 6px; border-radius: 4px; }
 .track-list { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.track-list :deep(.el-tag) {
+  background: rgba(0, 200, 83, 0.15);
+  border: 1px solid var(--green-primary, #00c853);
+  color: var(--green-primary, #00c853);
+}
+.track-list :deep(.el-tag .el-tag__close) { color: var(--green-primary, #00c853); }
+.track-list :deep(.el-tag .el-tag__close:hover) { background: rgba(0, 200, 83, 0.3); }
 .na { color: var(--text-disabled); font-style: italic; font-size: 13px; }
 .help-box { background: rgba(255,255,255,0.05); border: 1px solid var(--border-subtle); border-radius: 8px; padding: 16px; margin-top: 24px; }
 .help-box p { margin: 8px 0; }
