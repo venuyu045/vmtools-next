@@ -181,18 +181,17 @@ class MccProcessManager:
 
         master_fd, slave_fd = pty.openpty()
 
-        # Disable echo and set raw mode on PTY slave
+        # Disable echo + line processing tweaks on PTY slave.
+        # Keep cooked mode so MCC's Console.ReadLine() works correctly.
+        import termios
         try:
-            import termios
-            import tty
-            tty.setraw(slave_fd)  # no buffering, no echo, pass through everything
+            attrs = termios.tcgetattr(slave_fd)
+            attrs[3] &= ~termios.ECHO   # don't echo input back
+            attrs[3] &= ~termios.ECHOE  # don't echo erase
+            attrs[1] &= ~termios.ONLCR  # don't map NL → CR-NL on output
+            termios.tcsetattr(slave_fd, termios.TCSANOW, attrs)
         except Exception:
-            try:
-                attrs = termios.tcgetattr(slave_fd)
-                attrs[3] &= ~termios.ECHO
-                termios.tcsetattr(slave_fd, termios.TCSANOW, attrs)
-            except Exception:
-                pass
+            pass
 
         pid = os.fork()
         if pid == 0:
