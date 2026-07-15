@@ -147,6 +147,7 @@ class MccProcessManager:
         self._pending_disconnect: dict[str, str] = {}  # instance_id → disconnect line
         self._locks: dict[str, asyncio.Lock] = {}
         self._started = False
+        self._sentinel_id: str | None = None  # cached sentinel instance UUID
 
     async def start(self) -> None:
         self._started = True
@@ -797,20 +798,23 @@ class MccProcessManager:
         """
         from vmtools_next.config import get_config
         cfg = get_config().player_tracking
-        if not cfg.enabled:
+        if not cfg.enabled or not cfg.sentinel_instance:
             return
 
-        # Only the sentinel instance tracks players
-        Session = get_session_factory()
-        db = Session()
-        try:
-            sentinel = db.query(MccInstanceModel).filter(
-                MccInstanceModel.slug == cfg.sentinel_instance
-            ).first()
-            if not sentinel or sentinel.instance_id != instance_id:
-                return
-        finally:
-            db.close()
+        # Lazy cache sentinel instance_id — avoid DB query on every stdout line
+        if self._sentinel_id is None:
+            Session = get_session_factory()
+            db = Session()
+            try:
+                sentinel = db.query(MccInstanceModel).filter(
+                    MccInstanceModel.slug == cfg.sentinel_instance
+                ).first()
+                self._sentinel_id = sentinel.instance_id if sentinel else ""
+            finally:
+                db.close()
+
+        if instance_id != self._sentinel_id:
+            return
 
         import re
         import asyncio as _asyncio
