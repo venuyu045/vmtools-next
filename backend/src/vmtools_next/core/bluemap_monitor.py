@@ -87,6 +87,13 @@ class BlueMapMonitor:
                     data = resp.json()
                     for p in data.get("players", []):
                         name = p["name"]
+                        # Only record player from the world they're actually in,
+                        # not from foreign (cross-dimension) listings
+                        if p.get("foreign", False):
+                            continue
+                        # Use first-seen world if player already recorded (dedup)
+                        if name in all_players:
+                            continue
                         all_players[name] = {
                             "name": name,
                             "uuid": p["uuid"],
