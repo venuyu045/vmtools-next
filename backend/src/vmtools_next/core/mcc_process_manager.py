@@ -709,6 +709,23 @@ class MccProcessManager:
             if inst and inst.auto_reconnect and inst.desired_state == "running":
                 logger.info("Auto-reconnect triggered by disconnect: %s", instance_id)
                 await self._append_system_line(instance_id, "检测到断联，自动重连...")
+
+                # Kill the old process if it's still lingering
+                old = self._processes.get(instance_id)
+                if old:
+                    try:
+                        old.process.kill()
+                    except Exception:
+                        pass
+                    old.output_task.cancel()
+                    old.exit_task.cancel()
+                    self._processes.pop(instance_id, None)
+
+                # Reset status so start_instance allows re-launch
+                inst.status = "stopped"
+                inst.pid = None
+                db2.commit()
+
                 _asyncio.ensure_future(self.start_instance(instance_id))
         finally:
             db2.close()
@@ -745,7 +762,7 @@ class MccProcessManager:
                 else:
                     msg = "似了喵（原因未知）"
                 _asyncio.ensure_future(notify_mcc_event(name, "crashed", msg))
-                self._check_auto_reconnect(instance_id)
+                await self._check_auto_reconnect(instance_id)
             except Exception:
                 pass
             return
@@ -781,7 +798,7 @@ class MccProcessManager:
                         )
                     except Exception:
                         pass
-                    self._check_auto_reconnect(instance_id)
+                    await self._check_auto_reconnect(instance_id)
                 break
 
     # ── Player join/leave detection (for sentinel bots) ──────────────
