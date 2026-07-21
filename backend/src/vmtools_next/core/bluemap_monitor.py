@@ -68,6 +68,10 @@ class BlueMapMonitor:
 
         self._running = True
         self._task = asyncio.create_task(self._poll_loop())
+
+        # Re-register bot players from running instances (recover after restart)
+        await self._recover_bot_players()
+
         logger.info(
             "BlueMap monitor started (interval={}s, base_url={}, worlds={})",
             cfg.poll_interval_seconds,
@@ -218,6 +222,31 @@ class BlueMapMonitor:
         asyncio.ensure_future(broadcast(msg, mention_openids=[qq]))
 
     # ── Bot player notifications ─────────────────────────────────────
+
+    async def _recover_bot_players(self) -> None:
+        """Re-register bot players from all running/started instances (recover after restart)."""
+        from vmtools_next.data.db import get_session_factory
+        from vmtools_next.data.models.mcc_remote import MccInstanceModel
+
+        Session = get_session_factory()
+        db = Session()
+        try:
+            instances = db.query(MccInstanceModel).filter(
+                MccInstanceModel.deleted_at.is_(None),
+                MccInstanceModel.mc_username.isnot(None),
+                MccInstanceModel.mc_username != "",
+                MccInstanceModel.status.in_(["running", "starting", "started"]),
+            ).all()
+            for inst in instances:
+                name = inst.display_name or inst.slug
+                register_bot_player(inst.mc_username, name)
+                logger.info("BlueMap: recovered bot player {} -> {}", inst.mc_username, name)
+            if instances:
+                logger.info("BlueMap: recovered {} bot players from DB", len(instances))
+        except Exception as exc:
+            logger.warning("BlueMap: failed to recover bot players: {}", exc)
+        finally:
+            db.close()
 
     async def _notify_bot_player(self, player_name: str, event_type: str) -> None:
         """Send instance-level QQ notification when a tracked bot joins/leaves."""
