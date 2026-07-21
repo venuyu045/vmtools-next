@@ -5,6 +5,7 @@ import { useBuildStore } from '@/stores/build'
 import { useLogisticsStore } from '@/stores/logistics'
 import { useMonitorStore } from '@/stores/monitor'
 import { useMccInstanceStore } from '@/stores/mccInstance'
+import { useOnlinePlayersStore } from '@/stores/onlinePlayers'
 import { useAuthStore } from '@/stores/auth'
 import { ElNotification } from 'element-plus'
 
@@ -115,6 +116,26 @@ export function useSocketIO() {
       if (payload.bots) {
         const botStore = useBotStore()
         botStore.bots = payload.bots
+      }
+    })
+
+    // BlueMap online players (from BlueMap API polling)
+    socket.on('online_players_update', (payload) => {
+      const playerStore = useOnlinePlayersStore()
+      if (payload?.players) {
+        playerStore.setPlayers(payload.players)
+      }
+    })
+
+    socket.on('player_event', (payload) => {
+      const playerStore = useOnlinePlayersStore()
+      if (payload?.name && payload?.event) {
+        playerStore.addEvent({
+          name: payload.name,
+          event: payload.event,
+          world: payload.world || '',
+          position: payload.position,
+        })
       }
     })
   }

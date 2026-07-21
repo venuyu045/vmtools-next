@@ -103,9 +103,10 @@ qqbot:
   notify_on_chat: false      # 转发游戏聊天消息
 
 # 玩家进出追踪 — 监控特定玩家的登录/登出并推送到 QQ
+# BlueMap 启用时使用 API 轮询检测，禁用时回退到哨兵机器人终端解析
 player_tracking:
   enabled: true
-  sentinel_instance: "bot-001"  # 用哪个实例来监听
+  sentinel_instance: "bot-001"  # 仅在 bluemap.enabled=false 时使用
   owners:
     - name: "Venus_Yu"
       qq_openid: "E3D613A55099F0BEE950577A928EFC37"
@@ -116,4 +117,13 @@ player_tracking:
     - name: "happyzhou"
       qq_openid: "589CF71DEDFBCD86B7F60C62DDE49F20"
       track_players: []
-      qq_openid: "589CF71DEDFBCD86B7F60C62DDE49F20"
+
+# BlueMap 地图站 API — 通过 HTTP 轮询获取在线玩家
+bluemap:
+  enabled: true
+  api_base_url: "http://map.mangocraft.cn:2087"
+  poll_interval_seconds: 5
+  worlds:
+    - world
+    - world_nether
+    - world_the_end

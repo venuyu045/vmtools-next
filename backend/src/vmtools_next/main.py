@@ -49,6 +49,7 @@ _plugin_manager: PluginManager = None
 _monitor: MonitorCollector = None
 _alert_engine: AlertEngine = None
 _mcc_process_manager: MccProcessManager = None
+_bluemap_monitor: "BlueMapMonitor" = None
 
 
 def get_pool() -> MccSessionPool:
@@ -73,6 +74,10 @@ def get_plugin_manager() -> PluginManager:
 
 def get_mcc_process_manager() -> MccProcessManager:
     return _mcc_process_manager
+
+
+def get_bluemap_monitor() -> "BlueMapMonitor":
+    return _bluemap_monitor
 
 
 @asynccontextmanager
@@ -147,6 +152,11 @@ async def lifespan(app: FastAPI):
     from vmtools_next.core.qqbot_notify import start as qqbot_start
     await qqbot_start()
 
+    # 8.5 BlueMap player monitor (replaces sentinel-bot terminal parsing)
+    from vmtools_next.core.bluemap_monitor import BlueMapMonitor
+    _bluemap_monitor = BlueMapMonitor()
+    await _bluemap_monitor.start()
+
     # 9. Periodic broadcast task
     import asyncio
     broadcast_task = asyncio.create_task(_periodic_broadcast())
@@ -159,6 +169,8 @@ async def lifespan(app: FastAPI):
     from vmtools_next.core.qqbot_notify import stop as qqbot_stop
     await qqbot_stop()
     broadcast_task.cancel()
+    if _bluemap_monitor:
+        await _bluemap_monitor.stop()
     if _monitor:
         await _monitor.stop()
     if _alert_engine:

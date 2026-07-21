@@ -684,7 +684,9 @@ class MccProcessManager:
         # Fire-and-forget: don't block the read loop
         if stream == "stdout":
             asyncio.create_task(self._detect_disconnect(instance_id, content))
-            asyncio.create_task(self._detect_player_events(instance_id, content))
+            # Player join/leave detection via terminal is disabled when BlueMap is active
+            if not get_config().bluemap.enabled:
+                asyncio.create_task(self._detect_player_events(instance_id, content))
 
         await sio.emit("mcc_terminal_output", {
             "instance_id": instance_id,

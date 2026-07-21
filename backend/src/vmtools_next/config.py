@@ -147,6 +147,14 @@ class PlayerTrackingConfig(BaseModel):
     owners: list[TrackOwner] = Field(default_factory=list)
 
 
+class BlueMapConfig(BaseModel):
+    """BlueMap website API configuration for player monitoring."""
+    enabled: bool = True
+    api_base_url: str = "http://map.mangocraft.cn:2087"
+    poll_interval_seconds: int = 5
+    worlds: list[str] = Field(default_factory=lambda: ["world", "world_nether", "world_the_end"])
+
+
 class AppConfig(BaseSettings):
     """Top-level application configuration."""
 
@@ -167,6 +175,7 @@ class AppConfig(BaseSettings):
     plugins: PluginsConfig = Field(default_factory=PluginsConfig)
     qqbot: QqBotConfig = Field(default_factory=QqBotConfig)
     player_tracking: PlayerTrackingConfig = Field(default_factory=PlayerTrackingConfig)
+    bluemap: BlueMapConfig = Field(default_factory=BlueMapConfig)
 
 
 # ── Loader ──────────────────────────────────────────────────────────────
