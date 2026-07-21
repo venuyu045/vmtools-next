@@ -255,6 +255,16 @@ async function confirmPlayer() {
 }
 .world-count { font-size: 11px; color: var(--text-disabled); }
 .player-tags { display: flex; flex-wrap: wrap; gap: 6px; }
+.player-tags :deep(.el-tag) {
+  background: rgba(64, 158, 255, 0.12);
+  border-color: rgba(64, 158, 255, 0.35);
+  color: #409eff;
+}
+.player-tags :deep(.el-tag--success) {
+  background: rgba(0, 200, 83, 0.15);
+  border-color: rgba(0, 200, 83, 0.4);
+  color: #00c853;
+}
 
 /* 事件面板 */
 .events-panel {
