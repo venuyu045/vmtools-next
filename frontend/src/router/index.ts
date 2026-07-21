@@ -14,10 +14,14 @@ const routes = [
     children: [
       { path: '', redirect: '/dashboard' },
       { path: 'dashboard', name: 'Dashboard', component: () => import('@/views/DashboardView.vue'), meta: { title: '仪表盘' } },
+      // --- Bot 管理（统一入口，合并了原 MCC 管理） ---
       { path: 'bots', name: 'Bots', component: () => import('@/views/BotManageView.vue'), meta: { title: 'Bot 管理' } },
-      { path: 'mcc/instances', name: 'MccInstances', component: () => import('@/views/MccInstanceListView.vue'), meta: { title: 'MCC 管理' } },
-      { path: 'mcc/instances/:id/terminal', name: 'MccTerminal', component: () => import('@/views/MccTerminalView.vue'), meta: { title: 'MCC 终端' } },
-      { path: 'mcc/instances/:id/files', name: 'MccFiles', component: () => import('@/views/MccFileManagerView.vue'), meta: { title: 'MCC 文件' } },
+      { path: 'bots/:id/terminal', name: 'BotTerminal', component: () => import('@/views/MccTerminalView.vue'), meta: { title: 'Bot 终端' } },
+      { path: 'bots/:id/files', name: 'BotFiles', component: () => import('@/views/MccFileManagerView.vue'), meta: { title: 'Bot 文件' } },
+      // --- 旧 MCC 路由（重定向到新 Bot 路由） ---
+      { path: 'mcc/instances', redirect: '/bots' },
+      { path: 'mcc/instances/:id/terminal', redirect: (to: any) => `/bots/${to.params.id}/terminal` },
+      { path: 'mcc/instances/:id/files', redirect: (to: any) => `/bots/${to.params.id}/files` },
       { path: 'player-tracking', name: 'PlayerTracking', component: () => import('@/views/PlayerTrackingView.vue'), meta: { title: '玩家追踪' } },
       { path: 'warehouses', name: 'Warehouses', component: () => import('@/views/WarehouseListView.vue'), meta: { title: '仓库管理' } },
       { path: 'warehouses/:id', name: 'WarehouseDetail', component: () => import('@/views/WarehouseDetailView.vue'), meta: { title: '仓库详情' } },

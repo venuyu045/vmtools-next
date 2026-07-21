@@ -65,7 +65,6 @@ function onNavClick() {
 const navItems = [
   { path: '/dashboard', label: '仪表盘' },
   { path: '/bots', label: 'Bot 管理' },
-  { path: '/mcc/instances', label: 'MCC 管理' },
   { path: '/player-tracking', label: '玩家追踪' },
   { path: '/warehouses', label: '仓库管理' },
   { path: '/build', label: '建造任务' },
@@ -77,7 +76,7 @@ const navItems = [
 
 function isActive(item: { path: string }): boolean {
   return route.path === item.path ||
-    (item.path === '/mcc/instances' && route.path.startsWith('/mcc')) ||
+    (item.path === '/bots' && (route.path.startsWith('/bots') || route.path.startsWith('/mcc'))) ||
     (item.path === '/logistics/waypoints' && route.path.startsWith('/logistics'))
 }
 </script>
