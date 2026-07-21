@@ -3,112 +3,118 @@
     <h2>玩家进出追踪</h2>
     <p class="subtitle">通过 BlueMap API 实时监控在线玩家，追踪上下线并通知 QQ</p>
 
-    <!-- BlueMap 在线玩家面板 -->
-    <div class="online-panel">
-      <div class="panel-header">
-        <h3>
-          当前在线
-          <span class="count-badge">{{ playerStore.count }}</span>
-        </h3>
-        <span class="update-time" v-if="playerStore.lastUpdate">
-          更新于 {{ new Date(playerStore.lastUpdate).toLocaleTimeString() }}
-        </span>
-      </div>
-
-      <div v-if="playerStore.count === 0" class="empty-hint">暂无在线玩家</div>
-
-      <div v-else class="world-groups">
-        <div v-for="(list, world) in playerStore.byWorld" :key="world" class="world-group">
-          <div class="world-label">
-            {{ playerStore.getWorldLabel(world as string) }}
-            <span class="world-count">{{ list.length }}</span>
+    <div class="content-row">
+      <div class="main-column">
+        <!-- BlueMap 在线玩家面板 -->
+        <div class="online-panel">
+          <div class="panel-header">
+            <h3>
+              当前在线
+              <span class="count-badge">{{ playerStore.count }}</span>
+            </h3>
+            <span class="update-time" v-if="playerStore.lastUpdate">
+              更新于 {{ new Date(playerStore.lastUpdate).toLocaleTimeString() }}
+            </span>
           </div>
-          <div class="player-tags">
+
+          <div v-if="playerStore.count === 0" class="empty-hint">暂无在线玩家</div>
+
+          <div v-else class="world-groups">
+            <div v-for="(list, world) in playerStore.byWorld" :key="world" class="world-group">
+              <div class="world-label">
+                {{ playerStore.getWorldLabel(world as string) }}
+                <span class="world-count">{{ list.length }}</span>
+              </div>
+              <div class="player-tags">
+                <el-tag
+                  v-for="p in list"
+                  :key="p.uuid"
+                  size="default"
+                  :type="isTracked(p.name) ? 'success' : 'info'"
+                  effect="plain"
+                >
+                  {{ p.name }}
+                </el-tag>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 追踪配置 -->
+        <el-form inline class="settings-bar">
+          <el-form-item label="启用通知">
+            <el-switch v-model="config.enabled" @change="save" />
+          </el-form-item>
+          <el-form-item label="监听实例">
+            <el-input
+              v-model="config.sentinel_instance"
+              placeholder="bot-001（BlueMap启用时无需）"
+              style="width:180px"
+              disabled
+            />
+            <span class="hint">已由 BlueMap API 接管</span>
+          </el-form-item>
+          <el-form-item>
+            <el-button type="primary" @click="save">保存设置</el-button>
+          </el-form-item>
+        </el-form>
+
+        <div v-for="(owner, oi) in config.owners" :key="oi" class="owner-card">
+          <div class="owner-header">
+            <span class="owner-name">{{ owner.name }}</span>
+            <code class="owner-id">{{ owner.qq_openid.slice(0, 20) }}...</code>
+          </div>
+          <div class="track-list">
             <el-tag
-              v-for="p in list"
-              :key="p.uuid"
-              size="default"
-              :type="isTracked(p.name) ? 'success' : 'info'"
-              effect="plain"
+              v-for="(pname, pi) in owner.track_players"
+              :key="pi"
+              closable
+              @close="removePlayer(oi, pi)"
+              size="large"
             >
-              {{ p.name }}
+              {{ pname }}
             </el-tag>
+            <el-button size="small" type="primary" plain @click="addPlayer(oi)">+ 添加</el-button>
+            <span v-if="!owner.track_players.length" class="na">暂未追踪任何玩家</span>
+          </div>
+        </div>
+
+        <el-dialog v-model="showDialog" title="添加追踪玩家" width="360px">
+          <el-form label-width="80px">
+            <el-form-item label="玩家名">
+              <el-input v-model="form.name" placeholder="游戏内名称" @keyup.enter="confirmPlayer" />
+            </el-form-item>
+          </el-form>
+          <template #footer>
+            <el-button @click="showDialog = false">取消</el-button>
+            <el-button type="primary" @click="confirmPlayer">添加</el-button>
+          </template>
+        </el-dialog>
+      </div>
+
+      <!-- 最近上下线事件（右侧独立列） -->
+      <div class="events-column" v-if="playerStore.events.length > 0">
+        <div class="events-panel">
+          <h4>最近事件</h4>
+          <div class="event-list">
+            <div
+              v-for="(ev, i) in playerStore.events.slice(0, 30)"
+              :key="i"
+              class="event-item"
+              :class="ev.event"
+            >
+              <span class="event-time">{{ new Date(ev.time).toLocaleTimeString() }}</span>
+              <span class="event-icon">{{ ev.event === 'join' ? '' : '🚪' }}</span>
+              <span class="event-name">{{ ev.name }}</span>
+              <span class="event-action">{{ ev.event === 'join' ? '上线了' : '离线了' }}</span>
+              <span class="event-world" v-if="ev.world">
+                ({{ playerStore.getWorldLabel(ev.world) }})
+              </span>
+            </div>
           </div>
         </div>
       </div>
     </div>
-
-    <!-- 最近上下线事件 -->
-    <div class="events-panel" v-if="playerStore.events.length > 0">
-      <h4>最近事件</h4>
-      <div class="event-list">
-        <div
-          v-for="(ev, i) in playerStore.events.slice(0, 20)"
-          :key="i"
-          class="event-item"
-          :class="ev.event"
-        >
-          <span class="event-time">{{ new Date(ev.time).toLocaleTimeString() }}</span>
-          <span class="event-icon">{{ ev.event === 'join' ? '' : '🚪' }}</span>
-          <span class="event-name">{{ ev.name }}</span>
-          <span class="event-action">{{ ev.event === 'join' ? '上线了' : '离线了' }}</span>
-          <span class="event-world" v-if="ev.world">
-            ({{ playerStore.getWorldLabel(ev.world) }})
-          </span>
-        </div>
-      </div>
-    </div>
-
-    <!-- 追踪配置 -->
-    <el-form inline class="settings-bar">
-      <el-form-item label="启用通知">
-        <el-switch v-model="config.enabled" @change="save" />
-      </el-form-item>
-      <el-form-item label="监听实例">
-        <el-input
-          v-model="config.sentinel_instance"
-          placeholder="bot-001（BlueMap启用时无需）"
-          style="width:180px"
-          disabled
-        />
-        <span class="hint">已由 BlueMap API 接管</span>
-      </el-form-item>
-      <el-form-item>
-        <el-button type="primary" @click="save">保存设置</el-button>
-      </el-form-item>
-    </el-form>
-
-    <div v-for="(owner, oi) in config.owners" :key="oi" class="owner-card">
-      <div class="owner-header">
-        <span class="owner-name">{{ owner.name }}</span>
-        <code class="owner-id">{{ owner.qq_openid.slice(0, 20) }}...</code>
-      </div>
-      <div class="track-list">
-        <el-tag
-          v-for="(pname, pi) in owner.track_players"
-          :key="pi"
-          closable
-          @close="removePlayer(oi, pi)"
-          size="large"
-        >
-          {{ pname }}
-        </el-tag>
-        <el-button size="small" type="primary" plain @click="addPlayer(oi)">+ 添加</el-button>
-        <span v-if="!owner.track_players.length" class="na">暂未追踪任何玩家</span>
-      </div>
-    </div>
-
-    <el-dialog v-model="showDialog" title="添加追踪玩家" width="360px">
-      <el-form label-width="80px">
-        <el-form-item label="玩家名">
-          <el-input v-model="form.name" placeholder="游戏内名称" @keyup.enter="confirmPlayer" />
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="showDialog = false">取消</el-button>
-        <el-button type="primary" @click="confirmPlayer">添加</el-button>
-      </template>
-    </el-dialog>
 
     <div class="help-box">
       <h4>怎么获取 QQ OpenID？</h4>
@@ -215,8 +221,26 @@ async function confirmPlayer() {
 </script>
 
 <style scoped>
-.player-tracking-page { max-width: 860px; margin: 0 auto; padding: 24px; }
+.player-tracking-page { max-width: 1400px; margin: 0 auto; padding: 24px; }
 .subtitle { color: var(--text-secondary); margin-bottom: 16px; }
+
+/* Two-column layout */
+.content-row {
+  display: flex;
+  gap: 20px;
+  align-items: flex-start;
+}
+.main-column { flex: 1; min-width: 0; }
+.events-column {
+  width: 380px;
+  flex-shrink: 0;
+  position: sticky;
+  top: 16px;
+}
+@media (max-width: 1024px) {
+  .content-row { flex-direction: column; }
+  .events-column { width: 100%; position: static; }
+}
 
 /* 在线面板 */
 .online-panel {
