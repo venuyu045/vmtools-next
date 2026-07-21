@@ -47,9 +47,9 @@
         <div class="pixel-card quick-actions">
           <h3 class="pixel section-title">快速操作</h3>
           <div class="action-btns">
-            <button class="pixel-btn" @click="$router.push('/build')">新建任务</button>
+            <button class="pixel-btn" @click="$router.push('/build?create=1')">新建任务</button>
             <button class="pixel-btn outline" @click="$router.push('/warehouses')">扫描仓库</button>
-            <button class="pixel-btn outline" @click="$router.push('/build')">上传投影</button>
+            <button class="pixel-btn outline" @click="$router.push('/build?create=1')">上传投影</button>
           </div>
         </div>
         <div class="pixel-card build-status">

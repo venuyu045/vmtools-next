@@ -23,6 +23,7 @@ const routes = [
       { path: 'mcc/instances/:id/terminal', redirect: (to: any) => `/bots/${to.params.id}/terminal` },
       { path: 'mcc/instances/:id/files', redirect: (to: any) => `/bots/${to.params.id}/files` },
       { path: 'player-tracking', name: 'PlayerTracking', component: () => import('@/views/PlayerTrackingView.vue'), meta: { title: '玩家追踪' } },
+      { path: 'miaomiao', name: 'Miaomiao', component: () => import('@/views/MiaomiaoView.vue'), meta: { title: '妙妙工具' } },
       { path: 'warehouses', name: 'Warehouses', component: () => import('@/views/WarehouseListView.vue'), meta: { title: '仓库管理' } },
       { path: 'warehouses/:id', name: 'WarehouseDetail', component: () => import('@/views/WarehouseDetailView.vue'), meta: { title: '仓库详情' } },
       { path: 'build', name: 'BuildTasks', component: () => import('@/views/BuildTaskListView.vue'), meta: { title: '建造任务' } },
