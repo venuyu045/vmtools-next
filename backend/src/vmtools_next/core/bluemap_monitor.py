@@ -40,7 +40,7 @@ class BlueMapMonitor:
         self._running = True
         self._task = asyncio.create_task(self._poll_loop())
         logger.info(
-            "BlueMap monitor started (interval=%ds, base_url=%s, worlds=%s)",
+            "BlueMap monitor started (interval={}s, base_url={}, worlds={})",
             cfg.poll_interval_seconds,
             cfg.api_base_url,
             cfg.worlds,
@@ -82,7 +82,7 @@ class BlueMapMonitor:
                     url = f"{cfg.api_base_url}/maps/{world}/live/players.json"
                     resp = await client.get(url)
                     if resp.status_code != 200:
-                        logger.debug("BlueMap %s returned %d", world, resp.status_code)
+                        logger.debug("BlueMap {} returned {}", world, resp.status_code)
                         continue
                     data = resp.json()
                     for p in data.get("players", []):
@@ -96,7 +96,7 @@ class BlueMapMonitor:
                             "rotation": p.get("rotation"),
                         }
                 except Exception as exc:
-                    logger.debug("BlueMap fetch failed for world %s: %s", world, exc)
+                    logger.debug("BlueMap fetch failed for world {}: {}", world, exc)
 
         current_names = set(all_players.keys())
         previous_names = set(self._previous_players.keys())
@@ -125,7 +125,7 @@ class BlueMapMonitor:
         # ── emit individual join/leave events ──
         for name in joined:
             player = all_players[name]
-            logger.info("Player joined: %s (world=%s)", name, player["world"])
+            logger.info("Player joined: {} (world={})", name, player["world"])
             await sio.emit("player_event", {
                 "name": name,
                 "event": "join",
@@ -135,7 +135,7 @@ class BlueMapMonitor:
             await self._notify_tracked(name, "join")
 
         for name in left:
-            logger.info("Player left: %s", name)
+            logger.info("Player left: {}", name)
             await sio.emit("player_event", {
                 "name": name,
                 "event": "leave",
@@ -176,5 +176,5 @@ class BlueMapMonitor:
 
         label = "离线了喵" if event_type == "leave" else "上线了喵"
         msg = f"{display} {label}"
-        logger.info("Tracked player event: %s %s -> QQ %s", player_name, event_type, qq)
+        logger.info("Tracked player event: {} {} -> QQ {}", player_name, event_type, qq)
         asyncio.ensure_future(broadcast(msg, mention_openids=[qq]))
