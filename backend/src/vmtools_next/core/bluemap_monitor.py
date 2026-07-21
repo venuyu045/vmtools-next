@@ -1,0 +1,180 @@
+"""BlueMap API player monitor — polls the map website to detect join/leave events.
+
+Replaces the terminal-output-based player detection (sentinel bot) with
+HTTP polling of BlueMap's live players.json endpoint.
+
+Keeps a diff of player sets across polls to emit join/leave events,
+and notifies QQ for tracked players.
+"""
+from __future__ import annotations
+
+import asyncio
+import time
+from typing import Optional
+
+import httpx
+
+from vmtools_next.config import get_config
+from vmtools_next.data.db import sio
+from vmtools_next.infra.logging import get_logger
+
+logger = get_logger("bluemap")
+
+
+class BlueMapMonitor:
+    """Background service that polls BlueMap API for online players."""
+
+    def __init__(self) -> None:
+        self._task: Optional[asyncio.Task[None]] = None
+        self._previous_players: dict[str, dict] = {}  # name -> player info
+        self._running = False
+
+    # ── lifecycle ────────────────────────────────────────────────────
+
+    async def start(self) -> None:
+        cfg = get_config().bluemap
+        if not cfg.enabled:
+            logger.info("BlueMap monitor disabled, skipping")
+            return
+
+        self._running = True
+        self._task = asyncio.create_task(self._poll_loop())
+        logger.info(
+            "BlueMap monitor started (interval=%ds, base_url=%s, worlds=%s)",
+            cfg.poll_interval_seconds,
+            cfg.api_base_url,
+            cfg.worlds,
+        )
+
+    async def stop(self) -> None:
+        self._running = False
+        if self._task:
+            self._task.cancel()
+            try:
+                await self._task
+            except asyncio.CancelledError:
+                pass
+            self._task = None
+        logger.info("BlueMap monitor stopped")
+
+    # ── poll loop ────────────────────────────────────────────────────
+
+    async def _poll_loop(self) -> None:
+        cfg = get_config().bluemap
+        while self._running:
+            try:
+                await self._poll_once()
+            except asyncio.CancelledError:
+                break
+            except Exception as exc:
+                logger.warning("BlueMap poll error: {}", exc)
+
+            await asyncio.sleep(cfg.poll_interval_seconds)
+
+    async def _poll_once(self) -> None:
+        """Query all worlds, diff player sets, emit events."""
+        cfg = get_config().bluemap
+        all_players: dict[str, dict] = {}
+
+        async with httpx.AsyncClient(timeout=httpx.Timeout(10.0)) as client:
+            for world in cfg.worlds:
+                try:
+                    url = f"{cfg.api_base_url}/maps/{world}/live/players.json"
+                    resp = await client.get(url)
+                    if resp.status_code != 200:
+                        logger.debug("BlueMap %s returned %d", world, resp.status_code)
+                        continue
+                    data = resp.json()
+                    for p in data.get("players", []):
+                        name = p["name"]
+                        all_players[name] = {
+                            "name": name,
+                            "uuid": p["uuid"],
+                            "world": world,
+                            "foreign": p.get("foreign", False),
+                            "position": p.get("position"),
+                            "rotation": p.get("rotation"),
+                        }
+                except Exception as exc:
+                    logger.debug("BlueMap fetch failed for world %s: %s", world, exc)
+
+        current_names = set(all_players.keys())
+        previous_names = set(self._previous_players.keys())
+
+        joined = current_names - previous_names
+        left = previous_names - current_names
+
+        # ── emit full online player list ──
+        player_list = [
+            {
+                "name": p["name"],
+                "uuid": p["uuid"],
+                "world": p["world"],
+                "foreign": p["foreign"],
+                "position": p["position"],
+                "rotation": p["rotation"],
+            }
+            for p in all_players.values()
+        ]
+        await sio.emit("online_players_update", {
+            "players": player_list,
+            "count": len(player_list),
+            "timestamp": time.time(),
+        })
+
+        # ── emit individual join/leave events ──
+        for name in joined:
+            player = all_players[name]
+            logger.info("Player joined: %s (world=%s)", name, player["world"])
+            await sio.emit("player_event", {
+                "name": name,
+                "event": "join",
+                "world": player["world"],
+                "position": player["position"],
+            })
+            await self._notify_tracked(name, "join")
+
+        for name in left:
+            logger.info("Player left: %s", name)
+            await sio.emit("player_event", {
+                "name": name,
+                "event": "leave",
+            })
+            await self._notify_tracked(name, "leave")
+
+        self._previous_players = all_players
+
+    # ── QQ notification ─────────────────────────────────────────────
+
+    async def _notify_tracked(self, player_name: str, event_type: str) -> None:
+        """Send QQ notification if this player is on the tracking list."""
+        tracking = get_config().player_tracking
+        if not tracking.enabled:
+            return
+
+        # Build lookup: tracked_player_name → qq_openid
+        tracked: dict[str, str] = {}
+        for owner in tracking.owners:
+            for pname in owner.track_players:
+                tracked[pname] = owner.qq_openid
+
+        # Direct match first
+        qq: Optional[str] = tracked.get(player_name)
+        display = player_name
+        if not qq:
+            # Partial match: config says "Venus_Yu" but game shows "Venus_Yu002"
+            for tname, tqq in tracked.items():
+                if tname in player_name:
+                    qq = tqq
+                    display = tname
+                    break
+
+        if not qq:
+            return
+
+        from vmtools_next.core.qqbot_notify import broadcast
+
+        label = "离线了喵" if event_type == "leave" else "上线了喵"
+        msg = f"{display} {label}"
+        logger.info("Tracked player event: %s %s -> QQ %s", player_name, event_type, qq)
+        asyncio.ensure_future(broadcast(msg, mention_openids=[qq]))

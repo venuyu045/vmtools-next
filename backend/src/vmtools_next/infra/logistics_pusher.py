@@ -128,3 +128,23 @@ async def push_metrics_update(timestamp: float, cpu_percent: float,
         "memory_percent": memory_percent,
         "disk_percent": disk_percent,
     })
+
+
+async def push_online_players(players: list[dict], count: int, timestamp: float):
+    """Push full online player list to all connected clients."""
+    await sio.emit("online_players_update", {
+        "players": players,
+        "count": count,
+        "timestamp": timestamp,
+    })
+
+
+async def push_player_event(name: str, event: str, world: str = "",
+                              position: dict | None = None):
+    """Push individual player join/leave event."""
+    await sio.emit("player_event", {
+        "name": name,
+        "event": event,
+        "world": world,
+        "position": position,
+    })
