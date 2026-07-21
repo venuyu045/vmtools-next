@@ -103,3 +103,39 @@ async def notify_mcc_chat(instance_name: str, player: str, message: str) -> None
     if not config.enabled or not config.notify_on_chat:
         return
     await broadcast(f"[{instance_name}] {player}: {message}")
+
+
+# ── Auto-reconnect notifications ──────────────────────────────────
+
+async def notify_reconnect_started(instance_name: str) -> None:
+    """Notify that auto-reconnect has started after a disconnect."""
+    config = get_config().qqbot
+    if not config.enabled:
+        return
+    await broadcast(f"[{instance_name}] 自动重连已启动")
+
+
+async def notify_reconnect_success(instance_name: str) -> None:
+    """Notify that auto-reconnect succeeded (bot confirmed joined server)."""
+    config = get_config().qqbot
+    if not config.enabled:
+        return
+    await broadcast(f"[{instance_name}] 已成功重连")
+
+
+# ── Server-detected online/offline notifications ──────────────────
+
+async def notify_instance_online(instance_name: str) -> None:
+    """Notify that instance went online (detected via BlueMap API)."""
+    config = get_config().qqbot
+    if not config.enabled:
+        return
+    await broadcast(f"[{instance_name}] 上线了喵")
+
+
+async def notify_instance_offline(instance_name: str) -> None:
+    """Notify that instance went offline (detected via BlueMap API)."""
+    config = get_config().qqbot
+    if not config.enabled:
+        return
+    await broadcast(f"[{instance_name}] 下线了喵")

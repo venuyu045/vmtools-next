@@ -145,6 +145,7 @@ class MccProcessManager:
         self.buffer = buffer or TerminalLogBuffer()
         self._processes: dict[str, ProcessHandle] = {}
         self._pending_disconnect: dict[str, str] = {}  # instance_id → disconnect line
+        self._pending_reconnect: dict[str, str] = {}   # instance_id → mc_username (auto-reconnect in progress)
         self._locks: dict[str, asyncio.Lock] = {}
         self._started = False
         self._sentinel_id: str | None = None  # cached sentinel instance UUID
@@ -353,9 +354,25 @@ class MccProcessManager:
                     lock=lock,
                 )
                 await self._emit_status(instance_id, "running", pid=process.pid, mcp_port=instance.mcp_port)
+
+                # Register bot with BlueMap for server-detected online/offline tracking
+                self._register_bot_bluemap(instance)
+
+                # If this is an auto-reconnect, wait for BlueMap to confirm the
+                # player actually joined the server, then send "已成功重连"
+                mc_username = self._pending_reconnect.pop(instance_id, None)
+                if mc_username and instance.mc_username:
+                    import asyncio as _asyncio
+                    instance_name = instance.display_name or instance.slug
+                    _asyncio.ensure_future(
+                        self._on_reconnect_started(instance_id, mc_username, instance_name)
+                    )
+
                 return {"status": "running", "pid": process.pid, "message": "started"}
             except Exception as exc:
                 db.rollback()
+                # Clean up pending reconnect on failure
+                self._pending_reconnect.pop(instance_id, None)
                 instance = db.query(MccInstanceModel).filter(MccInstanceModel.instance_id == instance_id).first()
                 if instance:
                     instance.status = "error"
@@ -628,16 +645,28 @@ class MccProcessManager:
             ))
             db.commit()
 
-            # Auto-reconnect: if enabled and crashed, restart
+            # Auto-reconnect: if enabled and crashed, restart.
+            # Skip if _check_auto_reconnect already handled it (detected via terminal).
             should_reconnect = (
                 instance.auto_reconnect
                 and instance.status == "crashed"
                 and instance.desired_state == "running"
+                and instance_id not in self._pending_reconnect
             )
             if should_reconnect:
                 db.refresh(instance)
                 logger.info("Auto-reconnect: restarting crashed instance %s", instance_id)
                 await self._append_system_line(instance_id, "Auto-reconnect: restarting...")
+                # Send QQ notification
+                try:
+                    from vmtools_next.core.qqbot_notify import notify_reconnect_started
+                    name = instance.display_name or instance.slug
+                    import asyncio as _asyncio2
+                    _asyncio2.ensure_future(notify_reconnect_started(name))
+                except Exception:
+                    pass
+                # Mark for reconnect-success tracking
+                self._pending_reconnect[instance_id] = instance.mc_username
                 # Reset status for restart
                 instance.status = "created"
                 instance.pid = None
@@ -649,13 +678,17 @@ class MccProcessManager:
             # Trigger actual restart in background
             if should_reconnect:
                 try:
-                    import asyncio as _asyncio
-                    _asyncio.ensure_future(self.start_instance(instance_id))
+                    import asyncio as _asyncio3
+                    _asyncio3.ensure_future(self.start_instance(instance_id))
                 except Exception:
                     pass
         finally:
             db.close()
-            self._processes.pop(instance_id, None)
+            # Only pop if our process is still the stored one (may have been
+            # replaced by auto-reconnect in _check_auto_reconnect)
+            current = self._processes.get(instance_id)
+            if current is not None and current.process is process:
+                self._processes.pop(instance_id, None)
 
     async def _append_system_line(self, instance_id: str, content: str) -> TerminalLine:
         return await self._append_line(instance_id, "system", content)
@@ -697,6 +730,100 @@ class MccProcessManager:
         }, room=f"mcc:{instance_id}")
         return line
 
+    # ── BlueMap bot tracking helpers ──────────────────────────────────
+
+    @staticmethod
+    def _register_bot_bluemap(instance: MccInstanceModel) -> None:
+        """Register the instance's mc_username with BlueMap for join/leave tracking."""
+        if not instance.mc_username:
+            return
+        from vmtools_next.core.bluemap_monitor import register_bot_player
+        name = instance.display_name or instance.slug
+        register_bot_player(instance.mc_username, name)
+
+    @staticmethod
+    def _unregister_bot_bluemap(instance: MccInstanceModel) -> None:
+        """Unregister the instance's mc_username from BlueMap tracking."""
+        if not instance.mc_username:
+            return
+        from vmtools_next.core.bluemap_monitor import unregister_bot_player
+        unregister_bot_player(instance.mc_username)
+
+    async def _unregister_bot_instance(self, instance_id: str) -> None:
+        """Look up instance and unregister its bot from BlueMap tracking."""
+        Session = get_session_factory()
+        db = Session()
+        try:
+            inst = db.query(MccInstanceModel).filter(
+                MccInstanceModel.instance_id == instance_id
+            ).first()
+            if inst:
+                self._unregister_bot_bluemap(inst)
+        finally:
+            db.close()
+
+    async def _on_reconnect_started(
+        self, instance_id: str, mc_username: str, instance_name: str
+    ) -> None:
+        """Wait for BlueMap to confirm the player joined, then send success notification."""
+        online = await self._wait_for_player_online(mc_username)
+        if online:
+            # Suppress the normal "上线了喵" from BlueMap since we send "已成功重连"
+            from vmtools_next.core.bluemap_monitor import suppress_next_join
+            suppress_next_join(mc_username)
+
+            try:
+                from vmtools_next.core.qqbot_notify import notify_reconnect_success
+                await notify_reconnect_success(instance_name)
+            except Exception:
+                pass
+            await self._append_system_line(instance_id, "自动重连成功（BlueMap 确认在线）")
+        else:
+            await self._append_system_line(
+                instance_id, f"自动重连可能失败（{int(self._wait_for_player_online.__defaults__[0])}s 内未检测到在线）"
+            )
+            logger.warning(
+                "Auto-reconnect: player %s not detected online for instance %s", mc_username, instance_name
+            )
+
+    async def _wait_for_player_online(
+        self, mc_username: str, timeout: float = 120.0
+    ) -> bool:
+        """Poll BlueMap API until a specific player appears online.
+
+        Returns True if the player was detected online, False on timeout.
+        """
+        cfg = get_config()
+        if not cfg.bluemap.enabled:
+            return False
+
+        import time as _time
+        import httpx as _httpx
+
+        start = _time.monotonic()
+        while _time.monotonic() - start < timeout:
+            try:
+                async with _httpx.AsyncClient(timeout=_httpx.Timeout(10.0)) as client:
+                    for world in cfg.bluemap.worlds:
+                        url = f"{cfg.bluemap.api_base_url}/maps/{world}/live/players.json"
+                        resp = await client.get(url)
+                        if resp.status_code != 200:
+                            continue
+                        data = resp.json()
+                        for p in data.get("players", []):
+                            if p.get("foreign", False):
+                                continue
+                            if p.get("name") == mc_username:
+                                logger.info(
+                                    "Auto-reconnect: player %s detected online via BlueMap", mc_username
+                                )
+                                return True
+            except Exception as exc:
+                logger.debug("BlueMap poll (reconnect wait) error: {}", exc)
+            await asyncio.sleep(5)
+        logger.warning("Auto-reconnect: player %s not detected online within %.0fs", mc_username, timeout)
+        return False
+
     # ── Disconnect detection patterns (from MCC source) ──────────────
 
     async def _check_auto_reconnect(self, instance_id: str) -> None:
@@ -711,6 +838,17 @@ class MccProcessManager:
             if inst and inst.auto_reconnect and inst.desired_state == "running":
                 logger.info("Auto-reconnect triggered by disconnect: %s", instance_id)
                 await self._append_system_line(instance_id, "检测到断联，自动重连...")
+
+                # Send QQ notification: auto-reconnect started
+                try:
+                    from vmtools_next.core.qqbot_notify import notify_reconnect_started
+                    name = inst.display_name or inst.slug
+                    _asyncio.ensure_future(notify_reconnect_started(name))
+                except Exception:
+                    pass
+
+                # Mark for reconnect-success tracking in _watch_exit_loop
+                self._pending_reconnect[instance_id] = inst.mc_username
 
                 # Kill the old process if it's still lingering
                 old = self._processes.get(instance_id)
@@ -764,6 +902,8 @@ class MccProcessManager:
                 else:
                     msg = "似了喵（原因未知）"
                 _asyncio.ensure_future(notify_mcc_event(name, "crashed", msg))
+                # Unregister from BlueMap to prevent duplicate "下线了喵"
+                await self._unregister_bot_instance(instance_id)
                 await self._check_auto_reconnect(instance_id)
             except Exception:
                 pass
@@ -800,6 +940,8 @@ class MccProcessManager:
                         )
                     except Exception:
                         pass
+                    # Unregister from BlueMap to prevent duplicate "下线了喵"
+                    await self._unregister_bot_instance(instance_id)
                     await self._check_auto_reconnect(instance_id)
                 break
 
@@ -896,6 +1038,9 @@ class MccProcessManager:
         mcp_port: int,
         message: str = "",
     ) -> None:
+        # QQ notifications are now sent by BlueMap monitor when it detects
+        # the player actually join/leave the server, not from button clicks.
+        # Only Socket.IO emission here for frontend reactivity.
         await sio.emit("mcc_instance_status", {
             "instance_id": instance_id,
             "status": status,
@@ -903,16 +1048,6 @@ class MccProcessManager:
             "mcp_port": mcp_port,
             "message": message,
         }, room=f"mcc:{instance_id}")
-
-        # QQ Bot notification for status changes
-        if status in ("running", "stopped", "crashed", "error"):
-            try:
-                import asyncio as _asyncio
-                from vmtools_next.core.qqbot_notify import notify_mcc_event
-                name = await self._get_instance_name(instance_id)
-                _asyncio.ensure_future(notify_mcc_event(name, status, message))
-            except Exception:
-                pass
         await sio.emit("mcc_instance_status", {
             "instance_id": instance_id,
             "status": status,
