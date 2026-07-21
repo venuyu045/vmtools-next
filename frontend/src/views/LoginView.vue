@@ -122,6 +122,17 @@ async function handleLogin() {
   font-size: 14px;
 }
 
+/* Override browser autofill white background */
+:deep(.el-input__inner:-webkit-autofill),
+:deep(.el-input__inner:-webkit-autofill:hover),
+:deep(.el-input__inner:-webkit-autofill:focus),
+:deep(.el-input__inner:-webkit-autofill:active) {
+  -webkit-box-shadow: 0 0 0 30px #0a0a0a inset !important;
+  -webkit-text-fill-color: var(--text-primary) !important;
+  transition: background-color 5000s ease-in-out 0s;
+  caret-color: var(--text-primary);
+}
+
 /* ============ RESPONSIVE ============ */
 @media (max-width: 480px) {
   .login-card {
