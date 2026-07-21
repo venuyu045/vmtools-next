@@ -20,6 +20,35 @@ from vmtools_next.infra.logging import get_logger
 
 logger = get_logger("bluemap")
 
+# ── Bot player tracking ────────────────────────────────────────────
+# Maps mc_username → instance_name for MCC bot instances.
+# BlueMap poll will send QQ notifications when tracked bots join/leave.
+_bot_players: dict[str, str] = {}
+# Bot usernames whose next join notification should be suppressed
+# (e.g. because auto-reconnect already sent "已成功重连")
+_suppress_join: set[str] = set()
+
+
+def register_bot_player(mc_username: str, instance_name: str) -> None:
+    """Register a bot player for join/leave tracking."""
+    if mc_username:
+        _bot_players[mc_username] = instance_name
+        logger.debug("Bot player registered: {} -> {}", mc_username, instance_name)
+
+
+def unregister_bot_player(mc_username: str) -> None:
+    """Unregister a bot player from tracking."""
+    if mc_username:
+        _bot_players.pop(mc_username, None)
+        _suppress_join.discard(mc_username)
+        logger.debug("Bot player unregistered: {}", mc_username)
+
+
+def suppress_next_join(mc_username: str) -> None:
+    """Suppress the next join notification for this bot (used after auto-reconnect)."""
+    if mc_username:
+        _suppress_join.add(mc_username)
+
 
 class BlueMapMonitor:
     """Background service that polls BlueMap API for online players."""
@@ -140,6 +169,7 @@ class BlueMapMonitor:
                 "position": player["position"],
             })
             await self._notify_tracked(name, "join")
+            await self._notify_bot_player(name, "join")
 
         for name in left:
             logger.info("Player left: {}", name)
@@ -148,6 +178,7 @@ class BlueMapMonitor:
                 "event": "leave",
             })
             await self._notify_tracked(name, "leave")
+            await self._notify_bot_player(name, "leave")
 
         self._previous_players = all_players
 
@@ -185,3 +216,26 @@ class BlueMapMonitor:
         msg = f"{display} {label}"
         logger.info("Tracked player event: {} {} -> QQ {}", player_name, event_type, qq)
         asyncio.ensure_future(broadcast(msg, mention_openids=[qq]))
+
+    # ── Bot player notifications ─────────────────────────────────────
+
+    async def _notify_bot_player(self, player_name: str, event_type: str) -> None:
+        """Send instance-level QQ notification when a tracked bot joins/leaves."""
+        instance_name = _bot_players.get(player_name)
+        if not instance_name:
+            return
+
+        if event_type == "join":
+            if player_name in _suppress_join:
+                _suppress_join.discard(player_name)
+                logger.info("Bot join suppressed (auto-reconnect): {} -> {}", player_name, instance_name)
+                return
+            from vmtools_next.core.qqbot_notify import notify_instance_online
+            _asyncio = __import__("asyncio")
+            _asyncio.ensure_future(notify_instance_online(instance_name))
+            logger.info("Bot online: {} -> {}", player_name, instance_name)
+        else:
+            from vmtools_next.core.qqbot_notify import notify_instance_offline
+            _asyncio = __import__("asyncio")
+            _asyncio.ensure_future(notify_instance_offline(instance_name))
+            logger.info("Bot offline: {} -> {}", player_name, instance_name)
