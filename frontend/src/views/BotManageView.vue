@@ -65,19 +65,16 @@
           <button class="pixel-btn warning" :disabled="instance.status !== 'running' || isBusy(instance.instance_id)" @click="handleStop(instance)">停止</button>
 
           <!-- Bot connect / disconnect -->
-          <template v-if="getBot(instance)">
-            <button
-              v-if="getBot(instance)!.status !== 'online'"
-              class="pixel-btn outline"
-              @click="handleConnect(instance)"
-            >连接</button>
-            <button
-              v-else
-              class="pixel-btn warning"
-              @click="handleDisconnect(instance)"
-            >断开</button>
-          </template>
-          <button v-else class="pixel-btn outline" @click="handleRegisterBot(instance)">注册 Bot</button>
+          <button
+            v-if="!getBot(instance) || getBot(instance)!.status !== 'online'"
+            class="pixel-btn outline"
+            @click="handleConnect(instance)"
+          >连接</button>
+          <button
+            v-else
+            class="pixel-btn warning"
+            @click="handleDisconnect(instance)"
+          >断开</button>
 
           <button class="pixel-btn outline" @click="openInstance(instance, 'terminal')">终端</button>
           <button class="pixel-btn outline" @click="openInstance(instance, 'files')">文件</button>
@@ -189,22 +186,6 @@
       </div>
     </el-drawer>
 
-    <!-- Register Bot dialog (for instances without bot_id) -->
-    <el-dialog v-model="showRegisterBot" title="注册 Bot" width="480px">
-      <el-form :model="registerBotForm" label-width="80px">
-        <el-form-item label="Bot ID">
-          <el-input v-model="registerBotForm.bot_id" placeholder="自动使用实例 slug" />
-        </el-form-item>
-        <el-form-item label="名称">
-          <el-input v-model="registerBotForm.name" placeholder="自动使用实例显示名" />
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="showRegisterBot = false">取消</el-button>
-        <el-button type="primary" @click="doRegisterBot">注册</el-button>
-      </template>
-    </el-dialog>
-
     <!-- Create account profile dialog -->
     <el-dialog v-model="showProfileCreate" title="新建账号模板" width="560px">
       <el-form :model="profileForm" label-width="120px">
@@ -249,11 +230,9 @@ const botStore = useBotStore()
 
 const showCreate = ref(false)
 const showProfileCreate = ref(false)
-const showRegisterBot = ref(false)
 const detailOpen = ref(false)
 const activeTab = ref<'terminal' | 'account' | 'files'>('terminal')
 const selectedInstance = ref<MccInstance | null>(null)
-const registeringInstance = ref<MccInstance | null>(null)
 const selectedProfileId = ref('')
 const lastDiff = ref('')
 const sortMode = ref<'name' | 'running'>('running')
@@ -280,11 +259,6 @@ const createForm = reactive({
   mc_server_host: '',
   mc_server_port: 25565,
   mc_version: '1.21.1',
-})
-
-const registerBotForm = reactive({
-  bot_id: '',
-  name: '',
 })
 
 const accountForm = reactive<MccAccountConfig>({
@@ -394,12 +368,27 @@ async function stopAll() {
 
 // Bot connect / disconnect
 async function handleConnect(instance: MccInstance) {
-  const bot = getBot(instance)
-  if (!bot) return
+  let bot = getBot(instance)
+  // 如果还没有 Bot 记录，自动注册
+  if (!bot) {
+    try {
+      bot = await botStore.createBot({
+        bot_id: instance.slug,
+        name: instance.display_name || instance.slug,
+        mc_username: instance.mc_username || '',
+      } as any)
+      // 关联到实例
+      await mccInstanceApi.update(instance.instance_id, { bot_id: instance.slug })
+      instance.bot_id = instance.slug
+    } catch {
+      ElMessage.error('Bot 自动注册失败')
+      return
+    }
+  }
   const config: any = {}
   if (instance.mcp_host) config.host = instance.mcp_host
   if (instance.mcp_port) config.port = instance.mcp_port
-  const result = await botStore.connectBot(bot.bot_id, config)
+  const result = await botStore.connectBot(bot!.bot_id, config)
   const newStatus = result?.status || ''
   if (newStatus === 'online') {
     ElMessage.success('Bot 已连接')
@@ -415,37 +404,6 @@ async function handleDisconnect(instance: MccInstance) {
   if (!bot) return
   await botStore.disconnectBot(bot.bot_id)
   ElMessage.success('已断开')
-}
-
-function handleRegisterBot(instance: MccInstance) {
-  registeringInstance.value = instance
-  registerBotForm.bot_id = instance.slug
-  registerBotForm.name = instance.display_name || instance.slug
-  showRegisterBot.value = true
-}
-
-async function doRegisterBot() {
-  if (!registerBotForm.bot_id.trim()) {
-    ElMessage.warning('请输入 Bot ID')
-    return
-  }
-  await botStore.createBot({
-    bot_id: registerBotForm.bot_id,
-    name: registerBotForm.name,
-    mc_username: registeringInstance.value?.mc_username || '',
-  })
-  // Link instance to bot via the API
-  if (registeringInstance.value) {
-    try {
-      await mccInstanceApi.update(registeringInstance.value.instance_id, { bot_id: registerBotForm.bot_id })
-      registeringInstance.value.bot_id = registerBotForm.bot_id
-    } catch { /* ignore link failure */ }
-  }
-  showRegisterBot.value = false
-  registeringInstance.value = null
-  registerBotForm.bot_id = ''
-  registerBotForm.name = ''
-  ElMessage.success('Bot 已注册')
 }
 
 async function toggleReconnect(instance: MccInstance, event: Event) {
