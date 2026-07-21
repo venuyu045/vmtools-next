@@ -76,8 +76,8 @@
             @click="handleDisconnect(instance)"
           >断开</button>
 
-          <button class="pixel-btn outline" @click="openInstance(instance, 'terminal')">终端</button>
-          <button class="pixel-btn outline" @click="openInstance(instance, 'files')">文件</button>
+          <router-link :to="'/bots/' + instance.instance_id + '/terminal'" class="pixel-btn outline terminal-link" @click.stop>终端</router-link>
+          <router-link :to="'/bots/' + instance.instance_id + '/files'" class="pixel-btn outline terminal-link" @click.stop>文件</router-link>
           <button class="pixel-btn danger" :disabled="instance.status === 'running'" @click="handleDelete(instance)">删除</button>
           <label class="reconnect-toggle" :title="instance.auto_reconnect ? '已开启自动重连' : '开启自动重连'">
             <input type="checkbox" :checked="instance.auto_reconnect" @change="toggleReconnect(instance, $event)" />
@@ -536,6 +536,7 @@ onMounted(() => refreshAll())
 
 .actions { display: flex; flex-wrap: wrap; gap: 10px; }
 .actions .pixel-btn { padding: 8px 14px; }
+.terminal-link { text-decoration: none; display: inline-flex; align-items: center; }
 .pixel-btn.outline.active { border-color: var(--green-primary); color: var(--green-primary); background: var(--green-glow); }
 .pixel-btn:disabled { opacity: .45; cursor: not-allowed; }
 .pixel-badge.muted { opacity: .6; }
