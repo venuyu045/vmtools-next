@@ -74,6 +74,7 @@ class ProjectionResponse(BaseModel):
     total_volume: int
     region_count: int
     material_count: int
+    file_path: str = ""
     uploaded_at: str
 
 
@@ -164,6 +165,7 @@ async def upload_projection(
         total_volume=parsed.total_volume,
         region_count=len(parsed.regions),
         material_count=len(materials),
+        file_path=str(dest_path),
         uploaded_at=_projections[proj_id]["uploaded_at"],
     )
 
@@ -181,6 +183,7 @@ def list_projections(user=Depends(get_current_user)):
             total_volume=p["total_volume"],
             region_count=p["region_count"],
             material_count=len(p["materials"]),
+            file_path=p.get("file_path", ""),
             uploaded_at=p["uploaded_at"],
         )
         for p in proj.values()

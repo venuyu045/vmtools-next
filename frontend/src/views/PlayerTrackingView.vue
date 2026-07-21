@@ -26,15 +26,51 @@
                 <span class="world-count">{{ list.length }}</span>
               </div>
               <div class="player-tags">
-                <el-tag
+                <el-popover
                   v-for="p in list"
                   :key="p.uuid"
-                  size="default"
-                  :type="isTracked(p.name) ? 'success' : 'info'"
-                  effect="plain"
+                  placement="top"
+                  :width="280"
+                  trigger="hover"
+                  :show-after="300"
                 >
-                  {{ p.name }}
-                </el-tag>
+                  <template #reference>
+                    <el-tag
+                      size="default"
+                      :type="isTracked(p.name) ? 'success' : 'info'"
+                      effect="plain"
+                    >
+                      {{ p.name }}
+                    </el-tag>
+                  </template>
+                  <div class="player-popover">
+                    <div class="pop-section" v-if="p.residence">
+                      <span class="pop-label">🏠 所在领地</span>
+                      <span class="pop-value">{{ p.residence.name }}</span>
+                      <span class="pop-sub">所有者: {{ p.residence.owner }}</span>
+                    </div>
+                    <div class="pop-section" v-else>
+                      <span class="pop-label">🏠 所在领地</span>
+                      <span class="pop-none">无主之地</span>
+                    </div>
+                    <div class="pop-divider"></div>
+                    <div class="pop-section" v-if="p.region">
+                      <span class="pop-label">📊 区域性能</span>
+                      <div class="pop-stats">
+                        <div class="pop-stat"><span>TPS</span><span :class="tpsClass(p.region.tps)">{{ p.region.tps ?? '--' }}</span></div>
+                        <div class="pop-stat"><span>MSPT</span><span :class="msptClass(p.region.mspt)">{{ p.region.mspt ?? '--' }}ms</span></div>
+                        <div class="pop-stat"><span>实体</span><span>{{ p.region.entities ?? '--' }}</span></div>
+                        <div class="pop-stat"><span>区块</span><span>{{ p.region.chunks ?? '--' }}</span></div>
+                        <div class="pop-stat"><span>区域内玩家</span><span>{{ p.region.players_in_region ?? '--' }}</span></div>
+                      </div>
+                    </div>
+                    <div class="pop-divider" v-if="p.position"></div>
+                    <div class="pop-section" v-if="p.position">
+                      <span class="pop-label">📍 坐标</span>
+                      <span class="pop-sub">{{ p.position.x.toFixed(0) }}, {{ p.position.y.toFixed(0) }}, {{ p.position.z.toFixed(0) }}</span>
+                    </div>
+                  </div>
+                </el-popover>
               </div>
             </div>
           </div>
@@ -186,6 +222,20 @@ function isTracked(name: string): boolean {
   return false
 }
 
+function tpsClass(tps: number | null): string {
+  if (tps === null) return ''
+  if (tps >= 19.5) return 'perf-good'
+  if (tps >= 17) return 'perf-warn'
+  return 'perf-bad'
+}
+
+function msptClass(mspt: number | null): string {
+  if (mspt === null) return ''
+  if (mspt <= 30) return 'perf-good'
+  if (mspt <= 45) return 'perf-warn'
+  return 'perf-bad'
+}
+
 async function save() {
   try {
     await client.put('/player-tracking', {
@@ -334,4 +384,19 @@ async function confirmPlayer() {
 .help-box { background: rgba(255,255,255,0.05); border: 1px solid var(--border-subtle); border-radius: 8px; padding: 16px; margin-top: 24px; }
 .help-box p { margin: 8px 0; }
 .help-box code { background: #000; padding: 2px 6px; border-radius: 4px; font-size: 12px; display: block; margin: 8px 0; overflow-x: auto; }
+
+/* Player hover popover */
+.player-popover { font-size: 13px; }
+.pop-section { margin-bottom: 8px; }
+.pop-label { display: block; font-weight: 600; margin-bottom: 4px; font-size: 12px; color: var(--text-secondary); }
+.pop-value { font-size: 14px; font-weight: 600; }
+.pop-sub { display: block; color: var(--text-disabled); font-size: 12px; margin-top: 2px; }
+.pop-none { color: var(--text-disabled); font-style: italic; }
+.pop-divider { height: 1px; background: var(--border-subtle); margin: 8px 0; }
+.pop-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 8px; }
+.pop-stat { display: flex; justify-content: space-between; font-size: 12px; color: var(--text-secondary); }
+.pop-stat span:last-child { font-weight: 600; color: inherit; }
+.perf-good { color: #00c853 !important; }
+.perf-warn { color: #ff9800 !important; }
+.perf-bad { color: #f44336 !important; }
 </style>
