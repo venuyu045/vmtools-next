@@ -1,14 +1,14 @@
-"""BlueMap API player monitor — polls the map website to detect join/leave events.
+"""BlueMap API monitor — polls the map website to detect join/leave events,
+track Folia region performance, player residences, and custom markers.
 
-Replaces the terminal-output-based player detection (sentinel bot) with
-HTTP polling of BlueMap's live players.json endpoint.
-
-Keeps a diff of player sets across polls to emit join/leave events,
-and notifies QQ for tracked players.
+Players endpoint (fast): 5s poll → join/leave diff → Socket.IO + QQ notify.
+Markers endpoint (slow): 60s poll → residence/region/marker caches.
+Each online player is tagged with the residence and Folia region they're in.
 """
 from __future__ import annotations
 
 import asyncio
+import re
 import time
 from typing import Optional
 
@@ -20,45 +20,65 @@ from vmtools_next.infra.logging import get_logger
 
 logger = get_logger("bluemap")
 
-# ── Bot player tracking ────────────────────────────────────────────
-# Maps mc_username → instance_name for MCC bot instances.
-# BlueMap poll will send QQ notifications when tracked bots join/leave.
+# ── geometry helper ────────────────────────────────────────────────
+
+def _point_in_polygon_2d(x: float, z: float, polygon: list[dict]) -> bool:
+    """Ray-casting algorithm: check if (x,z) is inside a 2D polygon."""
+    n = len(polygon)
+    if n < 3:
+        return False
+    inside = False
+    j = n - 1
+    for i in range(n):
+        xi = polygon[i]["x"]
+        zi = polygon[i]["z"]
+        xj = polygon[j]["x"]
+        zj = polygon[j]["z"]
+        if ((zi > z) != (zj > z)) and (x < (xj - xi) * (z - zi) / (zj - zi + 1e-12) + xi):
+            inside = not inside
+        j = i
+    return inside
+
+
+# ── bot player tracking ────────────────────────────────────────────
+
 _bot_players: dict[str, str] = {}
-# Bot usernames whose next join notification should be suppressed
-# (e.g. because auto-reconnect already sent "已成功重连")
 _suppress_join: set[str] = set()
 
 
 def register_bot_player(mc_username: str, instance_name: str) -> None:
-    """Register a bot player for join/leave tracking."""
     if mc_username:
         _bot_players[mc_username] = instance_name
-        logger.debug("Bot player registered: {} -> {}", mc_username, instance_name)
 
 
 def unregister_bot_player(mc_username: str) -> None:
-    """Unregister a bot player from tracking."""
     if mc_username:
         _bot_players.pop(mc_username, None)
         _suppress_join.discard(mc_username)
-        logger.debug("Bot player unregistered: {}", mc_username)
 
 
 def suppress_next_join(mc_username: str) -> None:
-    """Suppress the next join notification for this bot (used after auto-reconnect)."""
     if mc_username:
         _suppress_join.add(mc_username)
 
 
+# ── monitor class ──────────────────────────────────────────────────
+
 class BlueMapMonitor:
-    """Background service that polls BlueMap API for online players."""
+    """Background service that polls BlueMap API for players, regions, residences."""
 
     def __init__(self) -> None:
         self._task: Optional[asyncio.Task[None]] = None
-        self._previous_players: dict[str, dict] = {}  # name -> player info
+        self._markers_task: Optional[asyncio.Task[None]] = None
+        self._previous_players: dict[str, dict] = {}
         self._running = False
 
-    # ── lifecycle ────────────────────────────────────────────────────
+        # Cached marker data (refreshed every 60s)
+        self._residences: list[dict] = []
+        self._regions: list[dict] = []
+        self._markers: list[dict] = []
+
+    # ── lifecycle ──────────────────────────────────────────────────
 
     async def start(self) -> None:
         cfg = get_config().bluemap
@@ -67,13 +87,13 @@ class BlueMapMonitor:
             return
 
         self._running = True
-        self._task = asyncio.create_task(self._poll_loop())
+        self._task = asyncio.create_task(self._players_poll_loop())
+        self._markers_task = asyncio.create_task(self._markers_poll_loop())
 
-        # Re-register bot players from running instances (recover after restart)
         await self._recover_bot_players()
 
         logger.info(
-            "BlueMap monitor started (interval={}s, base_url={}, worlds={})",
+            "BlueMap monitor started (players={}s, markers=60s, base_url={}, worlds={})",
             cfg.poll_interval_seconds,
             cfg.api_base_url,
             cfg.worlds,
@@ -81,31 +101,31 @@ class BlueMapMonitor:
 
     async def stop(self) -> None:
         self._running = False
-        if self._task:
-            self._task.cancel()
-            try:
-                await self._task
-            except asyncio.CancelledError:
-                pass
-            self._task = None
+        for t in (self._task, self._markers_task):
+            if t:
+                t.cancel()
+                try:
+                    await t
+                except asyncio.CancelledError:
+                    pass
+        self._task = None
+        self._markers_task = None
         logger.info("BlueMap monitor stopped")
 
-    # ── poll loop ────────────────────────────────────────────────────
+    # ── players poll (fast) ─────────────────────────────────────────
 
-    async def _poll_loop(self) -> None:
+    async def _players_poll_loop(self) -> None:
         cfg = get_config().bluemap
         while self._running:
             try:
-                await self._poll_once()
+                await self._poll_players_once()
             except asyncio.CancelledError:
                 break
             except Exception as exc:
-                logger.warning("BlueMap poll error: {}", exc)
-
+                logger.warning("BlueMap players poll error: {}", exc)
             await asyncio.sleep(cfg.poll_interval_seconds)
 
-    async def _poll_once(self) -> None:
-        """Query all worlds, diff player sets, emit events."""
+    async def _poll_players_once(self) -> None:
         cfg = get_config().bluemap
         all_players: dict[str, dict] = {}
 
@@ -115,44 +135,47 @@ class BlueMapMonitor:
                     url = f"{cfg.api_base_url}/maps/{world}/live/players.json"
                     resp = await client.get(url)
                     if resp.status_code != 200:
-                        logger.debug("BlueMap {} returned {}", world, resp.status_code)
                         continue
                     data = resp.json()
                     for p in data.get("players", []):
-                        name = p["name"]
-                        # Only record player from the world they're actually in,
-                        # not from foreign (cross-dimension) listings
                         if p.get("foreign", False):
                             continue
-                        # Use first-seen world if player already recorded (dedup)
+                        name = p["name"]
                         if name in all_players:
                             continue
-                        all_players[name] = {
+                        pos = p.get("position", {})
+                        player = {
                             "name": name,
                             "uuid": p["uuid"],
                             "world": world,
                             "foreign": p.get("foreign", False),
-                            "position": p.get("position"),
+                            "position": pos,
                             "rotation": p.get("rotation"),
                         }
-                except Exception as exc:
-                    logger.debug("BlueMap fetch failed for world {}: {}", world, exc)
+                        # Tag with residence & region
+                        if pos:
+                            player["residence"] = self._find_residence(pos.get("x", 0), pos.get("y", 0), pos.get("z", 0))
+                            player["region"] = self._find_region(pos.get("x", 0), pos.get("z", 0))
+                        else:
+                            player["residence"] = None
+                            player["region"] = None
+                        all_players[name] = player
+                except Exception:
+                    pass
 
         current_names = set(all_players.keys())
         previous_names = set(self._previous_players.keys())
-
         joined = current_names - previous_names
         left = previous_names - current_names
 
-        # ── emit full online player list ──
+        # Full list
         player_list = [
             {
-                "name": p["name"],
-                "uuid": p["uuid"],
-                "world": p["world"],
-                "foreign": p["foreign"],
-                "position": p["position"],
+                "name": p["name"], "uuid": p["uuid"], "world": p["world"],
+                "foreign": p["foreign"], "position": p["position"],
                 "rotation": p["rotation"],
+                "residence": p.get("residence"),
+                "region": p.get("region"),
             }
             for p in all_players.values()
         ]
@@ -162,72 +185,189 @@ class BlueMapMonitor:
             "timestamp": time.time(),
         })
 
-        # ── emit individual join/leave events ──
+        # Individual events
         for name in joined:
-            player = all_players[name]
-            logger.info("Player joined: {} (world={})", name, player["world"])
+            p = all_players[name]
+            logger.info("Player joined: {} (world={})", name, p["world"])
             await sio.emit("player_event", {
-                "name": name,
-                "event": "join",
-                "world": player["world"],
-                "position": player["position"],
+                "name": name, "event": "join", "world": p["world"],
+                "position": p["position"],
+                "residence": p.get("residence"),
+                "region": p.get("region"),
             })
             await self._notify_tracked(name, "join")
             await self._notify_bot_player(name, "join")
 
         for name in left:
             logger.info("Player left: {}", name)
-            await sio.emit("player_event", {
-                "name": name,
-                "event": "leave",
-            })
+            await sio.emit("player_event", {"name": name, "event": "leave"})
             await self._notify_tracked(name, "leave")
             await self._notify_bot_player(name, "leave")
 
         self._previous_players = all_players
 
-    # ── QQ notification ─────────────────────────────────────────────
+    # ── markers poll (slow, 60s) ────────────────────────────────────
+
+    async def _markers_poll_loop(self) -> None:
+        while self._running:
+            try:
+                await self._poll_markers_once()
+            except asyncio.CancelledError:
+                break
+            except Exception as exc:
+                logger.warning("BlueMap markers poll error: {}", exc)
+            await asyncio.sleep(60)
+
+    async def _poll_markers_once(self) -> None:
+        cfg = get_config().bluemap
+        url = f"{cfg.api_base_url}/maps/world/live/markers.json"
+
+        async with httpx.AsyncClient(timeout=httpx.Timeout(15.0)) as client:
+            try:
+                resp = await client.get(url)
+                if resp.status_code != 200:
+                    return
+                data = resp.json()
+            except Exception:
+                return
+
+        # Parse residences
+        residences: list[dict] = []
+        res_markers = data.get("Residences", {}).get("markers", {})
+        for key, mk in res_markers.items():
+            owner = ""
+            m = re.search(r"所有者:.*?>(.+?)<", mk.get("detail", ""))
+            if m:
+                owner = m.group(1)
+            shape = mk.get("shape", [])
+            area = self._polygon_area(shape) if len(shape) >= 3 else 0
+            residences.append({
+                "id": key,
+                "label": mk.get("label", key),
+                "owner": owner,
+                "min_y": mk.get("shapeMinY", 0),
+                "max_y": mk.get("shapeMaxY", 0),
+                "shape": shape,
+                "area": round(area, 1),
+                "position": mk.get("position"),
+                "type": mk.get("type", ""),
+            })
+
+        # Parse folia regions
+        regions: list[dict] = []
+        folia = data.get("folia-regions", {}).get("markers", {})
+        for key, mk in folia.items():
+            detail = mk.get("detail", "")
+            tps = _extract_float(detail, r"TPS:\s*([\d.]+)")
+            mspt = _extract_float(detail, r"MSPT:\s*([\d.]+)")
+            entities = _extract_int(detail, r"Entities:\s*(\d+)")
+            players = _extract_int(detail, r"Players:\s*(\d+)")
+            chunks = _extract_int(detail, r"Chunks:\s*(\d+)")
+            sections = _extract_int(detail, r"Sections:\s*(\d+)")
+            regions.append({
+                "id": key,
+                "label": mk.get("label", key),
+                "shape": mk.get("shape", []),
+                "shape_y": mk.get("shapeY", 0),
+                "tps": tps,
+                "mspt": mspt,
+                "entities": entities,
+                "players_in_region": players,
+                "chunks": chunks,
+                "sections": sections,
+                "position": mk.get("position"),
+            })
+
+        # Parse custom markers
+        markers: list[dict] = []
+        mk_group = data.get("markers", {}).get("markers", {})
+        for key, mk in mk_group.items():
+            markers.append({
+                "id": key,
+                "label": mk.get("label", key),
+                "position": mk.get("position"),
+                "type": mk.get("type", ""),
+                "detail": _strip_html(mk.get("detail", ""))[:200],
+            })
+
+        self._residences = residences
+        self._regions = regions
+        self._markers = markers
+        logger.info(
+            "BlueMap markers refreshed: {} residences, {} regions, {} markers",
+            len(residences), len(regions), len(markers),
+        )
+
+        # Push to clients
+        await sio.emit("regions_update", {"regions": regions, "timestamp": time.time()})
+        await sio.emit("residences_update", {"residences": residences, "timestamp": time.time()})
+        await sio.emit("markers_update", {"markers": markers, "timestamp": time.time()})
+
+    # ── spatial lookup ──────────────────────────────────────────────
+
+    def _find_residence(self, x: float, y: float, z: float) -> Optional[dict]:
+        for r in self._residences:
+            if y < r["min_y"] or y > r["max_y"]:
+                continue
+            if _point_in_polygon_2d(x, z, r["shape"]):
+                return {"name": r["label"], "owner": r["owner"], "area": r["area"]}
+        return None
+
+    def _find_region(self, x: float, z: float) -> Optional[dict]:
+        for r in self._regions:
+            if _point_in_polygon_2d(x, z, r["shape"]):
+                return {
+                    "label": r["label"], "tps": r["tps"], "mspt": r["mspt"],
+                    "entities": r["entities"], "players_in_region": r["players_in_region"],
+                    "chunks": r["chunks"], "sections": r["sections"],
+                }
+        return None
+
+    @staticmethod
+    def _polygon_area(shape: list[dict]) -> float:
+        """Shoelace formula for polygon area (approximate, in blocks²)."""
+        n = len(shape)
+        if n < 3:
+            return 0.0
+        area = 0.0
+        j = n - 1
+        for i in range(n):
+            area += (shape[j]["x"] + shape[i]["x"]) * (shape[j]["z"] - shape[i]["z"])
+            j = i
+        return abs(area) / 2.0
+
+    # ── QQ notification ────────────────────────────────────────────
 
     async def _notify_tracked(self, player_name: str, event_type: str) -> None:
-        """Send QQ notification if this player is on the tracking list."""
         tracking = get_config().player_tracking
         if not tracking.enabled:
             return
-
-        # Build lookup: tracked_player_name → qq_openid
         tracked: dict[str, str] = {}
         for owner in tracking.owners:
             for pname in owner.track_players:
                 tracked[pname] = owner.qq_openid
 
-        # Direct match first
         qq: Optional[str] = tracked.get(player_name)
         display = player_name
         if not qq:
-            # Partial match: config says "Venus_Yu" but game shows "Venus_Yu002"
             for tname, tqq in tracked.items():
                 if tname in player_name:
                     qq = tqq
                     display = tname
                     break
-
         if not qq:
             return
 
         from vmtools_next.core.qqbot_notify import broadcast
-
         label = "离线了喵" if event_type == "leave" else "上线了喵"
         msg = f"{display} {label}"
-        logger.info("Tracked player event: {} {} -> QQ {}", player_name, event_type, qq)
         asyncio.ensure_future(broadcast(msg, mention_openids=[qq]))
 
-    # ── Bot player notifications ─────────────────────────────────────
+    # ── bot player notifications ───────────────────────────────────
 
     async def _recover_bot_players(self) -> None:
-        """Re-register bot players from all running/started instances (recover after restart)."""
         from vmtools_next.data.db import get_session_factory
         from vmtools_next.data.models.mcc_remote import MccInstanceModel
-
         Session = get_session_factory()
         db = Session()
         try:
@@ -240,31 +380,46 @@ class BlueMapMonitor:
             for inst in instances:
                 name = inst.display_name or inst.slug
                 register_bot_player(inst.mc_username, name)
-                logger.info("BlueMap: recovered bot player {} -> {}", inst.mc_username, name)
-            if instances:
-                logger.info("BlueMap: recovered {} bot players from DB", len(instances))
-        except Exception as exc:
-            logger.warning("BlueMap: failed to recover bot players: {}", exc)
         finally:
             db.close()
 
     async def _notify_bot_player(self, player_name: str, event_type: str) -> None:
-        """Send instance-level QQ notification when a tracked bot joins/leaves."""
         instance_name = _bot_players.get(player_name)
         if not instance_name:
             return
-
         if event_type == "join":
             if player_name in _suppress_join:
                 _suppress_join.discard(player_name)
-                logger.info("Bot join suppressed (auto-reconnect): {} -> {}", player_name, instance_name)
                 return
             from vmtools_next.core.qqbot_notify import notify_instance_online
-            _asyncio = __import__("asyncio")
-            _asyncio.ensure_future(notify_instance_online(instance_name))
-            logger.info("Bot online: {} -> {}", player_name, instance_name)
+            asyncio.ensure_future(notify_instance_online(instance_name))
         else:
             from vmtools_next.core.qqbot_notify import notify_instance_offline
-            _asyncio = __import__("asyncio")
-            _asyncio.ensure_future(notify_instance_offline(instance_name))
-            logger.info("Bot offline: {} -> {}", player_name, instance_name)
+            asyncio.ensure_future(notify_instance_offline(instance_name))
+
+    # ── public accessors (for API endpoints) ────────────────────────
+
+    def get_regions(self) -> list[dict]:
+        return self._regions
+
+    def get_residences(self) -> list[dict]:
+        return self._residences
+
+    def get_markers(self) -> list[dict]:
+        return self._markers
+
+
+# ── helpers ────────────────────────────────────────────────────────
+
+def _extract_float(text: str, pattern: str) -> Optional[float]:
+    m = re.search(pattern, text)
+    return float(m.group(1)) if m else None
+
+
+def _extract_int(text: str, pattern: str) -> Optional[int]:
+    m = re.search(pattern, text)
+    return int(m.group(1)) if m else None
+
+
+def _strip_html(text: str) -> str:
+    return re.sub(r"<[^>]+>", "", text).strip()

@@ -1,6 +1,22 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 
+export interface ResidenceInfo {
+  name: string
+  owner: string
+  area: number
+}
+
+export interface RegionInfo {
+  label: string
+  tps: number | null
+  mspt: number | null
+  entities: number | null
+  players_in_region: number | null
+  chunks: number | null
+  sections: number | null
+}
+
 export interface OnlinePlayer {
   name: string
   uuid: string
@@ -8,6 +24,8 @@ export interface OnlinePlayer {
   foreign: boolean
   position: { x: number; y: number; z: number } | null
   rotation: { pitch: number; yaw: number; roll: number } | null
+  residence: ResidenceInfo | null
+  region: RegionInfo | null
 }
 
 export interface PlayerEvent {
@@ -15,6 +33,39 @@ export interface PlayerEvent {
   event: 'join' | 'leave'
   world: string
   position?: { x: number; y: number; z: number } | null
+  residence?: ResidenceInfo | null
+  region?: RegionInfo | null
+}
+
+export interface ResidenceEntry {
+  id: string
+  label: string
+  owner: string
+  area: number
+  min_y: number
+  max_y: number
+  position: { x: number; y: number; z: number } | null
+  type: string
+}
+
+export interface RegionEntry {
+  id: string
+  label: string
+  tps: number | null
+  mspt: number | null
+  entities: number | null
+  players_in_region: number | null
+  chunks: number | null
+  sections: number | null
+  position: { x: number; y: number; z: number } | null
+}
+
+export interface MarkerEntry {
+  id: string
+  label: string
+  position: { x: number; y: number; z: number } | null
+  type: string
+  detail: string
 }
 
 const WORLD_LABELS: Record<string, string> = {
@@ -27,6 +78,11 @@ export const useOnlinePlayersStore = defineStore('onlinePlayers', () => {
   const players = ref<OnlinePlayer[]>([])
   const events = ref<(PlayerEvent & { time: number })[]>([])
   const lastUpdate = ref(0)
+
+  // Cached marker data from slow poll
+  const residences = ref<ResidenceEntry[]>([])
+  const regions = ref<RegionEntry[]>([])
+  const markers = ref<MarkerEntry[]>([])
 
   const count = computed(() => players.value.length)
   const byWorld = computed(() => {
@@ -43,14 +99,44 @@ export const useOnlinePlayersStore = defineStore('onlinePlayers', () => {
 
   const worldLabels = computed(() => WORLD_LABELS)
 
+  // Residence rankings by area
+  const residenceRankings = computed(() => {
+    return [...residences.value]
+      .filter(r => r.area > 0)
+      .sort((a, b) => b.area - a.area)
+  })
+
+  // Group residences by owner
+  const ownerRankings = computed(() => {
+    const map: Record<string, { owner: string; count: number; totalArea: number }> = {}
+    for (const r of residences.value) {
+      const owner = r.owner || '未知'
+      if (!map[owner]) map[owner] = { owner, count: 0, totalArea: 0 }
+      map[owner].count++
+      map[owner].totalArea += r.area
+    }
+    return Object.values(map).sort((a, b) => b.totalArea - a.totalArea)
+  })
+
   function setPlayers(list: OnlinePlayer[]) {
     players.value = list
     lastUpdate.value = Date.now()
   }
 
+  function setResidences(list: ResidenceEntry[]) {
+    residences.value = list
+  }
+
+  function setRegions(list: RegionEntry[]) {
+    regions.value = list
+  }
+
+  function setMarkers(list: MarkerEntry[]) {
+    markers.value = list
+  }
+
   function addEvent(ev: PlayerEvent) {
     events.value.unshift({ ...ev, time: Date.now() })
-    // Keep only last 100 events
     if (events.value.length > 100) {
       events.value = events.value.slice(0, 100)
     }
@@ -61,14 +147,10 @@ export const useOnlinePlayersStore = defineStore('onlinePlayers', () => {
   }
 
   return {
-    players,
-    events,
-    lastUpdate,
-    count,
-    byWorld,
-    worldLabels,
-    setPlayers,
-    addEvent,
-    getWorldLabel,
+    players, events, lastUpdate, count, byWorld, worldLabels,
+    residences, regions, markers,
+    residenceRankings, ownerRankings,
+    setPlayers, setResidences, setRegions, setMarkers,
+    addEvent, getWorldLabel,
   }
 })

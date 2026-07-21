@@ -135,7 +135,28 @@ export function useSocketIO() {
           event: payload.event,
           world: payload.world || '',
           position: payload.position,
+          residence: payload.residence,
+          region: payload.region,
         })
+      }
+    })
+
+    // BlueMap marker caches (slow poll, 60s)
+    socket.on('regions_update', (payload) => {
+      if (payload?.regions) {
+        useOnlinePlayersStore().setRegions(payload.regions)
+      }
+    })
+
+    socket.on('residences_update', (payload) => {
+      if (payload?.residences) {
+        useOnlinePlayersStore().setResidences(payload.residences)
+      }
+    })
+
+    socket.on('markers_update', (payload) => {
+      if (payload?.markers) {
+        useOnlinePlayersStore().setMarkers(payload.markers)
       }
     })
   }

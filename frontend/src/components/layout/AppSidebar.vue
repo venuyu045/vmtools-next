@@ -66,6 +66,7 @@ const navItems = [
   { path: '/dashboard', label: '仪表盘' },
   { path: '/bots', label: 'Bot 管理' },
   { path: '/player-tracking', label: '玩家追踪' },
+  { path: '/miaomiao', label: '妙妙工具' },
   { path: '/warehouses', label: '仓库管理' },
   { path: '/build', label: '建造任务' },
   { path: '/logistics/waypoints', label: '物流管理' },

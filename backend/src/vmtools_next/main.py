@@ -31,6 +31,7 @@ from vmtools_next.api.routers.migration import router as migration_router
 from vmtools_next.api.routers.logistics import router as logistics_router
 from vmtools_next.api.routers.projection import router as projection_router
 from vmtools_next.api.routers.player_tracking import router as player_tracking_router
+from vmtools_next.api.routers.bluemap_api import router as bluemap_router
 from vmtools_next.adapters.mcc.mcc_session_pool import MccSessionPool
 from vmtools_next.core.task_engine import TaskEngine
 from vmtools_next.core.mcc_process_manager import MccProcessManager
@@ -266,6 +267,7 @@ def create_app() -> FastAPI:
     app.include_router(logistics_router)
     app.include_router(projection_router)
     app.include_router(player_tracking_router)
+    app.include_router(bluemap_router)
 
     # Static files (Web UI — will be populated in phase 6)
     static_dir = BASE_DIR.parent.parent / "static"
