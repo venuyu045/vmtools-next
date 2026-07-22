@@ -185,9 +185,12 @@ class QqBotClient:
             monitor = get_bluemap_monitor()
             players: list[dict] = []
             if monitor:
-                # Access the monitor's internal player state
                 players = list(monitor._previous_players.values())
-        except Exception:
+                logger.info(f"QQ Bot /list: monitor found, players={len(players)}")
+            else:
+                logger.warning("QQ Bot /list: monitor is None")
+        except Exception as exc:
+            logger.warning(f"QQ Bot /list error: {exc}")
             players = []
 
         if not players:
