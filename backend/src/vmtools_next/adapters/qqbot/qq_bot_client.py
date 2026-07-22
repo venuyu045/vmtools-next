@@ -237,7 +237,7 @@ class QqBotClient:
         return "其他"
 
     async def _cmd_list(self, group_id: str) -> None:
-        """Reply with current online player list, grouped by 玩家 / bot."""
+        """Reply with current online player list in markdown format."""
         try:
             from vmtools_next.main import get_bluemap_monitor
             monitor = get_bluemap_monitor()
@@ -253,8 +253,6 @@ class QqBotClient:
             return
 
         bot_list = self._load_bot_list()
-
-        # Separate into 玩家 and bot groups
         human_names: list[str] = []
         bot_groups: dict[str, list[str]] = {
             "venus": [],
@@ -273,35 +271,45 @@ class QqBotClient:
         total = len(players)
         bot_total = sum(len(v) for v in bot_groups.values())
 
-        lines = [f"🌐 当前在线 {total} 人："]
+        owner_labels = {
+            "venus": "venus的bot",
+            "gxko": "gxko的bot",
+            "快乐船": "快乐船的bot",
+            "其他": "其他bot",
+        }
 
-        # 玩家 section
+        # Build markdown message
+        lines = [f"## 🌐 当前在线 {total} 人"]
+
+        # 玩家
+        h_count = len(human_names)
+        lines.append(f"\n### 👤 玩家 {h_count}人")
         if human_names:
-            lines.append(f"\n👤 玩家 {len(human_names)}人")
-            lines.append("  " + "、".join(sorted(human_names)))
+            lines.append("`" + "`  `".join(sorted(human_names)) + "`")
         else:
-            lines.append("\n👤 玩家 0人")
+            lines.append("_— 无 —_")
 
-        # Bot section
+        # Bot
         if bot_total > 0:
-            lines.append(f"\n🤖 Bot {bot_total}人")
-            owner_labels = {
-                "venus": "venus的bot",
-                "gxko": "gxko的bot",
-                "快乐船": "快乐船的bot",
-                "其他": "其他bot",
-            }
+            lines.append(f"\n### 🤖 Bot {bot_total}人")
             for owner in ["venus", "gxko", "快乐船", "其他"]:
                 names = bot_groups.get(owner, [])
                 if names:
                     label = owner_labels.get(owner, f"{owner}的bot")
-                    lines.append(f"  【{label}】{len(names)}人")
-                    lines.append("    " + "、".join(sorted(names)))
+                    lines.append(f"\n**{label}** ({len(names)}人)")
+                    lines.append("`" + "`  `".join(sorted(names)) + "`")
 
         msg = "\n".join(lines)
         if len(msg) > 1800:
-            msg = msg[:1800] + "\n...（列表过长已截断）"
-        await self.send_group_message(group_id, msg)
+            msg = msg[:1800] + "\n\n> ...（列表过长已截断）"
+        await self._send_md(group_id, msg)
+
+    async def _send_md(self, group_id: str, content: str) -> None:
+        """Send a markdown message to a group."""
+        await self.send_group_message(
+            group_id, "", msg_type=2,
+            markdown={"content": content},
+        )
 
     async def _cmd_list_add(self, group_id: str, content: str) -> None:
         """Handle /list add <name> [owner]."""
