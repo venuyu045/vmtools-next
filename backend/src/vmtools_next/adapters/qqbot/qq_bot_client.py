@@ -5,6 +5,7 @@ API docs: https://bot.qq.com/wiki/develop/api-v2/
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 from typing import Optional
 
@@ -24,6 +25,8 @@ class QqBotClient:
 
     Manages access token lifecycle and provides high-level send_message helpers.
     Rate-limited: 60 QPM global, 20 QPM per group (verified bot).
+
+    Also supports WebSocket event listening for @bot commands.
     """
 
     def __init__(
@@ -40,6 +43,8 @@ class QqBotClient:
         self._token_expires_at: float = 0
         self._client: Optional[httpx.AsyncClient] = None
         self._rate_sem = asyncio.Semaphore(50)  # safe margin under 60 QPM
+        self._ws_task: Optional[asyncio.Task] = None
+        self._ws_running = False
 
     async def __aenter__(self):
         await self.start()
@@ -60,9 +65,141 @@ class QqBotClient:
             return False
 
     async def stop(self):
+        self._ws_running = False
+        if self._ws_task:
+            self._ws_task.cancel()
+            try:
+                await self._ws_task
+            except asyncio.CancelledError:
+                pass
+            self._ws_task = None
         if self._client:
             await self._client.aclose()
             self._client = None
+
+    # ── WebSocket Event Listener ────────────────────────────
+
+    async def start_ws_listener(self) -> None:
+        """Connect to QQ WSS gateway and listen for @bot commands."""
+        self._ws_running = True
+        self._ws_task = asyncio.create_task(self._ws_loop())
+
+    async def _ws_loop(self) -> None:
+        """WebSocket event loop — handle GROUP_AT_MESSAGE_CREATE."""
+        import websockets
+        while self._ws_running:
+            try:
+                await self._ensure_token()
+                ws_url = await self._get_gateway_url()
+                logger.info("QQ Bot WebSocket connecting: %s", ws_url[:60])
+                async with websockets.connect(ws_url) as ws:
+                    await self._ws_identify(ws)
+                    await self._ws_listen(ws)
+            except asyncio.CancelledError:
+                break
+            except Exception as exc:
+                logger.warning("QQ Bot WebSocket error, reconnecting in 5s: %s", exc)
+                await asyncio.sleep(5)
+
+    async def _get_gateway_url(self) -> str:
+        resp = await self._client.get(
+            "https://api.sgroup.qq.com/gateway/bot",
+            headers=self._headers,
+        )
+        data = resp.json()
+        if "url" not in data:
+            raise RuntimeError(f"Gateway URL fetch failed: {data}")
+        return data["url"]
+
+    async def _ws_identify(self, ws) -> None:
+        payload = {
+            "op": 2,
+            "d": {
+                "token": f"QQBot {self._token}",
+                "intents": 1 | (1 << 25),  # GUILDS + GROUP_AT_MESSAGE
+                "shard": [0, 1],
+                "properties": {"$os": "linux", "$browser": "vmtools", "$device": "server"},
+            },
+        }
+        await ws.send(json.dumps(payload))
+
+    async def _ws_listen(self, ws) -> None:
+        heartbeat_task = None
+        async for raw in ws:
+            event = json.loads(raw)
+            op = event.get("op")
+            t = event.get("t")
+            d = event.get("d", {})
+
+            if op == 10:  # Hello
+                interval = d["heartbeat_interval"]
+                heartbeat_task = asyncio.create_task(self._ws_heartbeat(ws, interval))
+
+            if op == 11:  # Heartbeat ACK
+                pass
+
+            if t == "GROUP_AT_MESSAGE_CREATE":
+                await self._handle_at_message(d)
+
+        if heartbeat_task:
+            heartbeat_task.cancel()
+
+    async def _ws_heartbeat(self, ws, interval_ms: int) -> None:
+        while self._ws_running:
+            await asyncio.sleep(interval_ms / 1000)
+            try:
+                await ws.send(json.dumps({"op": 1, "d": {}}))
+            except Exception:
+                break
+
+    async def _handle_at_message(self, d: dict) -> None:
+        """Handle @bot commands in group."""
+        content = (d.get("content", "") or "").strip()
+        # Remove bot mention prefix (e.g., "<@!robot_openid>")
+        import re
+        content = re.sub(r"<@!\w+>", "", content).strip()
+        group_id = d.get("group_id") or d.get("group_openid") or ""
+
+        logger.info("QQ Bot command: group=%s content=%s", group_id, content)
+
+        if content == "/list":
+            await self._cmd_list(group_id)
+
+    async def _cmd_list(self, group_id: str) -> None:
+        """Reply with current online player list from BlueMap."""
+        try:
+            from vmtools_next.main import get_bluemap_monitor
+            monitor = get_bluemap_monitor()
+            players: list[dict] = []
+            if monitor:
+                # Access the monitor's internal player state
+                players = list(monitor._previous_players.values())
+        except Exception:
+            players = []
+
+        if not players:
+            await self.send_group_message(group_id, "📭 当前没有在线玩家")
+            return
+
+        # Group by world
+        by_world: dict[str, list[str]] = {}
+        labels = {"world": "主世界", "world_nether": "地狱", "world_the_end": "末地"}
+        for p in players:
+            w = p.get("world", "unknown")
+            name = p.get("name", "?")
+            by_world.setdefault(w, []).append(name)
+
+        lines = [f"🌐 当前在线 {len(players)} 人："]
+        for w, names in sorted(by_world.items()):
+            label = labels.get(w, w)
+            lines.append(f"\n【{label}】{len(names)}人")
+            lines.append("  " + "、".join(names))
+
+        msg = "\n".join(lines)
+        # Truncate if too long (QQ limits at ~2000 chars)
+        if len(msg) > 1800:
+            msg = msg[:1800] + "\n...（列表过长已截断）"
+        await self.send_group_message(group_id, msg)
 
     # ── Token ────────────────────────────────────────────────
 
