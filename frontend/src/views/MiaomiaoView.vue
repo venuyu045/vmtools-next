@@ -154,6 +154,14 @@ function formatArea(v: number): string {
 .subtitle { color: var(--text-secondary); margin-bottom: 16px; }
 .mm-tabs { margin-top: 16px; }
 
+/* Fix Element Plus stripe row background in dark theme */
+:deep(.el-table--striped .el-table__body tr.el-table__row--striped td) {
+  background: rgba(255, 255, 255, 0.03) !important;
+}
+:deep(.el-table tr) {
+  background: transparent !important;
+}
+
 .tab-toolbar {
   display: flex;
   align-items: center;
