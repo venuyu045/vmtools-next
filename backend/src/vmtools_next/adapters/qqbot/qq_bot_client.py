@@ -177,18 +177,73 @@ class QqBotClient:
 
         if content == "/list":
             await self._cmd_list(group_id)
+        elif content.startswith("/list add "):
+            await self._cmd_list_add(group_id, content)
+        elif content.startswith("/list del "):
+            await self._cmd_list_del(group_id, content)
+
+    # ── Bot list storage ─────────────────────────────────────
+
+    def _load_bot_list(self) -> dict[str, str]:
+        """Load bot list {name: owner} from DB cache."""
+        try:
+            from vmtools_next.data.db import get_session_factory
+            from sqlalchemy import text
+            Session = get_session_factory()
+            db = Session()
+            try:
+                row = db.execute(
+                    text("SELECT cache_data FROM bluemap_cache WHERE cache_key = 'bot_list_json'")
+                ).fetchone()
+                if row and row[0]:
+                    return json.loads(row[0])
+            finally:
+                db.close()
+        except Exception:
+            pass
+        return {}
+
+    def _save_bot_list(self, data: dict[str, str]) -> None:
+        """Persist bot list to DB cache."""
+        try:
+            from vmtools_next.data.db import get_session_factory
+            from sqlalchemy import text
+            Session = get_session_factory()
+            db = Session()
+            try:
+                payload = json.dumps(data, ensure_ascii=False)
+                now = time.time()
+                db.execute(
+                    text(
+                        "INSERT INTO bluemap_cache (cache_key, cache_data, updated_at) "
+                        "VALUES ('bot_list_json', :data, :ts) "
+                        "ON CONFLICT(cache_key) DO UPDATE SET cache_data=:data2, updated_at=:ts2"
+                    ),
+                    {"data": payload, "ts": now, "data2": payload, "ts2": now},
+                )
+                db.commit()
+            finally:
+                db.close()
+        except Exception as exc:
+            logger.warning(f"Failed to save bot list: {exc}")
+
+    @staticmethod
+    def _detect_owner(name: str) -> str:
+        """Auto-detect bot owner by name prefix."""
+        if name.startswith("Venus_Yu"):
+            return "venus"
+        if name.startswith("OG_Cat_"):
+            return "gxko"
+        return "其他"
 
     async def _cmd_list(self, group_id: str) -> None:
-        """Reply with current online player list from BlueMap."""
+        """Reply with current online player list, grouped by 玩家 / bot."""
         try:
             from vmtools_next.main import get_bluemap_monitor
             monitor = get_bluemap_monitor()
             players: list[dict] = []
             if monitor:
                 players = list(monitor._previous_players.values())
-                logger.info(f"QQ Bot /list: monitor found, players={len(players)}")
-            else:
-                logger.warning("QQ Bot /list: monitor is None")
         except Exception as exc:
             logger.warning(f"QQ Bot /list error: {exc}")
             players = []
@@ -197,25 +252,95 @@ class QqBotClient:
             await self.send_group_message(group_id, "📭 当前没有在线玩家")
             return
 
-        # Group by world
-        by_world: dict[str, list[str]] = {}
-        labels = {"world": "主世界", "world_nether": "地狱", "world_the_end": "末地"}
-        for p in players:
-            w = p.get("world", "unknown")
-            name = p.get("name", "?")
-            by_world.setdefault(w, []).append(name)
+        bot_list = self._load_bot_list()
 
-        lines = [f"🌐 当前在线 {len(players)} 人："]
-        for w, names in sorted(by_world.items()):
-            label = labels.get(w, w)
-            lines.append(f"\n【{label}】{len(names)}人")
-            lines.append("  " + "、".join(names))
+        # Separate into 玩家 and bot groups
+        human_names: list[str] = []
+        bot_groups: dict[str, list[str]] = {
+            "venus": [],
+            "gxko": [],
+            "其他": [],
+        }
+
+        for p in players:
+            name = p.get("name", "?")
+            if name in bot_list:
+                owner = bot_list[name]
+                bot_groups.setdefault(owner, []).append(name)
+            else:
+                human_names.append(name)
+
+        total = len(players)
+        bot_total = sum(len(v) for v in bot_groups.values())
+
+        lines = [f"🌐 当前在线 {total} 人："]
+
+        # 玩家 section
+        if human_names:
+            lines.append(f"\n👤 玩家 {len(human_names)}人")
+            lines.append("  " + "、".join(sorted(human_names)))
+        else:
+            lines.append("\n👤 玩家 0人")
+
+        # Bot section
+        if bot_total > 0:
+            lines.append(f"\n🤖 Bot {bot_total}人")
+            owner_labels = {
+                "venus": "venus的bot",
+                "gxko": "gxko的bot",
+                "快乐船": "快乐船的bot",
+                "其他": "其他bot",
+            }
+            for owner in ["venus", "gxko", "快乐船", "其他"]:
+                names = bot_groups.get(owner, [])
+                if names:
+                    label = owner_labels.get(owner, f"{owner}的bot")
+                    lines.append(f"  【{label}】{len(names)}人")
+                    lines.append("    " + "、".join(sorted(names)))
 
         msg = "\n".join(lines)
-        # Truncate if too long (QQ limits at ~2000 chars)
         if len(msg) > 1800:
             msg = msg[:1800] + "\n...（列表过长已截断）"
         await self.send_group_message(group_id, msg)
+
+    async def _cmd_list_add(self, group_id: str, content: str) -> None:
+        """Handle /list add <name> [owner]."""
+        parts = content.split()
+        if len(parts) < 3:
+            await self.send_group_message(group_id, "❌ 用法: /list add <游戏名> [venus|gxko|快乐船|其他]")
+            return
+
+        name = parts[2]
+        owner = parts[3] if len(parts) >= 4 else self._detect_owner(name)
+
+        # Validate owner
+        valid_owners = {"venus", "gxko", "快乐船", "其他"}
+        if owner not in valid_owners:
+            owner = self._detect_owner(name)
+
+        bot_list = self._load_bot_list()
+        bot_list[name] = owner
+        self._save_bot_list(bot_list)
+
+        owner_labels = {"venus": "venus的bot", "gxko": "gxko的bot", "快乐船": "快乐船的bot", "其他": "其他bot"}
+        label = owner_labels.get(owner, owner)
+        await self.send_group_message(group_id, f"✅ 已添加 {name} → {label}")
+
+    async def _cmd_list_del(self, group_id: str, content: str) -> None:
+        """Handle /list del <name>."""
+        parts = content.split()
+        if len(parts) < 3:
+            await self.send_group_message(group_id, "❌ 用法: /list del <游戏名>")
+            return
+
+        name = parts[2]
+        bot_list = self._load_bot_list()
+        if name in bot_list:
+            del bot_list[name]
+            self._save_bot_list(bot_list)
+            await self.send_group_message(group_id, f"✅ 已移除 {name}")
+        else:
+            await self.send_group_message(group_id, f"❌ {name} 不在 Bot 列表中")
 
     # ── Token ────────────────────────────────────────────────
 
