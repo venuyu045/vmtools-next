@@ -133,10 +133,19 @@ class QqBotClient:
 
             if op == 10:  # Hello
                 interval = d["heartbeat_interval"]
+                logger.info(f"QQ Bot WebSocket ready, heartbeat={interval}ms")
                 heartbeat_task = asyncio.create_task(self._ws_heartbeat(ws, interval))
 
             if op == 11:  # Heartbeat ACK
                 pass
+
+            # Log all event types for debugging
+            if t:
+                logger.info(f"QQ Bot WS event: op={op} t={t}")
+
+            if t == "READY":
+                user = d.get("user", {})
+                logger.info(f"QQ Bot WS ready: user={user.get('username')}")
 
             if t == "GROUP_AT_MESSAGE_CREATE":
                 await self._handle_at_message(d)
