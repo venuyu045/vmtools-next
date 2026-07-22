@@ -218,6 +218,8 @@ class BlueMapMonitor:
     # ── markers poll (slow, 60s) ────────────────────────────────────
 
     async def _markers_poll_loop(self) -> None:
+        # Wait 60s before first poll — start() already did one
+        await asyncio.sleep(60)
         while self._running:
             try:
                 await self._poll_markers_once()
