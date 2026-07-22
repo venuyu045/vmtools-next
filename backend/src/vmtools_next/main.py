@@ -84,7 +84,7 @@ def get_bluemap_monitor() -> "BlueMapMonitor":
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application startup & shutdown lifecycle."""
-    global _pool, _task_engine, _plugin_manager, _monitor, _alert_engine, _mcc_process_manager
+    global _pool, _task_engine, _plugin_manager, _monitor, _alert_engine, _mcc_process_manager, _bluemap_monitor
     config = get_config()
 
     # 1. Logging
