@@ -218,8 +218,9 @@ class BlueMapMonitor:
     # ── markers poll (slow, 60s) ────────────────────────────────────
 
     async def _markers_poll_loop(self) -> None:
-        # Wait 60s before first poll — start() already did one
-        await asyncio.sleep(60)
+        # Poll once per day — residences/markers change infrequently
+        DAILY = 86400
+        await asyncio.sleep(DAILY)
         while self._running:
             try:
                 await self._poll_markers_once()
@@ -227,7 +228,7 @@ class BlueMapMonitor:
                 break
             except Exception as exc:
                 logger.warning("BlueMap markers poll error: {}", exc)
-            await asyncio.sleep(60)
+            await asyncio.sleep(DAILY)
 
     async def _poll_markers_once(self) -> None:
         cfg = get_config().bluemap
