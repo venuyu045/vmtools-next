@@ -91,14 +91,14 @@ class QqBotClient:
             try:
                 await self._ensure_token()
                 ws_url = await self._get_gateway_url()
-                logger.info("QQ Bot WebSocket connecting: %s", ws_url[:60])
+                logger.info(f"QQ Bot WebSocket connecting: {ws_url[:60]}")
                 async with websockets.connect(ws_url) as ws:
                     await self._ws_identify(ws)
                     await self._ws_listen(ws)
             except asyncio.CancelledError:
                 break
             except Exception as exc:
-                logger.warning("QQ Bot WebSocket error, reconnecting in 5s: %s", exc)
+                logger.warning(f"QQ Bot WebSocket error, reconnecting in 5s: {exc}")
                 await asyncio.sleep(5)
 
     async def _get_gateway_url(self) -> str:
