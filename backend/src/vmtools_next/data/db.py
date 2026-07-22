@@ -155,9 +155,17 @@ def _run_lightweight_migrations(engine) -> None:
 
 
 def _create_indexes(engine) -> None:
-    """Create additional indexes that aren't in ORM definitions."""
+    """Create additional indexes and utility tables that aren't in ORM definitions."""
     try:
         with engine.connect() as conn:
+            # bluemap_cache table (key-value store for BlueMap data persistence)
+            conn.execute(text(
+                "CREATE TABLE IF NOT EXISTS bluemap_cache ("
+                "  cache_key TEXT PRIMARY KEY,"
+                "  cache_data TEXT,"
+                "  updated_at REAL"
+                ")"
+            ))
             for sql in (
                 "CREATE INDEX IF NOT EXISTS idx_build_tasks_status ON build_tasks (status)",
                 "CREATE INDEX IF NOT EXISTS idx_build_tasks_bot ON build_tasks (bot_id)",
