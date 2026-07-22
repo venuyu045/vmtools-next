@@ -27,6 +27,9 @@ frontend/node_modules/
 .env.linux
 !.env.example
 
+# Config (local, not tracked — use config.yaml.example as template)
+backend/config/config.yaml
+
 # IDE
 .idea/
 .vscode/

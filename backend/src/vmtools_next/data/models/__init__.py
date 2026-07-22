@@ -19,6 +19,7 @@ from vmtools_next.data.models.plugin import PluginStateModel  # noqa: F401
 from vmtools_next.data.models.monitor import (  # noqa: F401
     AlertRuleModel, AlertHistoryModel, MetricsSnapshotModel,
 )
+from vmtools_next.data.models.player_tracking import PlayerTrackingOwnerModel  # noqa: F401
 
 __all__ = [
     # warehouse
