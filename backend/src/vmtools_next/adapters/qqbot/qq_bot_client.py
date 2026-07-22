@@ -285,7 +285,7 @@ class QqBotClient:
         h_count = len(human_names)
         lines.append(f"\n### 👤 玩家 {h_count}人")
         if human_names:
-            lines.append("`" + "`  `".join(sorted(human_names)) + "`")
+            lines.append("`" + "` `".join(sorted(human_names)) + "`")
         else:
             lines.append("_— 无 —_")
 
@@ -297,7 +297,7 @@ class QqBotClient:
                 if names:
                     label = owner_labels.get(owner, f"{owner}的bot")
                     lines.append(f"\n**{label}** ({len(names)}人)")
-                    lines.append("`" + "`  `".join(sorted(names)) + "`")
+                    lines.append("`" + "` `".join(sorted(names)) + "`")
 
         msg = "\n".join(lines)
         if len(msg) > 1800:
