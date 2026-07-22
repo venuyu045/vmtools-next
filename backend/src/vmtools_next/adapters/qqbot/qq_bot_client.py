@@ -166,9 +166,9 @@ class QqBotClient:
         content = (d.get("content", "") or "").strip()
         if "/list" not in content:
             return
-        # Remove bot mention prefix (e.g., "<@!robot_openid>")
+        # Remove bot mention prefix (handles both <@!openid> and <@openid>)
         import re
-        content = re.sub(r"<@!\w+>", "", content).strip()
+        content = re.sub(r"<@!?\w+>", "", content).strip()
         group_id = d.get("group_id") or d.get("group_openid") or ""
         if not group_id:
             return
