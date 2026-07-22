@@ -87,10 +87,19 @@ class BlueMapMonitor:
             return
 
         self._running = True
+
+        # Load cached data from DB first (survives restarts)
+        self._load_cache_from_db()
+
         self._task = asyncio.create_task(self._players_poll_loop())
         self._markers_task = asyncio.create_task(self._markers_poll_loop())
 
         await self._recover_bot_players()
+
+        # Do an immediate markers poll so the frontend has data right away
+        if not self._residences or not self._markers:
+            logger.info("BlueMap: running initial markers poll...")
+            await self._poll_markers_once()
 
         logger.info(
             "BlueMap monitor started (players={}s, markers=60s, base_url={}, worlds={})",
@@ -298,10 +307,85 @@ class BlueMapMonitor:
             len(residences), len(regions), len(markers),
         )
 
+        # Save to DB for persistence across restarts
+        self._save_cache_to_db()
+
         # Push to clients
         await sio.emit("regions_update", {"regions": regions, "timestamp": time.time()})
         await sio.emit("residences_update", {"residences": residences, "timestamp": time.time()})
         await sio.emit("markers_update", {"markers": markers, "timestamp": time.time()})
+
+    # ── DB cache persistence ─────────────────────────────────────────
+
+    def _save_cache_to_db(self) -> None:
+        """Save current residences/regions/markers to DB for persistence."""
+        try:
+            import json as _json
+            from vmtools_next.data.db import get_session_factory
+            Session = get_session_factory()
+            db = Session()
+            try:
+                now = time.time()
+                for key, data in [
+                    ("bluemap_residences", self._residences),
+                    ("bluemap_regions", self._regions),
+                    ("bluemap_markers", self._markers),
+                ]:
+                    db.execute(
+                        db.execute.__self__ if hasattr(db, 'execute') else None
+                    )
+                # Use raw SQL for simplicity since we don't have a model
+                from sqlalchemy import text
+                for key, data in [
+                    ("bluemap_residences", self._residences),
+                    ("bluemap_regions", self._regions),
+                    ("bluemap_markers", self._markers),
+                ]:
+                    payload = _json.dumps(data, ensure_ascii=False)
+                    db.execute(
+                        text(
+                            "INSERT INTO bluemap_cache (cache_key, cache_data, updated_at) "
+                            "VALUES (:key, :data, :ts) "
+                            "ON CONFLICT(cache_key) DO UPDATE SET cache_data=:data2, updated_at=:ts2"
+                        ),
+                        {"key": key, "data": payload, "ts": now, "data2": payload, "ts2": now},
+                    )
+                db.commit()
+            finally:
+                db.close()
+        except Exception as exc:
+            logger.debug("BlueMap DB cache save failed: {}", exc)
+
+    def _load_cache_from_db(self) -> None:
+        """Load cached residences/regions/markers from DB (survives restart)."""
+        try:
+            import json as _json
+            from vmtools_next.data.db import get_session_factory
+            from sqlalchemy import text
+            Session = get_session_factory()
+            db = Session()
+            try:
+                rows = db.execute(
+                    text("SELECT cache_key, cache_data FROM bluemap_cache")
+                ).fetchall()
+                for row in rows:
+                    key, payload = row[0], row[1]
+                    data = _json.loads(payload) if payload else []
+                    if key == "bluemap_residences":
+                        self._residences = data
+                    elif key == "bluemap_regions":
+                        self._regions = data
+                    elif key == "bluemap_markers":
+                        self._markers = data
+                if self._residences or self._markers:
+                    logger.info(
+                        "BlueMap: loaded cache from DB ({} residences, {} markers)",
+                        len(self._residences), len(self._markers),
+                    )
+            finally:
+                db.close()
+        except Exception as exc:
+            logger.debug("BlueMap DB cache load failed (table may not exist yet): {}", exc)
 
     # ── spatial lookup ──────────────────────────────────────────────
 
