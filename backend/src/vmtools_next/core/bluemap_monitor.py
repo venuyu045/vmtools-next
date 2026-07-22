@@ -67,11 +67,16 @@ def suppress_next_join(mc_username: str) -> None:
 class BlueMapMonitor:
     """Background service that polls BlueMap API for players, regions, residences."""
 
+    AFK_THRESHOLD_SECONDS = 600  # 10 minutes without movement → AFK
+
     def __init__(self) -> None:
         self._task: Optional[asyncio.Task[None]] = None
         self._markers_task: Optional[asyncio.Task[None]] = None
         self._previous_players: dict[str, dict] = {}
         self._running = False
+
+        # AFK detection: {name: {x, y, z, last_moved_at, afk}}
+        self._player_afk_status: dict[str, dict] = {}
 
         # Cached marker data (refreshed every 60s)
         self._residences: list[dict] = []
@@ -185,6 +190,7 @@ class BlueMapMonitor:
                 "rotation": p["rotation"],
                 "residence": p.get("residence"),
                 "region": p.get("region"),
+                "afk": self.is_player_afk(p["name"]),
             }
             for p in all_players.values()
         ]
@@ -213,7 +219,63 @@ class BlueMapMonitor:
             await self._notify_tracked(name, "leave")
             await self._notify_bot_player(name, "leave")
 
+        # ── AFK detection ───────────────────────────────────────────
+        self._update_afk_status(all_players)
+
         self._previous_players = all_players
+
+    # ── AFK detection ──────────────────────────────────────────────
+
+    def _update_afk_status(self, current_players: dict[str, dict]) -> None:
+        """Compare player positions against last poll to detect AFK."""
+        now = time.time()
+        for name, p in current_players.items():
+            pos = p.get("position") or {}
+            x = pos.get("x", 0)
+            y = pos.get("y", 0)
+            z = pos.get("z", 0)
+
+            prev = self._player_afk_status.get(name)
+            if prev is None:
+                # Newly seen player — initialize tracking
+                self._player_afk_status[name] = {
+                    "x": x, "y": y, "z": z,
+                    "last_moved_at": now,
+                    "afk": False,
+                }
+                continue
+
+            # Check if position changed (compare all three axes)
+            if (abs(x - prev["x"]) > 0.5 or
+                abs(y - prev["y"]) > 0.5 or
+                abs(z - prev["z"]) > 0.5):
+                # Player moved — reset timer
+                prev["x"] = x
+                prev["y"] = y
+                prev["z"] = z
+                prev["last_moved_at"] = now
+                prev["afk"] = False
+            elif now - prev["last_moved_at"] >= self.AFK_THRESHOLD_SECONDS:
+                # Stationary for 10+ minutes — mark AFK
+                prev["afk"] = True
+
+        # Clean up players who left (no longer in current_players)
+        for name in list(self._player_afk_status):
+            if name not in current_players:
+                del self._player_afk_status[name]
+
+    def is_player_afk(self, name: str) -> bool:
+        """Check if a player is currently AFK."""
+        status = self._player_afk_status.get(name)
+        return status["afk"] if status else False
+
+    def get_player_afk_info(self, name: str) -> dict | None:
+        """Get full AFK tracking info for a player."""
+        return self._player_afk_status.get(name)
+
+    def get_afk_players(self) -> dict[str, bool]:
+        """Return {name: afk} for all currently tracked players."""
+        return {name: s["afk"] for name, s in self._player_afk_status.items()}
 
     # ── markers poll (slow, 60s) ────────────────────────────────────
 

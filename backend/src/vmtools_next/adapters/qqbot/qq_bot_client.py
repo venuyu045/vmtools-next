@@ -268,6 +268,18 @@ class QqBotClient:
             else:
                 human_names.append(name)
 
+        # Split human players into active / AFK
+        active_names: list[str] = []
+        afk_names: list[str] = []
+        if monitor:
+            for name in human_names:
+                if monitor.is_player_afk(name):
+                    afk_names.append(name)
+                else:
+                    active_names.append(name)
+        else:
+            active_names = human_names
+
         total = len(players)
         bot_total = sum(len(v) for v in bot_groups.values())
 
@@ -281,11 +293,19 @@ class QqBotClient:
         # Build markdown message
         lines = [f"## 🌐 当前在线 {total} 人"]
 
-        # 玩家
-        h_count = len(human_names)
-        lines.append(f"\n### 👤 玩家 {h_count}人")
-        if human_names:
-            lines.append("`" + "` `".join(sorted(human_names)) + "`")
+        # 玩家 — 活跃中
+        a_count = len(active_names)
+        lines.append(f"\n### 🟢 活跃中 {a_count}人")
+        if active_names:
+            lines.append("`" + "` `".join(sorted(active_names)) + "`")
+        else:
+            lines.append("_— 无 —_")
+
+        # 玩家 — 挂机中
+        afk_count = len(afk_names)
+        lines.append(f"\n### 🟡 挂机中 {afk_count}人")
+        if afk_names:
+            lines.append("`" + "` `".join(sorted(afk_names)) + "`")
         else:
             lines.append("_— 无 —_")
 
