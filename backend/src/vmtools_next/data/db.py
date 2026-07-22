@@ -114,7 +114,7 @@ def init_db() -> None:
 def _sync_player_tracking(Session) -> None:
     """Sync player_tracking_owners DB table into the runtime config."""
     try:
-        from vmtools_next.config import get_config as _cfg_get, OwnerConfig
+        from vmtools_next.config import get_config as _cfg_get, TrackOwner
         import json as _json
         db = Session()
         try:
@@ -123,7 +123,7 @@ def _sync_player_tracking(Session) -> None:
             if not owners_db:
                 return
             owners = [
-                OwnerConfig(
+                TrackOwner(
                     name=o.name,
                     qq_openid=o.qq_openid,
                     track_players=_json.loads(o.track_players_json),

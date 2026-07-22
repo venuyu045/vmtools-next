@@ -43,10 +43,10 @@ def _sync_db_to_config() -> None:
     Session = get_session_factory()
     db = Session()
     try:
-        from vmtools_next.config import get_config as _cfg_get, OwnerConfig
+        from vmtools_next.config import get_config as _cfg_get, TrackOwner
         owners_db = db.query(PlayerTrackingOwnerModel).all()
         owners = [
-            OwnerConfig(
+            TrackOwner(
                 name=o.name,
                 qq_openid=o.qq_openid,
                 track_players=json.loads(o.track_players_json),
