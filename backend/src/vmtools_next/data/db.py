@@ -40,18 +40,20 @@ def get_engine():
     if _engine is not None:
         return _engine
 
-    from vmtools_next.config import get_config, _find_config_dir
+    from vmtools_next.config import get_config
     config = get_config()
     _DATABASE_URL = config.server.database_url
 
-    # Resolve relative SQLite paths against config dir → absolute,
+    # Resolve relative SQLite paths to absolute based on this module's location,
     # so the database is always found regardless of cwd.
+    # Module: backend/src/vmtools_next/data/db.py → 5 levels up → project root.
     if _DATABASE_URL.startswith("sqlite:///"):
         db_rel = _DATABASE_URL.removeprefix("sqlite:///")
         db_path = pathlib.Path(db_rel)
         if not db_path.is_absolute():
-            config_dir = _find_config_dir()
-            db_path = (config_dir / db_path).resolve()
+            # Derive project root from this file's location
+            project_root = pathlib.Path(__file__).resolve().parent.parent.parent.parent.parent
+            db_path = (project_root / "vmtools-next" / "vmtools-next.db").resolve()
             _DATABASE_URL = f"sqlite:///{db_path}"
 
     connect_args = {}
