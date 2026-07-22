@@ -329,15 +329,6 @@ class BlueMapMonitor:
             db = Session()
             try:
                 now = time.time()
-                for key, data in [
-                    ("bluemap_residences", self._residences),
-                    ("bluemap_regions", self._regions),
-                    ("bluemap_markers", self._markers),
-                ]:
-                    db.execute(
-                        db.execute.__self__ if hasattr(db, 'execute') else None
-                    )
-                # Use raw SQL for simplicity since we don't have a model
                 from sqlalchemy import text
                 for key, data in [
                     ("bluemap_residences", self._residences),
