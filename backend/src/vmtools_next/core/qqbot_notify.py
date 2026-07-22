@@ -34,6 +34,8 @@ async def start() -> bool:
         logger.info("QQ Bot notification service started, groups=%s", config.notify_groups)
         # Send startup notification
         await broadcast("VMTools Next 后端 上线了喵")
+        # Start WebSocket listener for @bot commands (e.g., /list)
+        await _qq_client.start_ws_listener()
     return ok
 
 
