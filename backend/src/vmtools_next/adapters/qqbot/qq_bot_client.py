@@ -147,7 +147,7 @@ class QqBotClient:
                 user = d.get("user", {})
                 logger.info(f"QQ Bot WS ready: user={user.get('username')}")
 
-            if t == "GROUP_AT_MESSAGE_CREATE":
+            if t in ("GROUP_AT_MESSAGE_CREATE", "GROUP_MESSAGE_CREATE"):
                 await self._handle_at_message(d)
 
         if heartbeat_task:
@@ -162,14 +162,18 @@ class QqBotClient:
                 break
 
     async def _handle_at_message(self, d: dict) -> None:
-        """Handle @bot commands in group."""
+        """Handle @bot commands or group messages containing /list."""
         content = (d.get("content", "") or "").strip()
+        if "/list" not in content:
+            return
         # Remove bot mention prefix (e.g., "<@!robot_openid>")
         import re
         content = re.sub(r"<@!\w+>", "", content).strip()
         group_id = d.get("group_id") or d.get("group_openid") or ""
+        if not group_id:
+            return
 
-        logger.info("QQ Bot command: group=%s content=%s", group_id, content)
+        logger.info(f"QQ Bot command: group={group_id} content={content}")
 
         if content == "/list":
             await self._cmd_list(group_id)
