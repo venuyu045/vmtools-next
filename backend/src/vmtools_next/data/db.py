@@ -40,9 +40,19 @@ def get_engine():
     if _engine is not None:
         return _engine
 
-    from vmtools_next.config import get_config
+    from vmtools_next.config import get_config, _find_config_dir
     config = get_config()
     _DATABASE_URL = config.server.database_url
+
+    # Resolve relative SQLite paths against config dir → absolute,
+    # so the database is always found regardless of cwd.
+    if _DATABASE_URL.startswith("sqlite:///"):
+        db_rel = _DATABASE_URL.removeprefix("sqlite:///")
+        db_path = pathlib.Path(db_rel)
+        if not db_path.is_absolute():
+            config_dir = _find_config_dir()
+            db_path = (config_dir / db_path).resolve()
+            _DATABASE_URL = f"sqlite:///{db_path}"
 
     connect_args = {}
     if _DATABASE_URL.startswith("sqlite"):
@@ -88,14 +98,43 @@ def init_db() -> None:
 
     # Import all model modules so Base.metadata knows about every table
     from vmtools_next.data.models import (  # noqa: F401
-        warehouse, auth, logistics, build, mcc_session, mcc_remote, plugin, monitor,
+        warehouse, auth, logistics, build, mcc_session, mcc_remote, plugin, monitor, player_tracking,
     )
 
     Base.metadata.create_all(bind=engine)
     _run_lightweight_migrations(engine)
     _create_indexes(engine)
     _ensure_site_admin(Session)
+    _sync_player_tracking(Session)
     logger.info("Database initialized: {}", _DATABASE_URL)
+
+
+def _sync_player_tracking(Session) -> None:
+    """Sync player_tracking_owners DB table into the runtime config."""
+    try:
+        from vmtools_next.config import get_config as _cfg_get, OwnerConfig
+        import json as _json
+        db = Session()
+        try:
+            from vmtools_next.data.models.player_tracking import PlayerTrackingOwnerModel
+            owners_db = db.query(PlayerTrackingOwnerModel).all()
+            if not owners_db:
+                return
+            owners = [
+                OwnerConfig(
+                    name=o.name,
+                    qq_openid=o.qq_openid,
+                    track_players=_json.loads(o.track_players_json),
+                )
+                for o in owners_db
+            ]
+            # Mutate cached config in-place (don't invalidate cache)
+            _cfg_get().player_tracking.owners = owners
+            logger.info("Player tracking: synced {} owners from DB to config", len(owners_db))
+        finally:
+            db.close()
+    except Exception:
+        pass
 
 
 def _run_lightweight_migrations(engine) -> None:
