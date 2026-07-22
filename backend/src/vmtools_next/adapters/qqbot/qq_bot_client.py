@@ -179,7 +179,7 @@ class QqBotClient:
             await self._cmd_list(group_id)
         elif content.startswith("/list add "):
             await self._cmd_list_add(group_id, content)
-        elif content.startswith("/list del "):
+        elif content.startswith("/list del ") or content.startswith("/list remove "):
             await self._cmd_list_del(group_id, content)
 
     # ── Bot list storage ─────────────────────────────────────
@@ -335,7 +335,7 @@ class QqBotClient:
         await self.send_group_message(group_id, f"✅ 已添加 {name} → {label}")
 
     async def _cmd_list_del(self, group_id: str, content: str) -> None:
-        """Handle /list del <name>."""
+        """Handle /list del|remove <name>."""
         parts = content.split()
         if len(parts) < 3:
             await self.send_group_message(group_id, "❌ 用法: /list del <游戏名>")
