@@ -57,13 +57,13 @@
         <el-form-item label="Bots">
           <el-select v-model="form.bot_ids" multiple placeholder="Select bots">
             <el-option
-              v-for="bot in onlineBots"
+              v-for="bot in allBots"
               :key="bot.bot_id"
-              :label="`${bot.name || bot.bot_id} (${bot.status})`"
+              :label="`${bot.name || bot.bot_id} (${bot.status || '?'})`"
               :value="bot.bot_id"
             />
           </el-select>
-          <span v-if="!onlineBots.length" style="color: #888; font-size: 12px;">No online bots — start one first</span>
+          <span v-if="!allBots.length" style="color: #888; font-size: 12px;">No bots loaded — check bot management</span>
         </el-form-item>
       </el-form>
       <template #footer>
@@ -77,17 +77,15 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { mapArtApi } from '@/api/mapArt'
-import { useBotStore } from '@/stores/bot'
+import { botApi } from '@/api/bot'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { computed } from 'vue'
-
-const botStore = useBotStore()
 
 const tasks = ref<any[]>([])
 const loading = ref(false)
 const showCreate = ref(false)
 const creating = ref(false)
 const uploadedPath = ref('')
+const allBots = ref<any[]>([])
 
 const form = ref({
   name: 'My Map Art',
@@ -97,10 +95,14 @@ const form = ref({
   bot_ids: [] as string[],
 })
 
-const onlineBots = computed(() => {
-  const bots = botStore.bots || []
-  return bots.filter((b: any) => b.status === 'online')
-})
+async function loadBots() {
+  try {
+    const { data } = await botApi.list()
+    allBots.value = Array.isArray(data) ? data : (data.bots || data.items || [])
+  } catch (e) {
+    console.error('Failed to load bots:', e)
+  }
+}
 
 function statusTag(s: string): string {
   if (s === 'running') return 'success'
@@ -172,7 +174,7 @@ async function deleteTask(taskId: string) {
 
 onMounted(() => {
   fetchTasks()
-  botStore.fetchBots?.()
+  loadBots()
 })
 </script>
 
