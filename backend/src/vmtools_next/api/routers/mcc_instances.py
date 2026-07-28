@@ -261,7 +261,7 @@ async def kill_all_instances(
     try:
         result = await manager.stop_all_instances(force=True, timeout_seconds=3)
         killed = [r for r in result.get("results", []) if r["status"] not in ("error",)]
-        logger.warning("Force-kill all MCC: {} instances killed by {}", len(killed), user.username)
+        logger.warning("Force-kill all MCC: {} instances killed by {}", len(killed), user.game_id)
         # Update DB status for each killed instance
         for r in killed:
             try:
