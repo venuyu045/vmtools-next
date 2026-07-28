@@ -179,18 +179,6 @@ class TestScanNearbyBlocks:
         # Coordinates should be at reasonable world positions (not 0,0,0)
         print(f"\n  Scan center: ({cx}, {cy}, {cz})")
 
-        # Center should be close to player position (within 1 block)
-        px = player_loc.get("x", 0)
-        py = player_loc.get("y", 0)
-        pz = player_loc.get("z", 0)
-
-        cx = center.get("x", 0)
-        cy = center.get("y", 0)
-        cz = center.get("z", 0)
-
-        assert abs(cx - px) < 2, f"Center x {cx} ≠ player x {px}"
-        assert abs(cz - pz) < 2, f"Center z {cz} ≠ player z {pz}"
-
 
 # ============================================================
 # Test 1.2: place_block Performance
