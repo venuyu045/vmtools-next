@@ -14,6 +14,9 @@ from vmtools_next.data.models.logistics import (  # noqa: F401
 from vmtools_next.data.models.build import (  # noqa: F401
     BuildTaskModel, BuildLayerModel,
 )
+from vmtools_next.data.models.build_map_art import (  # noqa: F401
+    MapArtTask, MapArtMaterial, MapArtBotAssignment, MapArtBlockState,
+)
 from vmtools_next.data.models.mcc_session import MccMcpSessionModel  # noqa: F401
 from vmtools_next.data.models.plugin import PluginStateModel  # noqa: F401
 from vmtools_next.data.models.monitor import (  # noqa: F401
