@@ -1696,7 +1696,7 @@ class LitematicaParser:
 
         # Read NBT
         with gzip.open(file_path, "rb") as f:
-            nbt_data = nbtlib.File(f)
+            nbt_data = nbtlib.File.parse(f)
 
         # Metadata
         metadata = nbt_data.get("Metadata", {})
