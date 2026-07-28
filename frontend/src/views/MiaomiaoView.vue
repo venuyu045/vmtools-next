@@ -268,7 +268,7 @@ const filteredRegions = computed(() => {
       break
     case 'mspt':
     default:
-      list.sort((a, b) => (a.mspt ?? 999) - (b.mspt ?? 999))
+      list.sort((a, b) => (b.mspt ?? 0) - (a.mspt ?? 0))
       break
   }
   return list
