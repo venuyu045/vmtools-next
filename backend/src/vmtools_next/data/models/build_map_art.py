@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy import (
     Column, String, Integer, Float, Boolean, DateTime,
-    Text, JSON, Index,
+    Text, ForeignKey, Index,
 )
 from sqlalchemy.orm import relationship
 
@@ -97,7 +97,7 @@ class MapArtMaterial(Base):
     __tablename__ = "map_art_materials"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    task_id = Column(String(12), nullable=False, index=True)
+    task_id = Column(String(12), ForeignKey("map_art_tasks.task_id", ondelete="CASCADE"), nullable=False, index=True)
 
     item_id = Column(String(128), nullable=False)       # e.g. "minecraft:white_wool"
     display_name = Column(String(256), default="")       # "White Wool"
@@ -114,7 +114,7 @@ class MapArtBotAssignment(Base):
     __tablename__ = "map_art_bot_assignments"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    task_id = Column(String(12), nullable=False, index=True)
+    task_id = Column(String(12), ForeignKey("map_art_tasks.task_id", ondelete="CASCADE"), nullable=False, index=True)
     bot_id = Column(String(64), nullable=False, index=True)
     bot_name = Column(String(128), default="")
 
@@ -158,7 +158,7 @@ class MapArtBlockState(Base):
     __tablename__ = "map_art_block_states"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    task_id = Column(String(12), nullable=False, index=True)
+    task_id = Column(String(12), ForeignKey("map_art_tasks.task_id", ondelete="CASCADE"), nullable=False, index=True)
 
     # World coordinates
     x = Column(Integer, nullable=False)
