@@ -1,7 +1,10 @@
 """Phase 4: End-to-end integration tests for map art build system.
 
-⚠️  Requires deployed server with MCP bot online.
+⚠️  Requires deployed server.
     Run on the server: pytest tests/phase1/test_integration.py -v --run-integration
+
+    Authentication: uses admin account VenusYu. Set SITE_ADMIN_PASSWORD env var
+    or defaults to 'jxy080405'.
 
 Covers:
   - Projection file upload → metadata extraction
@@ -9,18 +12,23 @@ Covers:
   - Task listing and detail retrieval
   - Task control (start/pause/resume/stop lifecycle)
   - Socket.IO build_map events
-  - 3D frontend block state queries
 """
 
+import os
 import pytest
 import httpx
 import asyncio
-import socketio as sio_client
 from pathlib import Path
 
 # Server endpoint
 BASE_URL = "http://127.0.0.1:8080"
 API_URL = f"{BASE_URL}/api/build/map-art"
+AUTH_URL = f"{BASE_URL}/api/auth"
+
+ADMIN_USER = "VenusYu"
+ADMIN_PASS = os.environ.get("SITE_ADMIN_PASSWORD", "jxy080405")
+
+_token: str = ""
 
 
 def requires_integration(fn):
@@ -28,24 +36,49 @@ def requires_integration(fn):
 
 
 # ──────────────────────────────────────────────
-# Test helpers
+# Auth helper
 # ──────────────────────────────────────────────
 
+async def ensure_auth():
+    """Login as admin and store JWT token."""
+    global _token
+    if _token:
+        return _token
+    async with httpx.AsyncClient(base_url=AUTH_URL, timeout=10) as c:
+        r = await c.post("/login", json={
+            "game_id": ADMIN_USER,
+            "password": ADMIN_PASS,
+        })
+        assert r.status_code == 200, f"Auth failed: {r.status_code} {r.text}"
+        data = r.json()
+        _token = data["token"]
+        return _token
+
+
+def _headers():
+    return {"Authorization": f"Bearer {_token}"} if _token else {}
+
+
 async def api_get(path: str, **kwargs) -> dict:
+    await ensure_auth()
+    h = _headers()
+    h.update(kwargs.pop("headers", {}))
     async with httpx.AsyncClient(base_url=API_URL, timeout=30) as c:
-        r = await c.get(path, **kwargs)
+        r = await c.get(path, headers=h, **kwargs)
         return r.json()
 
 
 async def api_post(path: str, json_data: dict = None) -> dict:
+    await ensure_auth()
     async with httpx.AsyncClient(base_url=API_URL, timeout=30) as c:
-        r = await c.post(path, json=json_data or {})
+        r = await c.post(path, json=json_data or {}, headers=_headers())
         return r.json()
 
 
 async def api_delete(path: str) -> dict:
+    await ensure_auth()
     async with httpx.AsyncClient(base_url=API_URL, timeout=10) as c:
-        r = await c.delete(path)
+        r = await c.delete(path, headers=_headers())
         return r.json()
 
 
