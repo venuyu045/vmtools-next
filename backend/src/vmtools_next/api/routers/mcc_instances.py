@@ -43,6 +43,9 @@ from vmtools_next.core.mcc_file_service import MccFileService
 from vmtools_next.core.mcc_instance_service import MccInstanceService
 from vmtools_next.data.models.auth import UserModel
 from vmtools_next.data.models.mcc_remote import MccInstanceModel, MccProcessEventModel
+from vmtools_next.infra.logging import get_logger
+
+logger = get_logger("mcc.api")
 
 router = APIRouter(prefix="/api/mcc/instances", tags=["mcc-instances"])
 service = MccInstanceService()
@@ -245,6 +248,36 @@ async def stop_instance(
         err_msg = str(exc) or repr(exc)
         audit.log(db, user=user, action="instance.stop", instance_id=instance_id, success=False, error_message=err_msg)
         db.commit()
+        raise HTTPException(status_code=400, detail=err_msg) from exc
+
+
+@router.post("/kill-all")
+async def kill_all_instances(
+    db: Session = Depends(get_db),
+    user: UserModel = Depends(get_current_user),
+):
+    """Force-kill all running MCC processes immediately. Use when duplicate instances fight over server connection."""
+    manager = _process_manager()
+    try:
+        result = await manager.stop_all_instances(force=True, timeout_seconds=3)
+        killed = [r for r in result.get("results", []) if r["status"] not in ("error",)]
+        logger.warning("Force-kill all MCC: {} instances killed by {}", len(killed), user.username)
+        # Update DB status for each killed instance
+        for r in killed:
+            try:
+                instance = service.get_instance(db, user, r["instance_id"])
+                instance.status = "stopped"
+                instance.pid = None
+                instance.exit_code = None
+                instance.last_stopped_at = datetime.now(timezone.utc)
+                audit.log(db, user=user, action="instance.kill_all", instance_id=r["instance_id"], after={"status": "killed"})
+            except Exception:
+                pass
+        db.commit()
+        return {"killed": len(killed), "total_running": len(result.get("results", [])), "results": result.get("results", [])}
+    except Exception as exc:
+        db.rollback()
+        err_msg = str(exc) or repr(exc)
         raise HTTPException(status_code=400, detail=err_msg) from exc
 
 

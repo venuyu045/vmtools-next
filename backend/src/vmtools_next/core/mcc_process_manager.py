@@ -163,6 +163,19 @@ class MccProcessManager:
                 logger.warning("Failed to stop MCC instance {} during shutdown: {}", instance_id, exc)
         self._started = False
 
+    async def stop_all_instances(self, force: bool = True, timeout_seconds: float = 5.0) -> dict:
+        """Force-kill all running MCC processes. Returns summary dict."""
+        instance_ids = list(self._processes.keys())
+        results: list[dict] = []
+        for instance_id in instance_ids:
+            try:
+                result = await self.stop_instance(instance_id, force=force, timeout_seconds=timeout_seconds)
+                results.append({"instance_id": instance_id, "status": result.get("status", "unknown"), "message": result.get("message", "")})
+            except Exception as exc:
+                results.append({"instance_id": instance_id, "status": "error", "message": str(exc) or repr(exc)})
+                logger.warning("Failed to force-kill MCC instance {}: {}", instance_id, exc)
+        return {"killed": len(results), "results": results}
+
     def is_running(self, instance_id: str) -> bool:
         handle = self._processes.get(instance_id)
         if not handle:

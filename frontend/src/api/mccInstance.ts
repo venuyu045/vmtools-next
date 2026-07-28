@@ -185,6 +185,9 @@ export const mccInstanceApi = {
   stop(instanceId: string, force = false, timeout_seconds = 10) {
     return client.post(`/mcc/instances/${instanceId}/stop`, { force, timeout_seconds })
   },
+  killAll() {
+    return client.post<{ killed: number; total_running: number; results: any[] }>('/mcc/instances/kill-all')
+  },
   restart(instanceId: string) {
     return client.post(`/mcc/instances/${instanceId}/restart`)
   },

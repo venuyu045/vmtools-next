@@ -9,6 +9,7 @@
         <button class="pixel-btn outline" :class="{ active: sortMode === 'name' }" @click="sortMode = 'name'">按名称</button>
         <button class="pixel-btn outline" :class="{ active: sortMode === 'running' }" @click="sortMode = 'running'">运行优先</button>
         <button class="pixel-btn warning" :disabled="mccStore.runningCount === 0" @click="stopAll">一键停止</button>
+        <button class="pixel-btn danger" :disabled="mccStore.runningCount === 0" @click="forceKillAll">强制终止所有</button>
         <button class="pixel-btn outline" @click="refreshAll">刷新</button>
         <button class="pixel-btn" @click="showCreate = true">+ 新建实例</button>
       </div>
@@ -364,6 +365,22 @@ async function stopAll() {
     try { await mccStore.stopInstance(instance.instance_id) } catch { /* skip */ }
   }
   ElMessage.success(`已停止 ${running.length} 个实例`)
+}
+
+async function forceKillAll() {
+  try {
+    await ElMessageBox.confirm(
+      `⚠️ 将立即强制终止所有 ${mccStore.runningCount} 个运行中的 MCC 进程！\n\n此操作用于解决重复进程抢占服务器等问题。`,
+      '强制终止所有进程',
+      { type: 'error', confirmButtonText: '确认终止', cancelButtonText: '取消' },
+    )
+  } catch { return }
+  try {
+    const result = await mccStore.killAllInstances()
+    ElMessage.success(`已强制终止 ${result.killed} 个进程`)
+  } catch (error: any) {
+    ElMessage.error(error.response?.data?.detail || '操作失败')
+  }
 }
 
 // Bot connect / disconnect
