@@ -18,6 +18,7 @@ import os
 import pytest
 import httpx
 import asyncio
+import socketio as sio_client
 from pathlib import Path
 
 # Server endpoint
