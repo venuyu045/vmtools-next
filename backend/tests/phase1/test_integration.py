@@ -23,16 +23,6 @@ BASE_URL = "http://127.0.0.1:8080"
 API_URL = f"{BASE_URL}/api/build/map-art"
 
 
-def pytest_addoption(parser):
-    parser.addoption("--run-integration", action="store_true", default=False,
-                     help="Run end-to-end integration tests")
-    parser.addoption("--api-url", default=BASE_URL)
-
-
-def pytest_configure(config):
-    config.addinivalue_line("markers", "integration: end-to-end integration tests")
-
-
 def requires_integration(fn):
     return pytest.mark.integration(fn)
 

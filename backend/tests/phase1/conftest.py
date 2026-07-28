@@ -20,12 +20,18 @@ def pytest_addoption(parser):
                      help="Run tests that require live MCC MCP bots")
     parser.addoption("--mcp-host", default="127.0.0.1")
     parser.addoption("--mcp-port", default=33333, type=int)
+    parser.addoption("--run-integration", action="store_true", default=False,
+                     help="Run end-to-end integration tests")
 
 
 def pytest_configure(config):
     config.addinivalue_line(
         "markers",
         "live_mcp: tests requiring live MCC MCP bot (skipped without --run-live-mcp)"
+    )
+    config.addinivalue_line(
+        "markers",
+        "integration: end-to-end integration tests"
     )
 
 
