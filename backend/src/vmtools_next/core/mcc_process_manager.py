@@ -166,7 +166,10 @@ class MccProcessManager:
 
     async def stop_all_instances(self, force: bool = True, timeout_seconds: float = 5.0) -> dict:
         """Force-kill all running MCC processes (tracked + orphaned). Returns summary dict."""
+        import psutil
+
         results: list[dict] = []
+        killed_pids: set[int] = set()
 
         # 1. Kill tracked processes (in self._processes)
         for instance_id in list(self._processes.keys()):
@@ -177,42 +180,51 @@ class MccProcessManager:
                 results.append({"instance_id": instance_id, "status": "error", "message": str(exc) or repr(exc)})
                 logger.warning("Failed to force-kill MCC instance {}: {}", instance_id, exc)
 
-        # 2. Kill orphaned processes (DB says running but not in self._processes, e.g. after backend restart)
+        # 2. Kill orphaned processes by scanning system process table
+        #    (handles backend-restart scenarios where _processes is empty and DB status is stale)
         Session = get_session_factory()
         db = Session()
         try:
-            orphaned = db.query(MccInstanceModel).filter(
-                MccInstanceModel.status == "running",
-                MccInstanceModel.pid.isnot(None),
-            ).all()
-            for instance in orphaned:
-                if instance.instance_id in self._processes:
-                    continue  # already handled above
-                pid = instance.pid
-                killed = False
-                if pid:
+            all_instances = db.query(MccInstanceModel).all()
+            binary_paths: set[str] = set()
+            for inst in all_instances:
+                if inst.mcc_binary_path:
+                    binary_paths.add(os.path.normpath(inst.mcc_binary_path))
+
+            if binary_paths:
+                for proc in psutil.process_iter(["pid", "name", "cmdline"]):
                     try:
-                        os.kill(pid, signal.SIGKILL)
-                        killed = True
-                        logger.warning("Force-killed orphaned MCC pid={} (instance={})", pid, instance.instance_id)
-                    except OSError:
-                        pass  # already dead
-                instance.status = "stopped"
-                instance.pid = None
-                instance.exit_code = None
-                instance.last_stopped_at = datetime.now(timezone.utc)
-                results.append({"instance_id": instance.instance_id, "status": "killed" if killed else "already_dead", "message": "orphaned process"})
-                # Also emit status update
-                try:
-                    await self._emit_status(instance.instance_id, "stopped", pid=None, mcp_port=instance.mcp_port)
-                except Exception:
-                    pass
-            db.commit()
+                        cmdline = proc.info.get("cmdline") or []
+                        cmdline_str = " ".join(cmdline)
+                        for bp in binary_paths:
+                            if bp in cmdline_str or os.path.basename(bp) in cmdline_str:
+                                pid = proc.pid
+                                if pid not in killed_pids:
+                                    proc.kill()
+                                    killed_pids.add(pid)
+                                    logger.warning("Force-killed orphaned MCC pid={} cmdline={}", pid, cmdline_str[:200])
+                                    results.append({"instance_id": "orphan", "status": "killed", "pid": pid, "message": "found via psutil scan"})
+                                break
+                    except (psutil.NoSuchProcess, psutil.AccessDenied):
+                        pass
         except Exception as exc:
-            logger.warning("Error cleaning up orphaned MCC instances: {}", exc)
-            db.rollback()
+            logger.warning("Error during psutil orphan scan: {}", exc)
         finally:
             db.close()
+
+        # 3. Update DB: mark all instances as stopped
+        Session2 = get_session_factory()
+        db2 = Session2()
+        try:
+            db2.query(MccInstanceModel).filter(
+                MccInstanceModel.status.in_(["running", "stopping"]),
+            ).update({"status": "stopped", "pid": None, "exit_code": None, "last_stopped_at": datetime.now(timezone.utc)}, synchronize_session=False)
+            db2.commit()
+        except Exception as exc:
+            logger.warning("Error updating DB after force-kill: {}", exc)
+            db2.rollback()
+        finally:
+            db2.close()
 
         return {"killed": len(results), "results": results}
 
