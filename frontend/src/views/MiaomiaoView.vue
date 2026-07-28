@@ -19,6 +19,7 @@
             style="width: 220px"
             @input="refreshResTable"
           />
+          <el-button size="small" :loading="refreshing" @click="refreshMarkers">🔄 刷新</el-button>
         </div>
 
         <el-table
@@ -69,6 +70,7 @@
             style="width: 260px"
           />
           <span class="mk-count">共 {{ filteredMarkers.length }} 个</span>
+          <el-button size="small" :loading="refreshing" @click="refreshMarkers">🔄 刷新</el-button>
         </div>
 
         <div class="markers-grid">
@@ -104,6 +106,7 @@
             style="width: 200px"
           />
           <span class="mk-count">{{ filteredRegions.length }} 个区域</span>
+          <el-button size="small" :loading="refreshing" @click="refreshMarkers">🔄 刷新</el-button>
         </div>
 
         <el-table
@@ -185,6 +188,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
+import { ElMessage } from 'element-plus'
 import { useOnlinePlayersStore } from '@/stores/onlinePlayers'
 import client from '@/api/client'
 
@@ -195,6 +199,7 @@ const resSearch = ref('')
 const mkSearch = ref('')
 const msptSort = ref('mspt')
 const msptSearch = ref('')
+const refreshing = ref(false)
 
 // ── filtered tables ──
 
@@ -240,6 +245,31 @@ const filteredMarkers = computed(() => {
 })
 
 function refreshResTable() { /* computed auto-refreshes */ }
+
+async function refreshMarkers() {
+  refreshing.value = true
+  try {
+    const { data: result } = await client.post('/bluemap/refresh')
+    if (result.ok) {
+      // Re-fetch all data after refresh
+      const [rd, md, rg] = await Promise.all([
+        client.get('/bluemap/residences'),
+        client.get('/bluemap/markers'),
+        client.get('/bluemap/regions'),
+      ])
+      playerStore.setResidences(rd.data.residences || [])
+      playerStore.setMarkers(md.data.markers || [])
+      playerStore.setRegions(rg.data.regions || [])
+      ElMessage.success(`刷新完成: ${result.residences} 领地, ${result.regions} 区域, ${result.markers} 标记`)
+    } else {
+      ElMessage.error(result.message || '刷新失败')
+    }
+  } catch {
+    ElMessage.error('刷新请求失败')
+  } finally {
+    refreshing.value = false
+  }
+}
 
 function formatArea(v: number): string {
   if (v >= 1_000_000) return (v / 1_000_000).toFixed(1) + 'M'

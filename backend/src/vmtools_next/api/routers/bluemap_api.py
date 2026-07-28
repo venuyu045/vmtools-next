@@ -62,3 +62,35 @@ def get_markers(user=Depends(get_current_user)):
     if not markers:
         markers = _load_from_db_cache("bluemap_markers")
     return {"markers": markers, "count": len(markers)}
+
+
+@router.post("/refresh")
+async def refresh_markers(user=Depends(get_current_user)):
+    """Manually trigger a markers poll and return updated data."""
+    monitor = _get_monitor()
+    if not monitor:
+        return {"ok": False, "message": "monitor not running"}
+
+    try:
+        await monitor._poll_markers_once()
+    except Exception as exc:
+        return {"ok": False, "message": str(exc) or repr(exc)}
+
+    residences = monitor.get_residences()
+    regions = monitor.get_regions()
+    markers = monitor.get_markers()
+
+    from vmtools_next.data.db import sio
+    try:
+        await sio.emit("regions_update", {"regions": regions})
+        await sio.emit("residences_update", {"residences": residences})
+        await sio.emit("markers_update", {"markers": markers})
+    except Exception:
+        pass
+
+    return {
+        "ok": True,
+        "residences": len(residences),
+        "regions": len(regions),
+        "markers": len(markers),
+    }
