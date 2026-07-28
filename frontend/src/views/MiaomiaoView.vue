@@ -114,7 +114,40 @@
           empty-text="等 BlueMap 拉取区域数据..."
         >
           <el-table-column type="index" label="#" width="50" />
-          <el-table-column prop="label" label="区域名" min-width="140" />
+          <el-table-column label="附近领地" min-width="150">
+            <template #default="{ row }">
+              <el-tooltip
+                v-if="(playerStore.regionResidences[row.id]?.length || 0) > 0"
+                placement="top"
+                :show-after="300"
+              >
+                <template #content>
+                  <div v-for="r in playerStore.regionResidences[row.id]" :key="r" style="line-height:1.6">{{ r }}</div>
+                </template>
+                <span class="region-link">
+                  {{ playerStore.regionResidences[row.id].length }} 个领地
+                </span>
+              </el-tooltip>
+              <span v-else class="na">--</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="附近玩家" min-width="150">
+            <template #default="{ row }">
+              <el-tooltip
+                v-if="(playerStore.regionOnlinePlayers[row.label]?.length || 0) > 0"
+                placement="top"
+                :show-after="300"
+              >
+                <template #content>
+                  <div v-for="name in playerStore.regionOnlinePlayers[row.label]" :key="name" style="line-height:1.6">{{ name }}</div>
+                </template>
+                <span class="region-link">
+                  {{ playerStore.regionOnlinePlayers[row.label].join(', ') }}
+                </span>
+              </el-tooltip>
+              <span v-else class="na">--</span>
+            </template>
+          </el-table-column>
           <el-table-column prop="mspt" label="MSPT (ms)" width="110" sortable>
             <template #default="{ row }">
               <span :class="msptClass(row.mspt)" class="perf-badge">
@@ -130,7 +163,6 @@
             </template>
           </el-table-column>
           <el-table-column prop="entities" label="实体数" width="90" sortable />
-          <el-table-column prop="players_in_region" label="玩家" width="70" sortable />
           <el-table-column prop="chunks" label="区块" width="70" sortable />
           <el-table-column prop="sections" label="Section" width="80" sortable />
         </el-table>
@@ -362,4 +394,15 @@ function tpsClass(v: number | null): string {
 .dot-green  { background: #4caf50; }
 .dot-orange { background: #ff9800; }
 .dot-red    { background: #f44336; }
+
+.region-link {
+  color: var(--text-primary);
+  cursor: default;
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: block;
+  max-width: 180px;
+}
 </style>

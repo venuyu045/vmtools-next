@@ -44,6 +44,7 @@ export interface ResidenceEntry {
   area: number
   min_y: number
   max_y: number
+  shape: { x: number; z: number }[]
   position: { x: number; y: number; z: number } | null
   type: string
 }
@@ -51,6 +52,8 @@ export interface ResidenceEntry {
 export interface RegionEntry {
   id: string
   label: string
+  shape: { x: number; z: number }[]
+  shape_y: number
   tps: number | null
   mspt: number | null
   entities: number | null
@@ -113,6 +116,52 @@ export const useOnlinePlayersStore = defineStore('onlinePlayers', () => {
       .sort((a, b) => (a.mspt ?? 999) - (b.mspt ?? 999))
   })
 
+  // ── Point-in-polygon helper (ray casting) ──
+  function pointInPolygon(px: number, pz: number, polygon: { x: number; z: number }[]): boolean {
+    if (!polygon || polygon.length < 3) return false
+    let inside = false
+    for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+      const xi = polygon[i].x, zi = polygon[i].z
+      const xj = polygon[j].x, zj = polygon[j].z
+      if ((zi > pz) !== (zj > pz) && px < ((xj - xi) * (pz - zi)) / (zj - zi) + xi) {
+        inside = !inside
+      }
+    }
+    return inside
+  }
+
+  // Map region id → residence labels whose position falls within the region polygon
+  const regionResidences = computed(() => {
+    const map: Record<string, string[]> = {}
+    for (const region of regions.value) {
+      const labels: string[] = []
+      if (region.shape && region.shape.length >= 3) {
+        for (const res of residences.value) {
+          if (res.position) {
+            if (pointInPolygon(res.position.x, res.position.z, region.shape)) {
+              labels.push(res.label)
+            }
+          }
+        }
+      }
+      map[region.id] = labels
+    }
+    return map
+  })
+
+  // Map region label → online player names currently in that region
+  const regionOnlinePlayers = computed(() => {
+    const map: Record<string, string[]> = {}
+    for (const p of players.value) {
+      if (p.region?.label) {
+        const rl = p.region.label
+        if (!map[rl]) map[rl] = []
+        map[rl].push(p.name)
+      }
+    }
+    return map
+  })
+
   // Group residences by owner
   const ownerRankings = computed(() => {
     const map: Record<string, { owner: string; count: number; totalArea: number }> = {}
@@ -157,6 +206,7 @@ export const useOnlinePlayersStore = defineStore('onlinePlayers', () => {
     players, events, lastUpdate, count, byWorld, worldLabels,
     residences, regions, markers,
     residenceRankings, ownerRankings, regionRankings,
+    regionResidences, regionOnlinePlayers,
     setPlayers, setResidences, setRegions, setMarkers,
     addEvent, getWorldLabel,
   }
