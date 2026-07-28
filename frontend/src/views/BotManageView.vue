@@ -9,7 +9,7 @@
         <button class="pixel-btn outline" :class="{ active: sortMode === 'name' }" @click="sortMode = 'name'">按名称</button>
         <button class="pixel-btn outline" :class="{ active: sortMode === 'running' }" @click="sortMode = 'running'">运行优先</button>
         <button class="pixel-btn warning" :disabled="mccStore.runningCount === 0" @click="stopAll">一键停止</button>
-        <button class="pixel-btn danger" :disabled="mccStore.runningCount === 0" @click="forceKillAll">强制终止所有</button>
+        <button class="pixel-btn danger" @click="forceKillAll">强制终止所有</button>
         <button class="pixel-btn outline" @click="refreshAll">刷新</button>
         <button class="pixel-btn" @click="showCreate = true">+ 新建实例</button>
       </div>
@@ -370,7 +370,7 @@ async function stopAll() {
 async function forceKillAll() {
   try {
     await ElMessageBox.confirm(
-      `⚠️ 将立即强制终止所有 ${mccStore.runningCount} 个运行中的 MCC 进程！\n\n此操作用于解决重复进程抢占服务器等问题。`,
+      `⚠️ 将立即强制终止服务器上所有 MCC 进程！\n\n包括：正在运行的实例 + 后端重启后残留的孤儿进程。`,
       '强制终止所有进程',
       { type: 'error', confirmButtonText: '确认终止', cancelButtonText: '取消' },
     )

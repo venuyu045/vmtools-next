@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import signal
 import subprocess
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -164,16 +165,55 @@ class MccProcessManager:
         self._started = False
 
     async def stop_all_instances(self, force: bool = True, timeout_seconds: float = 5.0) -> dict:
-        """Force-kill all running MCC processes. Returns summary dict."""
-        instance_ids = list(self._processes.keys())
+        """Force-kill all running MCC processes (tracked + orphaned). Returns summary dict."""
         results: list[dict] = []
-        for instance_id in instance_ids:
+
+        # 1. Kill tracked processes (in self._processes)
+        for instance_id in list(self._processes.keys()):
             try:
                 result = await self.stop_instance(instance_id, force=force, timeout_seconds=timeout_seconds)
                 results.append({"instance_id": instance_id, "status": result.get("status", "unknown"), "message": result.get("message", "")})
             except Exception as exc:
                 results.append({"instance_id": instance_id, "status": "error", "message": str(exc) or repr(exc)})
                 logger.warning("Failed to force-kill MCC instance {}: {}", instance_id, exc)
+
+        # 2. Kill orphaned processes (DB says running but not in self._processes, e.g. after backend restart)
+        Session = get_session_factory()
+        db = Session()
+        try:
+            orphaned = db.query(MccInstanceModel).filter(
+                MccInstanceModel.status == "running",
+                MccInstanceModel.pid.isnot(None),
+            ).all()
+            for instance in orphaned:
+                if instance.instance_id in self._processes:
+                    continue  # already handled above
+                pid = instance.pid
+                killed = False
+                if pid:
+                    try:
+                        os.kill(pid, signal.SIGKILL)
+                        killed = True
+                        logger.warning("Force-killed orphaned MCC pid={} (instance={})", pid, instance.instance_id)
+                    except OSError:
+                        pass  # already dead
+                instance.status = "stopped"
+                instance.pid = None
+                instance.exit_code = None
+                instance.last_stopped_at = datetime.now(timezone.utc)
+                results.append({"instance_id": instance.instance_id, "status": "killed" if killed else "already_dead", "message": "orphaned process"})
+                # Also emit status update
+                try:
+                    await self._emit_status(instance.instance_id, "stopped", pid=None, mcp_port=instance.mcp_port)
+                except Exception:
+                    pass
+            db.commit()
+        except Exception as exc:
+            logger.warning("Error cleaning up orphaned MCC instances: {}", exc)
+            db.rollback()
+        finally:
+            db.close()
+
         return {"killed": len(results), "results": results}
 
     def is_running(self, instance_id: str) -> bool:
