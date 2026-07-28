@@ -1,7 +1,7 @@
 <template>
   <div class="miaomiao-page">
     <h2>🛠️ 妙妙工具</h2>
-    <p class="subtitle">领地排行榜 · 标记点目录</p>
+    <p class="subtitle">领地排行榜 · 标记点目录 · 区域MSPT排行榜</p>
 
     <el-tabs v-model="activeTab" class="mm-tabs">
       <!-- Tab 1: 领地排行榜 -->
@@ -86,6 +86,67 @@
         </div>
         <div v-if="filteredMarkers.length === 0 && playerStore.markers.length > 0" class="empty-hint">没有匹配的标记点</div>
       </el-tab-pane>
+
+      <!-- Tab 3: 区域 MSPT 排行榜 -->
+      <el-tab-pane label="⚡ 区域MSPT排行榜" name="mspt">
+        <div class="tab-toolbar">
+          <el-radio-group v-model="msptSort" size="small">
+            <el-radio-button value="mspt">按 MSPT</el-radio-button>
+            <el-radio-button value="tps">按 TPS</el-radio-button>
+            <el-radio-button value="entities">按实体数</el-radio-button>
+            <el-radio-button value="players">按玩家数</el-radio-button>
+          </el-radio-group>
+          <el-input
+            v-model="msptSearch"
+            placeholder="搜索区域名..."
+            size="small"
+            clearable
+            style="width: 200px"
+          />
+          <span class="mk-count">{{ filteredRegions.length }} 个区域</span>
+        </div>
+
+        <el-table
+          :data="filteredRegions"
+          stripe
+          size="small"
+          max-height="500"
+          empty-text="等 BlueMap 拉取区域数据..."
+        >
+          <el-table-column type="index" label="#" width="50" />
+          <el-table-column prop="label" label="区域名" min-width="140" />
+          <el-table-column prop="mspt" label="MSPT (ms)" width="110" sortable>
+            <template #default="{ row }">
+              <span :class="msptClass(row.mspt)" class="perf-badge">
+                {{ row.mspt != null ? row.mspt.toFixed(1) : '--' }}
+              </span>
+            </template>
+          </el-table-column>
+          <el-table-column prop="tps" label="TPS" width="80" sortable>
+            <template #default="{ row }">
+              <span :class="tpsClass(row.tps)" class="perf-badge">
+                {{ row.tps != null ? row.tps.toFixed(1) : '--' }}
+              </span>
+            </template>
+          </el-table-column>
+          <el-table-column prop="entities" label="实体数" width="90" sortable />
+          <el-table-column prop="players_in_region" label="玩家" width="70" sortable />
+          <el-table-column prop="chunks" label="区块" width="70" sortable />
+          <el-table-column prop="sections" label="Section" width="80" sortable />
+        </el-table>
+
+        <!-- MSPT 颜色图例 -->
+        <div class="legend-box">
+          <span class="legend-title">颜色说明：</span>
+          <span class="legend-item"><span class="dot dot-green"></span>MSPT ≤ 30（流畅）</span>
+          <span class="legend-item"><span class="dot dot-orange"></span>MSPT ≤ 45（轻微卡顿）</span>
+          <span class="legend-item"><span class="dot dot-red"></span>MSPT &gt; 45（严重卡顿）</span>
+          <span class="legend-sep">|</span>
+          <span class="legend-item"><span class="dot dot-green"></span>TPS ≥ 19.5</span>
+          <span class="legend-item"><span class="dot dot-orange"></span>TPS ≥ 17</span>
+          <span class="legend-item"><span class="dot dot-red"></span>TPS &lt; 17</span>
+        </div>
+      </el-tab-pane>
     </el-tabs>
   </div>
 </template>
@@ -100,13 +161,15 @@ const activeTab = ref('residences')
 const resSort = ref('area')
 const resSearch = ref('')
 const mkSearch = ref('')
+const msptSort = ref('mspt')
+const msptSearch = ref('')
 
 // ── filtered tables ──
 
 const rawResidences = ref<any[]>([])
 
 onMounted(async () => {
-  // Fetch residences/markers from API on mount (in case Socket.IO hasn't pushed yet)
+  // Fetch residences/markers/regions from API on mount (in case Socket.IO hasn't pushed yet)
   try {
     const { data: rd } = await client.get('/bluemap/residences')
     rawResidences.value = rd.residences || []
@@ -115,6 +178,10 @@ onMounted(async () => {
   try {
     const { data: md } = await client.get('/bluemap/markers')
     playerStore.setMarkers(md.markers || [])
+  } catch { /* Socket.IO will populate */ }
+  try {
+    const { data: rg } = await client.get('/bluemap/regions')
+    playerStore.setRegions(rg.regions || [])
   } catch { /* Socket.IO will populate */ }
 })
 
@@ -146,6 +213,47 @@ function formatArea(v: number): string {
   if (v >= 1_000_000) return (v / 1_000_000).toFixed(1) + 'M'
   if (v >= 1_000) return (v / 1_000).toFixed(1) + 'K'
   return v.toFixed(0)
+}
+
+// ── MSPT leaderboard ──
+
+const filteredRegions = computed(() => {
+  let list = [...playerStore.regions]
+  if (msptSearch.value) {
+    const q = msptSearch.value.toLowerCase()
+    list = list.filter(r => r.label.toLowerCase().includes(q))
+  }
+  // Sort
+  switch (msptSort.value) {
+    case 'tps':
+      list.sort((a, b) => (b.tps ?? 0) - (a.tps ?? 0))
+      break
+    case 'entities':
+      list.sort((a, b) => (b.entities ?? 0) - (a.entities ?? 0))
+      break
+    case 'players':
+      list.sort((a, b) => (b.players_in_region ?? 0) - (a.players_in_region ?? 0))
+      break
+    case 'mspt':
+    default:
+      list.sort((a, b) => (a.mspt ?? 999) - (b.mspt ?? 999))
+      break
+  }
+  return list
+})
+
+function msptClass(v: number | null): string {
+  if (v == null) return ''
+  if (v <= 30) return 'mspt-good'
+  if (v <= 45) return 'mspt-warn'
+  return 'mspt-bad'
+}
+
+function tpsClass(v: number | null): string {
+  if (v == null) return ''
+  if (v >= 19.5) return 'tps-good'
+  if (v >= 17) return 'tps-warn'
+  return 'tps-bad'
 }
 </script>
 
@@ -216,4 +324,42 @@ function formatArea(v: number): string {
 .mk-detail { color: var(--text-disabled); font-size: 11px; margin-top: 4px; line-height: 1.4; }
 .na { color: var(--text-disabled); font-style: italic; }
 .empty-hint { color: var(--text-disabled); font-style: italic; font-size: 13px; text-align: center; padding: 24px; }
+
+/* MSPT / TPS badges */
+.perf-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-weight: 600;
+  font-size: 12px;
+}
+.mspt-good, .tps-good { background: rgba(76, 175, 80, 0.18); color: #4caf50; }
+.mspt-warn, .tps-warn { background: rgba(255, 152, 0, 0.18); color: #ff9800; }
+.mspt-bad, .tps-bad   { background: rgba(244, 67, 54, 0.18); color: #f44336; }
+
+/* Legend */
+.legend-box {
+  margin-top: 16px;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 10px 14px;
+  background: rgba(255,255,255,0.03);
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.legend-title { font-weight: 600; margin-right: 4px; }
+.legend-sep { color: var(--border-subtle); }
+.legend-item { display: flex; align-items: center; gap: 4px; }
+.dot {
+  display: inline-block;
+  width: 10px; height: 10px;
+  border-radius: 50%;
+}
+.dot-green  { background: #4caf50; }
+.dot-orange { background: #ff9800; }
+.dot-red    { background: #f44336; }
 </style>
