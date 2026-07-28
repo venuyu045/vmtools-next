@@ -172,9 +172,19 @@ export function useSocketIO() {
     socket?.emit(event, data)
   }
 
+  function on(event: string, handler: (...args: any[]) => void) {
+    socket?.on(event, handler)
+  }
+
+  function off(event: string, handler?: (...args: any[]) => void) {
+    socket?.off(event, handler)
+  }
+
   function getSocket() {
     return socket
   }
 
-  return { connect, disconnect, emit, getSocket }
+  const connected = () => socket?.connected ?? false
+
+  return { connect, disconnect, emit, on, off, connected, getSocket }
 }
