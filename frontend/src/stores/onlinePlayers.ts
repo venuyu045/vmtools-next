@@ -106,6 +106,13 @@ export const useOnlinePlayersStore = defineStore('onlinePlayers', () => {
       .sort((a, b) => b.area - a.area)
   })
 
+  // Region rankings by MSPT (lower is better performance)
+  const regionRankings = computed(() => {
+    return [...regions.value]
+      .filter(r => r.mspt != null && r.mspt > 0)
+      .sort((a, b) => (a.mspt ?? 999) - (b.mspt ?? 999))
+  })
+
   // Group residences by owner
   const ownerRankings = computed(() => {
     const map: Record<string, { owner: string; count: number; totalArea: number }> = {}
@@ -149,7 +156,7 @@ export const useOnlinePlayersStore = defineStore('onlinePlayers', () => {
   return {
     players, events, lastUpdate, count, byWorld, worldLabels,
     residences, regions, markers,
-    residenceRankings, ownerRankings,
+    residenceRankings, ownerRankings, regionRankings,
     setPlayers, setResidences, setRegions, setMarkers,
     addEvent, getWorldLabel,
   }
