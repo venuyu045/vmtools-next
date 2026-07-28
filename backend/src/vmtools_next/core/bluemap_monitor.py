@@ -69,10 +69,16 @@ class BlueMapMonitor:
 
     AFK_THRESHOLD_SECONDS = 600  # 10 minutes without movement → AFK
 
+    # Leave debounce: a player must be missing for N consecutive polls before
+    # we believe they actually left (BlueMap occasionally returns bogus data).
+    LEAVE_CONFIRM_POLLS = 3        # normal leave: ~15s at 5s poll interval
+    MASS_LEAVE_CONFIRM_POLLS = 24  # ALL players vanished at once → likely API glitch, ~2min
+
     def __init__(self) -> None:
         self._task: Optional[asyncio.Task[None]] = None
         self._markers_task: Optional[asyncio.Task[None]] = None
         self._previous_players: dict[str, dict] = {}
+        self._miss_counts: dict[str, int] = {}  # name → consecutive polls missing
         self._running = False
 
         # AFK detection: {name: {x, y, z, last_moved_at, afk}}
@@ -142,6 +148,7 @@ class BlueMapMonitor:
     async def _poll_players_once(self) -> None:
         cfg = get_config().bluemap
         all_players: dict[str, dict] = {}
+        failed_worlds: set[str] = set()
 
         async with httpx.AsyncClient(timeout=httpx.Timeout(10.0)) as client:
             for world in cfg.worlds:
@@ -149,6 +156,7 @@ class BlueMapMonitor:
                     url = f"{cfg.api_base_url}/maps/{world}/live/players.json"
                     resp = await client.get(url)
                     if resp.status_code != 200:
+                        failed_worlds.add(world)
                         continue
                     data = resp.json()
                     for p in data.get("players", []):
@@ -175,12 +183,59 @@ class BlueMapMonitor:
                             player["region"] = None
                         all_players[name] = player
                 except Exception:
-                    pass
+                    failed_worlds.add(world)
 
+        # All world requests failed → network/API outage, not players leaving.
+        # Keep previous state untouched and skip the diff entirely.
+        if len(failed_worlds) >= len(cfg.worlds):
+            logger.warning(
+                "BlueMap players poll: all {} world requests failed, skipping diff",
+                len(cfg.worlds),
+            )
+            return
+
+        previous = self._previous_players
         current_names = set(all_players.keys())
-        previous_names = set(self._previous_players.keys())
-        joined = current_names - previous_names
-        left = previous_names - current_names
+        joined = [n for n in current_names if n not in previous]
+        missing = [n for n in previous if n not in current_names]
+
+        # Mass-disappearance guard: BlueMap sometimes answers 200 with an
+        # empty/bogus player list. If EVERY previously-online player vanished
+        # in a single poll, require a much longer confirmation window.
+        mass_glitch = len(previous) >= 2 and len(missing) == len(previous)
+        threshold = self.MASS_LEAVE_CONFIRM_POLLS if mass_glitch else self.LEAVE_CONFIRM_POLLS
+        if mass_glitch and not any(self._miss_counts.values()):
+            logger.warning(
+                "BlueMap: ALL {} players vanished in one poll — treating as "
+                "possible API glitch, waiting {} polls before confirming",
+                len(previous), threshold,
+            )
+
+        # Debounce leaves: only confirm after N consecutive missing polls.
+        confirmed_left: list[str] = []
+        for name in missing:
+            last_world = previous[name].get("world")
+            if last_world in failed_worlds:
+                # That world's endpoint failed this round — no evidence of leaving.
+                continue
+            count = self._miss_counts.get(name, 0) + 1
+            self._miss_counts[name] = count
+            if count >= threshold:
+                confirmed_left.append(name)
+
+        # Players seen again → clear their miss counters (no join event fires
+        # because they were never removed from _previous_players).
+        for name in current_names:
+            self._miss_counts.pop(name, None)
+        for name in confirmed_left:
+            self._miss_counts.pop(name, None)
+
+        # Effective online set = currently seen + missing-but-not-yet-confirmed
+        # (kept with their last known data).
+        effective: dict[str, dict] = dict(all_players)
+        for name in missing:
+            if name not in confirmed_left:
+                effective[name] = previous[name]
 
         # Full list
         player_list = [
@@ -192,7 +247,7 @@ class BlueMapMonitor:
                 "region": p.get("region"),
                 "afk": self.is_player_afk(p["name"]),
             }
-            for p in all_players.values()
+            for p in effective.values()
         ]
         await sio.emit("online_players_update", {
             "players": player_list,
@@ -213,20 +268,24 @@ class BlueMapMonitor:
             await self._notify_tracked(name, "join")
             await self._notify_bot_player(name, "join")
 
-        for name in left:
-            logger.info("Player left: {}", name)
+        for name in confirmed_left:
+            logger.info("Player left: {} (confirmed after {} polls)", name, threshold)
             await sio.emit("player_event", {"name": name, "event": "leave"})
             await self._notify_tracked(name, "leave")
             await self._notify_bot_player(name, "leave")
 
         # ── AFK detection ───────────────────────────────────────────
-        self._update_afk_status(all_players)
+        self._update_afk_status(all_players, confirmed_left)
 
-        self._previous_players = all_players
+        self._previous_players = effective
 
     # ── AFK detection ──────────────────────────────────────────────
 
-    def _update_afk_status(self, current_players: dict[str, dict]) -> None:
+    def _update_afk_status(
+        self,
+        current_players: dict[str, dict],
+        confirmed_left: list[str] | None = None,
+    ) -> None:
         """Compare player positions against last poll to detect AFK."""
         now = time.time()
         for name, p in current_players.items():
@@ -259,10 +318,10 @@ class BlueMapMonitor:
                 # Stationary for 10+ minutes — mark AFK
                 prev["afk"] = True
 
-        # Clean up players who left (no longer in current_players)
-        for name in list(self._player_afk_status):
-            if name not in current_players:
-                del self._player_afk_status[name]
+        # Clean up only players whose leave has been CONFIRMED — a player
+        # temporarily missing from a glitchy poll keeps their AFK tracking.
+        for name in confirmed_left or []:
+            self._player_afk_status.pop(name, None)
 
     def is_player_afk(self, name: str) -> bool:
         """Check if a player is currently AFK."""
