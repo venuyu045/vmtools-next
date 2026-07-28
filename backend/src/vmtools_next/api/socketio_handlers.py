@@ -427,3 +427,72 @@ def _build_initial_payload(user_info: dict | None = None) -> dict:
         return {"bots": [], "warehouses": [], "active_task_runs": []}
     finally:
         db.close()
+
+
+# ──────────────────────────────────────────────
+# Map Art Build — Socket.IO room management
+# ──────────────────────────────────────────────
+
+@sio.event
+async def build_map_join(sid, data: dict):
+    """Client joins a map art build task's real-time room.
+
+    Frontend emits: { task_id: "xxx" }
+    Backend: joins room "build_{task_id}", pushes build_map_init
+    """
+    task_id = data.get("task_id", "")
+    if not task_id:
+        return
+    room = f"build_{task_id}"
+    sio.enter_room(sid, room)
+    logger.debug("Socket.IO {} joined room {}", sid, room)
+
+
+@sio.event
+async def build_map_leave(sid, data: dict):
+    """Client leaves a map art build task room."""
+    task_id = data.get("task_id", "")
+    if not task_id:
+        return
+    room = f"build_{task_id}"
+    sio.leave_room(sid, room)
+
+
+@sio.event
+async def build_map_request_blocks(sid, data: dict):
+    """Client requests block states chunk for 3D view.
+
+    Frontend emits: { task_id, chunk: { x_start, x_end, z_start, z_end } }
+    Backend responds with build_map_chunk event.
+    """
+    from sqlalchemy.orm import Session
+    task_id = data.get("task_id", "")
+    chunk = data.get("chunk", {})
+    if not task_id:
+        return
+
+    SessionLocal = get_session_factory()
+    db: Session = SessionLocal()
+    try:
+        from vmtools_next.data.models.build_map_art import MapArtBlockState
+        blocks = db.query(MapArtBlockState).filter(
+            MapArtBlockState.task_id == task_id,
+            MapArtBlockState.x >= chunk.get("x_start", 0),
+            MapArtBlockState.x <= chunk.get("x_end", 127),
+            MapArtBlockState.z >= chunk.get("z_start", 0),
+            MapArtBlockState.z <= chunk.get("z_end", 127),
+        ).all()
+        await sio.emit("build_map_chunk", {
+            "task_id": task_id,
+            "chunk": chunk,
+            "blocks": [
+                {"x": b.x, "y": b.y, "z": b.z,
+                 "expected": b.expected_block, "actual": b.actual_block,
+                 "placed": b.placed, "verified": b.verified}
+                for b in blocks
+            ],
+        }, to=sid)
+    except Exception as e:
+        logger.warning("build_map_request_blocks error: {}", e)
+    finally:
+        db.close()
