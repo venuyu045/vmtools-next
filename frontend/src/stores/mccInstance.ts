@@ -75,6 +75,12 @@ export const useMccInstanceStore = defineStore('mccInstance', {
         this.actionLoading[instanceId] = false
       }
     },
+    async killAllInstances() {
+      const { data } = await mccInstanceApi.killAll()
+      // Refresh all instances to get updated statuses
+      await this.fetchInstances()
+      return data
+    },
     async deleteInstance(instanceId: string) {
       await mccInstanceApi.delete(instanceId)
       this.instances = this.instances.filter(item => item.instance_id !== instanceId)
