@@ -362,21 +362,25 @@ async def upload_projection(file: UploadFile = File(...)):
     import os
     from pathlib import Path
 
-    # Save to uploads directory
-    upload_dir = Path("uploads/build_projections")
+    # Save to uploads directory (absolute path)
+    BASE = Path(__file__).resolve().parent.parent.parent.parent.parent  # backend/
+    upload_dir = BASE / "uploads" / "build_projections"
     upload_dir.mkdir(parents=True, exist_ok=True)
     file_path = upload_dir / file.filename
     with open(file_path, "wb") as f:
         content = await file.read()
         f.write(content)
 
+    # Return absolute path
+    abs_path = str(file_path.resolve())
+
     # Parse and return metadata
-    parsed = await LitematicaParser.parse_file(str(file_path))
-    info = await LitematicaParser.get_projection_info(str(file_path))
-    reqs = await LitematicaParser.get_material_requirements(str(file_path))
+    parsed = await LitematicaParser.parse_file(abs_path)
+    info = await LitematicaParser.get_projection_info(abs_path)
+    reqs = await LitematicaParser.get_material_requirements(abs_path)
 
     return {
-        "file_path": str(file_path),
+        "file_path": abs_path,
         "projection_info": {
             "name": info.name,
             "author": info.author,
