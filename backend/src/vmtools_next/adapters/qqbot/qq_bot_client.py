@@ -418,7 +418,7 @@ class QqBotClient:
             reverse=True,
         )
 
-        lines = [f"## ⚡ Folia 区域 MSPT 排行榜 ({len(sorted_regions)} 个区域)\n"]
+        lines = [f"## ⚡ MSPT 排行榜 ({len(sorted_regions)} 个区域)\n"]
 
         def mspt_icon(v: float) -> str:
             if v <= 30: return "🟢"
