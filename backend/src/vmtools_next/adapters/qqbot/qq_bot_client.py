@@ -379,11 +379,12 @@ class QqBotClient:
         try:
             from vmtools_next.main import get_bluemap_monitor
             monitor = get_bluemap_monitor()
+            regions: list[dict] = []
+            players: list[dict] = []
             if monitor:
                 await monitor._poll_markers_once()
                 regions = monitor.get_regions()
-            else:
-                regions = []
+                players = list(monitor._previous_players.values())
         except Exception as exc:
             logger.warning(f"QQ Bot /mspt error: {exc}")
             await self.send_group_message(group_id, f"❌ 刷新失败: {exc}")
@@ -392,6 +393,13 @@ class QqBotClient:
         if not regions:
             await self.send_group_message(group_id, "📭 暂无区域 MSPT 数据")
             return
+
+        # Build region → player names map
+        region_players: dict[str, list[str]] = {}
+        for p in players:
+            reg = p.get("region")
+            if reg and reg.get("label"):
+                region_players.setdefault(reg["label"], []).append(p.get("name", "?"))
 
         # Sort by MSPT descending (worst performance first)
         sorted_regions = sorted(
@@ -402,7 +410,6 @@ class QqBotClient:
 
         lines = [f"## ⚡ Folia 区域 MSPT 排行榜 ({len(sorted_regions)} 个区域)\n"]
 
-        # MSPT color emoji helper
         def mspt_icon(v: float) -> str:
             if v <= 30: return "🟢"
             if v <= 45: return "🟠"
@@ -413,15 +420,21 @@ class QqBotClient:
             mspt = r.get("mspt")
             tps = r.get("tps")
             entities = r.get("entities") or 0
-            players = r.get("players_in_region") or 0
+            region_player_count = r.get("players_in_region") or 0
 
             mspt_str = f"{mspt:.1f}ms" if mspt is not None else "?"
             tps_str = f"{tps:.1f}" if tps is not None else "?"
             icon = mspt_icon(mspt) if mspt is not None else "⚪"
 
+            # Use player names as title, fall back to region label
+            names = region_players.get(label, [])
+            title = "`" + "` `".join(names[:5]) + "`" if names else f"*{label}*"
+            if len(names) > 5:
+                title += f" 等{len(names)}人"
+
             lines.append(
-                f"{icon} **#{i} {label}**\n"
-                f"> MSPT `{mspt_str}` | TPS `{tps_str}` | 实体 `{entities}` | 玩家 `{players}`"
+                f"{icon} **#{i} {title}**\n"
+                f"> MSPT `{mspt_str}` | TPS `{tps_str}` | 实体 `{entities}` | 区域内 `{region_player_count}`人"
             )
 
         if len(sorted_regions) > 15:
