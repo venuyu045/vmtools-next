@@ -162,9 +162,9 @@ class QqBotClient:
                 break
 
     async def _handle_at_message(self, d: dict) -> None:
-        """Handle @bot commands or group messages containing /list."""
+        """Handle @bot commands: /list, /mspt."""
         content = (d.get("content", "") or "").strip()
-        if "/list" not in content:
+        if "/list" not in content and "/mspt" not in content:
             return
         # Remove bot mention prefix (handles both <@!openid> and <@openid>)
         import re
@@ -181,6 +181,8 @@ class QqBotClient:
             await self._cmd_list_add(group_id, content)
         elif content.startswith("/list del ") or content.startswith("/list remove "):
             await self._cmd_list_del(group_id, content)
+        elif content == "/mspt":
+            await self._cmd_mspt(group_id)
 
     # ── Bot list storage ─────────────────────────────────────
 
@@ -369,6 +371,66 @@ class QqBotClient:
             await self.send_group_message(group_id, f"✅ 已移除 {name}")
         else:
             await self.send_group_message(group_id, f"❌ {name} 不在 Bot 列表中")
+
+    async def _cmd_mspt(self, group_id: str) -> None:
+        """Refresh markers and return MSPT ranking table."""
+        await self.send_group_message(group_id, "🔄 正在刷新区域 MSPT 数据...")
+
+        try:
+            from vmtools_next.main import get_bluemap_monitor
+            monitor = get_bluemap_monitor()
+            if monitor:
+                await monitor._poll_markers_once()
+                regions = monitor.get_regions()
+            else:
+                regions = []
+        except Exception as exc:
+            logger.warning(f"QQ Bot /mspt error: {exc}")
+            await self.send_group_message(group_id, f"❌ 刷新失败: {exc}")
+            return
+
+        if not regions:
+            await self.send_group_message(group_id, "📭 暂无区域 MSPT 数据")
+            return
+
+        # Sort by MSPT descending (worst performance first)
+        sorted_regions = sorted(
+            [r for r in regions if r.get("mspt") is not None],
+            key=lambda r: r.get("mspt") or 0,
+            reverse=True,
+        )
+
+        lines = [f"## ⚡ Folia 区域 MSPT 排行榜 ({len(sorted_regions)} 个区域)\n"]
+
+        # MSPT color emoji helper
+        def mspt_icon(v: float) -> str:
+            if v <= 30: return "🟢"
+            if v <= 45: return "🟠"
+            return "🔴"
+
+        for i, r in enumerate(sorted_regions[:15], 1):
+            label = r.get("label", "?")
+            mspt = r.get("mspt")
+            tps = r.get("tps")
+            entities = r.get("entities") or 0
+            players = r.get("players_in_region") or 0
+
+            mspt_str = f"{mspt:.1f}ms" if mspt is not None else "?"
+            tps_str = f"{tps:.1f}" if tps is not None else "?"
+            icon = mspt_icon(mspt) if mspt is not None else "⚪"
+
+            lines.append(
+                f"{icon} **#{i} {label}**\n"
+                f"> MSPT `{mspt_str}` | TPS `{tps_str}` | 实体 `{entities}` | 玩家 `{players}`"
+            )
+
+        if len(sorted_regions) > 15:
+            lines.append(f"\n> ...共 {len(sorted_regions)} 个区域，仅显示前 15")
+
+        msg = "\n".join(lines)
+        if len(msg) > 1800:
+            msg = msg[:1800] + "\n\n> ...（列表过长已截断）"
+        await self._send_md(group_id, msg)
 
     # ── Token ────────────────────────────────────────────────
 
