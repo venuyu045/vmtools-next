@@ -1,7 +1,7 @@
 <template>
   <div class="miaomiao-page">
     <h2>🛠️ 妙妙工具</h2>
-    <p class="subtitle">领地排行榜 · 标记点目录 · 区域MSPT排行榜</p>
+    <p class="subtitle">领地排行榜 · 标记点目录 · MSPT排行榜</p>
 
     <el-tabs v-model="activeTab" class="mm-tabs">
       <!-- Tab 1: 领地排行榜 -->
@@ -90,7 +90,7 @@
       </el-tab-pane>
 
       <!-- Tab 3: 区域 MSPT 排行榜 -->
-      <el-tab-pane label="⚡ 区域MSPT排行榜" name="mspt">
+      <el-tab-pane label="⚡ MSPT排行榜" name="mspt">
         <div class="tab-toolbar">
           <el-radio-group v-model="msptSort" size="small">
             <el-radio-button value="mspt">按 MSPT</el-radio-button>
