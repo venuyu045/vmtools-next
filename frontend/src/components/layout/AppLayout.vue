@@ -28,6 +28,13 @@
       <main class="app-main">
         <router-view />
       </main>
+      <footer class="app-footer">
+        <a
+          href="https://beian.miit.gov.cn"
+          target="_blank"
+          rel="noopener noreferrer"
+        >渝ICP备2026011793号-1</a>
+      </footer>
     </div>
   </div>
 </template>
@@ -123,6 +130,24 @@ const mobileDrawerOpen = ref(false)
   padding: 24px 28px;
   background: #000;
   -webkit-overflow-scrolling: touch;
+}
+
+.app-footer {
+  flex-shrink: 0;
+  text-align: center;
+  padding: 10px 16px 12px;
+  background: #000;
+}
+
+.app-footer a {
+  color: #666;
+  font-size: 12px;
+  text-decoration: none;
+  transition: color 0.2s;
+}
+
+.app-footer a:hover {
+  color: #999;
 }
 
 /* ============ TABLET: auto-collapse sidebar ============ */
