@@ -69,6 +69,7 @@ const navItems = [
   { path: '/miaomiao', label: '妙妙工具' },
   { path: '/warehouses', label: '仓库管理' },
   { path: '/build', label: '建造任务' },
+  { path: '/map-art-tasks', label: '地图画建造' },
   { path: '/logistics/waypoints', label: '物流管理' },
   { path: '/config', label: '系统配置' },
   { path: '/plugins', label: '插件管理' },
