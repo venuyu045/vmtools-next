@@ -152,19 +152,9 @@ async def _get_mcp_client(bot_id: str, mcp_port: int = 0):
     return client, True
 
 
-def _parse_slot(s: dict, sid: int) -> InventorySlot:
-    return InventorySlot(
-        slot=sid,
-        item_id=s.get("type", s.get("itemId", "")) or "",
-        display_name=s.get("name", s.get("displayName", "")),
-        count=s.get("count", s.get("amount", 0)) or 0,
-        max_stack=s.get("maxStackSize", 64),
-    )
-
-
 @router.get("/{bot_id}/inventory")
 async def get_inventory(bot_id: str, mcp_port: int = 0):
-    """Get bot's player inventory snapshot (36 + hotbar + armor + offhand)."""
+    """Get bot's player inventory snapshot."""
     client, owned = await _get_mcp_client(bot_id, mcp_port)
     try:
         snap = await client.get_inventory_snapshot(inventory_id=0)
@@ -174,19 +164,28 @@ async def get_inventory(bot_id: str, mcp_port: int = 0):
     finally:
         if owned: await client.disconnect()
 
-    all_items = data.get("items", []) or []
-    slots = [_parse_slot(s, i) for i, s in enumerate(all_items) if s.get("type") or s.get("itemId")]
-    hotbar = data.get("hotbar", []) or list(range(27, 36))
-    selected = data.get("selectedHotbar", data.get("selectedSlot", 0)) or 0
+    all_items = data.get("slots", data.get("items", [])) or []
+    slot_count = data.get("slotCount", 46)
+    parsed = []
+    for s in all_items:
+        item_id = (s.get("type") or s.get("itemId") or "").strip()
+        if item_id:
+            parsed.append(InventorySlot(
+                slot=s.get("slot", 0),
+                item_id=item_id,
+                display_name=s.get("displayName", "") or item_id,
+                count=s.get("count", s.get("amount", 0)) or 0,
+                max_stack=s.get("maxStackSize", 64),
+            ))
 
     return InventorySnapshot(
         bot_id=bot_id,
-        inventory_id=0,
-        slots=slots,
-        hotbar=hotbar,
-        selected_hotbar=selected,
-        empty_slots=max(0, 50 - len(all_items)),
-        total_items=sum(s.get("count", s.get("amount", 0)) or 0 for s in (all_items or [])),
+        inventory_id=data.get("id", 0),
+        slots=parsed,
+        hotbar=list(range(36, 45)),
+        selected_hotbar=data.get("selectedHotbar", 0) or 0,
+        empty_slots=slot_count - len(all_items),
+        total_items=sum(s.get("count", s.get("amount", 0)) or 0 for s in all_items),
     )
 
 
