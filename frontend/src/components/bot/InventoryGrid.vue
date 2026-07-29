@@ -103,7 +103,7 @@ interface InvData {
 const props = defineProps<{ botId: string; inventory: InvData | null; loading: boolean }>()
 const emit = defineEmits<{
   refresh: []
-  action: [payload: { action: string; slot_id: number; from_slot?: number }]
+  action: [payload: { action: string; slot_id: number; inventory_id?: number; from_slot?: number }]
   drop: [payload: { item_type: string; count: number }]
 }>()
 
@@ -198,7 +198,7 @@ function doContextMove(action: string) {
   const ctx = contextMenu.value
   if (!ctx.item) return
   ctx.show = false
-  emit('action', { action, slot_id: ctx.slot_id })
+  emit('action', { action, slot_id: ctx.slot_id, inventory_id: 0 })
 }
 
 function doContextDrop(dropType: string) {
