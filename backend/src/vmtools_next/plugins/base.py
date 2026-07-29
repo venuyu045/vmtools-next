@@ -6,17 +6,21 @@ Plugins receive a PluginContext with access to core services.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from vmtools_next.core.task_engine import TaskEngine
     from vmtools_next.adapters.mcc.mcc_session_pool import MccSessionPool
+    from vmtools_next.adapters.mineflayer.mineflayer_session_pool import MineflayerSessionPool
+
+# Runtime type alias — both pool types have the same interface (get_client, etc.)
+PluginPool = Any
 
 
 class PluginContext:
     """Context provided to plugins during initialization."""
 
-    def __init__(self, task_engine: TaskEngine, pool: MccSessionPool):
+    def __init__(self, task_engine: TaskEngine, pool: PluginPool):
         self.task_engine = task_engine
         self.pool = pool
 

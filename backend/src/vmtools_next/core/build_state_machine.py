@@ -28,7 +28,7 @@ from vmtools_next.core.warehouse_manager import WarehouseManager
 from vmtools_next.core.warehouse_scanner import WarehouseScanner
 from vmtools_next.core.inventory_scanner import InventoryScanner
 from vmtools_next.core.operation_logger import OperationLogger, OperationType
-from vmtools_next.adapters.mcc.mcc_mcp_client import MccMcpClient, MccMcpError
+from vmtools_next.adapters.abstract.bot_agent import AbstractBotAgent
 from vmtools_next.adapters.mcc.mcc_baritone import MccBaritoneAdapter
 from vmtools_next.adapters.mcc.mcc_printer import MccPrinterAdapter
 from vmtools_next.adapters.mcc.mcc_litematica import MccLitematicaAdapter
@@ -76,7 +76,7 @@ class BuildStateMachine:
     def __init__(
         self,
         bot_id: str,
-        mcc: MccMcpClient,
+        agent: AbstractBotAgent,
         litematica: MccLitematicaAdapter,
         baritone: MccBaritoneAdapter,
         printer: MccPrinterAdapter,
@@ -92,7 +92,7 @@ class BuildStateMachine:
         layer_height: int = 6,
     ):
         self._bot_id = bot_id
-        self._mcc = mcc
+        self._agent = agent
         self._litematica = litematica
         self._baritone = baritone
         self._printer = printer
@@ -201,11 +201,11 @@ class BuildStateMachine:
                 # Check for nearby players via MCC
                 nearby_player_detected = False
                 try:
-                    result = await self._mcc.is_player_nearby(
+                    result = await self._agent.is_player_nearby(
                         radius=self._safety.policy.nearby_player_radius
                     )
                     nearby_player_detected = result.get("found", False)
-                except MccMcpError:
+                except Exception:
                     pass  # Ignore player check errors
 
                 # Safety check with player detection
@@ -418,12 +418,12 @@ class BuildStateMachine:
 
         # Get current position
         try:
-            state = await self._mcc.get_player_state()
+            state = await self._agent.get_player_state()
             loc = state.get("location", {})
             px, py, pz = loc.get("x", 0), loc.get("y", 0), loc.get("z", 0)
             import math
             distance = math.sqrt((px-target.x)**2 + (py-target.y)**2 + (pz-target.z)**2)
-        except MccMcpError:
+        except Exception:
             distance = 0
 
         if self._travel.should_teleport(distance) and self._travel.can_teleport():
@@ -460,12 +460,12 @@ class BuildStateMachine:
 
         cmd = self._teleport.get_command("self", wh["x"], wh["y"], wh["z"])
         try:
-            await self._mcc.send_chat(cmd)
+            await self._agent.send_chat(cmd)
             self._travel.record_teleport()
             self._teleport.record_use()
             await asyncio.sleep(3)  # Wait for teleport
             await self._transition(BuildState.TAKE_MATERIALS)
-        except MccMcpError as e:
+        except Exception as e:
             logger.warning("Teleport failed: %s", e)
             self._safety.record_failure()
             await self._transition(BuildState.DECIDE_TRAVEL_MODE)
@@ -489,10 +489,10 @@ class BuildStateMachine:
             if self._container_index < len(self._container_positions):
                 cx, cy, cz = self._container_positions[self._container_index]
                 try:
-                    result = await self._mcc.open_container_at(cx, cy, cz)
+                    result = await self._agent.open_container_at(cx, cy, cz)
                     self._current_inv_id = result.get("inventoryId", 0)
                     self._restock_phase = RestockPhase.READING
-                except MccMcpError as e:
+                except Exception as e:
                     logger.warning("Failed to open container at (%d,%d,%d): %s", cx, cy, cz, e)
                     self._container_index += 1
                     self._restock_phase = RestockPhase.NAVIGATING
@@ -501,7 +501,7 @@ class BuildStateMachine:
 
         elif self._restock_phase == RestockPhase.READING:
             try:
-                snapshot = await self._mcc.get_inventory_snapshot(self._current_inv_id)
+                snapshot = await self._agent.get_inventory_snapshot(self._current_inv_id)
                 container_items = snapshot.get("items", [])
                 # Check if any needed items are in this container
                 found_any = False
@@ -515,13 +515,13 @@ class BuildStateMachine:
                     if found_any:
                         break
                 self._restock_phase = RestockPhase.EXTRACTING if found_any else RestockPhase.CLOSING
-            except MccMcpError:
+            except Exception:
                 self._restock_phase = RestockPhase.CLOSING
 
         elif self._restock_phase == RestockPhase.EXTRACTING:
             # Use withdraw_container_item API to extract needed items
             try:
-                snapshot = await self._mcc.get_inventory_snapshot(self._current_inv_id)
+                snapshot = await self._agent.get_inventory_snapshot(self._current_inv_id)
                 container_items = snapshot.get("items", [])
                 extracted_any = False
 
@@ -541,13 +541,13 @@ class BuildStateMachine:
                             take = min(slot_count, needed, 64)
                             if take > 0:
                                 try:
-                                    await self._mcc.withdraw_container_item(
+                                    await self._agent.withdraw_container_item(
                                         slot_type, take, self._current_inv_id
                                     )
                                     extracted_any = True
                                     needed -= take
                                     logger.info("Withdrew %d x %s from container", take, slot_type)
-                                except MccMcpError as e:
+                                except Exception as e:
                                     logger.warning("Withdraw failed for %s: %s", slot_type, e)
                             break
 
@@ -562,15 +562,15 @@ class BuildStateMachine:
                     self._safety.reset_failures()
                 else:
                     self._safety.record_failure()
-            except MccMcpError as e:
+            except Exception as e:
                 logger.warning("Extract phase error: %s", e)
                 self._safety.record_failure()
             self._restock_phase = RestockPhase.CLOSING
 
         elif self._restock_phase == RestockPhase.CLOSING:
             try:
-                await self._mcc.close_container(self._current_inv_id)
-            except MccMcpError:
+                await self._agent.close_container(self._current_inv_id)
+            except Exception:
                 pass
             self._container_index += 1
             self._restock_phase = RestockPhase.NAVIGATING
@@ -608,12 +608,12 @@ class BuildStateMachine:
             "self", self._projection.origin_x,
             self._projection.origin_y, self._projection.origin_z)
         try:
-            await self._mcc.send_chat(cmd)
+            await self._agent.send_chat(cmd)
             self._travel.record_teleport()
             self._teleport.record_use()
             await asyncio.sleep(3)
             await self._transition(BuildState.BUILD_LAYER)
-        except MccMcpError:
+        except Exception:
             await self._transition(BuildState.DECIDE_TRAVEL_MODE)
 
     async def _do_build_layer(self) -> None:
@@ -647,16 +647,16 @@ class BuildStateMachine:
             # Select item in hotbar
             item_id = block_state.split("[")[0] if "[" in block_state else block_state
             try:
-                await self._mcc.select_hotbar_item(item_id, prefer_lowest_slot=True)
-            except MccMcpError:
+                await self._agent.select_hotbar_item(item_id, prefer_lowest_slot=True)
+            except Exception:
                 pass  # Item might not be in inventory
 
             # Place block
             try:
-                await self._mcc.place_block(wx, wy, wz, face="UP",
+                await self._agent.place_block(wx, wy, wz, face="UP",
                                              hand="MAIN_HAND", look_at_block=True)
                 placed += 1
-            except MccMcpError as e:
+            except Exception as e:
                 logger.warning("Failed to place block at (%d,%d,%d): %s", wx, wy, wz, e)
 
             # Rate limit
@@ -705,10 +705,10 @@ class BuildStateMachine:
         if self._projection:
             next_y = self._projection.origin_y + self._current_layer * self._layer_height
             try:
-                await self._mcc.move_to(
+                await self._agent.move_to(
                     self._projection.origin_x, next_y,
                     self._projection.origin_z, max_offset=3, timeout_ms=10000)
-            except MccMcpError:
+            except Exception:
                 pass
         await self._transition(BuildState.BUILD_LAYER)
 

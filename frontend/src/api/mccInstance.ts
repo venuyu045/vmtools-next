@@ -6,6 +6,7 @@ export interface MccInstanceCreatePayload {
   bot_id?: string | null
   account_profile_id?: string | null
   binary_mode?: 'symlink' | 'copy' | 'external'
+  bot_engine?: 'mcc' | 'mineflayer'
   mc_username?: string
   mc_server_host?: string
   mc_server_port?: number
@@ -18,6 +19,7 @@ export interface MccInstance {
   display_name: string
   bot_id: string | null
   account_profile_id: string | null
+  bot_engine: string
   instance_dir: string
   binary_mode: string
   mcc_binary_path: string

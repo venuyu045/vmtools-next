@@ -9,7 +9,7 @@ import asyncio
 import logging
 from typing import Optional
 
-from vmtools_next.adapters.mcc.mcc_mcp_client import MccMcpClient, MccMcpError
+from vmtools_next.adapters.abstract.bot_agent import AbstractBotAgent
 from vmtools_next.adapters.mcc.mcc_printer import MccPrinterAdapter
 from vmtools_next.adapters.mcc.mcc_litematica import MccLitematicaAdapter
 from vmtools_next.core.dataclasses import ProjectionInfo
@@ -21,9 +21,9 @@ logger = logging.getLogger("vmtools.build_engine")
 class BuildEngine:
     """Block placement engine for a single layer."""
 
-    def __init__(self, mcc: MccMcpClient, printer: MccPrinterAdapter,
+    def __init__(self, agent: AbstractBotAgent, printer: MccPrinterAdapter,
                  litematica: MccLitematicaAdapter, op_logger: OperationLogger):
-        self._mcc = mcc
+        self._agent = agent
         self._printer = printer
         self._litematica = litematica
         self._op_logger = op_logger
@@ -55,26 +55,26 @@ class BuildEngine:
             # Select item if changed
             if item_id != current_item:
                 try:
-                    await self._mcc.select_hotbar_item(item_id, prefer_lowest_slot=True)
+                    await self._agent.select_hotbar_item(item_id, prefer_lowest_slot=True)
                     current_item = item_id
-                except MccMcpError:
+                except Exception:
                     logger.warning("Item not in hotbar: %s", item_id)
 
             # Check if within printer range
             try:
-                state = await self._mcc.get_player_state()
+                state = await self._agent.get_player_state()
                 loc = state.get("location", {})
                 px, py, pz = loc.get("x", 0), loc.get("y", 0), loc.get("z", 0)
                 import math
                 dist = math.sqrt((px-wx)**2 + (py-wy)**2 + (pz-wz)**2)
                 if dist > self._printer.get_range():
-                    await self._mcc.move_to(wx, wy + 1, wz, max_offset=2, timeout_ms=10000)
-            except MccMcpError:
+                    await self._agent.move_to(wx, wy + 1, wz, max_offset=2, timeout_ms=10000)
+            except Exception:
                 pass
 
             # Place block
             try:
-                await self._mcc.place_block(wx, wy, wz, face="UP",
+                await self._agent.place_block(wx, wy, wz, face="UP",
                                              hand="MAIN_HAND", look_at_block=True)
                 placed += 1
             except MccMcpError as e:
@@ -123,7 +123,7 @@ class BuildEngine:
         """Move to the starting position of the next layer."""
         next_y = projection.origin_y + next_layer_index * layer_height
         try:
-            await self._mcc.move_to(
+            await self._agent.move_to(
                 projection.origin_x, next_y, projection.origin_z,
                 max_offset=3, timeout_ms=10000)
             return True

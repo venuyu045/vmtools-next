@@ -54,6 +54,10 @@ class MccInstanceModel(Base):
     last_stopped_at = Column(DateTime, nullable=True)
     last_heartbeat_at = Column(DateTime, nullable=True)
     auto_reconnect = Column(Boolean, default=False, nullable=False)
+
+    # Bot engine type: "mcc" (C# MCC MCP) or "mineflayer" (Node.js mineflayer)
+    bot_engine = Column(String, default="mcc", nullable=False)
+
     deleted_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=utc_now, nullable=False)
     updated_at = Column(DateTime, default=utc_now, onupdate=utc_now, nullable=False)

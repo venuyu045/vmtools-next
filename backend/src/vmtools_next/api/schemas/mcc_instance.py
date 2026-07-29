@@ -17,6 +17,7 @@ class MccInstanceCreate(BaseModel):
     mc_server_host: str = ""
     mc_server_port: int = 25565
     mc_version: str = "1.21.1"
+    bot_engine: str = "mcc"  # "mcc" | "mineflayer"
 
     @field_validator("slug")
     @classmethod
@@ -45,6 +46,7 @@ class MccInstanceUpdate(BaseModel):
     mc_server_port: Optional[int] = None
     mc_version: Optional[str] = None
     auto_reconnect: Optional[bool] = None
+    bot_engine: Optional[str] = None  # "mcc" | "mineflayer"
 
 
 class MccInstanceStartRequest(BaseModel):
@@ -259,6 +261,7 @@ class MccInstanceResponse(BaseModel):
     mc_server_host: str
     mc_server_port: int
     mc_version: str
+    bot_engine: str = "mcc"
     organization_id: Optional[str] = None
     created_by: Optional[str] = None
     last_started_at: Optional[datetime] = None
