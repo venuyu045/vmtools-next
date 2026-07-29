@@ -21,6 +21,7 @@ import { useSocketIO } from '@/composables/useSocketIO'
 const props = defineProps<{
   taskId: string
   materials?: { item_id: string; display_name: string; placed: number; required: number }[]
+  initData?: MapInitData | null
 }>()
 
 const emit = defineEmits<{ ready: [] }>()
@@ -43,7 +44,13 @@ onMounted(() => {
   if (!canvas.value) return
   scene = new BuildMapScene(canvas.value)
 
-  // Socket event handlers
+  // If initData is provided (from REST API), render immediately
+  if (props.initData) {
+    scene.initialize(props.initData as MapInitData)
+    emit('ready')
+  }
+
+  // Socket event handlers (for live updates during building)
   sockOn('build_map_init', (data: MapInitData) => {
     if (data.task_id !== props.taskId) return
     scene!.initialize(data)
