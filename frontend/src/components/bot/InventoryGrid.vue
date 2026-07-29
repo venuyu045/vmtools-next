@@ -2,114 +2,75 @@
   <div class="inventory-grid">
     <div v-if="!inventory" class="empty-state">点击 🔄 刷新 加载背包数据</div>
     <div v-else>
-      <!-- Cursor item (picked up) -->
-      <div v-if="cursorItem" class="cursor-item">
-        <img :src="iconUrl(cursorItem.item_id)" class="cursor-icon" />
-        <span class="cursor-count">{{ formatCount(cursorItem.count) }}</span>
+      <!-- Cursor item overlay -->
+      <div v-if="cursorSlot !== -1" class="cursor-hint">
+        已选中槽位 {{ cursorSlot }} · 再点目标格子交换 · Esc 取消
       </div>
 
-      <!-- Help text -->
-      <div class="help-bar">
-        <span>🖱 左键物品=拿起</span>
-        <span>·</span>
-        <span>🖱 左键空格=放下</span>
-        <span>·</span>
-        <span>🖱 右键=丢弃菜单</span>
-      </div>
-
-      <!-- Main inventory (3 rows of 9, slots 0-26) -->
+      <!-- Main inventory (slots 0-35) -->
+      <div class="section-title">背包</div>
       <div class="main-rows">
-        <div v-for="row in 3" :key="row" class="inv-row">
+        <div v-for="row in 4" :key="row" class="inv-row">
           <div
             v-for="col in 9" :key="(row-1)*9+col-1" class="grid-slot"
             :class="slotClass((row-1)*9+col-1)"
-            :title="slotTooltip(getSlot((row-1)*9+col-1))"
-            @click.left="onLeftClick((row-1)*9+col-1)"
-            @click.right.prevent="onRightClick((row-1)*9+col-1, $event)"
+            :title="slotTitle((row-1)*9+col-1)"
+            @click.left="onSlotClick((row-1)*9+col-1)"
+            @click.right.prevent="onSlotRight((row-1)*9+col-1, $event)"
           >
-            <template v-if="getSlot((row-1)*9+col-1)">
-              <img
-                :src="iconUrl(getSlot((row-1)*9+col-1)!.item_id)"
-                class="item-icon"
-                @error="(e: Event) => (e.target as HTMLImageElement).style.display='none'"
-              />
-              <span
-                v-if="!iconLoaded(getSlot((row-1)*9+col-1)!.item_id)"
-                class="item-abbr"
-              >{{ shortName(getSlot((row-1)*9+col-1)!.item_id).slice(0, 4) }}</span>
-              <span class="count-badge">{{ formatCount(getSlot((row-1)*9+col-1)!.count) }}</span>
-            </template>
+            <SlotContent :slot-data="getSlot((row-1)*9+col-1)" />
+            <span class="slot-idx">{{ (row-1)*9+col-1 }}</span>
           </div>
         </div>
       </div>
 
-      <!-- Hotbar row (slots 36-44) -->
+      <!-- Hotbar (slots 36-44) -->
+      <div class="section-title">快捷栏</div>
       <div class="hotbar-row">
         <div
           v-for="i in 9" :key="'h'+i" class="grid-slot"
           :class="[slotClass(35 + i), { selected: (i - 1) === (inventory?.selected_hotbar ?? 0) }]"
-          :title="slotTooltip(getSlot(35 + i))"
-          @click.left="onLeftClick(35 + i)"
-          @click.right.prevent="onRightClick(35 + i, $event)"
+          :title="slotTitle(35 + i)"
+          @click.left="onSlotClick(35 + i)"
+          @click.right.prevent="onSlotRight(35 + i, $event)"
         >
-          <template v-if="getSlot(35 + i)">
-            <img
-              :src="iconUrl(getSlot(35 + i)!.item_id)"
-              class="item-icon"
-              @error="(e: Event) => (e.target as HTMLImageElement).style.display='none'"
-            />
-            <span
-              v-if="!iconLoaded(getSlot(35 + i)!.item_id)"
-              class="item-abbr"
-            >{{ shortName(getSlot(35 + i)!.item_id).slice(0, 4) }}</span>
-            <span class="count-badge">{{ formatCount(getSlot(35 + i)!.count) }}</span>
-          </template>
+          <SlotContent :slot-data="getSlot(35 + i)" />
           <span class="slot-num">{{ i }}</span>
         </div>
       </div>
 
-      <!-- Stats bar -->
+      <!-- Stats -->
       <div class="stats-bar">
-        <el-button size="small" @click="$emit('refresh')" :loading="loading">🔄 刷新背包</el-button>
-        <span class="stat">物品: {{ inventory?.total_items ?? 0 }}</span>
-        <span class="stat">空位: {{ inventory?.empty_slots ?? 0 }}</span>
-        <span v-if="cursorItem" class="stat cursor-hint">⌨ 按 Esc 取消选中</span>
+        <el-button size="small" @click="$emit('refresh')" :loading="loading">🔄 刷新</el-button>
+        <span>物品 {{ inventory?.total_items }} · 空位 {{ inventory?.empty_slots }}</span>
       </div>
     </div>
 
-    <!-- Right-click context menu -->
-    <div v-if="contextMenu.show" class="context-menu" :style="{ top: contextMenu.y + 'px', left: contextMenu.x + 'px' }">
-      <div v-if="contextMenu.item" class="menu-header">{{ formatName(contextMenu.item.item_id) }} ×{{ contextMenu.item.count }}</div>
-      <div class="menu-item" @click="doContextDrop('DropItemStack')">🗑 丢弃整组</div>
-      <div class="menu-item" @click="doContextDrop('DropSingleItem')">🗑 丢弃一个</div>
-      <div class="menu-item" @click="doContextMove('ShiftClick')">📦 快速移动到箱子</div>
-      <div class="menu-item cancel" @click="contextMenu.show = false">取消</div>
+    <!-- Right-click menu -->
+    <div v-if="ctx.show" class="context-menu" :style="{ top: ctx.y + 'px', left: ctx.x + 'px' }">
+      <div class="menu-header">{{ formatName(ctx.item?.item_id || '') }} ×{{ ctx.item?.count }}</div>
+      <div class="menu-item" @click="ctxDrop('DropItemStack')">🗑 丢弃整组</div>
+      <div class="menu-item" @click="ctxDrop('DropSingleItem')">🗑 丢弃一个</div>
+      <div class="menu-item" @click="ctxSwap">🔀 移到快捷栏</div>
+      <div class="menu-item cancel" @click="ctx.show = false">取消</div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted, defineComponent, h } from 'vue'
 
-interface InvSlot {
-  slot: number; item_id: string; display_name: string; count: number
-}
-
+interface InvSlot { slot: number; item_id: string; display_name: string; count: number }
 interface InvData {
   bot_id: string; inventory_id: number; slots: InvSlot[]
   hotbar: number[]; selected_hotbar: number; empty_slots: number; total_items: number
 }
 
 const props = defineProps<{ botId: string; inventory: InvData | null; loading: boolean }>()
-const emit = defineEmits<{
-  refresh: []
-  action: [payload: { action: string; slot_id: number; inventory_id?: number; from_slot?: number }]
-  drop: [payload: { item_type: string; count: number }]
-}>()
+const emit = defineEmits<{ refresh: []; action: [payload: { action: string; slot_id: number; inventory_id?: number }]; drop: [payload: { item_type: string; count: number }] }>()
 
-const contextMenu = ref({ show: false, x: 0, y: 0, item: null as InvSlot | null, slot_id: 0 })
-const cursorItem = ref<InvSlot | null>(null)   // picked-up item
-const cursorFromSlot = ref(-1)                   // slot picked from
+const cursorSlot = ref(-1)
+const ctx = ref({ show: false, x: 0, y: 0, item: null as InvSlot | null, slot_id: 0 })
 
 const slotMap = computed(() => {
   const m: Record<number, InvSlot> = {}
@@ -118,171 +79,155 @@ const slotMap = computed(() => {
 })
 
 function getSlot(idx: number): InvSlot | undefined { return slotMap.value[idx] }
+
 function slotClass(idx: number) {
   return {
-    'has-item': getSlot(idx),
+    'has-item': !!getSlot(idx),
     'empty-slot': !getSlot(idx),
-    'cursor-source': idx === cursorFromSlot.value,
+    'cursor-pick': idx === cursorSlot.value,
   }
 }
 
-// ── Item visual ──────────────────────
+function slotTitle(idx: number): string {
+  const s = getSlot(idx)
+  if (cursorSlot.value !== -1 && !s) return '放这里'
+  return s ? `${formatName(s.item_id)} ×${s.count}` : '空'
+}
 
 function formatName(id: string): string {
   return (id || '').replace('minecraft:', '').replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
 }
 
-function shortName(id: string): string {
-  return (id || '').split(':').pop()?.replace(/_/g, ' ').slice(0, 12) || ''
+// Slot content renderer
+const itemColors: Record<string, string> = {
+  shulkerbox: '#b366cc', playerhead: '#cc6633', hopper: '#666666',
+  stick: '#8B6914', azalea: '#558833', floweringazalea: '#cc3388',
 }
 
-function formatCount(n: number): string { return n > 9999 ? (n / 1000).toFixed(1) + 'k' : String(n) }
-
-function snakeCase(id: string): string {
-  return (id || '').replace('minecraft:', '').replace(/([A-Z])/g, '_$1').toLowerCase().replace(/^_/, '')
+function itemBg(id: string): string {
+  const lower = id.toLowerCase().replace('minecraft:', '')
+  for (const [k, v] of Object.entries(itemColors)) if (lower.includes(k)) return v
+  const h = id.split('').reduce((v, c) => v * 31 + c.charCodeAt(0), 0)
+  return `hsl(${Math.abs(h) % 360}, 50%, 42%)`
 }
 
-function iconUrl(itemId: string): string {
-  const name = snakeCase(itemId)
-  return `https://raw.githubusercontent.com/misode/mcmeta/assets-summary/textures/item/${name}.png`
-}
+const SlotContent = defineComponent({
+  props: { slotData: Object as () => InvSlot | undefined },
+  setup(p) {
+    return () => {
+      if (!p.slotData) return null
+      const id = p.slotData.item_id
+      const name = id.replace('minecraft:', '').replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
+      const short = name.length > 9 ? name.slice(0, 8) + '…' : name
+      return h('div', { class: 'item-inner', style: { background: itemBg(id) } }, [
+        h('span', { class: 'item-name' }, short),
+        h('span', { class: 'item-count' }, p.slotData.count > 1 ? String(p.slotData.count) : ''),
+      ])
+    }
+  },
+})
 
-function iconLoaded(_itemId: string): boolean {
-  // Track via img @error event
-  return false
-}
+// Click handlers
+function onSlotClick(slotIdx: number) {
+  ctx.value.show = false
+  const has = getSlot(slotIdx)
 
-function slotTooltip(s: InvSlot | undefined | null): string {
-  if (!s) return cursorItem.value ? '放置物品' : '空'
-  return `${formatName(s.item_id)} ×${s.count}`
-}
-
-// ── Click handlers ────────────────────
-
-function onLeftClick(slotIdx: number) {
-  contextMenu.value.show = false
-
-  const slotItem = getSlot(slotIdx)
-
-  if (cursorItem.value) {
-    // Have item in hand — try to place/swap
-    emit('action', {
-      action: 'LeftClick',
-      slot_id: slotIdx,
-      from_slot: cursorFromSlot.value,
-    })
-    cursorItem.value = null
-    cursorFromSlot.value = -1
-    return
-  }
-
-  if (slotItem) {
-    // Pick up item
-    cursorItem.value = slotItem
-    cursorFromSlot.value = slotIdx
+  if (cursorSlot.value === -1) {
+    // Pick up
+    if (has) cursorSlot.value = slotIdx
+  } else if (cursorSlot.value === slotIdx) {
+    // Click same slot → cancel
+    cursorSlot.value = -1
+  } else {
+    // Swap: send two LeftClicks
+    emit('action', { action: 'LeftClick', slot_id: cursorSlot.value, inventory_id: 0 })
+    emit('action', { action: 'LeftClick', slot_id: slotIdx, inventory_id: 0 })
+    cursorSlot.value = -1
+    setTimeout(() => emit('refresh'), 200)
   }
 }
 
-function onRightClick(slotIdx: number, e: MouseEvent) {
-  const slotItem = getSlot(slotIdx)
-  if (!slotItem) return
-  contextMenu.value = {
-    show: true,
-    x: Math.min(e.clientX, window.innerWidth - 150),
-    y: Math.min(e.clientY, window.innerHeight - 180),
-    item: slotItem, slot_id: slotIdx,
+function onSlotRight(slotIdx: number, e: MouseEvent) {
+  const s = getSlot(slotIdx)
+  if (!s) return
+  ctx.value = { show: true, x: Math.min(e.clientX, window.innerWidth - 150), y: Math.min(e.clientY, window.innerHeight - 200), item: s, slot_id: slotIdx }
+}
+
+function ctxDrop(action: string) {
+  if (!ctx.value.item) return
+  ctx.value.show = false
+  emit('drop', { item_type: ctx.value.item.item_id, count: action === 'DropItemStack' ? 64 : 1 })
+}
+
+function ctxSwap() {
+  if (!ctx.value.item) return
+  ctx.value.show = false
+  // Move to first empty hotbar slot (36-44)
+  const emptyHotbar = [36, 37, 38, 39, 40, 41, 42, 43, 44].find(i => !getSlot(i))
+  if (emptyHotbar != null) {
+    emit('action', { action: 'LeftClick', slot_id: ctx.value.slot_id, inventory_id: 0 })
+    emit('action', { action: 'LeftClick', slot_id: emptyHotbar, inventory_id: 0 })
+    setTimeout(() => emit('refresh'), 200)
   }
 }
 
-function doContextMove(action: string) {
-  const ctx = contextMenu.value
-  if (!ctx.item) return
-  ctx.show = false
-  emit('action', { action, slot_id: ctx.slot_id, inventory_id: 0 })
-}
-
-function doContextDrop(dropType: string) {
-  const ctx = contextMenu.value
-  if (!ctx.item) return
-  ctx.show = false
-  emit('drop', { item_type: ctx.item.item_id, count: dropType === 'DropItemStack' ? 64 : 1 })
-}
-
-function cancelDrag() {
-  cursorItem.value = null
-  cursorFromSlot.value = -1
-}
-
-function closeMenu() { contextMenu.value.show = false }
+function cancelPick() { cursorSlot.value = -1; ctx.value.show = false }
 
 onMounted(() => {
-  document.addEventListener('click', closeMenu)
-  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') cancelDrag() })
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') cancelPick() })
+  document.addEventListener('click', () => ctx.value.show = false)
 })
-onUnmounted(() => document.removeEventListener('click', closeMenu))
 </script>
 
 <style scoped>
-.inventory-grid { padding: 12px; min-height: 200px; user-select: none; position: relative; }
+.inventory-grid { padding: 8px; min-height: 200px; user-select: none; }
 .empty-state { color: #888; text-align: center; padding: 40px; }
 
-.help-bar {
-  display: flex; gap: 8px; justify-content: center; padding: 8px 0 12px;
-  font-size: 12px; color: #888;
+.cursor-hint {
+  text-align: center; padding: 6px; margin-bottom: 8px; border-radius: 4px;
+  background: rgba(255,165,0,0.15); color: #ffa500; font-size: 12px;
 }
 
-.cursor-item {
-  position: fixed; z-index: 10000; pointer-events: none;
-  top: 50%; left: 50%; transform: translate(-50%, -50%);
-  width: 64px; height: 64px; opacity: 0.85;
-}
-.cursor-icon { width: 100%; height: 100%; image-rendering: pixelated; filter: drop-shadow(0 2px 4px rgba(0,0,0,0.5)); }
-.cursor-count {
-  position: absolute; bottom: -6px; right: -6px;
-  background: #1a1a1a; color: #fff; font-size: 12px; font-weight: bold;
-  padding: 1px 6px; border-radius: 10px; border: 1px solid #555;
-}
+.section-title { font-size: 11px; color: #666; margin: 8px 0 4px; text-align: center; }
 
-.main-rows { display: flex; flex-direction: column; gap: 2px; margin-bottom: 8px; }
+.main-rows { display: flex; flex-direction: column; gap: 2px; }
 .inv-row { display: flex; gap: 2px; justify-content: center; }
-
-.hotbar-row { display: flex; gap: 2px; justify-content: center; margin-top: 4px; }
+.hotbar-row { display: flex; gap: 2px; justify-content: center; margin-top: 2px; }
 
 .grid-slot {
-  width: 48px; height: 48px; border: 2px solid #444; border-radius: 4px;
-  background: #1a1a1a; cursor: pointer; position: relative;
-  transition: border-color 0.15s, transform 0.1s;
+  width: 44px; height: 44px; border: 2px solid #3a3a3a; border-radius: 4px;
+  background: #141414; cursor: pointer; position: relative;
+  transition: border-color 0.1s, transform 0.1s;
 }
-.grid-slot:hover { border-color: #aaa; transform: scale(1.05); z-index: 1; }
-.grid-slot.selected { border-color: #ffd700; box-shadow: 0 0 8px rgba(255,215,0,0.3); }
-.grid-slot.empty-slot { opacity: 0.6; }
-.grid-slot.cursor-source { border-style: dashed; border-color: #ffa500; }
+.grid-slot:hover { border-color: #777; }
+.grid-slot.selected { border-color: #ffd700; box-shadow: 0 0 6px rgba(255,215,0,0.25); }
+.grid-slot.empty-slot { opacity: 0.5; }
+.grid-slot.cursor-pick { border-color: #ff8c00; border-style: dashed; transform: scale(1.04); }
 
-.item-icon {
-  position: absolute; width: 36px; height: 36px; top: 5px; left: 5px;
-  image-rendering: pixelated;
+.item-inner {
+  position: absolute; inset: 2px; border-radius: 2px;
+  display: flex; align-items: center; justify-content: center;
 }
-.item-abbr {
-  position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
-  font-size: 10px; color: #ccc; font-weight: bold;
-  text-shadow: 0 1px 2px #000; white-space: nowrap; overflow: hidden; max-width: 40px;
+.item-name {
+  font-size: 9px; color: #fff; font-weight: bold; text-align: center;
+  text-shadow: 0 1px 2px rgba(0,0,0,0.8); line-height: 1.1; padding: 2px;
 }
-.count-badge {
-  position: absolute; bottom: 1px; right: 3px;
+.item-count {
+  position: absolute; bottom: 0; right: 2px;
   font-size: 11px; color: #fff; font-weight: bold;
-  text-shadow: 0 0 2px #000, 0 0 2px #000;
+  text-shadow: 0 0 3px #000;
 }
-.slot-num { position: absolute; top: 0; left: 2px; font-size: 8px; color: #666; }
+.slot-idx { position: absolute; top: 0; left: 2px; font-size: 7px; color: #555; }
+.slot-num { position: absolute; top: 0; left: 2px; font-size: 8px; color: #888; }
 
 .stats-bar {
-  display: flex; align-items: center; gap: 16px; margin-top: 12px; justify-content: center;
+  display: flex; align-items: center; gap: 12px; margin-top: 12px; justify-content: center;
+  font-size: 12px; color: #aaa;
 }
-.stat { font-size: 12px; color: #aaa; }
-.cursor-hint { color: #ffa500; }
 
 .context-menu {
   position: fixed; z-index: 9999; background: #2c2c2c; border: 1px solid #555;
-  border-radius: 6px; padding: 4px 0; min-width: 150px; box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+  border-radius: 6px; padding: 4px 0; min-width: 140px; box-shadow: 0 4px 12px rgba(0,0,0,0.5);
 }
 .menu-header { padding: 6px 12px; font-size: 12px; color: #aaa; border-bottom: 1px solid #444; margin-bottom: 2px; }
 .menu-item { padding: 8px 14px; font-size: 13px; cursor: pointer; color: #ddd; }
