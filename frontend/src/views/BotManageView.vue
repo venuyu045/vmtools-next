@@ -183,6 +183,20 @@
               embedded
             />
           </el-tab-pane>
+
+          <el-tab-pane label="背包" name="inventory">
+            <div v-if="selectedInstance" class="inventory-tab">
+              <InventoryGrid
+                :bot-id="selectedInstance.bot_id"
+                :inventory="inventoryData"
+                :loading="inventoryLoading"
+                @refresh="fetchInventory"
+                @action="handleInventoryAction"
+                @drop="handleInventoryDrop"
+              />
+            </div>
+            <div v-else class="empty-state">选择 Bot 实例查看背包</div>
+          </el-tab-pane>
         </el-tabs>
       </div>
     </el-drawer>
@@ -221,8 +235,10 @@ import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import MccWebTerminal from '@/components/MccWebTerminal.vue'
 import MccFileManagerPanel from '@/components/MccFileManagerPanel.vue'
+import InventoryGrid from '@/components/bot/InventoryGrid.vue'
 import { useMccInstanceStore } from '@/stores/mccInstance'
 import { useBotStore } from '@/stores/bot'
+import { botApi } from '@/api/bot'
 import type { MccAccountConfig, MccAuthType, MccInstance } from '@/api/mccInstance'
 import { mccInstanceApi } from '@/api/mccInstance'
 
@@ -232,7 +248,11 @@ const botStore = useBotStore()
 const showCreate = ref(false)
 const showProfileCreate = ref(false)
 const detailOpen = ref(false)
-const activeTab = ref<'terminal' | 'account' | 'files'>('terminal')
+const activeTab = ref<'terminal' | 'account' | 'files' | 'inventory'>('terminal')
+
+// Inventory state
+const inventoryData = ref<any>(null)
+const inventoryLoading = ref(false)
 const selectedInstance = ref<MccInstance | null>(null)
 const selectedProfileId = ref('')
 const lastDiff = ref('')
@@ -457,10 +477,6 @@ async function openInstance(instance: MccInstance, tab: 'terminal' | 'account' |
   await loadActiveTab()
 }
 
-async function handleTabChange() {
-  await loadActiveTab()
-}
-
 async function loadActiveTab() {
   if (!selectedInstance.value) return
   if (activeTab.value === 'account') {
@@ -468,6 +484,49 @@ async function loadActiveTab() {
     const data = await mccStore.fetchAccountConfig(selectedInstance.value.instance_id)
     Object.assign(accountForm, { ...data, password: '' })
     selectedProfileId.value = selectedInstance.value.account_profile_id || ''
+  }
+  if (activeTab.value === 'inventory') {
+    fetchInventory()
+  }
+}
+
+// ── Inventory ──────────────────────────────
+
+async function fetchInventory() {
+  if (!selectedInstance.value) return
+  const botId = selectedInstance.value.bot_id
+  if (!botId) { ElMessage.warning('此实例未绑定 Bot'); return }
+  inventoryLoading.value = true
+  try {
+    const { data } = await botApi.getInventory(botId)
+    inventoryData.value = data
+  } catch (e: any) {
+    ElMessage.error('获取背包失败: ' + (e?.response?.data?.detail || e))
+  } finally { inventoryLoading.value = false }
+}
+
+async function handleInventoryAction(payload: { action: string; slot_id: number; inventory_id: number }) {
+  if (!selectedInstance.value) return
+  try {
+    await botApi.inventoryAction(selectedInstance.value.bot_id, payload)
+    ElMessage.success('操作完成')
+    fetchInventory()
+  } catch (e: any) {
+    ElMessage.error('操作失败: ' + (e?.response?.data?.detail || e))
+  }
+}
+
+async function handleInventoryDrop(payload: { item_type: string; count: number }) {
+  if (!selectedInstance.value) return
+  try {
+    await botApi.inventoryDrop(selectedInstance.value.bot_id, {
+      item_type: payload.item_type,
+      count: payload.count,
+    })
+    ElMessage.success(`丢弃 ${payload.item_type} ×${payload.count}`)
+    fetchInventory()
+  } catch (e: any) {
+    ElMessage.error('丢弃失败: ' + (e?.response?.data?.detail || e))
   }
 }
 
