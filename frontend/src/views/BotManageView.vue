@@ -506,9 +506,10 @@ async function fetchInventory() {
 }
 
 async function handleInventoryAction(payload: { action: string; slot_id: number; inventory_id: number }) {
-  if (!selectedInstance.value) return
+  const botId = selectedInstance.value?.bot_id
+  if (!botId) { ElMessage.warning('未绑定 Bot'); return }
   try {
-    await botApi.inventoryAction(selectedInstance.value.bot_id, payload)
+    await botApi.inventoryAction(botId, payload)
     ElMessage.success('操作完成')
     fetchInventory()
   } catch (e: any) {
@@ -517,9 +518,10 @@ async function handleInventoryAction(payload: { action: string; slot_id: number;
 }
 
 async function handleInventoryDrop(payload: { item_type: string; count: number }) {
-  if (!selectedInstance.value) return
+  const botId = selectedInstance.value?.bot_id
+  if (!botId) { ElMessage.warning('未绑定 Bot'); return }
   try {
-    await botApi.inventoryDrop(selectedInstance.value.bot_id, {
+    await botApi.inventoryDrop(botId, {
       item_type: payload.item_type,
       count: payload.count,
     })
