@@ -2,49 +2,69 @@
   <div class="inventory-grid">
     <div v-if="!inventory" class="empty-state">点击 🔄 刷新 加载背包数据</div>
     <div v-else>
-      <!-- Help text -->
-      <div class="help-bar">
-        <span>🖱 左键=快速移动</span>
-        <span>·</span>
-        <span>🖱 右键=菜单（丢弃/移动）</span>
+      <!-- Cursor item (picked up) -->
+      <div v-if="cursorItem" class="cursor-item">
+        <img :src="iconUrl(cursorItem.item_id)" class="cursor-icon" @error="onIconError" />
+        <span class="cursor-count">{{ formatCount(cursorItem.count) }}</span>
       </div>
 
-      <!-- Main inventory (3 rows of 9) -->
+      <!-- Help text -->
+      <div class="help-bar">
+        <span>🖱 左键物品=拿起</span>
+        <span>·</span>
+        <span>🖱 左键空格=放下</span>
+        <span>·</span>
+        <span>🖱 右键=丢弃菜单</span>
+      </div>
+
+      <!-- Main inventory (3 rows of 9, slots 0-26) -->
       <div class="main-rows">
         <div v-for="row in 3" :key="row" class="inv-row">
           <div
             v-for="col in 9" :key="(row-1)*9+col-1" class="grid-slot"
-            :class="{ 'has-item': getSlot((row-1)*9+col-1), 'empty-slot': !getSlot((row-1)*9+col-1) }"
+            :class="slotClass((row-1)*9+col-1)"
             :title="slotTooltip(getSlot((row-1)*9+col-1))"
-            @click.left="onSlotClick(getSlot((row-1)*9+col-1), (row-1)*9+col-1)"
-            @click.right.prevent="onSlotRight(getSlot((row-1)*9+col-1), (row-1)*9+col-1)"
+            @click.left="onLeftClick((row-1)*9+col-1)"
+            @click.right.prevent="onRightClick((row-1)*9+col-1, $event)"
           >
             <template v-if="getSlot((row-1)*9+col-1)">
-              <div class="item-bg" :style="{ background: itemColor(getSlot((row-1)*9+col-1)!.item_id) }" />
-              <img v-if="itemIcon(getSlot((row-1)*9+col-1)!.item_id)" :src="itemIcon(getSlot((row-1)*9+col-1)!.item_id)!" class="item-icon" />
-              <span v-else class="item-abbr">{{ shortName(getSlot((row-1)*9+col-1)!.item_id).slice(0, 4) }}</span>
+              <img
+                :src="iconUrl(getSlot((row-1)*9+col-1)!.item_id)"
+                class="item-icon"
+                @error="(e: Event) => (e.target as HTMLImageElement).style.display='none'"
+              />
+              <span
+                v-if="!iconLoaded(getSlot((row-1)*9+col-1)!.item_id)"
+                class="item-abbr"
+              >{{ shortName(getSlot((row-1)*9+col-1)!.item_id).slice(0, 4) }}</span>
               <span class="count-badge">{{ formatCount(getSlot((row-1)*9+col-1)!.count) }}</span>
             </template>
           </div>
         </div>
       </div>
 
-      <!-- Hotbar row -->
+      <!-- Hotbar row (slots 36-44) -->
       <div class="hotbar-row">
         <div
-          v-for="(s, i) in hotbarSlots" :key="'h'+i" class="grid-slot"
-          :class="{ selected: i === (inventory?.selected_hotbar ?? 0), 'has-item': s, 'empty-slot': !s }"
-          :title="slotTooltip(s)"
-          @click.left="onSlotClick(s, 36 + i)"
-          @click.right.prevent="onSlotRight(s, 36 + i)"
+          v-for="i in 9" :key="'h'+i" class="grid-slot"
+          :class="[slotClass(35 + i), { selected: (i - 1) === (inventory?.selected_hotbar ?? 0) }]"
+          :title="slotTooltip(getSlot(35 + i))"
+          @click.left="onLeftClick(35 + i)"
+          @click.right.prevent="onRightClick(35 + i, $event)"
         >
-          <template v-if="s">
-            <div class="item-bg" :style="{ background: itemColor(s.item_id) }" />
-            <img v-if="itemIcon(s.item_id)" :src="itemIcon(s.item_id)!" class="item-icon" />
-            <span v-else class="item-abbr">{{ shortName(s.item_id).slice(0, 4) }}</span>
-            <span class="count-badge">{{ formatCount(s.count) }}</span>
+          <template v-if="getSlot(35 + i)">
+            <img
+              :src="iconUrl(getSlot(35 + i)!.item_id)"
+              class="item-icon"
+              @error="(e: Event) => (e.target as HTMLImageElement).style.display='none'"
+            />
+            <span
+              v-if="!iconLoaded(getSlot(35 + i)!.item_id)"
+              class="item-abbr"
+            >{{ shortName(getSlot(35 + i)!.item_id).slice(0, 4) }}</span>
+            <span class="count-badge">{{ formatCount(getSlot(35 + i)!.count) }}</span>
           </template>
-          <span class="slot-label">{{ 1 + i }}</span>
+          <span class="slot-num">{{ i }}</span>
         </div>
       </div>
 
@@ -53,16 +73,16 @@
         <el-button size="small" @click="$emit('refresh')" :loading="loading">🔄 刷新背包</el-button>
         <span class="stat">物品: {{ inventory?.total_items ?? 0 }}</span>
         <span class="stat">空位: {{ inventory?.empty_slots ?? 0 }}</span>
+        <span v-if="cursorItem" class="stat cursor-hint">⌨ 按 Esc 取消选中</span>
       </div>
     </div>
 
     <!-- Right-click context menu -->
     <div v-if="contextMenu.show" class="context-menu" :style="{ top: contextMenu.y + 'px', left: contextMenu.x + 'px' }">
       <div v-if="contextMenu.item" class="menu-header">{{ formatName(contextMenu.item.item_id) }} ×{{ contextMenu.item.count }}</div>
-      <div class="menu-item" @click="doContextAction('DropItemStack')">🗑 丢弃整组</div>
-      <div class="menu-item" @click="doContextAction('DropSingleItem')">🗑 丢弃一个</div>
-      <div class="menu-item" @click="doContextAction('ShiftClick')">📦 快速移动</div>
-      <div class="menu-item" @click="doContextAction('LeftClick')">👆 左键拿取</div>
+      <div class="menu-item" @click="doContextDrop('DropItemStack')">🗑 丢弃整组</div>
+      <div class="menu-item" @click="doContextDrop('DropSingleItem')">🗑 丢弃一个</div>
+      <div class="menu-item" @click="doContextMove('ShiftClick')">📦 快速移动到箱子</div>
       <div class="menu-item cancel" @click="contextMenu.show = false">取消</div>
     </div>
   </div>
@@ -83,11 +103,13 @@ interface InvData {
 const props = defineProps<{ botId: string; inventory: InvData | null; loading: boolean }>()
 const emit = defineEmits<{
   refresh: []
-  action: [payload: { action: string; slot_id: number; inventory_id: number }]
+  action: [payload: { action: string; slot_id: number; from_slot?: number }]
   drop: [payload: { item_type: string; count: number }]
 }>()
 
 const contextMenu = ref({ show: false, x: 0, y: 0, item: null as InvSlot | null, slot_id: 0 })
+const cursorItem = ref<InvSlot | null>(null)   // picked-up item
+const cursorFromSlot = ref(-1)                   // slot picked from
 
 const slotMap = computed(() => {
   const m: Record<number, InvSlot> = {}
@@ -96,10 +118,15 @@ const slotMap = computed(() => {
 })
 
 function getSlot(idx: number): InvSlot | undefined { return slotMap.value[idx] }
+function slotClass(idx: number) {
+  return {
+    'has-item': getSlot(idx),
+    'empty-slot': !getSlot(idx),
+    'cursor-source': idx === cursorFromSlot.value,
+  }
+}
 
-const hotbarSlots = computed(() => {
-  return Array.from({ length: 9 }, (_, i) => slotMap.value[36 + i] || null)
-})
+// ── Item visual ──────────────────────
 
 function formatName(id: string): string {
   return (id || '').replace('minecraft:', '').replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
@@ -109,74 +136,111 @@ function shortName(id: string): string {
   return (id || '').split(':').pop()?.replace(/_/g, ' ').slice(0, 12) || ''
 }
 
-function formatCount(n: number): string { return n >= 64 ? '64+' : String(n) }
+function formatCount(n: number): string { return n > 9999 ? (n / 1000).toFixed(1) + 'k' : String(n) }
+
+function snakeCase(id: string): string {
+  return (id || '').replace('minecraft:', '').replace(/([A-Z])/g, '_$1').toLowerCase().replace(/^_/, '')
+}
+
+function iconUrl(itemId: string): string {
+  const name = snakeCase(itemId)
+  return `https://raw.githubusercontent.com/misode/mcmeta/assets-summary/textures/item/${name}.png`
+}
+
+function iconLoaded(_itemId: string): boolean {
+  // Track via img @error event
+  return false
+}
 
 function slotTooltip(s: InvSlot | undefined | null): string {
-  if (!s) return '空'
-  return `${formatName(s.item_id)} ×${s.count} (槽位 ${s.slot})`
+  if (!s) return cursorItem.value ? '放置物品' : '空'
+  return `${formatName(s.item_id)} ×${s.count}`
 }
 
-function itemColor(itemId: string): string {
-  const colors: Record<string, string> = {
-    shulkerbox: '#9b59b6', playerhead: '#e67e22', hopper: '#7f8c8d',
-    stick: '#8B4513', azalea: '#27ae60', flowingazalea: '#e91e63',
-    wool: '#ecf0f1', concrete: '#95a5a6', stone: '#7f8c8d',
-    dirt: '#6d4c41', wood: '#d4a574', iron: '#bdc3c7', gold: '#f1c40f',
-  }
-  const lower = itemId.toLowerCase()
-  for (const [k, v] of Object.entries(colors)) {
-    if (lower.includes(k) || lower.includes(k.replace(' ', '_'))) return v
-  }
-  const h = itemId.split('').reduce((v, c) => v * 31 + c.charCodeAt(0), 0)
-  return `hsl(${Math.abs(h) % 360}, 45%, 40%)`
-}
+// ── Click handlers ────────────────────
 
-function itemIcon(itemId: string): string | null {
-  // Return null for now — MC item icons need a CDN
-  // Could use: https://api.mcasset.cloud/1.21.4/items/{item_id}.png
-  return null
-}
-
-// Click handlers
-function onSlotClick(slot: InvSlot | null | undefined, slotIdx: number) {
+function onLeftClick(slotIdx: number) {
   contextMenu.value.show = false
-  if (!slot) return
-  emit('action', { action: 'ShiftClick', slot_id: slotIdx, inventory_id: 0 })
+
+  const slotItem = getSlot(slotIdx)
+
+  if (cursorItem.value) {
+    // Have item in hand — try to place/swap
+    emit('action', {
+      action: 'LeftClick',
+      slot_id: slotIdx,
+      from_slot: cursorFromSlot.value,
+    })
+    cursorItem.value = null
+    cursorFromSlot.value = -1
+    return
+  }
+
+  if (slotItem) {
+    // Pick up item
+    cursorItem.value = slotItem
+    cursorFromSlot.value = slotIdx
+  }
 }
 
-function onSlotRight(slot: InvSlot | null | undefined, slotIdx: number, e?: MouseEvent) {
-  if (!slot) return
+function onRightClick(slotIdx: number, e: MouseEvent) {
+  const slotItem = getSlot(slotIdx)
+  if (!slotItem) return
   contextMenu.value = {
     show: true,
-    x: Math.min((e as MouseEvent).clientX, window.innerWidth - 150),
-    y: Math.min((e as MouseEvent).clientY, window.innerHeight - 180),
-    item: slot, slot_id: slotIdx,
+    x: Math.min(e.clientX, window.innerWidth - 150),
+    y: Math.min(e.clientY, window.innerHeight - 180),
+    item: slotItem, slot_id: slotIdx,
   }
 }
 
-function doContextAction(action: string) {
+function doContextMove(action: string) {
   const ctx = contextMenu.value
   if (!ctx.item) return
-  if (action.startsWith('Drop')) {
-    emit('drop', { item_type: ctx.item.item_id, count: action === 'DropItemStack' ? 64 : 1 })
-  } else {
-    emit('action', { action, slot_id: ctx.slot_id, inventory_id: 0 })
-  }
   ctx.show = false
+  emit('action', { action, slot_id: ctx.slot_id })
+}
+
+function doContextDrop(dropType: string) {
+  const ctx = contextMenu.value
+  if (!ctx.item) return
+  ctx.show = false
+  emit('drop', { item_type: ctx.item.item_id, count: dropType === 'DropItemStack' ? 64 : 1 })
+}
+
+function cancelDrag() {
+  cursorItem.value = null
+  cursorFromSlot.value = -1
 }
 
 function closeMenu() { contextMenu.value.show = false }
-onMounted(() => document.addEventListener('click', closeMenu))
+
+onMounted(() => {
+  document.addEventListener('click', closeMenu)
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') cancelDrag() })
+})
 onUnmounted(() => document.removeEventListener('click', closeMenu))
 </script>
 
 <style scoped>
-.inventory-grid { padding: 12px; min-height: 200px; user-select: none; }
+.inventory-grid { padding: 12px; min-height: 200px; user-select: none; position: relative; }
 .empty-state { color: #888; text-align: center; padding: 40px; }
 
 .help-bar {
   display: flex; gap: 8px; justify-content: center; padding: 8px 0 12px;
   font-size: 12px; color: #888;
+}
+
+.cursor-item {
+  position: fixed; z-index: 10000; pointer-events: none;
+  top: 50%; left: 50%; transform: translate(-50%, -50%);
+  width: 64px; height: 64px; opacity: 0.85;
+}
+.cursor-icon { width: 100%; height: 100%; image-rendering: pixelated; filter: drop-shadow(0 2px 4px rgba(0,0,0,0.5)); }
+.cursor-count {
+  position: absolute; bottom: -6px; right: -6px;
+  background: #1a1a1a; color: #fff; font-size: 12px; font-weight: bold;
+  padding: 1px 6px; border-radius: 10px; border: 1px solid #555;
 }
 
 .main-rows { display: flex; flex-direction: column; gap: 2px; margin-bottom: 8px; }
@@ -190,32 +254,31 @@ onUnmounted(() => document.removeEventListener('click', closeMenu))
   transition: border-color 0.15s, transform 0.1s;
 }
 .grid-slot:hover { border-color: #aaa; transform: scale(1.05); z-index: 1; }
-.grid-slot.selected { border-color: #ffd700; border-width: 2.5px; box-shadow: 0 0 8px rgba(255,215,0,0.3); }
+.grid-slot.selected { border-color: #ffd700; box-shadow: 0 0 8px rgba(255,215,0,0.3); }
 .grid-slot.empty-slot { opacity: 0.6; }
+.grid-slot.cursor-source { border-style: dashed; border-color: #ffa500; }
 
-.item-bg {
-  position: absolute; inset: 2px; border-radius: 2px; opacity: 0.3;
+.item-icon {
+  position: absolute; width: 36px; height: 36px; top: 5px; left: 5px;
+  image-rendering: pixelated;
 }
-.item-icon { position: absolute; width: 32px; height: 32px; top: 6px; left: 6px; image-rendering: pixelated; }
 .item-abbr {
   position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
-  font-size: 10px; color: #eee; font-weight: bold; text-shadow: 0 1px 2px #000;
-  white-space: nowrap; overflow: hidden; max-width: 40px;
+  font-size: 10px; color: #ccc; font-weight: bold;
+  text-shadow: 0 1px 2px #000; white-space: nowrap; overflow: hidden; max-width: 40px;
 }
 .count-badge {
   position: absolute; bottom: 1px; right: 3px;
   font-size: 11px; color: #fff; font-weight: bold;
   text-shadow: 0 0 2px #000, 0 0 2px #000;
 }
-.slot-label {
-  position: absolute; top: 0; left: 2px;
-  font-size: 8px; color: #666;
-}
+.slot-num { position: absolute; top: 0; left: 2px; font-size: 8px; color: #666; }
 
 .stats-bar {
   display: flex; align-items: center; gap: 16px; margin-top: 12px; justify-content: center;
 }
 .stat { font-size: 12px; color: #aaa; }
+.cursor-hint { color: #ffa500; }
 
 .context-menu {
   position: fixed; z-index: 9999; background: #2c2c2c; border: 1px solid #555;
