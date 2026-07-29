@@ -117,20 +117,38 @@ async def disconnect_bot(bot_id: str, db: Session = Depends(get_db),
     return {"bot_id": bot_id, "status": "offline"}
 
 
-# ── Inventory endpoints ──────────────────────
+# ── MCP connection cache (shared session for inventory actions) ──
+
+import time as _time
+_mcp_conn_cache: dict[str, tuple[float, object]] = {}  # bot_id → (last_used_ts, client)
+_MCP_CACHE_TTL = 120  # seconds
+
 
 async def _get_mcp_client(bot_id: str, mcp_port: int = 0):
-    """Get MccMcpClient from session pool, or connect directly."""
+    """Get MccMcpClient from session pool, cache, or create new."""
     from vmtools_next.main import get_pool
     from vmtools_next.adapters.mcc.mcc_mcp_client import MccMcpClient
 
+    # 1. Try pool
     pool = get_pool()
     if pool:
         client = pool.get_client(bot_id)
         if client:
             return client, False
 
-    # Determine MCP port from the MCC instance associated with this bot
+    # 2. Try cache
+    cached = _mcp_conn_cache.get(bot_id)
+    if cached:
+        ts, client = cached
+        if _time.time() - ts < _MCP_CACHE_TTL:
+            _mcp_conn_cache[bot_id] = (_time.time(), client)
+            return client, True
+        # Expired — clean up
+        try: await client.disconnect()
+        except: pass
+        del _mcp_conn_cache[bot_id]
+
+    # 3. Create new connection
     port = mcp_port
     if not port:
         from vmtools_next.data.db import get_session_factory
@@ -143,12 +161,13 @@ async def _get_mcp_client(bot_id: str, mcp_port: int = 0):
             if inst:
                 port = inst.mcp_port
     if not port:
-        port = 33333  # fallback
+        port = 33333
 
     client = MccMcpClient(host="127.0.0.1", port=port, timeout_read=10)
     ok = await client.connect()
     if not ok:
-        raise HTTPException(503, f"无法连接 MCC MCP port={port} — 确认 MCC 已进入游戏且 MCP 已启用")
+        raise HTTPException(503, f"无法连接 MCC MCP port={port}")
+    _mcp_conn_cache[bot_id] = (_time.time(), client)
     return client, True
 
 
@@ -162,7 +181,7 @@ async def get_inventory(bot_id: str, mcp_port: int = 0):
     except MccMcpError as e:
         raise HTTPException(502, f"MCP error: {str(e) or repr(e)}")
     finally:
-        if owned: await client.disconnect()
+        pass  # keep connection alive in cache
 
     all_items = data.get("slots", data.get("items", [])) or []
     slot_count = data.get("slotCount", 46)
@@ -203,7 +222,7 @@ async def inventory_action(bot_id: str, data: InventoryActionRequest):
     except MccMcpError as e:
         raise HTTPException(502, f"MCP error: {str(e) or repr(e)}")
     finally:
-        if owned: await client.disconnect()
+        pass  # keep connection alive in cache
 
 
 @router.post("/{bot_id}/inventory/drop")
@@ -220,7 +239,7 @@ async def inventory_drop(bot_id: str, data: InventoryDropRequest):
     except MccMcpError as e:
         raise HTTPException(502, f"MCP error: {str(e) or repr(e)}")
     finally:
-        if owned: await client.disconnect()
+        pass  # keep connection alive in cache
 
 
 @router.post("/{bot_id}/inventory/select-hotbar")
