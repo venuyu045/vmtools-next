@@ -511,7 +511,11 @@ async function handleInventoryAction(payload: { action: string; slot_id: number;
   const botId = selectedInstance.value?.bot_id
   if (!botId) { ElMessage.warning('未绑定 Bot'); return }
   try {
-    await botApi.inventoryAction(botId, payload)
+    await botApi.inventoryAction(botId, {
+      action: payload.action,
+      slot_id: payload.slot_id,
+      inventory_id: payload.inventory_id ?? 0,
+    })
     ElMessage.success('操作完成')
     fetchInventory()
   } catch (e: any) {
