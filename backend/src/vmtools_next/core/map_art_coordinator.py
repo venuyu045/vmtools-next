@@ -141,6 +141,10 @@ class BotBuildLoop:
     from north edge (standing at Z-1, facing south).
     """
 
+    # EssentialsX传送点
+    WAREHOUSE_HOME = "mdssj"   # 仓库传送点 (需管理员预先 /sethome mdssj)
+    TEMP_HOME = "gzqy"         # 临时回家点 (建造位置)
+
     def __init__(
         self,
         bot_id: str,
@@ -168,6 +172,7 @@ class BotBuildLoop:
         self._paused.set()     # start unpaused
         self._stopped = False
         self._current_item: Optional[str] = None  # item currently in hand
+        self._supply_box: Optional[tuple[int, int, int]] = None  # 补给箱坐标（None→用传送）
 
     # ── Control ──────────────────────────────
 
@@ -272,16 +277,89 @@ class BotBuildLoop:
                                    self.bot_id, world_x, self.origin_y, world_z, e)
 
     async def _ensure_item_in_hand(self, block_id: str):
-        """Switch hotbar to the required block type."""
+        """Switch hotbar to the required block type, restock if empty."""
         if self._current_item == block_id:
             return
+        clean_id = block_id.split("[")[0] if "[" in block_id else block_id
         try:
-            # Strip properties for item matching: "minecraft:white_wool[facing=north]" → "minecraft:white_wool"
-            clean_id = block_id.split("[")[0] if "[" in block_id else block_id
             await self.mcp.select_hotbar_item(clean_id)
             self._current_item = block_id
         except MccMcpError:
-            logger.warning("[%s] Cannot switch to item: %s", self.bot_id, block_id)
+            # select_hotbar_item 失败 → 背包可能没这个物品了
+            logger.warning("[%s] Cannot switch to %s, checking inventory...", self.bot_id, clean_id)
+            count = await self._check_inventory_level(block_id)
+            if count == 0 and self._supply_box is None:
+                # 没有补给箱配置 → 用 EssentialsX 传送去仓库
+                logger.info("[%s] %s 用完了，传送去仓库取货...", self.bot_id, clean_id)
+                if await self._do_restock(block_id):
+                    await self.mcp.select_hotbar_item(clean_id)
+                    self._current_item = block_id
+
+    # ── Restocking ────────────────────────────
+
+    async def _check_inventory_level(self, block_id: str) -> int:
+        """Scan player inventory and return count of block_id."""
+        clean_id = block_id.split("[")[0] if "[" in block_id else block_id
+        try:
+            snap = await self.mcp.get_inventory_snapshot(inventory_id=0)
+            items = (snap.get("data", snap)).get("items", [])
+            total = sum(
+                s.get("count", 0)
+                for s in items
+                if (s.get("type", "") or "").split("[")[0] == clean_id
+            )
+            return total
+        except MccMcpError:
+            return 0
+
+    async def _do_restock(self, needed_block_id: str, needed_count: int = 64) -> bool:
+        """Teleport to warehouse, withdraw items, teleport back.
+
+        Uses EssentialsX homes: /esethome gzqy → /ehomes mdssj → withdraw → /ehomes gzqy
+        """
+        self.progress.state = "restocking"
+        clean_id = needed_block_id.split("[")[0] if "[" in needed_block_id else needed_block_id
+
+        try:
+            # 1. 保存当前位置
+            logger.info("[%s] Saving position → /esethome %s", self.bot_id, self.TEMP_HOME)
+            await self.mcp.send_chat(f"/esethome {self.TEMP_HOME}")
+            await asyncio.sleep(1.5)
+
+            # 2. 传到仓库
+            logger.info("[%s] Teleporting to warehouse → /ehomes %s", self.bot_id, self.WAREHOUSE_HOME)
+            await self.mcp.send_chat(f"/ehomes {self.WAREHOUSE_HOME}")
+            await asyncio.sleep(2.5)
+
+            # 3. 扫描附近找容器
+            scan = await self.mcp.scan_nearby_blocks(radius=6, max_count=20, material_filter="chest")
+            blocks = (scan.get("data", scan)).get("blocks", [])
+            if not blocks:
+                logger.warning("[%s] 仓库附近没找到容器", self.bot_id)
+                return False
+
+            chest = blocks[0]
+            cx, cy, cz = chest["x"], chest["y"], chest["z"]
+
+            # 4. 打开 → 取材料 → 关
+            logger.info("[%s] Opening container at (%d,%d,%d)", self.bot_id, cx, cy, cz)
+            open_result = await self.mcp.open_container_at(cx, cy, cz, timeout_ms=5000)
+            inv_id = (open_result.get("data", open_result)).get("inventoryId", 0)
+
+            await self.mcp.withdraw_container_item(clean_id, needed_count, inv_id)
+            await self.mcp.close_container(inv_id)
+
+            logger.info("[%s] Restock done: %s ×%d, returning...", self.bot_id, clean_id, needed_count)
+            return True
+
+        except MccMcpError as e:
+            logger.error("[%s] Restock failed: %s", self.bot_id, e)
+            return False
+        finally:
+            # 5. 传回建造位置（无论成败都返回）
+            await self.mcp.send_chat(f"/ehomes {self.TEMP_HOME}")
+            await asyncio.sleep(1.5)
+            self.progress.state = "placing"
 
 
 # ──────────────────────────────────────────────
