@@ -119,7 +119,7 @@ async def disconnect_bot(bot_id: str, db: Session = Depends(get_db),
 
 # ── Inventory endpoints ──────────────────────
 
-async def _get_mcp_client(bot_id: str):
+async def _get_mcp_client(bot_id: str, mcp_port: int = 0):
     """Get MccMcpClient from session pool, or connect directly as fallback."""
     from vmtools_next.main import get_pool
     from vmtools_next.adapters.mcc.mcc_mcp_client import MccMcpClient
@@ -127,14 +127,21 @@ async def _get_mcp_client(bot_id: str):
     if pool:
         client = pool.get_client(bot_id)
         if client:
-            return client, False  # (client, owned) — False = don't disconnect after
+            return client, False  # (client, owned)
 
-    # Fallback: connect directly to MCC MCP on default port
-    client = MccMcpClient(host="127.0.0.1", port=33333, timeout_read=10)
-    ok = await client.connect()
-    if not ok:
-        raise HTTPException(503, "无法连接 MCC MCP — 确认 MCC 已进入游戏且 MCP 已启用")
-    return client, True  # (client, owned) — True = own it, disconnect after
+    # Fallback: try common MCP ports
+    ports = [mcp_port] if mcp_port else [33333, 33335, 33334, 33336]
+    last_err = None
+    for port in ports:
+        client = MccMcpClient(host="127.0.0.1", port=port, timeout_read=10)
+        try:
+            ok = await client.connect()
+            if ok:
+                return client, True
+        except Exception as e:
+            last_err = str(e)
+            continue
+    raise HTTPException(503, f"无法连接 MCC MCP (tried ports {ports}): {last_err or 'all failed'}")
 
 
 def _parse_slot(s: dict, sid: int) -> InventorySlot:
@@ -148,9 +155,9 @@ def _parse_slot(s: dict, sid: int) -> InventorySlot:
 
 
 @router.get("/{bot_id}/inventory")
-async def get_inventory(bot_id: str):
+async def get_inventory(bot_id: str, mcp_port: int = 0):
     """Get bot's player inventory snapshot (36 + hotbar + armor + offhand)."""
-    client, owned = await _get_mcp_client(bot_id)
+    client, owned = await _get_mcp_client(bot_id, mcp_port)
     try:
         snap = await client.get_inventory_snapshot(inventory_id=0)
         data = snap.get("data", snap)
