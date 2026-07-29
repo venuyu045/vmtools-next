@@ -19,7 +19,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Optional
 
-from vmtools_next.adapters.mcc.mcc_mcp_client import MccMcpClient, MccMcpError
+from vmtools_next.adapters.abstract.bot_agent import AbstractBotAgent
 from vmtools_next.data.db import sio
 
 logger = logging.getLogger("vmtools.map_art")
@@ -153,7 +153,7 @@ class BotBuildLoop:
         region: Region,
         block_matrix: dict[tuple[int, int], str],   # (x, z) → block_id
         origin_x: int, origin_y: int, origin_z: int,
-        mcp: MccMcpClient,
+        mcp: AbstractBotAgent,
     ):
         self.bot_id = bot_id
         self.bot_name = bot_name
@@ -213,7 +213,7 @@ class BotBuildLoop:
                 self.progress.state = "completed"
                 logger.info("[%s] Region complete: %d blocks placed",
                             self.bot_id, self.progress.blocks_placed)
-        except MccMcpError as e:
+        except Exception as e:
             self.progress.state = "offline"
             logger.error("[%s] MCP error: %s", self.bot_id, e)
         except asyncio.CancelledError:
@@ -272,7 +272,7 @@ class BotBuildLoop:
                     )
                     self.progress.record_place()
                     self.progress.last_completed_x = x
-                except MccMcpError as e:
+                except Exception as e:
                     logger.warning("[%s] Place failed at (%d,%d,%d): %s",
                                    self.bot_id, world_x, self.origin_y, world_z, e)
 
@@ -284,7 +284,7 @@ class BotBuildLoop:
         try:
             await self.mcp.select_hotbar_item(clean_id)
             self._current_item = block_id
-        except MccMcpError:
+        except Exception:
             # select_hotbar_item 失败 → 背包可能没这个物品了
             logger.warning("[%s] Cannot switch to %s, checking inventory...", self.bot_id, clean_id)
             count = await self._check_inventory_level(block_id)
@@ -309,7 +309,7 @@ class BotBuildLoop:
                 if (s.get("type", "") or "").split("[")[0] == clean_id
             )
             return total
-        except MccMcpError:
+        except Exception:
             return 0
 
     async def _do_restock(self, needed_block_id: str, needed_count: int = 64) -> bool:
@@ -352,7 +352,7 @@ class BotBuildLoop:
             logger.info("[%s] Restock done: %s ×%d, returning...", self.bot_id, clean_id, needed_count)
             return True
 
-        except MccMcpError as e:
+        except Exception as e:
             logger.error("[%s] Restock failed: %s", self.bot_id, e)
             return False
         finally:
@@ -402,11 +402,11 @@ class MapArtCoordinator:
 
     # ── Lifecycle ─────────────────────────────
 
-    async def start(self, bot_mcps: dict[str, tuple[str, MccMcpClient]]):
+    async def start(self, bot_agents: dict[str, tuple[str, AbstractBotAgent]]):
         """Start build with N bots.
 
         Args:
-            bot_mcps: {bot_id: (bot_name, MccMcpClient)}
+            bot_agents: {bot_id: (bot_name, AbstractBotAgent)}
         """
         self._started_at = time.monotonic()
 
@@ -418,7 +418,7 @@ class MapArtCoordinator:
         size_x = self.projection.get("regions", {}).get("Main", {}).get("size", {}).get("x", 128)
         size_z = self.projection.get("regions", {}).get("Main", {}).get("size", {}).get("z", 128)
 
-        n_bots = len(bot_mcps)
+        n_bots = len(bot_agents)
         if n_bots == 0:
             logger.error("[%s] No bots available", self.task_id)
             return
@@ -427,9 +427,9 @@ class MapArtCoordinator:
         regions = partition_rectangular(size_x, size_z, n_bots)
 
         # Spawn loops
-        bot_ids = list(bot_mcps.keys())
+        bot_ids = list(bot_agents.keys())
         for i, bot_id in enumerate(bot_ids):
-            bot_name, mcp = bot_mcps[bot_id]
+            bot_name, mcp = bot_agents[bot_id]
             loop = BotBuildLoop(
                 bot_id=bot_id,
                 bot_name=bot_name,
@@ -448,7 +448,7 @@ class MapArtCoordinator:
         self._progress_task = asyncio.create_task(self._push_loop())
 
         # Emit initial map data
-        await self._emit_map_init(bot_mcps, regions, size_x, size_z)
+        await self._emit_map_init(bot_agents, regions, size_x, size_z)
 
         logger.info("[%s] Build started: %d bots, %d regions",
                      self.task_id, n_bots, len(regions))
@@ -500,7 +500,7 @@ class MapArtCoordinator:
             })
         await sio.emit("build_bot_status", {"task_id": self.task_id, "bots": bot_data}, room=room)
 
-    async def _emit_map_init(self, bot_mcps, regions, size_x, size_z):
+    async def _emit_map_init(self, bot_agents, regions, size_x, size_z):
         """Push initial 3D map data to connected clients."""
         room = f"build_{self.task_id}"
         blocks = [
@@ -518,7 +518,7 @@ class MapArtCoordinator:
                 },
                 "state": "idle",
             }
-            for (bid, (name, _)), r in zip(bot_mcps.items(), regions)
+            for (bid, (name, _)), r in zip(bot_agents.items(), regions)
         ]
         await sio.emit("build_map_init", {
             "task_id": self.task_id,

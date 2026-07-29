@@ -16,6 +16,8 @@ from typing import Any, Optional
 
 import httpx
 
+from vmtools_next.adapters.abstract.bot_agent import AbstractBotAgent
+
 logger = logging.getLogger("vmtools.mcc_mcp")
 
 
@@ -27,7 +29,7 @@ class MccMcpError(Exception):
         self.data = data
 
 
-class MccMcpClient:
+class MccMcpClient(AbstractBotAgent):
     """Async HTTP client for MCC's MCP server.
 
     One instance per bot. Managed by MccSessionPool.

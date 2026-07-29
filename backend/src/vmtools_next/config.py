@@ -98,6 +98,22 @@ class MccConfig(BaseModel):
     terminal_buffer_lines: int = 2000
     log_retention_days: int = 14
 
+    # Mineflayer backend ports (used when bot_engine == "mineflayer")
+    mineflayer_ws_start_port: int = 44444
+    mineflayer_ws_end_port: int = 44500
+
+
+class MineflayerConfig(BaseModel):
+    """Mineflayer bot engine configuration."""
+    enabled: bool = False  # Master switch to enable mineflayer mode
+    default_engine: str = "mcc"  # "mcc" | "mineflayer" — default for new instances
+    script_dir: str = "../mineflayer-bots"  # relative to backend/
+    node_path: str = "node"  # Node.js executable path
+    ws_port_start: int = 44444
+    ws_port_end: int = 44500
+    status_interval_ms: int = 5000
+    yggdrasil_auth_server_url: str = ""  # 默认 Yggdrasil auth server URL
+
 
 class MonitorConfig(BaseModel):
     enabled: bool = True
@@ -171,6 +187,7 @@ class AppConfig(BaseSettings):
     travel: TravelConfig = Field(default_factory=TravelConfig)
     server: ServerConfig = Field(default_factory=ServerConfig)
     mcc: MccConfig = Field(default_factory=MccConfig)
+    mineflayer: MineflayerConfig = Field(default_factory=MineflayerConfig)
     monitor: MonitorConfig = Field(default_factory=MonitorConfig)
     plugins: PluginsConfig = Field(default_factory=PluginsConfig)
     qqbot: QqBotConfig = Field(default_factory=QqBotConfig)

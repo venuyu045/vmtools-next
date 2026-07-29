@@ -104,6 +104,7 @@ class MccInstanceService:
             mc_server_host=data.mc_server_host,
             mc_server_port=data.mc_server_port,
             mc_version=data.mc_version,
+            bot_engine=getattr(data, 'bot_engine', 'mcc'),
             organization_id=user.organization_id,
             created_by=user.id,
         )
