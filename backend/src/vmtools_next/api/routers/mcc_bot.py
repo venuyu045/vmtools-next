@@ -5,8 +5,13 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from vmtools_next.api.deps import get_db, get_current_user
-from vmtools_next.api.schemas.mcc import MccBotCreate, MccBotResponse, MccBotConnectRequest
+from vmtools_next.api.schemas.mcc import (
+    MccBotCreate, MccBotResponse, MccBotConnectRequest,
+    InventorySnapshot, InventorySlot, InventoryActionRequest,
+    InventorySelectHotbarRequest, InventoryDropRequest,
+)
 from vmtools_next.data.models.logistics import MccBotModel
+from vmtools_next.adapters.mcc.mcc_mcp_client import MccMcpError
 
 router = APIRouter(prefix="/api/mcc-bots", tags=["mcc-bots"])
 
@@ -110,3 +115,94 @@ async def disconnect_bot(bot_id: str, db: Session = Depends(get_db),
         db.commit()
 
     return {"bot_id": bot_id, "status": "offline"}
+
+
+# ── Inventory endpoints ──────────────────────
+
+def _get_mcp_client(bot_id: str):
+    """Get MccMcpClient from session pool, or raise 503."""
+    from vmtools_next.main import get_pool
+    pool = get_pool()
+    if not pool:
+        raise HTTPException(503, "MCC pool not initialized")
+    client = pool.get_client(bot_id)
+    if not client:
+        raise HTTPException(503, "Bot not connected to MCP — start MCC first")
+    return client
+
+
+def _parse_slot(s: dict, sid: int) -> InventorySlot:
+    return InventorySlot(
+        slot=sid,
+        item_id=s.get("type", s.get("itemId", "")) or "",
+        display_name=s.get("name", s.get("displayName", "")),
+        count=s.get("count", s.get("amount", 0)) or 0,
+        max_stack=s.get("maxStackSize", 64),
+    )
+
+
+@router.get("/{bot_id}/inventory")
+async def get_inventory(bot_id: str):
+    """Get bot's player inventory snapshot (36 + hotbar + armor + offhand)."""
+    client = _get_mcp_client(bot_id)
+    try:
+        snap = await client.get_inventory_snapshot(inventory_id=0)
+        data = snap.get("data", snap)
+    except MccMcpError as e:
+        raise HTTPException(502, f"MCP error: {str(e) or repr(e)}")
+
+    all_items = data.get("items", []) or []
+    slots = [_parse_slot(s, i) for i, s in enumerate(all_items) if s.get("type") or s.get("itemId")]
+    hotbar = data.get("hotbar", []) or list(range(27, 36))
+    selected = data.get("selectedHotbar", data.get("selectedSlot", 0)) or 0
+
+    return InventorySnapshot(
+        bot_id=bot_id,
+        inventory_id=0,
+        slots=slots,
+        hotbar=hotbar,
+        selected_hotbar=selected,
+        empty_slots=max(0, 50 - len(all_items)),
+        total_items=sum(s.get("count", s.get("amount", 0)) or 0 for s in (all_items or [])),
+    )
+
+
+@router.post("/{bot_id}/inventory/action")
+async def inventory_action(bot_id: str, data: InventoryActionRequest):
+    """Perform a slot action: LeftClick, RightClick, ShiftClick, DropItemStack, DropSingleItem."""
+    client = _get_mcp_client(bot_id)
+    try:
+        result = await client.inventory_window_action(
+            inventory_id=data.inventory_id,
+            slot_id=data.slot_id,
+            action_type=data.action,
+        )
+        return {"success": True, "action": data.action, "slot": data.slot_id, "result": result}
+    except MccMcpError as e:
+        raise HTTPException(502, f"MCP error: {str(e) or repr(e)}")
+
+
+@router.post("/{bot_id}/inventory/drop")
+async def inventory_drop(bot_id: str, data: InventoryDropRequest):
+    """Drop items from inventory by type."""
+    client = _get_mcp_client(bot_id)
+    try:
+        result = await client.drop_inventory_item(
+            item_type=data.item_type,
+            count=data.count,
+            inventory_id=data.inventory_id,
+        )
+        return {"success": True, "dropped": data.item_type, "count": data.count, "result": result}
+    except MccMcpError as e:
+        raise HTTPException(502, f"MCP error: {str(e) or repr(e)}")
+
+
+@router.post("/{bot_id}/inventory/select-hotbar")
+async def inventory_select_hotbar(bot_id: str, data: InventorySelectHotbarRequest):
+    """Select a hotbar slot (0-8)."""
+    client = _get_mcp_client(bot_id)
+    try:
+        result = await client.change_hotbar_slot(data.slot)
+        return {"success": True, "slot": data.slot, "result": result}
+    except MccMcpError as e:
+        raise HTTPException(502, f"MCP error: {str(e) or repr(e)}")
