@@ -187,7 +187,7 @@
           <el-tab-pane label="背包" name="inventory">
             <div v-if="selectedInstance" class="inventory-tab">
               <InventoryGrid
-                :bot-id="selectedInstance.bot_id"
+                :bot-id="selectedInstance.bot_id || ''"
                 :inventory="inventoryData"
                 :loading="inventoryLoading"
                 @refresh="fetchInventory"
@@ -489,6 +489,8 @@ async function loadActiveTab() {
     fetchInventory()
   }
 }
+
+async function handleTabChange() { await loadActiveTab() }
 
 // ── Inventory ──────────────────────────────
 
