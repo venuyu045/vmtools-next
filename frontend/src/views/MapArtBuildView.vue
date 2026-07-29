@@ -13,9 +13,12 @@
     <div class="main-content">
       <!-- 3D Canvas -->
       <div class="canvas-area">
+        <div v-if="loadingBlocks" class="loading-canvas">加载方块数据...</div>
         <BuildMapCanvas
+          v-else
           :task-id="taskId"
           :materials="materials"
+          :init-data="blockData"
           @ready="onCanvasReady"
         />
 
@@ -121,6 +124,8 @@ const { on: sockOn, emit: sockEmit } = useSocketIO()
 const task = ref<any>(null)
 const bots = ref<any[]>([])
 const materials = ref<any[]>([])
+const blockData = ref<any>(null)
+const loadingBlocks = ref(true)
 const elapsed = ref(0)
 const eta = ref(0)
 const overallRate = ref('0')
@@ -178,6 +183,20 @@ async function fetchTask() {
     task.value = data
     materials.value = data.materials || []
     bots.value = data.bots || []
+
+    // Load block data for 3D canvas
+    loadingBlocks.value = true
+    try {
+      const { data: blockResp } = await mapArtApi.getBlocks(taskId.value)
+      blockData.value = {
+        task_id: blockResp.task_id,
+        blocks: blockResp.blocks || [],
+        bots: blockResp.bots || [],
+        origin: blockResp.origin || { x: 0, y: 64, z: 0 },
+        size: blockResp.size || { x: 32, z: 32 },
+      }
+    } catch { /* blocks may not be loaded yet */ }
+    loadingBlocks.value = false
   } catch (e) {
     ElMessage.error('Failed to fetch task')
   }
