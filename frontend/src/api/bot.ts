@@ -31,8 +31,8 @@ export const botApi = {
     return client.post(`/mcc-bots/${botId}/disconnect`)
   },
   // Inventory
-  getInventory(botId: string) {
-    return client.get(`/mcc-bots/${botId}/inventory`)
+  getInventory(botId: string, mcpPort?: number) {
+    return client.get(`/mcc-bots/${botId}/inventory`, { params: { mcp_port: mcpPort || 0 } })
   },
   inventoryAction(botId: string, data: { inventory_id: number; slot_id: number; action: string }) {
     return client.post(`/mcc-bots/${botId}/inventory/action`, data)
