@@ -120,28 +120,36 @@ async def disconnect_bot(bot_id: str, db: Session = Depends(get_db),
 # ── Inventory endpoints ──────────────────────
 
 async def _get_mcp_client(bot_id: str, mcp_port: int = 0):
-    """Get MccMcpClient from session pool, or connect directly as fallback."""
+    """Get MccMcpClient from session pool, or connect directly."""
     from vmtools_next.main import get_pool
     from vmtools_next.adapters.mcc.mcc_mcp_client import MccMcpClient
+
     pool = get_pool()
     if pool:
         client = pool.get_client(bot_id)
         if client:
-            return client, False  # (client, owned)
+            return client, False
 
-    # Fallback: try common MCP ports
-    ports = [mcp_port] if mcp_port else [33333, 33335, 33334, 33336]
-    last_err = None
-    for port in ports:
-        client = MccMcpClient(host="127.0.0.1", port=port, timeout_read=10)
-        try:
-            ok = await client.connect()
-            if ok:
-                return client, True
-        except Exception as e:
-            last_err = str(e)
-            continue
-    raise HTTPException(503, f"无法连接 MCC MCP (tried ports {ports}): {last_err or 'all failed'}")
+    # Determine MCP port from the MCC instance associated with this bot
+    port = mcp_port
+    if not port:
+        from vmtools_next.data.db import get_session_factory
+        from vmtools_next.data.models.mcc_remote import MccInstanceModel
+        Session = get_session_factory()
+        with Session() as db:
+            inst = db.query(MccInstanceModel).filter(
+                MccInstanceModel.bot_id == bot_id
+            ).first()
+            if inst:
+                port = inst.mcp_port
+    if not port:
+        port = 33333  # fallback
+
+    client = MccMcpClient(host="127.0.0.1", port=port, timeout_read=10)
+    ok = await client.connect()
+    if not ok:
+        raise HTTPException(503, f"无法连接 MCC MCP port={port} — 确认 MCC 已进入游戏且 MCP 已启用")
+    return client, True
 
 
 def _parse_slot(s: dict, sid: int) -> InventorySlot:
