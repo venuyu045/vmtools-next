@@ -35,7 +35,7 @@
         </div>
       </div>
 
-      <!-- Armor + offhand: slots 36-40 -->
+      <!-- Armor 36-39 + Offhand 40 + Crafting 41-44 -->
       <div class="side-area">
         <div class="side-label">Armor</div>
         <div v-for="(label, i) in ['头','胸','腿','脚','副']" :key="'a'+i"
@@ -47,6 +47,18 @@
           <img v-if="get(36+i)" :src="icon(get(36+i)!.item_id)" class="icon" />
           <span v-if="get(36+i)" class="count">{{ get(36+i)!.count }}</span>
           <span class="num">{{ label }}</span>
+        </div>
+        <div class="side-label" style="margin-top:8px">Craft</div>
+        <div class="craft-grid">
+          <div v-for="(s, i) in [41,42,43,44,45]" :key="'c'+s"
+            class="slot" :class="[slotCls(s), { out: s === 45 }]"
+            :title="(s===45?'输出':'合成') + ': ' + tip(s)"
+            @click.left="click(s)"
+            @click.right.prevent="rclick(s, $event)"
+          >
+            <img v-if="get(s)" :src="icon(get(s)!.item_id)" class="icon" />
+            <span v-if="get(s)" class="count">{{ get(s)!.count }}</span>
+          </div>
         </div>
       </div>
     </div>
@@ -168,6 +180,10 @@ onMounted(() => {
 
 .side-area { display: flex; flex-direction: column; gap: 2px; }
 .side-label { font-size: 10px; color: #666; text-align: center; padding: 2px; }
+.craft-grid {
+  display: grid; grid-template-columns: repeat(2, 42px); gap: 2px; justify-content: center;
+}
+.slot.out { border-color: #666; }
 
 .slot {
   width: 42px; height: 42px; border: 2px solid #3a3a3a; border-radius: 3px;
