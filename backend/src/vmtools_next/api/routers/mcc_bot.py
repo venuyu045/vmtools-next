@@ -119,16 +119,22 @@ async def disconnect_bot(bot_id: str, db: Session = Depends(get_db),
 
 # ── Inventory endpoints ──────────────────────
 
-def _get_mcp_client(bot_id: str):
-    """Get MccMcpClient from session pool, or raise 503."""
+async def _get_mcp_client(bot_id: str):
+    """Get MccMcpClient from session pool, or connect directly as fallback."""
     from vmtools_next.main import get_pool
+    from vmtools_next.adapters.mcc.mcc_mcp_client import MccMcpClient
     pool = get_pool()
-    if not pool:
-        raise HTTPException(503, "MCC pool not initialized")
-    client = pool.get_client(bot_id)
-    if not client:
-        raise HTTPException(503, "Bot not connected to MCP — start MCC first")
-    return client
+    if pool:
+        client = pool.get_client(bot_id)
+        if client:
+            return client, False  # (client, owned) — False = don't disconnect after
+
+    # Fallback: connect directly to MCC MCP on default port
+    client = MccMcpClient(host="127.0.0.1", port=33333, timeout_read=10)
+    ok = await client.connect()
+    if not ok:
+        raise HTTPException(503, "无法连接 MCC MCP — 确认 MCC 已进入游戏且 MCP 已启用")
+    return client, True  # (client, owned) — True = own it, disconnect after
 
 
 def _parse_slot(s: dict, sid: int) -> InventorySlot:
@@ -144,12 +150,14 @@ def _parse_slot(s: dict, sid: int) -> InventorySlot:
 @router.get("/{bot_id}/inventory")
 async def get_inventory(bot_id: str):
     """Get bot's player inventory snapshot (36 + hotbar + armor + offhand)."""
-    client = _get_mcp_client(bot_id)
+    client, owned = await _get_mcp_client(bot_id)
     try:
         snap = await client.get_inventory_snapshot(inventory_id=0)
         data = snap.get("data", snap)
     except MccMcpError as e:
         raise HTTPException(502, f"MCP error: {str(e) or repr(e)}")
+    finally:
+        if owned: await client.disconnect()
 
     all_items = data.get("items", []) or []
     slots = [_parse_slot(s, i) for i, s in enumerate(all_items) if s.get("type") or s.get("itemId")]
@@ -170,7 +178,7 @@ async def get_inventory(bot_id: str):
 @router.post("/{bot_id}/inventory/action")
 async def inventory_action(bot_id: str, data: InventoryActionRequest):
     """Perform a slot action: LeftClick, RightClick, ShiftClick, DropItemStack, DropSingleItem."""
-    client = _get_mcp_client(bot_id)
+    client, owned = await _get_mcp_client(bot_id)
     try:
         result = await client.inventory_window_action(
             inventory_id=data.inventory_id,
@@ -180,12 +188,14 @@ async def inventory_action(bot_id: str, data: InventoryActionRequest):
         return {"success": True, "action": data.action, "slot": data.slot_id, "result": result}
     except MccMcpError as e:
         raise HTTPException(502, f"MCP error: {str(e) or repr(e)}")
+    finally:
+        if owned: await client.disconnect()
 
 
 @router.post("/{bot_id}/inventory/drop")
 async def inventory_drop(bot_id: str, data: InventoryDropRequest):
     """Drop items from inventory by type."""
-    client = _get_mcp_client(bot_id)
+    client, owned = await _get_mcp_client(bot_id)
     try:
         result = await client.drop_inventory_item(
             item_type=data.item_type,
@@ -195,14 +205,18 @@ async def inventory_drop(bot_id: str, data: InventoryDropRequest):
         return {"success": True, "dropped": data.item_type, "count": data.count, "result": result}
     except MccMcpError as e:
         raise HTTPException(502, f"MCP error: {str(e) or repr(e)}")
+    finally:
+        if owned: await client.disconnect()
 
 
 @router.post("/{bot_id}/inventory/select-hotbar")
 async def inventory_select_hotbar(bot_id: str, data: InventorySelectHotbarRequest):
     """Select a hotbar slot (0-8)."""
-    client = _get_mcp_client(bot_id)
+    client, owned = await _get_mcp_client(bot_id)
     try:
         result = await client.change_hotbar_slot(data.slot)
         return {"success": True, "slot": data.slot, "result": result}
     except MccMcpError as e:
         raise HTTPException(502, f"MCP error: {str(e) or repr(e)}")
+    finally:
+        if owned: await client.disconnect()
