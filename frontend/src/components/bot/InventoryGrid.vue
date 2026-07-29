@@ -1,39 +1,53 @@
 <template>
   <div class="inv-container">
-    <!-- Cursor indicator -->
     <div v-if="cursorMsg" class="cursor-bar">{{ cursorMsg }}</div>
+    <div class="help">左键=拿/放/交换 · 右键=丢弃 · 🔄刷新看结果</div>
 
-    <div class="help">
-      左键=拿/放/交换 · 右键=丢弃 · 🔄刷新看结果
-    </div>
+    <div class="layout">
+      <!-- Main inventory: slots 9-35 (3 rows), with armor/offhand on right -->
+      <div class="main-area">
+        <div class="inv-rows">
+          <div v-for="row in 3" :key="row" class="inv-row">
+            <div v-for="col in 9" :key="9+(row-1)*9+col-1"
+              class="slot" :class="slotCls(9+(row-1)*9+col-1)"
+              :title="tip(9+(row-1)*9+col-1)"
+              @click.left="click(9+(row-1)*9+col-1)"
+              @click.right.prevent="rclick(9+(row-1)*9+col-1, $event)"
+            >
+              <img v-if="get(9+(row-1)*9+col-1)" :src="icon(get(9+(row-1)*9+col-1)!.item_id)" class="icon" />
+              <span v-if="get(9+(row-1)*9+col-1)" class="count">{{ get(9+(row-1)*9+col-1)!.count }}</span>
+            </div>
+          </div>
+        </div>
 
-    <!-- Backpack (slots 0-35) -->
-    <div class="inv-grid">
-      <div v-for="row in 4" :key="row" class="inv-row">
-        <div v-for="col in 9" :key="(row-1)*9+col-1"
-          class="slot" :class="{ filled: !!get((row-1)*9+col-1), cursor: cursorSlot === (row-1)*9+col-1 }"
-          :title="tip((row-1)*9+col-1)"
-          @click.left="click((row-1)*9+col-1)"
-          @click.right.prevent="rclick((row-1)*9+col-1, $event)"
-        >
-          <img v-if="get((row-1)*9+col-1)" :src="icon(get((row-1)*9+col-1)!.item_id)" class="icon" />
-          <span v-if="get((row-1)*9+col-1)" class="count">{{ get((row-1)*9+col-1)!.count }}</span>
-          <span v-if="!get((row-1)*9+col-1)" class="sid">{{ (row-1)*9+col-1 }}</span>
+        <!-- Hotbar: slots 0-8 -->
+        <div class="hotbar-row">
+          <div v-for="i in 9" :key="'h'+i"
+            class="slot" :class="[slotCls(i-1), { sel: (i-1) === (inventory?.selected_hotbar ?? 0) }]"
+            :title="tip(i-1)"
+            @click.left="click(i-1)"
+            @click.right.prevent="rclick(i-1, $event)"
+          >
+            <img v-if="get(i-1)" :src="icon(get(i-1)!.item_id)" class="icon" />
+            <span v-if="get(i-1)" class="count">{{ get(i-1)!.count }}</span>
+            <span class="num">{{ i }}</span>
+          </div>
         </div>
       </div>
-    </div>
 
-    <!-- Hotbar (slots 36-44) -->
-    <div class="hotbar">
-      <div v-for="i in 9" :key="'h'+i"
-        class="slot" :class="{ filled: !!get(35+i), sel: (i-1) === (inventory?.selected_hotbar ?? 0), cursor: cursorSlot === 35+i }"
-        :title="tip(35+i)"
-        @click.left="click(35+i)"
-        @click.right.prevent="rclick(35+i, $event)"
-      >
-        <img v-if="get(35+i)" :src="icon(get(35+i)!.item_id)" class="icon" />
-        <span v-if="get(35+i)" class="count">{{ get(35+i)!.count }}</span>
-        <span class="num">{{ i }}</span>
+      <!-- Armor + offhand: slots 36-40 -->
+      <div class="side-area">
+        <div class="side-label">Armor</div>
+        <div v-for="(label, i) in ['头','胸','腿','脚','副']" :key="'a'+i"
+          class="slot" :class="slotCls(36+i)"
+          :title="label + ': ' + tip(36+i)"
+          @click.left="click(36+i)"
+          @click.right.prevent="rclick(36+i, $event)"
+        >
+          <img v-if="get(36+i)" :src="icon(get(36+i)!.item_id)" class="icon" />
+          <span v-if="get(36+i)" class="count">{{ get(36+i)!.count }}</span>
+          <span class="num">{{ label }}</span>
+        </div>
       </div>
     </div>
 
@@ -89,11 +103,15 @@ function label(id: string): string {
 
 function tip(i: number): string {
   const s = get(i)
-  if (cursorSlot.value >= 0) {
-    if (i === cursorSlot.value) return '再次点击取消'
-    return s ? `交换 ${label(s.item_id)}` : '放在这里'
+  if (s) return `${label(s.item_id)} ×${s.count}`
+  return `空`
+}
+
+function slotCls(i: number) {
+  return {
+    filled: !!get(i),
+    cursor: cursorSlot.value === i,
   }
-  return s ? `${label(s.item_id)} ×${s.count}` : `空 (槽位 ${i})`
 }
 
 async function click(slotIdx: number) {
@@ -141,9 +159,15 @@ onMounted(() => {
 .cursor-bar { text-align: center; padding: 5px 8px; margin-bottom: 6px; background: rgba(255,165,0,0.12); color: #ffa500; font-size: 12px; border-radius: 4px; }
 .help { text-align: center; font-size: 11px; color: #777; padding: 4px 0 8px; }
 
-.inv-grid { display: flex; flex-direction: column; gap: 2px; }
-.inv-row { display: flex; gap: 2px; justify-content: center; }
-.hotbar { display: flex; gap: 2px; justify-content: center; margin-top: 6px; }
+.layout { display: flex; gap: 8px; justify-content: center; align-items: flex-start; }
+
+.main-area { display: flex; flex-direction: column; align-items: center; }
+.inv-rows { display: flex; flex-direction: column; gap: 2px; }
+.inv-row { display: flex; gap: 2px; }
+.hotbar-row { display: flex; gap: 2px; margin-top: 6px; }
+
+.side-area { display: flex; flex-direction: column; gap: 2px; }
+.side-label { font-size: 10px; color: #666; text-align: center; padding: 2px; }
 
 .slot {
   width: 42px; height: 42px; border: 2px solid #3a3a3a; border-radius: 3px;
@@ -155,7 +179,6 @@ onMounted(() => {
 .slot.cursor { border-color: #ff8c00; border-style: dashed; background: rgba(255,140,0,0.08); }
 .slot .icon { position: absolute; width: 32px; height: 32px; top: 4px; left: 4px; image-rendering: pixelated; }
 .slot .count { position: absolute; bottom: 1px; right: 3px; font-size: 11px; color: #fff; font-weight: bold; text-shadow: 0 0 3px #000; }
-.slot .sid { position: absolute; top: 0; left: 2px; font-size: 8px; color: #444; }
 .slot .num { position: absolute; top: 0; left: 2px; font-size: 9px; color: #888; }
 
 .bar { display: flex; align-items: center; gap: 12px; margin-top: 12px; justify-content: center; font-size: 12px; color: #aaa; }
