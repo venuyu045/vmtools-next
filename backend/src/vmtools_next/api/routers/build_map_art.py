@@ -349,6 +349,46 @@ def delete_task(task_id: str, db: Session = Depends(get_db)):
     return {"deleted": task_id}
 
 
+@router.get("/tasks/{task_id}/blocks")
+def get_task_blocks(task_id: str, db: Session = Depends(get_db)):
+    """Return all block states for a task (for 3D frontend initialization).
+
+    Returns full block list so the Three.js canvas can render immediately.
+    """
+    task = db.query(MapArtTask).filter(MapArtTask.task_id == task_id).first()
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    blocks = db.query(MapArtBlockState).filter(
+        MapArtBlockState.task_id == task_id
+    ).all()
+
+    # Get bot assignments for region outlines
+    bots = db.query(MapArtBotAssignment).filter(
+        MapArtBotAssignment.task_id == task_id
+    ).all()
+
+    return {
+        "task_id": task_id,
+        "blocks": [
+            {"x": b.x, "y": b.y, "z": b.z,
+             "expected": b.expected_block, "actual": b.actual_block,
+             "placed": b.placed, "verified": b.verified}
+            for b in blocks
+        ],
+        "bots": [
+            {"bot_id": ba.bot_id, "bot_name": ba.bot_name, "state": ba.state,
+             "region": {"x_start": ba.region_x_start, "x_end": ba.region_x_end,
+                        "z_start": ba.region_z_start, "z_end": ba.region_z_end}}
+            for ba in bots
+        ],
+        "origin": {"x": task.origin_x, "y": task.origin_y, "z": task.origin_z},
+        "size": {"x": task.projection_size_x, "z": task.projection_size_z},
+        "total": len(blocks),
+        "placed": task.placed_blocks or 0,
+    }
+
+
 # ──────────────────────────────────────────────
 # Projection upload
 # ──────────────────────────────────────────────

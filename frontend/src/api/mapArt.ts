@@ -31,4 +31,7 @@ export const mapArtApi = {
       headers: { 'Content-Type': 'multipart/form-data' },
     })
   },
+  getBlocks(taskId: string) {
+    return client.get(`/build/map-art/tasks/${taskId}/blocks`)
+  },
 }
