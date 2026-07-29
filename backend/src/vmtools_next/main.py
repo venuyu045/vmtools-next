@@ -34,8 +34,10 @@ from vmtools_next.api.routers.player_tracking import router as player_tracking_r
 from vmtools_next.api.routers.bluemap_api import router as bluemap_router
 from vmtools_next.api.routers.build_map_art import router as map_art_router
 from vmtools_next.adapters.mcc.mcc_session_pool import MccSessionPool
+from vmtools_next.adapters.mineflayer.mineflayer_session_pool import MineflayerSessionPool
 from vmtools_next.core.task_engine import TaskEngine
 from vmtools_next.core.mcc_process_manager import MccProcessManager
+from vmtools_next.core.mineflayer_process_manager import MineflayerProcessManager
 from vmtools_next.plugins.base import PluginContext
 from vmtools_next.plugins.manager import PluginManager
 from vmtools_next.infra.monitor import MonitorCollector
@@ -45,16 +47,17 @@ logger = get_logger("main")
 BASE_DIR = pathlib.Path(__file__).resolve().parent
 
 # Global instances (initialized in lifespan)
-_pool: MccSessionPool = None
+_pool: MccSessionPool | MineflayerSessionPool = None
 _task_engine: TaskEngine = None
 _plugin_manager: PluginManager = None
 _monitor: MonitorCollector = None
 _alert_engine: AlertEngine = None
 _mcc_process_manager: MccProcessManager = None
+_mineflayer_process_manager: MineflayerProcessManager = None
 _bluemap_monitor: "BlueMapMonitor" = None
 
 
-def get_pool() -> MccSessionPool:
+def get_pool() -> MccSessionPool | MineflayerSessionPool:
     return _pool
 
 
@@ -78,6 +81,10 @@ def get_mcc_process_manager() -> MccProcessManager:
     return _mcc_process_manager
 
 
+def get_mineflayer_process_manager() -> MineflayerProcessManager:
+    return _mineflayer_process_manager
+
+
 def get_bluemap_monitor() -> "BlueMapMonitor":
     return _bluemap_monitor
 
@@ -85,7 +92,7 @@ def get_bluemap_monitor() -> "BlueMapMonitor":
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application startup & shutdown lifecycle."""
-    global _pool, _task_engine, _plugin_manager, _monitor, _alert_engine, _mcc_process_manager, _bluemap_monitor
+    global _pool, _task_engine, _plugin_manager, _monitor, _alert_engine, _mcc_process_manager, _mineflayer_process_manager, _bluemap_monitor
     config = get_config()
 
     # 1. Logging
@@ -96,15 +103,25 @@ async def lifespan(app: FastAPI):
     init_db()
     logger.info("Database initialized: {}", config.server.database_url)
 
-    # 3. MCC Session Pool
-    _pool = MccSessionPool()
+    # 3. Session Pool — choose engine based on config
+    use_mineflayer = config.mineflayer.enabled
+    if use_mineflayer:
+        _pool = MineflayerSessionPool()
+        logger.info("Using Mineflayer bot engine")
+    else:
+        _pool = MccSessionPool()
+        logger.info("Using MCC MCP bot engine")
     await _pool.start()
-    logger.info("MCC Session Pool started")
+    logger.info("Session Pool started")
 
-    # 3.5 MCC Process Manager
-    _mcc_process_manager = MccProcessManager()
-    await _mcc_process_manager.start()
-    logger.info("MCC Process Manager started")
+    # 3.5 Process Manager — choose engine based on config
+    if use_mineflayer:
+        _mineflayer_process_manager = MineflayerProcessManager()
+        logger.info("Mineflayer Process Manager started")
+    else:
+        _mcc_process_manager = MccProcessManager()
+        await _mcc_process_manager.start()
+        logger.info("MCC Process Manager started")
 
     # 4. Task Engine
     _task_engine = TaskEngine(_pool)
@@ -181,6 +198,8 @@ async def lifespan(app: FastAPI):
         await _plugin_manager.stop_all()
     if _mcc_process_manager:
         await _mcc_process_manager.stop()
+    if _mineflayer_process_manager:
+        await _mineflayer_process_manager.stop_all()
     if _pool:
         await _pool.stop()
 

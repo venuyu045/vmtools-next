@@ -20,6 +20,7 @@ from vmtools_next.core.warehouse_manager import WarehouseManager
 from vmtools_next.core.warehouse_scanner import WarehouseScanner
 from vmtools_next.core.inventory_scanner import InventoryScanner
 from vmtools_next.core.operation_logger import OperationLogger
+from vmtools_next.adapters.abstract.bot_agent import AbstractBotAgent
 from vmtools_next.adapters.mcc.mcc_mcp_client import MccMcpClient
 from vmtools_next.adapters.mcc.mcc_session_pool import MccSessionPool
 from vmtools_next.adapters.mcc.mcc_baritone import MccBaritoneAdapter
@@ -33,7 +34,12 @@ logger = logging.getLogger("vmtools.task_engine")
 class TaskEngine:
     """Unified task scheduler for build and logistics tasks."""
 
-    def __init__(self, pool: MccSessionPool):
+    def __init__(self, pool):
+        """Initialize TaskEngine.
+        
+        Args:
+            pool: MccSessionPool or MineflayerSessionPool — must have get_client(bot_id) method.
+        """
         self._pool = pool
         self._build_tasks: dict[str, BuildStateMachine] = {}  # task_id → state machine
         self._logistics_tasks: dict[str, "LogisticsRunner"] = {}  # task_id → runner
@@ -49,22 +55,22 @@ class TaskEngine:
     def operation_logger(self) -> OperationLogger:
         return self._op_logger
 
-    def _create_build_sm(self, bot_id: str, mcc: MccMcpClient) -> BuildStateMachine:
+    def _create_build_sm(self, bot_id: str, agent: AbstractBotAgent) -> BuildStateMachine:
         """Create a BuildStateMachine with all dependencies for a bot."""
-        baritone = MccBaritoneAdapter(mcc)
-        printer = MccPrinterAdapter(mcc)
-        minihud = MccMiniHudAdapter(mcc)
-        litematica = MccLitematicaAdapter(mcc)
-        scanner = WarehouseScanner(mcc, minihud)
+        baritone = MccBaritoneAdapter(agent)
+        printer = MccPrinterAdapter(agent)
+        minihud = MccMiniHudAdapter(agent)
+        litematica = MccLitematicaAdapter(agent)
+        scanner = WarehouseScanner(agent, minihud)
         safety = SafetyManager()
         travel = TravelManager()
         teleport = TeleportManager()
         material_calc = MaterialCalculator()
-        inventory_scanner = InventoryScanner(mcc)
+        inventory_scanner = InventoryScanner(agent)
 
         return BuildStateMachine(
             bot_id=bot_id,
-            mcc=mcc,
+            agent=agent,
             litematica=litematica,
             baritone=baritone,
             printer=printer,
@@ -180,7 +186,7 @@ class TaskEngine:
         safety = SafetyManager()
         teleport = TeleportManager()
         runner = LogisticsRunner(
-            mcc=client, baritone=baritone, safety=safety,
+            agent=client, baritone=baritone, safety=safety,
             teleport=teleport, op_logger=self._op_logger, bot_id=bot_id,
         )
 

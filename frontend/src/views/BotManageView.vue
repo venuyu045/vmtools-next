@@ -39,6 +39,7 @@
           <span :class="['status-dot-mini', botStatusDotClass(getBot(instance)!.status)]"></span>
           <span class="bot-status-label">{{ botStatusLabel(getBot(instance)!.status) }}</span>
           <span class="mono bot-server">{{ serverLabel(instance) }}</span>
+          <span class="engine-badge" :class="instance.bot_engine || 'mcc'">{{ instance.bot_engine || 'MCC' }}</span>
         </div>
 
         <!-- HP / Food bars (only when bot is online) -->
@@ -89,7 +90,7 @@
     </div>
 
     <!-- Create instance dialog -->
-    <el-dialog v-model="showCreate" title="新建 MCC 实例" width="560px">
+    <el-dialog v-model="showCreate" title="新建实例" width="560px">
       <el-form :model="createForm" label-width="110px">
         <el-form-item label="目录名 slug"><el-input v-model="createForm.slug" placeholder="bot-alice" /></el-form-item>
         <el-form-item label="显示名"><el-input v-model="createForm.display_name" placeholder="Alice Bot" /></el-form-item>
@@ -107,10 +108,20 @@
         <el-form-item label="游戏版本"><el-input v-model="createForm.mc_version" placeholder="1.21.1" /></el-form-item>
         <el-form-item label="程序模式">
           <el-select v-model="createForm.binary_mode">
-            <el-option label="符号链接（推荐）" value="symlink" />
+            <el-option label="���号链接（推荐）" value="symlink" />
             <el-option label="复制程序" value="copy" />
             <el-option label="外部路径" value="external" />
           </el-select>
+        </el-form-item>
+        <el-form-item label="Bot 引擎">
+          <el-select v-model="createForm.bot_engine">
+            <el-option label="MCC (Minecraft Console Client)" value="mcc" />
+            <el-option label="Mineflayer (Node.js)" value="mineflayer" />
+          </el-select>
+          <span class="engine-hint">
+            <template v-if="createForm.bot_engine === 'mcc'">C# 客户端，通过 MCP 控制</template>
+            <template v-else>Node.js 客户��，直接 API 调用</template>
+          </span>
         </el-form-item>
       </el-form>
       <template #footer>
@@ -126,6 +137,7 @@
           <span>{{ selectedInstance.display_name }}</span>
           <span>PID: {{ selectedInstance.pid || '--' }}</span>
           <span>PORT: {{ selectedInstance.mcp_port }}</span>
+          <span>ENGINE: {{ selectedInstance.bot_engine || 'mcc' }}</span>
           <span>{{ selectedInstance.instance_dir }}</span>
         </div>
 
@@ -276,6 +288,7 @@ const createForm = reactive({
   bot_id: '' as string | null,
   account_profile_id: null as string | null,
   binary_mode: 'symlink' as 'symlink' | 'copy' | 'external',
+  bot_engine: 'mcc' as 'mcc' | 'mineflayer',
   mc_username: '',
   mc_server_host: '',
   mc_server_port: 25565,
@@ -357,8 +370,8 @@ async function handleCreate() {
   if (!payload.bot_id) delete payload.bot_id
   await mccStore.createInstance(payload)
   showCreate.value = false
-  Object.assign(createForm, { slug: '', display_name: '', bot_id: '', account_profile_id: null, binary_mode: 'symlink', mc_username: '', mc_server_host: '', mc_server_port: 25565, mc_version: '1.21.1' })
-  ElMessage.success('MCC 实例已创建')
+  Object.assign(createForm, { slug: '', display_name: '', bot_id: '', account_profile_id: null, binary_mode: 'symlink', bot_engine: 'mcc', mc_username: '', mc_server_host: '', mc_server_port: 25565, mc_version: '1.21.1' })
+  ElMessage.success('实例已创建')
 }
 
 async function handleStart(instance: MccInstance) {
@@ -573,6 +586,34 @@ onMounted(() => refreshAll())
 </script>
 
 <style scoped>
+.engine-hint {
+  display: block;
+  font-size: 11px;
+  color: var(--green-dim, #666);
+  margin-top: 4px;
+  line-height: 1.4;
+}
+
+.engine-badge {
+  display: inline-block;
+  font-size: 10px;
+  font-family: 'VT323', monospace;
+  padding: 0 6px;
+  margin-left: 8px;
+  border-radius: 2px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.engine-badge.mcc {
+  background: #1a3a1a;
+  color: #4ade80;
+  border: 1px solid #4ade8033;
+}
+.engine-badge.mineflayer {
+  background: #1a1a3a;
+  color: #60a5fa;
+  border: 1px solid #60a5fa33;
+}
 .bots-page { display: flex; flex-direction: column; gap: 24px; }
 .page-header { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
 .page-title { color: var(--green-primary); font-size: 16px; margin-bottom: 8px; }

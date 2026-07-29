@@ -54,13 +54,31 @@ profile_service = MccAccountProfileService()
 audit = MccAuditLogService()
 
 
-def _process_manager():
-    from vmtools_next.main import get_mcc_process_manager
+def _process_manager(bot_engine: str = "mcc"):
+    """Get the appropriate process manager for the given engine type."""
+    if bot_engine == "mineflayer":
+        from vmtools_next.main import get_mineflayer_process_manager
+        manager = get_mineflayer_process_manager()
+        if not manager:
+            raise RuntimeError("Mineflayer process manager not initialized")
+        return manager
 
+    from vmtools_next.main import get_mcc_process_manager
     manager = get_mcc_process_manager()
     if not manager:
         raise RuntimeError("MCC process manager not initialized")
     return manager
+
+
+def _resolve_engine(db: Session, instance_id: str) -> str:
+    """Determine the bot engine type for an instance."""
+    instance = db.query(MccInstanceModel).filter(
+        MccInstanceModel.instance_id == instance_id,
+        MccInstanceModel.deleted_at.is_(None),
+    ).first()
+    if instance:
+        return getattr(instance, 'bot_engine', 'mcc') or 'mcc'
+    return 'mcc'
 
 
 def _check_file_permission(instance: MccInstanceModel, user: UserModel) -> None:
@@ -210,8 +228,9 @@ async def start_instance(
     user: UserModel = Depends(get_current_user),
 ):
     instance = service.get_instance(db, user, instance_id)
+    engine = _resolve_engine(db, instance_id)
     try:
-        result = await _process_manager().start_instance(instance_id, extra_env=(data.env if data else None))
+        result = await _process_manager(engine).start_instance(instance_id, extra_env=(data.env if data else None))
         db.refresh(instance)
         audit.log(db, user=user, action="instance.start", instance_id=instance_id, after=result)
         db.commit()
@@ -234,7 +253,7 @@ async def stop_instance(
     instance = service.get_instance(db, user, instance_id)
     request = data or MccInstanceStopRequest()
     try:
-        result = await _process_manager().stop_instance(
+        result = await _process_manager(_resolve_engine(db, instance_id)).stop_instance(
             instance_id,
             force=request.force,
             timeout_seconds=request.timeout_seconds,
@@ -256,29 +275,30 @@ async def kill_all_instances(
     db: Session = Depends(get_db),
     user: UserModel = Depends(get_current_user),
 ):
-    """Force-kill all running MCC processes immediately. Use when duplicate instances fight over server connection."""
-    manager = _process_manager()
+    """Force-kill all running processes immediately."""
+    manager_mcc = _process_manager("mcc")
+    manager_mf = _process_manager("mineflayer")
+    results = []
     try:
-        result = await manager.stop_all_instances(force=True, timeout_seconds=3)
-        killed = [r for r in result.get("results", []) if r["status"] not in ("error",)]
-        logger.warning("Force-kill all MCC: {} instances killed by {}", len(killed), user.game_id)
-        # Update DB status for each killed instance
-        for r in killed:
-            try:
-                instance = service.get_instance(db, user, r["instance_id"])
-                instance.status = "stopped"
-                instance.pid = None
-                instance.exit_code = None
-                instance.last_stopped_at = datetime.now(timezone.utc)
-                audit.log(db, user=user, action="instance.kill_all", instance_id=r["instance_id"], after={"status": "killed"})
-            except Exception:
-                pass
-        db.commit()
-        return {"killed": len(killed), "total_running": len(result.get("results", [])), "results": result.get("results", [])}
-    except Exception as exc:
-        db.rollback()
-        err_msg = str(exc) or repr(exc)
-        raise HTTPException(status_code=400, detail=err_msg) from exc
+        mcc_result = await manager_mcc.stop_all_instances(force=True, timeout_seconds=3)
+        results.extend(mcc_result.get("results", []))
+    except Exception:
+        pass
+    killed = [r for r in results if r.get("status", "") not in ("error",)]
+    logger.warning("Force-kill all: {} instances killed by {}", len(killed), user.game_id)
+    # Update DB status
+    for r in killed:
+        try:
+            instance = service.get_instance(db, user, r["instance_id"])
+            instance.status = "stopped"
+            instance.pid = None
+            instance.exit_code = None
+            instance.last_stopped_at = datetime.now(timezone.utc)
+            audit.log(db, user=user, action="instance.kill_all", instance_id=r["instance_id"], after={"status": "killed"})
+        except Exception:
+            pass
+    db.commit()
+    return {"killed": len(killed), "results": results}
 
 
 @router.post("/{instance_id}/restart", response_model=MccStartStopResponse)
@@ -288,7 +308,8 @@ async def restart_instance(
     user: UserModel = Depends(get_current_user),
 ):
     instance = service.get_instance(db, user, instance_id)
-    manager = _process_manager()
+    engine = _resolve_engine(db, instance_id)
+    manager = _process_manager(engine)
     try:
         await manager.stop_instance(instance_id, force=False, timeout_seconds=10)
         result = await manager.start_instance(instance_id)
