@@ -4,7 +4,7 @@
     <div v-else>
       <!-- Cursor item (picked up) -->
       <div v-if="cursorItem" class="cursor-item">
-        <img :src="iconUrl(cursorItem.item_id)" class="cursor-icon" @error="onIconError" />
+        <img :src="iconUrl(cursorItem.item_id)" class="cursor-icon" />
         <span class="cursor-count">{{ formatCount(cursorItem.count) }}</span>
       </div>
 
