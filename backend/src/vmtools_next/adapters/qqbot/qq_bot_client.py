@@ -162,9 +162,9 @@ class QqBotClient:
                 break
 
     async def _handle_at_message(self, d: dict) -> None:
-        """Handle @bot commands: /list, /mspt."""
+        """Handle @bot commands: /list, /mspt, /help."""
         content = (d.get("content", "") or "").strip()
-        if "/list" not in content and "/mspt" not in content:
+        if not any(content.startswith(cmd) for cmd in ("/list", "/mspt", "/help")):
             return
         # Remove bot mention prefix (handles both <@!openid> and <@openid>)
         import re
@@ -183,6 +183,8 @@ class QqBotClient:
             await self._cmd_list_del(group_id, content)
         elif content == "/mspt":
             await self._cmd_mspt(group_id)
+        elif content == "/help":
+            await self._cmd_help(group_id)
 
     # ── Bot list storage ─────────────────────────────────────
 
@@ -371,6 +373,28 @@ class QqBotClient:
             await self.send_group_message(group_id, f"✅ 已移除 {name}")
         else:
             await self.send_group_message(group_id, f"❌ {name} 不在 Bot 列表中")
+
+    async def _cmd_help(self, group_id: str) -> None:
+        """Reply with available commands list."""
+        msg = """## 📋 可用命令
+
+### 👥 在线玩家
+**`/list`**  查看当前在线玩家列表
+> 分类显示活跃/挂机玩家及 Bot
+
+**`/list add <游戏名> [venus|gxko]`**  将玩家标记为 Bot
+> 标记后在 /list 中归入对应 Bot 分组  
+> 例: `/list add OG_Cat_001 venus`
+
+**`/list del <游戏名>`**  取消 Bot 标记
+> 例: `/list del OG_Cat_001`
+
+### ⚡ 服务器性能
+**`/mspt`**  刷新并返回 MSPT 排行榜
+> 按 MSPT 从高到低排列，🟢≤30ms 🟠≤45ms 🔴>45ms  
+> 显示每个区域内的玩家、实体数、TPS"""
+
+        await self._send_md(group_id, msg.strip())
 
     async def _cmd_mspt(self, group_id: str) -> None:
         """Refresh markers and return MSPT ranking table."""
