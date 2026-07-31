@@ -391,7 +391,7 @@ class QqBotClient:
 
 ### ⚡ 服务器性能
 **`/mspt`**  刷新并返回 MSPT 排行榜
-> 按 MSPT 从高到低排列，🟢≤30ms 🟠≤45ms 🔴>45ms  
+> 覆盖主世界/地狱/末地，按 MSPT 从高到低排列，🟢≤30ms 🟠≤45ms 🔴>45ms  
 > 显示每个区域内的玩家、实体数、TPS"""
 
         await self._send_md(group_id, msg.strip())
@@ -419,17 +419,31 @@ class QqBotClient:
             await self.send_group_message(group_id, "📭 暂无区域 MSPT 数据")
             return
 
-        # Match players to regions by position (polygon point-in test)
+        # World display names for the leaderboard
+        WORLD_LABELS = {
+            "world": "🌍 主世界",
+            "world_nether": "🔥 地狱",
+            "world_the_end": "🌌 末地",
+        }
+
+        def world_label(world: str) -> str:
+            return WORLD_LABELS.get(world, world)
+
+        # Match players to regions by position (polygon point-in test) —
+        # players only count for regions in their own world.
         region_players: dict[str, list[str]] = {}
         for p in players:
             pos = p.get("position")
             name = p.get("name", "?")
+            p_world = p.get("world")
             if not pos:
                 continue
             x, z = pos.get("x"), pos.get("z")
             if x is None or z is None:
                 continue
             for r in regions:
+                if p_world and r.get("world") and r["world"] != p_world:
+                    continue
                 shape = r.get("shape", [])
                 if shape and _point_in_polygon_2d(x, z, shape):
                     region_players.setdefault(r["id"], []).append(name)
@@ -442,7 +456,12 @@ class QqBotClient:
             reverse=True,
         )
 
-        lines = [f"## ⚡ MSPT 排行榜 ({len(sorted_regions)} 个区域)\n"]
+        by_world: dict[str, int] = {}
+        for r in sorted_regions:
+            by_world[r.get("world", "world")] = by_world.get(r.get("world", "world"), 0) + 1
+        world_summary = " | ".join(f"{world_label(w)} {c}" for w, c in by_world.items())
+
+        lines = [f"## ⚡ MSPT 排行榜 ({len(sorted_regions)} 个区域)\n> {world_summary}\n"]
 
         def mspt_icon(v: float) -> str:
             if v <= 30: return "🟢"
@@ -465,7 +484,7 @@ class QqBotClient:
                 title += f" 等{len(names)}人"
 
             lines.append(
-                f"{icon} **#{i} {title}**\n"
+                f"{icon} **#{i} {world_label(r.get('world', 'world'))} | {title}**\n"
                 f"> MSPT `{mspt_str}` | TPS `{tps_str}` | 实体 `{entities}` | 区域内 `{region_player_count}`人"
             )
 

@@ -174,10 +174,13 @@ class BlueMapMonitor:
                             "position": pos,
                             "rotation": p.get("rotation"),
                         }
-                        # Tag with residence & region
+                        # Tag with residence & region (scoped to the player's world —
+                        # same coordinates in nether/end must not match overworld shapes)
                         if pos:
-                            player["residence"] = self._find_residence(pos.get("x", 0), pos.get("y", 0), pos.get("z", 0))
-                            player["region"] = self._find_region(pos.get("x", 0), pos.get("z", 0))
+                            player["residence"] = self._find_residence(
+                                pos.get("x", 0), pos.get("y", 0), pos.get("z", 0), world,
+                            )
+                            player["region"] = self._find_region(pos.get("x", 0), pos.get("z", 0), world)
                         else:
                             player["residence"] = None
                             player["region"] = None
@@ -353,17 +356,56 @@ class BlueMapMonitor:
 
     async def _poll_markers_once(self) -> None:
         cfg = get_config().bluemap
-        url = f"{cfg.api_base_url}/maps/world/live/markers.json"
+
+        # Fetch markers for EVERY world — regions/residences live on all maps
+        # (world / world_nether / world_the_end), not just the overworld.
+        residences: list[dict] = []
+        regions: list[dict] = []
+        markers: list[dict] = []
+        per_world_counts: dict[str, tuple[int, int, int]] = {}
 
         async with httpx.AsyncClient(timeout=httpx.Timeout(15.0)) as client:
-            try:
-                resp = await client.get(url)
-                if resp.status_code != 200:
-                    return
-                data = resp.json()
-            except Exception:
-                return
+            for world in cfg.worlds:
+                try:
+                    url = f"{cfg.api_base_url}/maps/{world}/live/markers.json"
+                    resp = await client.get(url)
+                    if resp.status_code != 200:
+                        logger.warning("BlueMap markers poll: {} -> HTTP {}", url, resp.status_code)
+                        continue
+                    data = resp.json()
+                except Exception as exc:
+                    logger.warning("BlueMap markers poll failed for {}: {}", world, exc)
+                    continue
 
+                w_res, w_reg, w_mk = self._parse_markers_data(data, world)
+                residences.extend(w_res)
+                regions.extend(w_reg)
+                markers.extend(w_mk)
+                per_world_counts[world] = (len(w_res), len(w_reg), len(w_mk))
+
+        self._residences = residences
+        self._regions = regions
+        self._markers = markers
+        logger.info(
+            "BlueMap markers refreshed: {} residences, {} regions, {} markers (per world: {})",
+            len(residences), len(regions), len(markers),
+            {w: f"res={c[0]} reg={c[1]} mk={c[2]}" for w, c in per_world_counts.items()},
+        )
+
+        # Save to DB for persistence across restarts
+        self._save_cache_to_db()
+
+        # Push to clients
+        await sio.emit("regions_update", {"regions": regions, "timestamp": time.time()})
+        await sio.emit("residences_update", {"residences": residences, "timestamp": time.time()})
+        await sio.emit("markers_update", {"markers": markers, "timestamp": time.time()})
+
+    def _parse_markers_data(self, data: dict, world: str) -> tuple[list[dict], list[dict], list[dict]]:
+        """Parse one world's markers.json into (residences, regions, custom markers).
+
+        Every entry is tagged with its ``world`` id so leaderboards and
+        point-in-polygon lookups can distinguish same-named regions across maps.
+        """
         # Parse residences
         residences: list[dict] = []
         res_markers = data.get("Residences", {}).get("markers", {})
@@ -376,6 +418,7 @@ class BlueMapMonitor:
             area = self._polygon_area(shape) if len(shape) >= 3 else 0
             residences.append({
                 "id": key,
+                "world": world,
                 "label": mk.get("label", key),
                 "owner": owner,
                 "min_y": mk.get("shapeMinY", 0),
@@ -399,6 +442,7 @@ class BlueMapMonitor:
             sections = _extract_int(detail, r"Sections:\s*(\d+)")
             regions.append({
                 "id": key,
+                "world": world,
                 "label": mk.get("label", key),
                 "shape": mk.get("shape", []),
                 "shape_y": mk.get("shapeY", 0),
@@ -417,27 +461,14 @@ class BlueMapMonitor:
         for key, mk in mk_group.items():
             markers.append({
                 "id": key,
+                "world": world,
                 "label": mk.get("label", key),
                 "position": mk.get("position"),
                 "type": mk.get("type", ""),
                 "detail": _strip_html(mk.get("detail", ""))[:200],
             })
 
-        self._residences = residences
-        self._regions = regions
-        self._markers = markers
-        logger.info(
-            "BlueMap markers refreshed: {} residences, {} regions, {} markers",
-            len(residences), len(regions), len(markers),
-        )
-
-        # Save to DB for persistence across restarts
-        self._save_cache_to_db()
-
-        # Push to clients
-        await sio.emit("regions_update", {"regions": regions, "timestamp": time.time()})
-        await sio.emit("residences_update", {"residences": residences, "timestamp": time.time()})
-        await sio.emit("markers_update", {"markers": markers, "timestamp": time.time()})
+        return residences, regions, markers
 
     # ── DB cache persistence ─────────────────────────────────────────
 
@@ -486,6 +517,11 @@ class BlueMapMonitor:
                 for row in rows:
                     key, payload = row[0], row[1]
                     data = _json.loads(payload) if payload else []
+                    # Legacy cache (pre multi-world markers) has no `world` tag —
+                    # it was fetched from the overworld only, so tag as `world`.
+                    for item in data:
+                        if isinstance(item, dict) and "world" not in item:
+                            item["world"] = "world"
                     if key == "bluemap_residences":
                         self._residences = data
                     elif key == "bluemap_regions":
@@ -504,21 +540,26 @@ class BlueMapMonitor:
 
     # ── spatial lookup ──────────────────────────────────────────────
 
-    def _find_residence(self, x: float, y: float, z: float) -> Optional[dict]:
+    def _find_residence(self, x: float, y: float, z: float, world: Optional[str] = None) -> Optional[dict]:
         for r in self._residences:
+            if world and r.get("world") and r["world"] != world:
+                continue
             if y < r["min_y"] or y > r["max_y"]:
                 continue
             if _point_in_polygon_2d(x, z, r["shape"]):
                 return {"name": r["label"], "owner": r["owner"], "area": r["area"]}
         return None
 
-    def _find_region(self, x: float, z: float) -> Optional[dict]:
+    def _find_region(self, x: float, z: float, world: Optional[str] = None) -> Optional[dict]:
         for r in self._regions:
+            if world and r.get("world") and r["world"] != world:
+                continue
             if _point_in_polygon_2d(x, z, r["shape"]):
                 return {
                     "label": r["label"], "tps": r["tps"], "mspt": r["mspt"],
                     "entities": r["entities"], "players_in_region": r["players_in_region"],
                     "chunks": r["chunks"], "sections": r["sections"],
+                    "world": r.get("world"),
                 }
         return None
 
