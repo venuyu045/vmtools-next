@@ -29,6 +29,11 @@
           max-height="500"
           empty-text="等 BlueMap 拉取数据..."
         >
+          <el-table-column label="世界" width="80">
+            <template #default="{ row }">
+              <span class="world-tag">{{ playerStore.getWorldLabel(row.world || 'world') }}</span>
+            </template>
+          </el-table-column>
           <el-table-column prop="label" label="领地名" min-width="140" />
           <el-table-column prop="owner" label="所有者" min-width="100" />
           <el-table-column prop="area" label="面积(块²)" width="120" sortable>
@@ -79,7 +84,10 @@
             :key="mk.id"
             class="marker-card"
           >
-            <div class="mk-name">{{ mk.label }}</div>
+            <div class="mk-name">
+              <span class="world-tag world-tag-sm">{{ playerStore.getWorldLabel(mk.world || 'world') }}</span>
+              {{ mk.label }}
+            </div>
             <div class="mk-pos" v-if="mk.position">
               {{ mk.position.x.toFixed(0) }}, {{ mk.position.y.toFixed(0) }}, {{ mk.position.z.toFixed(0) }}
             </div>
@@ -117,18 +125,23 @@
           empty-text="等 BlueMap 拉取区域数据..."
         >
           <el-table-column type="index" label="#" width="50" />
+          <el-table-column label="世界" width="80">
+            <template #default="{ row }">
+              <span class="world-tag">{{ playerStore.getWorldLabel(row.world || 'world') }}</span>
+            </template>
+          </el-table-column>
           <el-table-column label="玩家" min-width="160">
             <template #default="{ row }">
               <el-tooltip
-                v-if="(playerStore.regionOnlinePlayers[row.label]?.length || 0) > 0"
+                v-if="(playerStore.regionOnlinePlayers[`${row.world || 'world'}|${row.label}`]?.length || 0) > 0"
                 placement="top"
                 :show-after="300"
               >
                 <template #content>
-                  <div v-for="name in playerStore.regionOnlinePlayers[row.label]" :key="name" style="line-height:1.6">{{ name }}</div>
+                  <div v-for="name in playerStore.regionOnlinePlayers[`${row.world || 'world'}|${row.label}`]" :key="name" style="line-height:1.6">{{ name }}</div>
                 </template>
                 <span class="region-link" style="font-weight:600">
-                  {{ playerStore.regionOnlinePlayers[row.label].join(', ') }}
+                  {{ playerStore.regionOnlinePlayers[`${row.world || 'world'}|${row.label}`].join(', ') }}
                 </span>
               </el-tooltip>
               <span v-else class="na">无人区域</span>
@@ -229,7 +242,9 @@ const filteredResidences = computed(() => {
   if (resSearch.value) {
     const q = resSearch.value.toLowerCase()
     list = list.filter(r =>
-      r.label.toLowerCase().includes(q) || r.owner.toLowerCase().includes(q)
+      r.label.toLowerCase().includes(q)
+      || r.owner.toLowerCase().includes(q)
+      || playerStore.getWorldLabel(r.world || 'world').toLowerCase().includes(q)
     )
   }
   return list
@@ -239,7 +254,10 @@ const filteredMarkers = computed(() => {
   let list = playerStore.markers
   if (mkSearch.value) {
     const q = mkSearch.value.toLowerCase()
-    list = list.filter(m => m.label.toLowerCase().includes(q))
+    list = list.filter(m =>
+      m.label.toLowerCase().includes(q)
+      || playerStore.getWorldLabel(m.world || 'world').toLowerCase().includes(q)
+    )
   }
   return list
 })
@@ -283,7 +301,10 @@ const filteredRegions = computed(() => {
   let list = [...playerStore.regions]
   if (msptSearch.value) {
     const q = msptSearch.value.toLowerCase()
-    list = list.filter(r => r.label.toLowerCase().includes(q))
+    list = list.filter(r =>
+      r.label.toLowerCase().includes(q)
+      || playerStore.getWorldLabel(r.world || 'world').toLowerCase().includes(q)
+    )
   }
   // Sort
   switch (msptSort.value) {
@@ -382,6 +403,18 @@ function tpsClass(v: number | null): string {
   padding: 10px 12px;
 }
 .mk-name { font-weight: 600; font-size: 14px; }
+.world-tag {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 500;
+  background: rgba(64, 158, 255, 0.15);
+  color: #409eff;
+  margin-right: 6px;
+  white-space: nowrap;
+}
+.world-tag-sm { font-size: 10px; padding: 0 6px; vertical-align: 1px; }
 .mk-pos { color: var(--text-secondary); font-size: 11px; margin-top: 4px; }
 .mk-detail { color: var(--text-disabled); font-size: 11px; margin-top: 4px; line-height: 1.4; }
 .na { color: var(--text-disabled); font-style: italic; }

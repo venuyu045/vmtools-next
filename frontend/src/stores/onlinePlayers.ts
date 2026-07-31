@@ -15,6 +15,7 @@ export interface RegionInfo {
   players_in_region: number | null
   chunks: number | null
   sections: number | null
+  world?: string
 }
 
 export interface OnlinePlayer {
@@ -39,6 +40,7 @@ export interface PlayerEvent {
 
 export interface ResidenceEntry {
   id: string
+  world: string
   label: string
   owner: string
   area: number
@@ -51,6 +53,7 @@ export interface ResidenceEntry {
 
 export interface RegionEntry {
   id: string
+  world: string
   label: string
   shape: { x: number; z: number }[]
   shape_y: number
@@ -65,6 +68,7 @@ export interface RegionEntry {
 
 export interface MarkerEntry {
   id: string
+  world: string
   label: string
   position: { x: number; y: number; z: number } | null
   type: string
@@ -131,12 +135,14 @@ export const useOnlinePlayersStore = defineStore('onlinePlayers', () => {
   }
 
   // Map region id → residence labels whose position falls within the region polygon
+  // (same-world only — nether/end shapes must not swallow overworld residences)
   const regionResidences = computed(() => {
     const map: Record<string, string[]> = {}
     for (const region of regions.value) {
       const labels: string[] = []
       if (region.shape && region.shape.length >= 3) {
         for (const res of residences.value) {
+          if (region.world && res.world && region.world !== res.world) continue
           if (res.position) {
             if (pointInPolygon(res.position.x, res.position.z, region.shape)) {
               labels.push(res.label)
@@ -149,14 +155,15 @@ export const useOnlinePlayersStore = defineStore('onlinePlayers', () => {
     return map
   })
 
-  // Map region label → online player names currently in that region
+  // Map region → online player names currently in that region.
+  // Key uses world + label so same-named regions in different worlds don't merge.
   const regionOnlinePlayers = computed(() => {
     const map: Record<string, string[]> = {}
     for (const p of players.value) {
       if (p.region?.label) {
-        const rl = p.region.label
-        if (!map[rl]) map[rl] = []
-        map[rl].push(p.name)
+        const key = `${p.region.world || p.world || 'world'}|${p.region.label}`
+        if (!map[key]) map[key] = []
+        map[key].push(p.name)
       }
     }
     return map
