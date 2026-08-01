@@ -201,12 +201,17 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
+import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { useOnlinePlayersStore } from '@/stores/onlinePlayers'
 import client from '@/api/client'
 
 const playerStore = useOnlinePlayersStore()
-const activeTab = ref('residences')
+const route = useRoute()
+// Support ?tab=mspt|residences|markers for deep links (e.g. QQ leaderboard link)
+const activeTab = ref(['mspt', 'residences', 'markers'].includes(String(route.query.tab || ''))
+  ? String(route.query.tab)
+  : 'residences')
 const resSort = ref('area')
 const resSearch = ref('')
 const mkSearch = ref('')

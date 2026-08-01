@@ -107,11 +107,6 @@ class BlueMapMonitor:
 
         await self._recover_bot_players()
 
-        # Do an immediate markers poll so the frontend has data right away
-        if not self._residences or not self._markers:
-            logger.info("BlueMap: running initial markers poll...")
-            await self._poll_markers_once()
-
         logger.info(
             "BlueMap monitor started (players={}s, markers=60s, base_url={}, worlds={})",
             cfg.poll_interval_seconds,
@@ -342,9 +337,9 @@ class BlueMapMonitor:
     # ── markers poll (slow, 60s) ────────────────────────────────────
 
     async def _markers_poll_loop(self) -> None:
-        # Poll periodically — MSPT leaderboard needs fresh data
+        # Poll immediately on startup (so stale DB cache — possibly overworld-only —
+        # is replaced with all-world data right away), then every 30s.
         INTERVAL = 30
-        await asyncio.sleep(INTERVAL)
         while self._running:
             try:
                 await self._poll_markers_once()
