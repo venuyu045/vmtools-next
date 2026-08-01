@@ -474,6 +474,9 @@ class QqBotClient:
             top = world_regions[:10]
             total_shown += len(top)
             lines.append(f"**{world_label(w)} TOP {len(top)}**")
+            lines.append("")
+            lines.append("| # | 区域 | MSPT | TPS |")
+            lines.append("|---|------|------|-----|")
             for i, r in enumerate(top, 1):
                 mspt = r.get("mspt")
                 tps = r.get("tps")
@@ -487,11 +490,10 @@ class QqBotClient:
                     title = "、".join(names[:3])
                     if len(names) > 3:
                         title += f" 等{len(names)}人"
-                    title = f"**{title}**"
                 else:
-                    title = "*无人区域*"
+                    title = "无人区域"
                 lines.append(
-                    f"{icon} {i}. {title} | MSPT `{mspt_str}` | TPS `{tps_str}`"
+                    f"| {icon} {i} | {title} | `{mspt_str}` | `{tps_str}` |"
                 )
             lines.append("")
 
