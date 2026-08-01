@@ -64,6 +64,9 @@ function createStatusUpdate(bot) {
       food: bot.food || 20,
       dimension: bot.game?.dimension || 'unknown',
       game_mode: bot.game?.gameMode || 'unknown',
+      logged_in: true,  // 状态推送只会在 login 事件后启动，true = 已通过登录认证
+      username: bot.username,
+      ping: bot.player?.ping ?? -1,
     },
   };
 }

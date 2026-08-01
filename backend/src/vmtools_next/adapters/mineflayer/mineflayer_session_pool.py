@@ -50,10 +50,14 @@ class MineflayerSessionPool:
             await existing.disconnect()
 
         client = MineflayerBridgeClient(host=host, port=port)
+        # bot_ready 事件 → 确认登录 → instance.status = running（补充 stdout LOGIN_OK 通道）
+        client.on_event(self._on_bot_event(bot_id))
         ok = await client.connect()
         if ok:
             self._clients[bot_id] = client
             logger.info("Bot %s connected at %s:%d", bot_id, host, port)
+            # 同步 bot 状态到 DB + Socket.IO（前端 bot 卡片实时变绿）
+            await self._sync_bot_status(bot_id, "online")
         else:
             logger.warning("Bot %s failed to connect at %s:%d", bot_id, host, port)
         return ok
@@ -64,6 +68,7 @@ class MineflayerSessionPool:
         if client:
             await client.disconnect()
             logger.info("Bot %s disconnected", bot_id)
+            await self._sync_bot_status(bot_id, "offline")
 
     async def disconnect_all(self) -> None:
         """Disconnect all bots."""
@@ -98,8 +103,62 @@ class MineflayerSessionPool:
                 for bot_id, client in list(self._clients.items()):
                     if not client.is_connected:
                         logger.warning("Bot %s disconnected during health check", bot_id)
-                        # 不做自动重连，由 MineflayerProcessManager 处理
+                        # 移除失效 client（监听循环已退出），由 MineflayerProcessManager
+                        # 处理重启；同时同步状态
+                        self._clients.pop(bot_id, None)
+                        await self._sync_bot_status(bot_id, "offline")
             except asyncio.CancelledError:
                 break
             except Exception as e:
                 logger.error("Health check error: %s", e)
+
+    @staticmethod
+    async def _sync_bot_status(bot_id: str, status: str) -> None:
+        """Sync a bot's status to the mcc_bots row + broadcast Socket.IO event."""
+        try:
+            from vmtools_next.data.db import get_session_factory, sio
+            from vmtools_next.data.models.logistics import MccBotModel
+            Session = get_session_factory()
+            db = Session()
+            try:
+                bot = db.query(MccBotModel).filter(
+                    MccBotModel.bot_id == bot_id).first()
+                if bot:
+                    bot.status = status
+                    db.commit()
+            finally:
+                db.close()
+            await sio.emit("bot_status_update", {"bot_id": bot_id, "status": status})
+        except Exception as e:
+            logger.warning("Failed to sync bot status for %s: %s", bot_id, e)
+
+    def _on_bot_event(self, bot_id: str):
+        """Return an event handler that syncs instance status on bot_ready/kicked/end."""
+        from vmtools_next.data.models.mcc_remote import MccInstanceModel
+
+        async def handler(event: str, data: dict) -> None:
+            if event == "bot_ready":
+                logger.info("Bot %s reported bot_ready (logged in)", bot_id)
+                await self._sync_bot_status(bot_id, "online")
+                # 同步关联 instance 状态
+                try:
+                    from vmtools_next.data.db import get_session_factory
+                    Session = get_session_factory()
+                    db = Session()
+                    try:
+                        inst = db.query(MccInstanceModel).filter(
+                            MccInstanceModel.bot_id == bot_id,
+                            MccInstanceModel.deleted_at.is_(None),
+                        ).first()
+                        if inst and inst.status != "running":
+                            inst.status = "running"
+                            db.commit()
+                    finally:
+                        db.close()
+                except Exception as e:
+                    logger.warning("Failed to sync instance status: %s", e)
+            elif event in ("bot_kicked", "bot_disconnected", "bot_error"):
+                logger.info("Bot %s event %s: %s", bot_id, event, data)
+                await self._sync_bot_status(bot_id, "error" if event == "bot_error" else "offline")
+
+        return handler

@@ -88,10 +88,13 @@ async def connect_bot(bot_id: str, data: MccBotConnectRequest,
         raise HTTPException(404, "Bot not found")
 
     # Get pool from app state (injected by lifespan)
-    from vmtools_next.main import get_pool
-    pool = get_pool()
+    from vmtools_next.main import get_pool_for_engine
+    from vmtools_next.core.bot_engine import resolve_bot_engine
+    # Route to the engine pool matching this bot's instance engine.
+    engine = resolve_bot_engine(bot_id, db)
+    pool = get_pool_for_engine(engine)
     if not pool:
-        raise HTTPException(500, "MCC pool not initialized")
+        raise HTTPException(500, "Pool not initialized")
 
     success = await pool.connect_bot(bot_id, data.host, data.port, data.auth_token)
     bot.status = "online" if success else "error"
@@ -104,8 +107,9 @@ async def connect_bot(bot_id: str, data: MccBotConnectRequest,
 async def disconnect_bot(bot_id: str, db: Session = Depends(get_db),
                           user=Depends(get_current_user)):
     """Disconnect a bot."""
-    from vmtools_next.main import get_pool
-    pool = get_pool()
+    from vmtools_next.main import get_pool_for_engine
+    from vmtools_next.core.bot_engine import resolve_bot_engine
+    pool = get_pool_for_engine(resolve_bot_engine(bot_id, db))
     if pool:
         await pool.disconnect_bot(bot_id)
 
@@ -125,12 +129,15 @@ _MCP_CACHE_TTL = 120  # seconds
 
 
 async def _get_mcp_client(bot_id: str, mcp_port: int = 0):
-    """Get MccMcpClient from session pool, cache, or create new."""
-    from vmtools_next.main import get_pool
-    from vmtools_next.adapters.mcc.mcc_mcp_client import MccMcpClient
+    """Get bot agent client from the engine-appropriate session pool, cache, or create new."""
+    from vmtools_next.main import get_pool_for_engine
+    from vmtools_next.core.bot_engine import resolve_bot_engine
+    from vmtools_next.data.db import get_session_factory
 
-    # 1. Try pool
-    pool = get_pool()
+    # 1. Try the pool matching this bot's engine
+    with get_session_factory()() as db:
+        engine = resolve_bot_engine(bot_id, db)
+    pool = get_pool_for_engine(engine)
     if pool:
         client = pool.get_client(bot_id)
         if client:
@@ -148,13 +155,11 @@ async def _get_mcp_client(bot_id: str, mcp_port: int = 0):
         except: pass
         del _mcp_conn_cache[bot_id]
 
-    # 3. Create new connection
+    # 3. Create new connection (MCC MCP fallback)
     port = mcp_port
     if not port:
-        from vmtools_next.data.db import get_session_factory
         from vmtools_next.data.models.mcc_remote import MccInstanceModel
-        Session = get_session_factory()
-        with Session() as db:
+        with get_session_factory()() as db:
             inst = db.query(MccInstanceModel).filter(
                 MccInstanceModel.bot_id == bot_id
             ).first()
@@ -163,6 +168,7 @@ async def _get_mcp_client(bot_id: str, mcp_port: int = 0):
     if not port:
         port = 33333
 
+    from vmtools_next.adapters.mcc.mcc_mcp_client import MccMcpClient
     client = MccMcpClient(host="127.0.0.1", port=port, timeout_read=10)
     ok = await client.connect()
     if not ok:
@@ -178,6 +184,8 @@ async def get_inventory(bot_id: str, mcp_port: int = 0):
     try:
         snap = await client.get_inventory_snapshot(inventory_id=0)
         data = snap.get("data", snap)
+        if not isinstance(data, dict):
+            data = {"items": []}
     except MccMcpError as e:
         raise HTTPException(502, f"MCP error: {str(e) or repr(e)}")
     finally:

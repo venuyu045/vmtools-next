@@ -290,18 +290,18 @@ async def control_task(
             origin_y=task.origin_y,
             origin_z=task.origin_z,
         )
-        # Get bot MCP clients from session pool
-        # (This requires integration with the existing bot management system)
-        from vmtools_next.adapters.mcc.mcc_session_pool import MccSessionPool
-        pool = MccSessionPool.get_instance()
+        # 按每个 bot 的引擎从对应 session pool 取 client（MCC MCP vs mineflayer WS）
+        from vmtools_next.main import get_pool_for_engine
+        from vmtools_next.core.bot_engine import resolve_bot_engine
         bot_mcps = {}
         assignments = db.query(MapArtBotAssignment).filter(
             MapArtBotAssignment.task_id == task_id
         ).all()
         for ba in assignments:
-            session = pool.get_session(ba.bot_id)
-            if session and session.client:
-                bot_mcps[ba.bot_id] = (ba.bot_name or ba.bot_id, session.client)
+            pool = get_pool_for_engine(resolve_bot_engine(ba.bot_id, db))
+            client = pool.get_client(ba.bot_id) if pool else None
+            if client:
+                bot_mcps[ba.bot_id] = (ba.bot_name or ba.bot_id, client)
 
         if not bot_mcps:
             raise HTTPException(status_code=400, detail="No bots available to start task")
