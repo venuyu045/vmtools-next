@@ -284,6 +284,10 @@ async def kill_all_instances(
     processes regardless of engine.
     """
     results = []
+    # Pre-declare: managers may fail to resolve (engine not initialized);
+    # Engine 3 checks manager_mcc to decide whether an orphan sweep is needed.
+    manager_mcc = None
+    manager_mf = None
 
     # Engine 1: MCC process manager (may be None if mineflayer is active)
     try:
@@ -315,9 +319,11 @@ async def kill_all_instances(
 
     # Engine 3 (belt & braces): orphan MCC processes that belong to no
     # initialized manager — handled inside stop_all_instances via psutil,
-    # but if the active manager errored out we still sweep once here.
+    # but when Mineflayer is the active engine (MCC manager is None) those
+    # leftovers are invisible to it, so sweep here. Also sweeps when the
+    # active manager errored out and killed nothing.
     killed = [r for r in results if r.get("status", "") not in ("error",)]
-    if not killed:
+    if manager_mcc is None or not killed:
         try:
             sweep = await _sweep_orphan_mcc_processes()
             results.extend(sweep)
