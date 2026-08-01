@@ -425,6 +425,7 @@ class QqBotClient:
             "world_nether": "🔥 地狱",
             "world_the_end": "🌌 末地",
         }
+        WORLD_ORDER = ["world", "world_nether", "world_the_end"]
 
         def world_label(world: str) -> str:
             return WORLD_LABELS.get(world, world)
@@ -449,51 +450,55 @@ class QqBotClient:
                     region_players.setdefault(r["id"], []).append(name)
                     break  # player can only be in one region
 
-        # Sort by MSPT descending (worst performance first)
-        sorted_regions = sorted(
-            [r for r in regions if r.get("mspt") is not None],
-            key=lambda r: r.get("mspt") or 0,
-            reverse=True,
-        )
-
-        by_world: dict[str, int] = {}
-        for r in sorted_regions:
-            by_world[r.get("world", "world")] = by_world.get(r.get("world", "world"), 0) + 1
-        world_summary = " | ".join(f"{world_label(w)} {c}" for w, c in by_world.items())
-
-        lines = [f"## ⚡ MSPT 排行榜 ({len(sorted_regions)} 个区域)\n> {world_summary}\n"]
-
         def mspt_icon(v: float) -> str:
             if v <= 30: return "🟢"
             if v <= 45: return "🟠"
             return "🔴"
 
-        for i, r in enumerate(sorted_regions[:15], 1):
-            mspt = r.get("mspt")
-            tps = r.get("tps")
-            entities = r.get("entities") or 0
-            region_player_count = r.get("players_in_region") or 0
+        # Split regions per world, each sorted by MSPT descending (worst first)
+        by_world_regions: dict[str, list[dict]] = {}
+        for r in regions:
+            if r.get("mspt") is None:
+                continue
+            w = r.get("world", "world")
+            by_world_regions.setdefault(w, []).append(r)
+        for w in by_world_regions:
+            by_world_regions[w].sort(key=lambda r: r.get("mspt") or 0, reverse=True)
 
-            mspt_str = f"{mspt:.1f}ms" if mspt is not None else "?"
-            tps_str = f"{tps:.1f}" if tps is not None else "?"
-            icon = mspt_icon(mspt) if mspt is not None else "⚪"
+        lines = ["## ⚡ MSPT 排行榜（三界）\n"]
+        total_shown = 0
+        for w in WORLD_ORDER:
+            world_regions = by_world_regions.get(w)
+            if not world_regions:
+                continue
+            top = world_regions[:10]
+            total_shown += len(top)
+            lines.append(f"**{world_label(w)} TOP {len(top)}**")
+            for i, r in enumerate(top, 1):
+                mspt = r.get("mspt")
+                tps = r.get("tps")
+                mspt_str = f"{mspt:.1f}ms" if mspt is not None else "?"
+                tps_str = f"{tps:.1f}" if tps is not None else "?"
+                icon = mspt_icon(mspt) if mspt is not None else "⚪"
+                names = region_players.get(r["id"], [])
+                player_txt = f" | 玩家: " + "、".join(names[:3]) if names else ""
+                if len(names) > 3:
+                    player_txt += f"等{len(names)}人"
+                lines.append(
+                    f"{icon} {i}. `{r['label']}` | MSPT `{mspt_str}` | TPS `{tps_str}`{player_txt}"
+                )
+            lines.append("")
 
-            names = region_players.get(r["id"], [])
-            title = "`" + "` `".join(names[:5]) + "`" if names else "*无人区域*"
-            if len(names) > 5:
-                title += f" 等{len(names)}人"
+        if not total_shown:
+            await self.send_group_message(group_id, "📭 暂无区域 MSPT 数据")
+            return
 
-            lines.append(
-                f"{icon} **#{i} {world_label(r.get('world', 'world'))} | {title}**\n"
-                f"> MSPT `{mspt_str}` | TPS `{tps_str}` | 实体 `{entities}` | 区域内 `{region_player_count}`人"
-            )
-
-        if len(sorted_regions) > 15:
-            lines.append(f"\n> ...共 {len(sorted_regions)} 个区域，仅显示前 15")
+        lines.append(f"📊 [查看全部排行榜 →](https://www.venusyu045.cn/miaomiao?tab=mspt)")
+        lines.append("https://www.venusyu045.cn/miaomiao?tab=mspt")
 
         msg = "\n".join(lines)
-        if len(msg) > 1800:
-            msg = msg[:1800] + "\n\n> ...（列表过长已截断）"
+        if len(msg) > 3000:
+            msg = msg[:3000] + "\n\n> ...（列表过长已截断）"
         await self._send_md(group_id, msg)
 
     # ── Token ────────────────────────────────────────────────
