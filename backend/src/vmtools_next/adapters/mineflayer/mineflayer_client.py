@@ -81,6 +81,29 @@ class MineflayerBridgeClient(AbstractBotAgent):
         self._pending: dict[str, asyncio.Future] = {}
         self._connected = False
         self._listen_task: Optional[asyncio.Task] = None
+        self._last_status: dict = {}
+        self._event_handlers: list = []
+        self._bot_ready = False
+        self._username: str | None = None
+
+    # ── 状态与事件 ──
+
+    @property
+    def bot_ready(self) -> bool:
+        """True once the bot process reports a successful mineflayer login."""
+        return self._bot_ready
+
+    @property
+    def username(self) -> str | None:
+        return self._username
+
+    @property
+    def last_status(self) -> dict:
+        return self._last_status
+
+    def on_event(self, handler) -> None:
+        """Register an event handler (async or sync) receiving (event, data)."""
+        self._event_handlers.append(handler)
 
     # ── 连接管理 ──
 
@@ -187,9 +210,21 @@ class MineflayerBridgeClient(AbstractBotAgent):
         event_name = msg.get("event")
         data = msg.get("data", {})
         logger.debug("Event: %s %s", event_name, data)
+        if event_name == "bot_ready":
+            self._bot_ready = True
+            self._username = data.get("username") or self._username
+        # 分发到事件处理器（含 bot_ready / bot_disconnected / bot_kicked 等）
+        for handler in list(self._event_handlers):
+            try:
+                result = handler(event_name, data)
+                if asyncio.iscoroutine(result):
+                    asyncio.create_task(result)
+            except Exception as e:
+                logger.warning("Event handler error for %s: %s", event_name, e)
 
     def _handle_status(self, msg: dict) -> None:
         status = msg.get("bot_status", {})
+        self._last_status = status
         logger.debug("Status update: connected=%s", status.get("connected"))
 
     # ── 请求-响应核心 ──
@@ -293,8 +328,31 @@ class MineflayerBridgeClient(AbstractBotAgent):
         }, timeout=DEFAULT_CMD_TIMEOUT)
 
     async def get_inventory_snapshot(self, inventory_id: int = 0) -> dict:
-        return await self._send_request(METHOD_GET_INVENTORY_SNAPSHOT, {},
-                                        timeout=DEFAULT_CMD_TIMEOUT)
+        """Get inventory snapshot, normalized to MCC's snapshot schema.
+
+        Consumers (InventoryScanner, LogisticsRunner, BuildStateMachine,
+        /mcc-bots/{id}/inventory) read ``{"items": [{type, displayName, count, slot}]}``
+        — mineflayer returns ``{name, type, display_name, ...}`` per item, so map it.
+        """
+        result = await self._send_request(METHOD_GET_INVENTORY_SNAPSHOT, {},
+                                          timeout=DEFAULT_CMD_TIMEOUT)
+        if isinstance(result, dict) and isinstance(result.get("items"), list):
+            items = []
+            for s in result["items"]:
+                if not isinstance(s, dict):
+                    continue
+                item_id = (s.get("type") or s.get("name") or s.get("itemId") or "").strip()
+                if not item_id:
+                    continue
+                items.append({
+                    "slot": s.get("slot", -1),
+                    "type": item_id,
+                    "displayName": s.get("displayName") or s.get("display_name") or item_id,
+                    "count": s.get("count", s.get("amount", 0)) or 0,
+                    "maxStackSize": s.get("max_stack_size", s.get("maxStackSize", 64)),
+                })
+            result["items"] = items
+        return result
 
     # ── 容器 ──
 

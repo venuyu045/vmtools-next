@@ -93,8 +93,8 @@ async def start_task(task_id: str, db: Session = Depends(get_db),
     if not task:
         raise HTTPException(404, "Task not found")
 
-    from vmtools_next.main import get_task_engine
-    engine = get_task_engine()
+    from vmtools_next.main import get_task_engine_for_bot
+    engine = get_task_engine_for_bot(task.bot_id, db)
     if not engine:
         raise HTTPException(503, "Task engine not initialized")
 

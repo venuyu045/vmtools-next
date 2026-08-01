@@ -65,7 +65,7 @@ async function createBotProcess(options) {
     respawn: true,
   };
 
-  // ── 认���方式处理 ──
+  // ── 认证方式处理 ──
   if (auth === 'yggdrasil') {
     const authServerUrl = options.authServerUrl || process.env.AUTH_SERVER_URL || '';
     if (!authServerUrl) {
@@ -161,6 +161,10 @@ async function createBotProcess(options) {
     });
 
     bot.on('spawn', () => {
+      // 登录成功标志（同 login 事件）：WS 服务在 login 后才开启，若 Python 端
+      // 恰好没抓到 login 的 stdout 行（缓冲/竞态），spawn 是第二次确定性信号。
+      if (!bot.username) return;
+      console.log('[bot] LOGIN_OK', bot.username);
       console.log('[bot] spawned at', bot.entity.position);
       broadcast(createEvent('bot_spawned', {
         position: {
@@ -174,6 +178,10 @@ async function createBotProcess(options) {
     bot.on('death', () => {
       console.log('[bot] died');
       broadcast(createEvent('bot_death', {}));
+    });
+
+    bot.on('health', () => {
+      // 生命值变化，状态推送会在定时器中覆盖
     });
 
     bot.on('kicked', (reason) => {
@@ -212,6 +220,10 @@ async function createBotProcess(options) {
 
     // ── 连接成功 ──
     bot.once('login', () => {
+      console.log('[bot] LOGIN_OK', bot.username);
+      // 登录成功标志：由 Python 端通过 stdout 解析，作为 bot 已进入服务器且
+      // 已经通过 yggdrasil 认证的确定性信号（mineflayer 没有独立的 login 事件标志，
+      // 只有这里能可靠区分「进程存活」与「真正登录成功」）。
       console.log('[bot] logged in as', bot.username);
 
       // ── 4. 创建 handlers 并注册 ──

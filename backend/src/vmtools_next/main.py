@@ -48,7 +48,11 @@ BASE_DIR = pathlib.Path(__file__).resolve().parent
 
 # Global instances (initialized in lifespan)
 _pool: MccSessionPool | MineflayerSessionPool = None
+_mcc_pool: MccSessionPool | None = None
+_mineflayer_pool: MineflayerSessionPool | None = None
 _task_engine: TaskEngine = None
+_mcc_task_engine: TaskEngine | None = None
+_mineflayer_task_engine: TaskEngine | None = None
 _plugin_manager: PluginManager = None
 _monitor: MonitorCollector = None
 _alert_engine: AlertEngine = None
@@ -61,8 +65,42 @@ def get_pool() -> MccSessionPool | MineflayerSessionPool:
     return _pool
 
 
+def get_pool_for_engine(engine: str) -> MccSessionPool | MineflayerSessionPool | None:
+    """Return the session pool matching the given bot engine ('mcc' | 'mineflayer')."""
+    if engine == "mineflayer":
+        return _mineflayer_pool if _mineflayer_pool is not None else _pool
+    if engine == "mcc":
+        return _mcc_pool if _mcc_pool is not None else _pool
+    return _pool
+
+
+def get_task_engine_for_bot(bot_id: str, db) -> TaskEngine | None:
+    """Return the TaskEngine matching a bot's engine, or None before startup."""
+    from vmtools_next.core.bot_engine import resolve_bot_engine
+
+    if _mcc_task_engine is None and _mineflayer_task_engine is None:
+        return None
+    engine = resolve_bot_engine(bot_id, db)
+    if engine == "mineflayer":
+        return _mineflayer_task_engine
+    return _mcc_task_engine if _mcc_task_engine is not None else _task_engine
+
+
 def get_task_engine() -> TaskEngine:
     return _task_engine
+
+
+def get_all_task_engines() -> list:
+    """All active task engines, primary first, deduplicated.
+
+    Used by task control handlers (stop/pause/resume) that only know a
+    task_id — the owning engine is the first one that reports success.
+    """
+    engines = []
+    for e in (_task_engine, _mcc_task_engine, _mineflayer_task_engine):
+        if e is not None and e not in engines:
+            engines.append(e)
+    return engines
 
 
 def get_monitor() -> MonitorCollector:
@@ -92,7 +130,7 @@ def get_bluemap_monitor() -> "BlueMapMonitor":
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application startup & shutdown lifecycle."""
-    global _pool, _task_engine, _plugin_manager, _monitor, _alert_engine, _mcc_process_manager, _mineflayer_process_manager, _bluemap_monitor
+    global _pool, _task_engine, _plugin_manager, _monitor, _alert_engine, _mcc_process_manager, _mineflayer_process_manager, _bluemap_monitor, _mcc_pool, _mineflayer_pool, _mcc_task_engine, _mineflayer_task_engine
     config = get_config()
 
     # 1. Logging
@@ -103,29 +141,36 @@ async def lifespan(app: FastAPI):
     init_db()
     logger.info("Database initialized: {}", config.server.database_url)
 
-    # 3. Session Pool — choose engine based on config
+    # 3. Session Pools — BOTH engines coexist: each instance routes by its own bot_engine.
+    #    The "primary" engine is decided by config (used as the fallback pool for bot
+    #    operations that don't carry an engine — e.g. the /api/bots MCP bridge).
     use_mineflayer = config.mineflayer.enabled
-    if use_mineflayer:
-        _pool = MineflayerSessionPool()
-        logger.info("Using Mineflayer bot engine")
-    else:
-        _pool = MccSessionPool()
-        logger.info("Using MCC MCP bot engine")
+    _pool = MineflayerSessionPool() if use_mineflayer else MccSessionPool()
+    logger.info("Using {} bot engine as primary pool",
+                "Mineflayer" if use_mineflayer else "MCC")
+    # Always create both pools so either engine's instances can connect at runtime.
+    _mcc_pool = MccSessionPool()
+    _mineflayer_pool = MineflayerSessionPool()
     await _pool.start()
-    logger.info("Session Pool started")
+    await _mcc_pool.start()
+    await _mineflayer_pool.start()
+    logger.info("Session Pools started (mcc + mineflayer)")
 
-    # 3.5 Process Manager — choose engine based on config
-    if use_mineflayer:
-        _mineflayer_process_manager = MineflayerProcessManager()
-        logger.info("Mineflayer Process Manager started")
-    else:
-        _mcc_process_manager = MccProcessManager()
-        await _mcc_process_manager.start()
-        logger.info("MCC Process Manager started")
+    # 3.5 Process Managers — start BOTH so instances with either bot_engine can run.
+    #    (MccProcessManager.start() spawns the MCC runtime watcher; MineflayerProcessManager
+    #     is lazy and only spawns node processes on demand.)
+    _mcc_process_manager = MccProcessManager()
+    await _mcc_process_manager.start()
+    logger.info("MCC Process Manager started")
+    _mineflayer_process_manager = MineflayerProcessManager()
+    logger.info("Mineflayer Process Manager started")
 
-    # 4. Task Engine
+    # 4. Task Engine — one per engine; each TaskEngine's pool is fixed at
+    #    construction, so it can only ever see clients of one engine.
     _task_engine = TaskEngine(_pool)
-    logger.info("Task Engine initialized")
+    _mcc_task_engine = TaskEngine(_mcc_pool)
+    _mineflayer_task_engine = TaskEngine(_mineflayer_pool)
+    logger.info("Task Engines initialized (primary + mcc + mineflayer)")
 
     # 5. Plugin Manager
     context = PluginContext(_task_engine, _pool)
@@ -202,6 +247,10 @@ async def lifespan(app: FastAPI):
         await _mineflayer_process_manager.stop_all()
     if _pool:
         await _pool.stop()
+    if _mcc_pool:
+        await _mcc_pool.stop()
+    if _mineflayer_pool:
+        await _mineflayer_pool.stop()
 
 
 async def _periodic_broadcast():

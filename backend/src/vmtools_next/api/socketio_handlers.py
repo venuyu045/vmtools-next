@@ -12,6 +12,31 @@ from vmtools_next.infra.logging import get_logger
 logger = get_logger("socketio")
 
 
+async def _task_control_all(action: str, task_id: str) -> bool:
+    """Apply a control action to a task across all active task engines.
+
+    stop/pause/resume only carry a task_id (no bot_id), so we ask each
+    engine in order — the owner is the first one that reports success.
+    """
+    from vmtools_next.main import get_all_task_engines
+
+    for engine in get_all_task_engines():
+        try:
+            if action == "stop":
+                ok = await engine.stop_task(task_id)
+            elif action == "pause":
+                ok = await engine.pause_task(task_id)
+            elif action == "resume":
+                ok = await engine.resume_task(task_id)
+            else:
+                return False
+            if ok:
+                return True
+        except Exception as e:
+            logger.warning("Task engine {} {} failed: {}", action, task_id, e)
+    return False
+
+
 async def _verify_socketio_token(sid: str, auth: dict | None) -> dict | None:
     """Validate JWT token from Socket.IO auth handshake.
 
@@ -246,15 +271,25 @@ async def scan_control(sid, data):
                     await sio.emit("scan_alert", {"type": "error", "message": "bot_id required for scan"}, to=sid)
                     return
 
-                client = engine._pool.get_client(bot_id)
+                # 按 bot 的引擎路由到对应 pool（MCC MCP vs mineflayer WS）
+                from vmtools_next.main import get_pool_for_engine
+                from vmtools_next.core.bot_engine import resolve_bot_engine
+                pool = get_pool_for_engine(resolve_bot_engine(bot_id, db))
+                client = pool.get_client(bot_id) if pool else None
                 if not client:
                     await sio.emit("scan_alert", {"type": "error", "message": f"Bot {bot_id} not connected"}, to=sid)
                     return
 
-                from vmtools_next.adapters.mcc.mcc_minihud import MccMiniHudAdapter
+                # 按 bot 的引擎选择对应的 MiniHud 适配器（MCC MCP vs mineflayer WS）
+                from vmtools_next.adapters.abstract.minihud import AbstractMiniHudAdapter
+                if resolve_bot_engine(bot_id, db) == "mineflayer":
+                    from vmtools_next.adapters.mineflayer.mf_minihud import MfMiniHudAdapter
+                    minihud: AbstractMiniHudAdapter = MfMiniHudAdapter(client)
+                else:
+                    from vmtools_next.adapters.mcc.mcc_minihud import MccMiniHudAdapter
+                    minihud = MccMiniHudAdapter(client)
                 from vmtools_next.core.warehouse_scanner import WarehouseScanner
 
-                minihud = MccMiniHudAdapter(client)
                 scanner = WarehouseScanner(client, minihud)
 
                 # Set up progress callback to emit updates via Socket.IO
@@ -295,13 +330,18 @@ async def logistics_control(sid, data):
     logger.info("Logistics control from {}: {} run={}", sid, action, run_id)
 
     try:
-        from vmtools_next.main import get_task_engine
-        engine = get_task_engine()
-        if not engine:
-            await sio.emit("logistics_alert", {"type": "error", "message": "Task engine not initialized"}, to=sid)
-            return
-
         if action == "start" and template_id and bot_id:
+            # 按 bot 的引擎选择对应 TaskEngine
+            from vmtools_next.main import get_task_engine_for_bot
+            from vmtools_next.data.db import get_session_factory as _gsf
+            db = _gsf()()
+            try:
+                engine = get_task_engine_for_bot(bot_id, db)
+            finally:
+                db.close()
+            if not engine:
+                await sio.emit("logistics_alert", {"type": "error", "message": "Task engine not initialized"}, to=sid)
+                return
             # Start a new logistics task
             run_id = await engine.start_logistics_task(bot_id, template_id)
             if run_id:
@@ -309,11 +349,11 @@ async def logistics_control(sid, data):
             else:
                 await sio.emit("logistics_alert", {"type": "error", "message": "Failed to start logistics task"}, to=sid)
         elif action == "stop" and run_id:
-            await engine.stop_task(run_id)
+            await _task_control_all("stop", run_id)
         elif action == "pause" and run_id:
-            await engine.pause_task(run_id)
+            await _task_control_all("pause", run_id)
         elif action == "resume" and run_id:
-            await engine.resume_task(run_id)
+            await _task_control_all("resume", run_id)
     except Exception as e:
         logger.error("Logistics control error: {}", e)
         await sio.emit("logistics_alert", {"type": "error", "message": str(e)}, to=sid)
@@ -330,17 +370,22 @@ async def build_control(sid, data):
     logger.info("Build control from {}: {} task={}", sid, action, task_id)
 
     try:
-        from vmtools_next.main import get_task_engine
-        engine = get_task_engine()
-        if not engine:
-            await sio.emit("build_alert", {"type": "error", "message": "Task engine not initialized"}, to=sid)
-            return
-
         if action == "start":
             bot_id = data.get("bot_id")
             projection_path = data.get("projection_file_path")
             if not bot_id or not projection_path:
                 await sio.emit("build_alert", {"type": "error", "message": "bot_id and projection_file_path required"}, to=sid)
+                return
+            # 按 bot 的引擎选择对应 TaskEngine
+            from vmtools_next.main import get_task_engine_for_bot
+            from vmtools_next.data.db import get_session_factory as _gsf
+            db = _gsf()()
+            try:
+                engine = get_task_engine_for_bot(bot_id, db)
+            finally:
+                db.close()
+            if not engine:
+                await sio.emit("build_alert", {"type": "error", "message": "Task engine not initialized"}, to=sid)
                 return
             task_id_result = await engine.start_build_task(
                 bot_id, projection_path,
@@ -351,11 +396,11 @@ async def build_control(sid, data):
             else:
                 await sio.emit("build_alert", {"type": "error", "message": "Failed to start build"}, to=sid)
         elif action == "stop" and task_id:
-            await engine.stop_task(task_id)
+            await _task_control_all("stop", task_id)
         elif action == "pause" and task_id:
-            await engine.pause_task(task_id)
+            await _task_control_all("pause", task_id)
         elif action == "resume" and task_id:
-            await engine.resume_task(task_id)
+            await _task_control_all("resume", task_id)
     except Exception as e:
         logger.error("Build control error: {}", e)
         await sio.emit("build_alert", {"type": "error", "message": str(e)}, to=sid)
