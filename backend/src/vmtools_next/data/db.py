@@ -149,6 +149,8 @@ def _run_lightweight_migrations(engine) -> None:
                     conn.execute(text("ALTER TABLE mcc_instances ADD COLUMN account_profile_id VARCHAR"))
                 if "auto_reconnect" not in columns:
                     conn.execute(text("ALTER TABLE mcc_instances ADD COLUMN auto_reconnect BOOLEAN DEFAULT 0"))
+                if "bot_engine" not in columns:
+                    conn.execute(text("ALTER TABLE mcc_instances ADD COLUMN bot_engine VARCHAR DEFAULT 'mcc'"))
             conn.commit()
     except Exception as e:
         logger.warning("Lightweight migration check: {}", e)
