@@ -166,22 +166,27 @@ class MccProcessManager:
 
     async def stop_all_instances(self, force: bool = True, timeout_seconds: float = 5.0) -> dict:
         """Force-kill all running MCC processes (tracked + orphaned). Returns summary dict."""
-        import psutil
-
         results: list[dict] = []
         killed_pids: set[int] = set()
 
-        # 1. Kill tracked processes (in self._processes)
-        for instance_id in list(self._processes.keys()):
+        # 1. Kill tracked processes in PARALLEL — serial kills would take
+        #    N×timeout_seconds worst case and blow past HTTP client timeouts
+        #    (frontend axios default 15s) on multi-instance setups.
+        async def _kill_tracked(instance_id: str) -> dict:
             try:
                 result = await self.stop_instance(instance_id, force=force, timeout_seconds=timeout_seconds)
-                results.append({"instance_id": instance_id, "status": result.get("status", "unknown"), "message": result.get("message", "")})
+                return {"instance_id": instance_id, "status": result.get("status", "unknown"), "message": result.get("message", "")}
             except Exception as exc:
-                results.append({"instance_id": instance_id, "status": "error", "message": str(exc) or repr(exc)})
                 logger.warning("Failed to force-kill MCC instance {}: {}", instance_id, exc)
+                return {"instance_id": instance_id, "status": "error", "message": str(exc) or repr(exc)}
+
+        tracked_ids = list(self._processes.keys())
+        if tracked_ids:
+            results.extend(await asyncio.gather(*(_kill_tracked(iid) for iid in tracked_ids)))
 
         # 2. Kill orphaned processes by scanning system process table
         #    (handles backend-restart scenarios where _processes is empty and DB status is stale)
+        import psutil  # local import: step 1 must run even if psutil is missing
         Session = get_session_factory()
         db = Session()
         try:
@@ -189,24 +194,41 @@ class MccProcessManager:
             binary_paths: set[str] = set()
             for inst in all_instances:
                 if inst.mcc_binary_path:
-                    binary_paths.add(os.path.normpath(inst.mcc_binary_path))
+                    bp = os.path.normpath(inst.mcc_binary_path)
+                    binary_paths.add(bp)
+                    binary_paths.add(os.path.basename(bp))
 
-            if binary_paths:
-                for proc in psutil.process_iter(["pid", "name", "cmdline"]):
-                    try:
-                        cmdline = proc.info.get("cmdline") or []
-                        cmdline_str = " ".join(cmdline)
-                        for bp in binary_paths:
-                            if bp in cmdline_str or os.path.basename(bp) in cmdline_str:
-                                pid = proc.pid
-                                if pid not in killed_pids:
-                                    proc.kill()
-                                    killed_pids.add(pid)
-                                    logger.warning("Force-killed orphaned MCC pid={} cmdline={}", pid, cmdline_str[:200])
-                                    results.append({"instance_id": "orphan", "status": "killed", "pid": pid, "message": "found via psutil scan"})
-                                break
-                    except (psutil.NoSuchProcess, psutil.AccessDenied):
-                        pass
+            def _match(cmdline_str: str, proc_name: str) -> bool:
+                """Match a process as MCC by cmdline path OR by known name patterns.
+
+                Path match first (exact path or basename); then falls back to
+                generic MCC binary names so leftovers are still cleaned up even
+                when DB paths are empty, stale, or differ from the live cmdline.
+                """
+                if binary_paths and any(bp in cmdline_str for bp in binary_paths):
+                    return True
+                lower = (cmdline_str + " " + proc_name).lower()
+                if "minecraftclient" in lower:
+                    return "exe" in lower or ".dll" in lower or "mono" in lower
+                # Weak fallback: executable whose path contains "mcc"
+                return "mcc" in lower and ("exe" in lower or ".dll" in lower)
+
+            for proc in psutil.process_iter(["pid", "name", "cmdline"]):
+                try:
+                    cmdline = proc.info.get("cmdline") or []
+                    cmdline_str = " ".join(cmdline)
+                    if not cmdline_str:
+                        continue
+                    if not _match(cmdline_str, proc.info.get("name") or ""):
+                        continue
+                    pid = proc.pid
+                    if pid not in killed_pids:
+                        proc.kill()
+                        killed_pids.add(pid)
+                        logger.warning("Force-killed orphaned MCC pid={} cmdline={}", pid, cmdline_str[:200])
+                        results.append({"instance_id": "orphan", "status": "killed", "pid": pid, "message": "found via psutil scan"})
+                except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                    pass
         except Exception as exc:
             logger.warning("Error during psutil orphan scan: {}", exc)
         finally:
@@ -481,45 +503,73 @@ class MccProcessManager:
                     return {"status": "stopped", "pid": None, "message": "already stopped"}
 
                 await self._append_system_line(instance_id, "Stopping MCC process")
-                if not force:
+                if force:
+                    # Fast path: SIGKILL/TerminateProcess immediately, then
+                    # wait briefly. Do NOT sit idle waiting for a graceful
+                    # exit — that stalls "kill all" past HTTP client timeouts.
+                    try:
+                        handle.process.kill()
+                    except Exception:
+                        pass
+                    try:
+                        if _is_async_proc(handle.process):
+                            await asyncio.wait_for(handle.process.wait(), timeout=timeout_seconds)
+                        else:
+                            loop = asyncio.get_event_loop()
+                            await asyncio.wait_for(loop.run_in_executor(None, handle.process.wait), timeout=timeout_seconds)
+                    except asyncio.TimeoutError:
+                        logger.warning("Force-kill instance {} pid={} did not exit within {}s, retrying", instance_id, handle.process.pid, timeout_seconds)
+                        try:
+                            handle.process.kill()
+                        except Exception:
+                            pass
+                        try:
+                            if _is_async_proc(handle.process):
+                                await asyncio.wait_for(handle.process.wait(), timeout=2)
+                            else:
+                                loop = asyncio.get_event_loop()
+                                await asyncio.wait_for(loop.run_in_executor(None, handle.process.wait), timeout=2)
+                        except asyncio.TimeoutError:
+                            logger.warning("Force-kill instance {} pid={} still alive after retry (left for psutil sweep)", instance_id, handle.process.pid)
+                else:
                     try:
                         handle.process.terminate()
                     except Exception:
                         pass
-
-                try:
-                    if _is_async_proc(handle.process):
-                        await asyncio.wait_for(handle.process.wait(), timeout=timeout_seconds)
-                    else:
-                        loop = asyncio.get_event_loop()
-                        await asyncio.wait_for(loop.run_in_executor(None, handle.process.wait), timeout=timeout_seconds)
-                except asyncio.TimeoutError:
-                    handle.process.terminate()
                     try:
                         if _is_async_proc(handle.process):
-                            await asyncio.wait_for(handle.process.wait(), timeout=5)
+                            await asyncio.wait_for(handle.process.wait(), timeout=timeout_seconds)
                         else:
                             loop = asyncio.get_event_loop()
-                            await asyncio.wait_for(loop.run_in_executor(None, handle.process.wait), timeout=5)
+                            await asyncio.wait_for(loop.run_in_executor(None, handle.process.wait), timeout=timeout_seconds)
                     except asyncio.TimeoutError:
-                        handle.process.kill()
-                        if _is_async_proc(handle.process):
-                            await handle.process.wait()
-                        else:
-                            loop = asyncio.get_event_loop()
-                            await loop.run_in_executor(None, handle.process.wait)
+                        handle.process.terminate()
+                        try:
+                            if _is_async_proc(handle.process):
+                                await asyncio.wait_for(handle.process.wait(), timeout=5)
+                            else:
+                                loop = asyncio.get_event_loop()
+                                await asyncio.wait_for(loop.run_in_executor(None, handle.process.wait), timeout=5)
+                        except asyncio.TimeoutError:
+                            handle.process.kill()
+                            if _is_async_proc(handle.process):
+                                await handle.process.wait()
+                            else:
+                                loop = asyncio.get_event_loop()
+                                await loop.run_in_executor(None, handle.process.wait)
 
                 returncode = handle.process.returncode
                 if instance:
-                    # If we sent a graceful exit command, always treat as "stopped"
-                    stopped_gracefully = not force and handle.process.stdin is not None
-                    instance.status = "stopped" if (returncode == 0 or stopped_gracefully) else "crashed"
+                    # Graceful exit → stopped; force-kill is user-requested → stopped;
+                    # anything else (unexpected exit) → crashed.
+                    stopped_gracefully = (returncode == 0) or force
+                    instance.status = "stopped" if stopped_gracefully else "crashed"
                     instance.pid = None
                     instance.exit_code = returncode
                     instance.last_stopped_at = datetime.now(timezone.utc)
                     db.add(MccProcessEventModel(
                         instance_id=instance_id,
-                        event_type="stop" if returncode == 0 else "crash",
+                        event_type="stop" if stopped_gracefully else "crash",
                         exit_code=returncode,
                         message="MCC process stopped",
                     ))

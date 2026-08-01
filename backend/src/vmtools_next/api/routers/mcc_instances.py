@@ -41,6 +41,7 @@ from vmtools_next.core.mcc_account_profile_service import MccAccountProfileServi
 from vmtools_next.core.mcc_audit_log_service import MccAuditLogService
 from vmtools_next.core.mcc_file_service import MccFileService
 from vmtools_next.core.mcc_instance_service import MccInstanceService
+from vmtools_next.data.db import get_session_factory
 from vmtools_next.data.models.auth import UserModel
 from vmtools_next.data.models.mcc_remote import MccInstanceModel, MccProcessEventModel
 from vmtools_next.infra.logging import get_logger
@@ -275,16 +276,55 @@ async def kill_all_instances(
     db: Session = Depends(get_db),
     user: UserModel = Depends(get_current_user),
 ):
-    """Force-kill all running processes immediately."""
-    manager_mcc = _process_manager("mcc")
-    manager_mf = _process_manager("mineflayer")
+    """Force-kill all running processes immediately.
+
+    Tolerant by design: the active engine is the only one initialized at
+    startup (MCC XOR Mineflayer), so the other manager may be None —
+    that must NOT 500 the request. Orphan scanning still catches leftover
+    processes regardless of engine.
+    """
     results = []
+
+    # Engine 1: MCC process manager (may be None if mineflayer is active)
     try:
-        mcc_result = await manager_mcc.stop_all_instances(force=True, timeout_seconds=3)
-        results.extend(mcc_result.get("results", []))
-    except Exception:
-        pass
+        manager_mcc = _process_manager("mcc")
+        if manager_mcc:
+            try:
+                mcc_result = await manager_mcc.stop_all_instances(force=True, timeout_seconds=2)
+                results.extend(mcc_result.get("results", []))
+            except Exception as exc:
+                logger.warning("kill-all: MCC engine error: {}", exc)
+    except Exception as exc:
+        logger.warning("kill-all: MCC manager unavailable: {}", exc)
+
+    # Engine 2: Mineflayer process manager (may be None if MCC is active)
+    try:
+        manager_mf = _process_manager("mineflayer")
+        if manager_mf:
+            try:
+                if hasattr(manager_mf, "stop_all_instances"):
+                    mf_result = await manager_mf.stop_all_instances(force=True, timeout_seconds=2)
+                    results.extend(mf_result.get("results", []))
+                else:
+                    await manager_mf.stop_all()
+                    results.append({"instance_id": "mineflayer", "status": "killed", "message": "mineflayer stop_all"})
+            except Exception as exc:
+                logger.warning("kill-all: Mineflayer engine error: {}", exc)
+    except Exception as exc:
+        logger.warning("kill-all: Mineflayer manager unavailable: {}", exc)
+
+    # Engine 3 (belt & braces): orphan MCC processes that belong to no
+    # initialized manager — handled inside stop_all_instances via psutil,
+    # but if the active manager errored out we still sweep once here.
     killed = [r for r in results if r.get("status", "") not in ("error",)]
+    if not killed:
+        try:
+            sweep = await _sweep_orphan_mcc_processes()
+            results.extend(sweep)
+            killed = [r for r in results if r.get("status", "") not in ("error",)]
+        except Exception as exc:
+            logger.warning("kill-all: orphan sweep error: {}", exc)
+
     logger.warning("Force-kill all: {} instances killed by {}", len(killed), user.game_id)
     # Update DB status
     for r in killed:
@@ -299,6 +339,62 @@ async def kill_all_instances(
             pass
     db.commit()
     return {"killed": len(killed), "results": results}
+
+
+async def _sweep_orphan_mcc_processes() -> list[dict]:
+    """Scan the system process table for leftover MCC processes.
+
+    Matches by configured binary path, its basename, or a known MCC
+    executable name — so orphaned processes survive backend restarts
+    and missing DB paths.
+    """
+    import os as _os
+    import psutil
+
+    Session = get_session_factory()
+    db = Session()
+    try:
+        all_instances = db.query(MccInstanceModel).all()
+    finally:
+        db.close()
+
+    binary_paths: set[str] = set()
+    for inst in all_instances:
+        if inst.mcc_binary_path:
+            bp = _os.path.normpath(inst.mcc_binary_path)
+            binary_paths.add(bp)
+            binary_paths.add(_os.path.basename(bp))
+
+    results: list[dict] = []
+    killed_pids: set[int] = set()
+
+    def _match_cmdline(cmdline_str: str, proc_name: str) -> bool:
+        if binary_paths and any(bp in cmdline_str for bp in binary_paths):
+            return True
+        lower = (cmdline_str + " " + proc_name).lower()
+        if "minecraftclient" in lower:
+            return "exe" in lower or ".dll" in lower or "mono" in lower
+        # Weak fallback: executable whose path contains "mcc"
+        return "mcc" in lower and ("exe" in lower or ".dll" in lower)
+
+    for proc in psutil.process_iter(["pid", "name", "cmdline"]):
+        try:
+            cmdline = proc.info.get("cmdline") or []
+            cmdline_str = " ".join(cmdline)
+            if not cmdline_str:
+                continue
+            if not _match_cmdline(cmdline_str, proc.info.get("name") or ""):
+                continue
+            pid = proc.pid
+            if pid in killed_pids:
+                continue
+            proc.kill()
+            killed_pids.add(pid)
+            logger.warning("Force-killed orphaned MCC pid={} cmdline={}", pid, cmdline_str[:200])
+            results.append({"instance_id": "orphan", "status": "killed", "pid": pid, "message": "found via psutil scan"})
+        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+            pass
+    return results
 
 
 @router.post("/{instance_id}/restart", response_model=MccStartStopResponse)
