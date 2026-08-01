@@ -6,6 +6,7 @@ Replaces MccProcessManager for mineflayer backend. Manages:
   - Port allocation (reuses MccPortAllocator)
   - Auto-reconnect on crash
   - Stdout logging
+  - Status sync: instance.status + bot login flag + Socket.IO broadcast
 """
 
 from __future__ import annotations
@@ -28,6 +29,9 @@ from vmtools_next.data.models.mcc_remote import MccAccountProfileModel, MccInsta
 
 logger = logging.getLogger("vmtools.mineflayer_pm")
 
+# 登录成功标志：bot_main.js 在 mineflayer login 事件里打印（作为 bot 真正进入服务器的确定性信号）
+LOGIN_OK_MARKER = "LOGIN_OK"
+
 
 @dataclass
 class ProcessHandle:
@@ -36,6 +40,7 @@ class ProcessHandle:
     process: asyncio.subprocess.Process
     ws_port: int
     started_at: float
+    logged_in: bool = False
     output_task: Optional[asyncio.Task] = None
     exit_task: Optional[asyncio.Task] = None
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
@@ -115,6 +120,17 @@ class MineflayerProcessManager:
             finally:
                 db.close()
 
+            # 启动前预检：node 可执行 + bot_main.js 存在（否则 create_subprocess_exec 会失败）
+            # 注意：self._node_path 可能是绝对路径，which() 只查 PATH；同时检查可执行性
+            node_ok = self._node_path and (
+                os.path.isabs(self._node_path) and os.access(self._node_path, os.X_OK)
+                or shutil.which(self._node_path)
+            )
+            if not node_ok:
+                raise ValueError(f"Node.js executable not found: {self._node_path!r}")
+            if not self._script_path or not os.path.exists(self._script_path):
+                raise ValueError(f"bot_main.js not found: {self._script_path!r}")
+
             # 分配 WS 端口
             db_session = Session()
             try:
@@ -178,13 +194,21 @@ class MineflayerProcessManager:
 
             logger.info("Starting mineflayer bot: %s", " ".join(cmd[:6]) + " ...")
 
-            # 启动进程
-            process = await asyncio.create_subprocess_exec(
-                *cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.STDOUT,
-                env=env,
-            )
+            # 启动进程（失败 → 弹回 stopped，与 MCC start_instance 的语义一致）
+            try:
+                process = await asyncio.create_subprocess_exec(
+                    *cmd,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.STDOUT,
+                    env=env,
+                )
+            except Exception as exc:
+                logger.error("Failed to spawn mineflayer bot %s: %s", instance_id[:8], exc)
+                await self._update_instance_status(
+                    instance_id, status="stopped", pid=None,
+                    message=f"mineflayer spawn failed: {str(exc) or repr(exc)}",
+                )
+                raise
 
             handle = ProcessHandle(
                 instance_id=instance_id,
@@ -202,6 +226,15 @@ class MineflayerProcessManager:
                 self._watch_exit_loop(handle)
             )
 
+            # 同步实例状态到 DB + Socket.IO（desired_state 由 _sync_desired_state 管理）
+            await self._update_instance_status(
+                instance_id,
+                status="starting",
+                pid=process.pid,
+                message=f"mineflayer process started (ws_port={ws_port})",
+            )
+            await self._sync_desired_state(instance_id, "running")
+
             return {
                 "status": "started",
                 "pid": process.pid,
@@ -214,6 +247,8 @@ class MineflayerProcessManager:
         """Stop a mineflayer bot process gracefully."""
         handle = self._processes.get(instance_id)
         if not handle or handle.process.returncode is not None:
+            # 进程可能已自行退出；无论如何确保 desired_state = stopped
+            await self._sync_desired_state(instance_id, "stopped")
             return {"status": "not_running"}
 
         try:
@@ -235,6 +270,15 @@ class MineflayerProcessManager:
         # 清理
         self._cleanup_handle(instance_id)
 
+        # 同步状态：DB + Socket.IO
+        await self._sync_desired_state(instance_id, "stopped")
+        await self._update_instance_status(
+            instance_id,
+            status="stopped",
+            pid=None,
+            message="mineflayer process stopped",
+        )
+
         return {"status": "stopped"}
 
     async def stop_all(self) -> None:
@@ -254,7 +298,12 @@ class MineflayerProcessManager:
     async def _read_output_loop(self, handle: ProcessHandle) -> None:
         """Read stdout from the mineflayer process line by line."""
         try:
-            async for line in handle.process.stdout:
+            # 用 readline 而非 async for —— Windows Proactor 下 async for 对
+            # PIPE 的迭代可能不会逐行触发（缓冲问题），readline 稳定。
+            while True:
+                line = await handle.process.stdout.readline()
+                if not line:
+                    break
                 text = line.decode("utf-8", errors="replace").rstrip()
                 if text:
                     logger.debug("[%s] %s", handle.instance_id[:8], text)
@@ -262,6 +311,17 @@ class MineflayerProcessManager:
                     if "READY" in text:
                         logger.info("Mineflayer bot %s is ready (ws_port=%d)",
                                      handle.instance_id[:8], handle.ws_port)
+                    # 检测登录成功信号 → 同步 instance.status = running
+                    if LOGIN_OK_MARKER in text and not handle.logged_in:
+                        handle.logged_in = True
+                        logger.info("Mineflayer bot %s logged in (LOGIN_OK)",
+                                    handle.instance_id[:8])
+                        await self._update_instance_status(
+                            handle.instance_id,
+                            status="running",
+                            pid=handle.process.pid,
+                            message="mineflayer bot logged in (LOGIN_OK)",
+                        )
         except asyncio.CancelledError:
             pass
         except Exception as e:
@@ -284,6 +344,63 @@ class MineflayerProcessManager:
         # 清理
         if self._processes.get(instance_id) is handle:
             self._processes.pop(instance_id, None)
+
+        # 同步状态：进程退出 → stopped
+        await self._update_instance_status(
+            instance_id,
+            status="stopped",
+            pid=None,
+            message=f"mineflayer process exited (code {return_code})",
+        )
+
+        # 意外退出（非 stop_instance 主动终止）且实例仍期望运行 → 自动重启，
+        # 与 MccProcessManager 的 auto_reconnect/desired_state 语义一致。
+        try:
+            if not self._stop_requested(instance_id):
+                if await self._desired_state_is(instance_id, "running"):
+                    logger.warning(
+                        "Mineflayer bot %s crashed unexpectedly, auto-restarting (desired_state=running)",
+                        instance_id[:8],
+                    )
+                    await self.start_instance(instance_id)
+        except Exception as exc:
+            logger.warning("Auto-restart failed for %s: %s", instance_id[:8], exc)
+
+    async def _desired_state_is(self, instance_id: str, state: str) -> bool:
+        """Check the instance's desired_state in the DB."""
+        from vmtools_next.data.db import get_session_factory
+        Session = get_session_factory()
+        db = Session()
+        try:
+            inst = db.query(MccInstanceModel).filter(
+                MccInstanceModel.instance_id == instance_id,
+            ).first()
+            return bool(inst and inst.desired_state == state)
+        finally:
+            db.close()
+
+    def _stop_requested(self, instance_id: str) -> bool:
+        """True while stop_instance is still holding the instance lock (SIGTERM sent)."""
+        lock = self._locks.get(instance_id)
+        return bool(lock and lock.locked())
+
+    async def _sync_desired_state(self, instance_id: str, state: str) -> None:
+        """Persist desired_state (running on start, stopped on stop)."""
+        try:
+            from vmtools_next.data.db import get_session_factory
+            Session = get_session_factory()
+            db = Session()
+            try:
+                inst = db.query(MccInstanceModel).filter(
+                    MccInstanceModel.instance_id == instance_id,
+                ).first()
+                if inst and inst.desired_state != state:
+                    inst.desired_state = state
+                    db.commit()
+            finally:
+                db.close()
+        except Exception as e:
+            logger.warning("Failed to sync desired_state for %s: %s", instance_id, e)
 
     def _cleanup_handle(self, instance_id: str) -> None:
         """Remove and clean up a process handle."""
@@ -315,6 +432,51 @@ class MineflayerProcessManager:
                 db.close()
         except Exception as e:
             logger.warning("Failed to record event: %s", e)
+
+    async def _update_instance_status(self, instance_id: str, status: str,
+                                      pid: int | None, message: str = "") -> None:
+        """Sync instance status to DB and broadcast via Socket.IO.
+
+        Mirrors MccProcessManager._emit_status so the frontend reacts the same way.
+        """
+        try:
+            from vmtools_next.data.db import get_session_factory, sio
+            Session = get_session_factory()
+            db = Session()
+            try:
+                instance = db.query(MccInstanceModel).filter(
+                    MccInstanceModel.instance_id == instance_id,
+                    MccInstanceModel.deleted_at.is_(None),
+                ).first()
+                if instance:
+                    instance.status = status
+                    instance.pid = pid
+                    # SQLAlchemy DateTime 列必须用 datetime 对象（字符串会 TypeError）
+                    from datetime import datetime as _dt
+                    if status == "running":
+                        instance.last_started_at = _dt.now()
+                    if status == "stopped":
+                        instance.last_stopped_at = _dt.now()
+                    db.commit()
+            finally:
+                db.close()
+
+            payload = {
+                "instance_id": instance_id,
+                "status": status,
+                "pid": pid,
+                "ws_port": self.get_ws_port(instance_id) if pid else None,
+                "message": message,
+            }
+            # 房间内 + 全局广播（前端按 instance_id 去重）
+            # sio.emit 在没有 socket server（如单元测试/独立脚本）时会抛异常，需保护
+            try:
+                await sio.emit("mcc_instance_status", payload, room=f"mcc:{instance_id}")
+                await sio.emit("mcc_instance_status", payload)
+            except Exception as emit_err:
+                logger.debug("Socket.IO emit skipped: %s", emit_err)
+        except Exception as e:
+            logger.warning("Failed to sync status for %s: %s", instance_id, e)
 
     @staticmethod
     def _get_mc_host(instance: MccInstanceModel) -> str:

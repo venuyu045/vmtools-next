@@ -86,6 +86,7 @@ function createInventoryHandlers(bot) {
         type: item.type,
         count: item.count,
         display_name: item.displayName,
+        displayName: item.displayName,
         max_stack_size: item.maxStackSize,
       }));
       return {
