@@ -188,7 +188,9 @@ export const mccInstanceApi = {
     return client.post(`/mcc/instances/${instanceId}/stop`, { force, timeout_seconds })
   },
   killAll() {
-    return client.post<{ killed: number; total_running: number; results: any[] }>('/mcc/instances/kill-all')
+    // Long timeout: force-kill sweeps all processes + psutil scan on the server,
+    // which can exceed the 15s axios default on slow/multi-instance setups.
+    return client.post<{ killed: number; total_running: number; results: any[] }>('/mcc/instances/kill-all', undefined, { timeout: 60000 })
   },
   restart(instanceId: string) {
     return client.post(`/mcc/instances/${instanceId}/restart`)

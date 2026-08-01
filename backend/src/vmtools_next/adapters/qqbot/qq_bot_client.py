@@ -480,12 +480,18 @@ class QqBotClient:
                 mspt_str = f"{mspt:.1f}ms" if mspt is not None else "?"
                 tps_str = f"{tps:.1f}" if tps is not None else "?"
                 icon = mspt_icon(mspt) if mspt is not None else "⚪"
+                # Region labels are Folia internals like "Region@the_nether[-52084,-52084]",
+                # too noisy for a leaderboard — show the players as the title instead.
                 names = region_players.get(r["id"], [])
-                player_txt = f" | 玩家: " + "、".join(names[:3]) if names else ""
-                if len(names) > 3:
-                    player_txt += f"等{len(names)}人"
+                if names:
+                    title = "、".join(names[:3])
+                    if len(names) > 3:
+                        title += f" 等{len(names)}人"
+                    title = f"**{title}**"
+                else:
+                    title = "*无人区域*"
                 lines.append(
-                    f"{icon} {i}. `{r['label']}` | MSPT `{mspt_str}` | TPS `{tps_str}`{player_txt}"
+                    f"{icon} {i}. {title} | MSPT `{mspt_str}` | TPS `{tps_str}`"
                 )
             lines.append("")
 
