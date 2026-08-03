@@ -35,6 +35,9 @@
       <div class="login-footer mono">
         v3.0 · MCC Server · Build Automation
       </div>
+      <div class="login-icp">
+        <a href="https://beian.miit.gov.cn" target="_blank" rel="noopener noreferrer">渝ICP备2026011793号-1</a>
+      </div>
     </div>
   </div>
 </template>
@@ -120,6 +123,23 @@ async function handleLogin() {
   margin-top: 24px;
   color: var(--text-muted);
   font-size: 14px;
+}
+
+.login-icp {
+  text-align: center;
+  margin-top: 12px;
+  padding-bottom: 4px;
+}
+
+.login-icp a {
+  color: #666;
+  font-size: 12px;
+  text-decoration: none;
+  transition: color 0.2s;
+}
+
+.login-icp a:hover {
+  color: #999;
 }
 
 /* Override browser autofill white background */
