@@ -165,15 +165,27 @@ export const useOnlinePlayersStore = defineStore('onlinePlayers', () => {
     return inside
   }
 
+  // Residences grouped by world — speeds up region↔residence point-in-polygon
+  // matching (only same-world pairs need testing).
+  const residencesByWorld = computed(() => {
+    const map: Record<string, ResidenceEntry[]> = {}
+    for (const r of residences.value) {
+      const w = r.world || 'world'
+      if (!map[w]) map[w] = []
+      map[w].push(r)
+    }
+    return map
+  })
+
   // Map region id → residence labels whose position falls within the region polygon
   // (same-world only — nether/end shapes must not swallow overworld residences)
   const regionResidences = computed(() => {
     const map: Record<string, string[]> = {}
     for (const region of regions.value) {
       const labels: string[] = []
+      const wRes = residencesByWorld.value[region.world || 'world'] || []
       if (region.shape && region.shape.length >= 3) {
-        for (const res of residences.value) {
-          if (region.world && res.world && region.world !== res.world) continue
+        for (const res of wRes) {
           if (res.position) {
             if (pointInPolygon(res.position.x, res.position.z, region.shape)) {
               labels.push(res.label)

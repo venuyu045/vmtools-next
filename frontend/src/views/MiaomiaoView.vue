@@ -3,7 +3,7 @@
     <h2>🛠️ 妙妙工具</h2>
     <p class="subtitle">领地排行榜 · 标记点目录 · MSPT排行榜</p>
 
-    <el-tabs v-model="activeTab" class="mm-tabs">
+    <el-tabs v-model="activeTab" class="mm-tabs" @tab-change="onTabChange">
       <!-- Tab 1: 领地排行榜 -->
       <el-tab-pane label="🏠 领地排行榜" name="residences">
         <div class="tab-toolbar">
@@ -23,7 +23,7 @@
         </div>
 
         <el-table
-          :data="filteredResidences"
+          :data="filteredResidences.slice(0, 500)"
           stripe
           size="small"
           max-height="500"
@@ -210,7 +210,7 @@
         </div>
 
         <el-table
-          :data="filteredRegions"
+          :data="filteredRegions.slice(0, 500)"
           stripe
           size="small"
           max-height="500"
@@ -317,33 +317,45 @@ const refreshing = ref(false)
 
 const rawResidences = ref<any[]>([])
 
-onMounted(async () => {
-  // Fetch residences/markers/regions from API on mount (in case Socket.IO hasn't pushed yet)
+// ── 按 tab 懒加载 ──────────────────────────────────────────────
+// 进入页面只请求当前 tab 的数据；切换 tab 时按需加载该 tab（每个 tab 只请求一次）。
+// 此前 onMounted 串行 await 6 个接口（每个等返回才发下一个）是"点击卡很久"的主因。
+const loadedTabs = ref<Set<string>>(new Set())
+
+async function loadTabData(tab: string) {
+  if (loadedTabs.value.has(tab)) return
+  loadedTabs.value.add(tab)
   try {
-    const { data: rd } = await client.get('/bluemap/residences')
-    rawResidences.value = rd.residences || []
-    playerStore.setResidences(rd.residences || [])
+    if (tab === 'residences') {
+      const { data: rd } = await client.get('/bluemap/residences')
+      rawResidences.value = rd.residences || []
+      playerStore.setResidences(rd.residences || [])
+    } else if (tab === 'markers') {
+      const { data: md } = await client.get('/bluemap/markers')
+      playerStore.setMarkers(md.markers || [])
+    } else if (tab === 'landmarks') {
+      const { data: ld } = await client.get('/bluemap/landmarks')
+      playerStore.setLandmarks(ld.landmarks || [])
+    } else if (tab === 'metro') {
+      const [ml, ms] = await Promise.all([
+        client.get('/bluemap/metro-lines'),
+        client.get('/bluemap/metro-stations'),
+      ])
+      playerStore.setMetroLines(ml.data.metro_lines || [])
+      playerStore.setMetroStations(ms.data.metro_stations || [])
+    } else if (tab === 'mspt') {
+      const { data: rg } = await client.get('/bluemap/regions')
+      playerStore.setRegions(rg.regions || [])
+    }
   } catch { /* Socket.IO will populate */ }
-  try {
-    const { data: md } = await client.get('/bluemap/markers')
-    playerStore.setMarkers(md.markers || [])
-  } catch { /* Socket.IO will populate */ }
-  try {
-    const { data: rg } = await client.get('/bluemap/regions')
-    playerStore.setRegions(rg.regions || [])
-  } catch { /* Socket.IO will populate */ }
-  try {
-    const { data: ld } = await client.get('/bluemap/landmarks')
-    playerStore.setLandmarks(ld.landmarks || [])
-  } catch { /* Socket.IO will populate */ }
-  try {
-    const { data: ml } = await client.get('/bluemap/metro-lines')
-    playerStore.setMetroLines(ml.metro_lines || [])
-  } catch { /* Socket.IO will populate */ }
-  try {
-    const { data: ms } = await client.get('/bluemap/metro-stations')
-    playerStore.setMetroStations(ms.metro_stations || [])
-  } catch { /* Socket.IO will populate */ }
+}
+
+function onTabChange() {
+  void loadTabData(activeTab.value)
+}
+
+onMounted(() => {
+  void loadTabData(activeTab.value)
 })
 
 const filteredResidences = computed(() => {
