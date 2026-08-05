@@ -106,6 +106,16 @@
           <template v-if="warehouseStore.scanScanned || warehouseStore.scanTotal">
             | {{ warehouseStore.scanScanned }}/{{ warehouseStore.scanTotal }} 容器
           </template>
+          <template v-if="warehouseStore.scanItems">
+            | {{ warehouseStore.scanItems.toLocaleString() }} 物品
+          </template>
+          <template v-if="warehouseStore.scanSpeed > 0">
+            | {{ warehouseStore.scanSpeed }} 容器/秒
+            <template v-if="warehouseStore.scanEta != null">| 预计剩余 {{ formatEta(warehouseStore.scanEta) }}</template>
+          </template>
+          <template v-if="queuePosition != null">
+            | 排队中（前面还有 {{ queuePosition }} 个任务）
+          </template>
           <template v-if="warehouseStore.scanCurrentPos">
             | 当前: {{ warehouseStore.scanCurrentPos.x }},{{ warehouseStore.scanCurrentPos.y }},{{ warehouseStore.scanCurrentPos.z }}
           </template>
@@ -200,12 +210,12 @@ const availableBots = computed(() => {
 })
 
 const isScanning = computed(() =>
-  ['scanning', 'paused'].includes(warehouseStore.scanStatus)
+  ['scanning', 'paused', 'queued'].includes(warehouseStore.scanStatus)
 )
-
 const statusText = computed(() => {
   const map: Record<string, string> = {
     idle: '空闲',
+    queued: '排队中',
     scanning: '扫描中',
     paused: '已暂停',
     finished: '已完成',
@@ -214,6 +224,29 @@ const statusText = computed(() => {
   }
   return map[warehouseStore.scanStatus] || warehouseStore.scanStatus
 })
+// 当前仓库在扫描队列中的位置（排队中时显示）
+const queuePosition = computed<number | null>(() => {
+  const items = warehouseStore.scanQueue.filter(
+    (q: any) => q.warehouse_id === warehouseId.value && ['pending', 'paused'].includes(q.status)
+  )
+  if (!items.length) return null
+  // 计算排在当前任务前面（更早创建）的 pending 任务数
+  const myCreated = items[0].created_at
+  const ahead = warehouseStore.scanQueue.filter(
+    (q: any) => q.status === 'pending' && q.created_at && myCreated && q.created_at < myCreated
+  ).length
+  return ahead
+})
+function formatEta(seconds: number | null) {
+  if (seconds == null || !isFinite(seconds) || seconds < 0) return '--'
+  const s = Math.round(seconds)
+  const h = Math.floor(s / 3600)
+  const m = Math.floor((s % 3600) / 60)
+  const sec = s % 60
+  if (h > 0) return `${h}h${m}m`
+  if (m > 0) return `${m}m${sec}s`
+  return `${sec}s`
+}
 
 function formatTime(iso: string | null) {
   if (!iso) return '--'
@@ -268,15 +301,30 @@ function onScanAlert(payload: any) {
   }
 }
 
+function onScanQueueUpdate(payload: any) {
+  warehouseStore.setScanQueue(payload?.items ?? [])
+  // 若当前仓库有新队列项，同步 scan_status
+  const mine = (payload?.items ?? []).find((q: any) => q.warehouse_id === warehouseId.value)
+  if (mine) {
+    warehouseStore.scanStatus = mine.status === 'running' ? 'scanning' : mine.status
+    if (mine.status === 'running') {
+      warehouseStore.scanScanned = mine.scanned_containers || 0
+      warehouseStore.scanTotal = mine.total_containers || 0
+      warehouseStore.scanItems = mine.items_scanned || 0
+    }
+  }
+}
+
 onMounted(async () => {
-  await Promise.all([botStore.fetchBots(), mccStore.fetchInstances(), refreshAll()])
+  await Promise.all([botStore.fetchBots(), mccStore.fetchInstances(), refreshAll(), warehouseStore.fetchScanQueue()])
   getSocket()?.on('scan_progress', onScanProgress)
   getSocket()?.on('scan_alert', onScanAlert)
+  getSocket()?.on('scan_queue_update', onScanQueueUpdate)
 })
-
 onBeforeUnmount(() => {
   getSocket()?.off('scan_progress', onScanProgress)
   getSocket()?.off('scan_alert', onScanAlert)
+  getSocket()?.off('scan_queue_update', onScanQueueUpdate)
 })
 </script>
 

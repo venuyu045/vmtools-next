@@ -43,4 +43,7 @@ export const warehouseApi = {
     getScanStatus(id: string) {
     return client.get(`/warehouses/${id}/scan-status`)
     },
+    getScanQueue() {
+    return client.get(`/warehouses/scan-queue`)
+    },
     }

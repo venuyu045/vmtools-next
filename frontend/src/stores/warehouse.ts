@@ -42,11 +42,15 @@ export const useWarehouseStore = defineStore('warehouse', {
     materialTotal: 0,
     loading: false,
     // 扫描状态（Socket.IO 实时推送）
-    scanStatus: 'idle' as string, // idle | scanning | paused | finished | cancelled | failed
+    scanStatus: 'idle' as string, // idle | queued | scanning | paused | finished | cancelled | failed
     scanProgress: 0,
     scanScanned: 0,
     scanTotal: 0,
+    scanItems: 0,
+    scanSpeed: 0,
+    scanEta: null as number | null,
     scanCurrentPos: null as { x: number; y: number; z: number } | null,
+    scanQueue: [] as any[], // 扫描队列（scan_queue_update）
   }),
   actions: {
     async fetchWarehouses() {
@@ -89,13 +93,26 @@ export const useWarehouseStore = defineStore('warehouse', {
       this.scanProgress = data.progress || 0
       this.scanScanned = data.scanned_containers || 0
       this.scanTotal = data.total_containers || 0
+      this.scanItems = data.items_scanned || 0
       return data
+    },
+    async fetchScanQueue() {
+      try {
+        const { data } = await warehouseApi.getScanQueue()
+        this.scanQueue = data?.items ?? []
+      } catch { /* ignore */ }
     },
     setScanProgress(payload: any) {
       this.scanProgress = payload?.progress ?? this.scanProgress
       this.scanScanned = payload?.scanned ?? this.scanScanned
       this.scanTotal = payload?.total ?? this.scanTotal
+      this.scanItems = payload?.items_scanned ?? this.scanItems
+      this.scanSpeed = payload?.speed ?? 0
+      this.scanEta = payload?.eta_seconds ?? null
       if (payload?.current_pos) this.scanCurrentPos = payload.current_pos
+    },
+    setScanQueue(items: any[]) {
+      this.scanQueue = items ?? []
     },
   },
 })
