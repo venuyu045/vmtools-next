@@ -8,7 +8,7 @@
         </div>
       </div>
       <div class="header-actions">
-        <router-link to="/mcc-instances" class="pixel-btn outline page-link">返回实例</router-link>
+        <router-link :to="backPath" class="pixel-btn outline page-link">返回实例</router-link>
         <button class="pixel-btn outline" @click="refreshPage">刷新</button>
         <button class="pixel-btn" :disabled="!instance || instance.status === 'running' || isBusy" @click="startInstance">启动</button>
         <button class="pixel-btn warning" :disabled="!instance || instance.status !== 'running' || isBusy" @click="stopInstance">停止</button>
@@ -41,6 +41,9 @@ const instanceId = computed(() => String(route.params.id || ''))
 const instance = computed(() => store.instances.find(item => item.instance_id === instanceId.value) || null)
 const isBusy = computed(() => instance.value ? !!store.actionLoading[instance.value.instance_id] : false)
 const instanceLabel = computed(() => instance.value ? `${instance.value.display_name || instance.value.slug}` : instanceId.value)
+/** MF 实例返回 MF 管理列表，MCC 实例返回 MCC 管理列表 */
+const isMineflayer = computed(() => instance.value?.bot_engine === 'mineflayer')
+const backPath = computed(() => (isMineflayer.value ? '/mf-instances' : '/mcc-instances'))
 const serverLabel = computed(() => {
   if (!instance.value?.mc_server_host) return '--'
   return `${instance.value.mc_server_host}:${instance.value.mc_server_port}`

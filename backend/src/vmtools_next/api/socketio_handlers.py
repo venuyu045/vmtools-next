@@ -138,6 +138,34 @@ async def disconnect(sid):
     logger.info("Socket.IO client disconnected: {}", sid)
 
 
+async def _terminal_manager_for(instance_id: str):
+    """根据实例的 bot_engine 选择对应的进程管理器（MCC / Mineflayer）。
+
+    MCC 与 MF 实例共用同一张 mcc_instances 表，但终端数据由各自的
+    ProcessManager 维护（MccProcessManager / MineflayerProcessManager）。
+    """
+    try:
+        from vmtools_next.data.models.mcc_remote import MccInstanceModel
+        Session = get_session_factory()
+        db = Session()
+        try:
+            inst = db.query(MccInstanceModel).filter(
+                MccInstanceModel.instance_id == instance_id,
+                MccInstanceModel.deleted_at.is_(None),
+            ).first()
+            engine = (inst.bot_engine if inst else None) or "mcc"
+        finally:
+            db.close()
+    except Exception:
+        engine = "mcc"
+
+    if engine == "mineflayer":
+        from vmtools_next.main import get_mineflayer_process_manager
+        return get_mineflayer_process_manager()
+    from vmtools_next.main import get_mcc_process_manager
+    return get_mcc_process_manager()
+
+
 @sio.on("mcc_join_instance")
 async def mcc_join_instance(sid, data):
     """Subscribe a socket to one MCC instance terminal room."""
@@ -153,11 +181,9 @@ async def mcc_join_instance(sid, data):
         await sio.emit("mcc_terminal_error", {"instance_id": instance_id, "message": "Permission denied"}, to=sid)
         return
     try:
-        from vmtools_next.main import get_mcc_process_manager
-
-        manager = get_mcc_process_manager()
+        manager = await _terminal_manager_for(instance_id)
         if not manager:
-            await sio.emit("mcc_terminal_error", {"instance_id": instance_id, "message": "MCC process manager not initialized"}, to=sid)
+            await sio.emit("mcc_terminal_error", {"instance_id": instance_id, "message": "Process manager not initialized"}, to=sid)
             return
         await sio.enter_room(sid, f"mcc:{instance_id}")
         lines = manager.tail_logs(instance_id, tail=max(1, min(tail_lines, 1000)))
@@ -207,11 +233,9 @@ async def mcc_terminal_input(sid, data):
     user = await _user_from_session(sid)
     db = get_session_factory()()
     try:
-        from vmtools_next.main import get_mcc_process_manager
-
-        manager = get_mcc_process_manager()
+        manager = await _terminal_manager_for(instance_id)
         if not manager:
-            await sio.emit("mcc_terminal_error", {"instance_id": instance_id, "message": "MCC process manager not initialized"}, to=sid)
+            await sio.emit("mcc_terminal_error", {"instance_id": instance_id, "message": "Process manager not initialized"}, to=sid)
             return
         await manager.write_stdin(instance_id, input_text, append_newline=append_newline, source_sid=sid)
         audit.log(db, user=user, action="terminal.input", resource_type="terminal", instance_id=instance_id)
@@ -239,9 +263,7 @@ async def mcc_terminal_resize(sid, data):
     if not await _check_mcc_permission(sid, instance_id):
         return
     try:
-        from vmtools_next.main import get_mcc_process_manager
-
-        manager = get_mcc_process_manager()
+        manager = await _terminal_manager_for(instance_id)
         if not manager:
             return
         await manager.resize_terminal(instance_id, int(cols), int(rows))

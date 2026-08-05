@@ -478,7 +478,7 @@ def terminal_history(
     user: UserModel = Depends(get_current_user),
 ):
     service.get_instance(db, user, instance_id)
-    lines = _process_manager().tail_logs(instance_id, tail=tail, after_seq=after_seq)
+    lines = _process_manager(_resolve_engine(db, instance_id)).tail_logs(instance_id, tail=tail, after_seq=after_seq)
     return MccTerminalHistoryResponse(
         items=[
             MccTerminalLogResponse(
@@ -502,7 +502,7 @@ async def terminal_input(
 ):
     service.get_instance(db, user, instance_id)
     try:
-        await _process_manager().write_stdin(instance_id, data.input, append_newline=data.append_newline)
+        await _process_manager(_resolve_engine(db, instance_id)).write_stdin(instance_id, data.input, append_newline=data.append_newline)
         audit.log(db, user=user, action="terminal.input", resource_type="terminal", instance_id=instance_id)
         db.commit()
         return {"sent": True}
