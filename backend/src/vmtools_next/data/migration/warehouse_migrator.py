@@ -1,6 +1,8 @@
 """Warehouse Migrator — converts Java warehouse JSON to SQLite.
 
 Reads DataSerializer output (warehouses.json) and imports to database.
+Field names are aligned with the current ORM models (WarehouseModel /
+StorageZoneModel).
 """
 from __future__ import annotations
 
@@ -33,36 +35,40 @@ class WarehouseMigrator:
             warehouses = data if isinstance(data, list) else data.get("warehouses", [])
 
             for wh_data in warehouses:
-                wh_id = wh_data.get("id", str(uuid.uuid4()))
-                existing = db.query(WarehouseModel).filter(WarehouseModel.id == wh_id).first()
+                wh_id = wh_data.get("id", wh_data.get("warehouseId", str(uuid.uuid4())))
+                existing = db.query(WarehouseModel).filter(WarehouseModel.warehouse_id == wh_id).first()
                 if existing:
                     logger.info("Warehouse %s already exists, skipping", wh_id)
                     continue
 
                 warehouse = WarehouseModel(
-                    id=wh_id,
-                    name=wh_data.get("name", ""),
-                    server_address=wh_data.get("serverAddress", ""),
-                    x=wh_data.get("x", 0),
-                    y=wh_data.get("y", 0),
-                    z=wh_data.get("z", 0),
-                    teleport_command=wh_data.get("teleportCmd", ""),
-                    organization_id=organization_id,
+                    warehouse_id=wh_id,
+                    name=wh_data.get("name", wh_data.get("displayName", "")),
+                    aisle_lines=json.dumps(
+                        wh_data.get("aisleLines", wh_data.get("aisle_lines", [])),
+                        ensure_ascii=False,
+                    ),
+                    organization_id=organization_id or wh_data.get("organizationId"),
+                    logistics_teleport_cmd=wh_data.get("teleportCmd") or wh_data.get("teleport_command"),
                 )
                 db.add(warehouse)
 
                 # Import storage zones
-                for zone_data in wh_data.get("storageZones", []):
+                for zone_data in wh_data.get("storageZones", wh_data.get("zones", [])):
                     zone = StorageZoneModel(
-                        id=str(uuid.uuid4()),
-                        warehouse_id=wh_id,
+                        zone_id=zone_data.get("id", zone_data.get("zoneId", str(uuid.uuid4()))),
+                        warehouse_fk=wh_id,
                         name=zone_data.get("name", ""),
-                        min_x=zone_data.get("minX", 0),
-                        min_y=zone_data.get("minY", 0),
-                        min_z=zone_data.get("minZ", 0),
-                        max_x=zone_data.get("maxX", 0),
-                        max_y=zone_data.get("maxY", 0),
-                        max_z=zone_data.get("maxZ", 0),
+                        range_min_x=zone_data.get("minX", zone_data.get("rangeMinX", 0)),
+                        range_min_y=zone_data.get("minY", zone_data.get("rangeMinY", 0)),
+                        range_min_z=zone_data.get("minZ", zone_data.get("rangeMinZ", 0)),
+                        range_max_x=zone_data.get("maxX", zone_data.get("rangeMaxX", 0)),
+                        range_max_y=zone_data.get("maxY", zone_data.get("rangeMaxY", 0)),
+                        range_max_z=zone_data.get("maxZ", zone_data.get("rangeMaxZ", 0)),
+                        aisle_lines=json.dumps(
+                            zone_data.get("aisleLines", zone_data.get("aisle_lines", [])),
+                            ensure_ascii=False,
+                        ),
                     )
                     db.add(zone)
 

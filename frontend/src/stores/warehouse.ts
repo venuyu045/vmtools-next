@@ -23,7 +23,14 @@ export const useWarehouseStore = defineStore('warehouse', {
     warehouses: [] as Warehouse[],
     currentWarehouse: null as Warehouse | null,
     materials: [] as MaterialItem[],
+    materialTotal: 0,
     loading: false,
+    // 扫描状态（Socket.IO 实时推送）
+    scanStatus: 'idle' as string, // idle | scanning | paused | finished | cancelled | failed
+    scanProgress: 0,
+    scanScanned: 0,
+    scanTotal: 0,
+    scanCurrentPos: null as { x: number; y: number; z: number } | null,
   }),
   actions: {
     async fetchWarehouses() {
@@ -40,8 +47,8 @@ export const useWarehouseStore = defineStore('warehouse', {
       this.currentWarehouse = data
       return data
     },
-    async createWarehouse(name: string, organizationId?: string) {
-      const { data } = await warehouseApi.create({ name, organization_id: organizationId })
+    async createWarehouse(name: string) {
+      const { data } = await warehouseApi.create({ name })
       this.warehouses.push(data)
       return data
     },
@@ -51,8 +58,23 @@ export const useWarehouseStore = defineStore('warehouse', {
     },
     async fetchMaterials(id: string) {
       const { data } = await warehouseApi.getMaterials(id)
-      this.materials = data
+      this.materials = data.items ?? []
+      this.materialTotal = data.total ?? 0
       return data
+    },
+    async fetchScanStatus(id: string) {
+      const { data } = await warehouseApi.getScanStatus(id)
+      this.scanStatus = data.status || 'idle'
+      this.scanProgress = data.progress || 0
+      this.scanScanned = data.scanned_containers || 0
+      this.scanTotal = data.total_containers || 0
+      return data
+    },
+    setScanProgress(payload: any) {
+      this.scanProgress = payload?.progress ?? this.scanProgress
+      this.scanScanned = payload?.scanned ?? this.scanScanned
+      this.scanTotal = payload?.total ?? this.scanTotal
+      if (payload?.current_pos) this.scanCurrentPos = payload.current_pos
     },
   },
 })

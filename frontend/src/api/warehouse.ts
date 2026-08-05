@@ -13,28 +13,31 @@ export const warehouseApi = {
   delete(id: string) {
     return client.delete(`/warehouses/${id}`)
   },
-  getMaterials(id: string, page = 1, pageSize = 500) {
+    getMaterials(id: string, page = 1, pageSize = 500) {
     return client.get(`/warehouses/${id}/materials`, { params: { page, page_size: pageSize } })
-  },
-  searchMaterials(q: string, page = 1) {
+    },
+    searchMaterials(q: string, page = 1) {
     return client.get('/materials/search', { params: { q, page } })
-  },
-  getAisles(id: string) {
+    },
+    getAisles(id: string) {
     return client.get(`/warehouses/${id}/aisles`)
-  },
-  updateAisles(id: string, data: any) {
+    },
+    updateAisles(id: string, data: any) {
     return client.put(`/warehouses/${id}/aisles`, data)
-  },
-  getZones(id: string) {
+    },
+    getZones(id: string) {
     return client.get(`/warehouses/${id}/zones`)
-  },
-  createZone(id: string, data: any) {
+    },
+    createZone(id: string, data: any) {
     return client.post(`/warehouses/${id}/zones`, data)
-  },
-  updateZone(id: string, zoneId: string, data: any) {
+    },
+    updateZone(id: string, zoneId: string, data: any) {
     return client.put(`/warehouses/${id}/zones/${zoneId}`, data)
-  },
-  deleteZone(id: string, zoneId: string) {
+    },
+    deleteZone(id: string, zoneId: string) {
     return client.delete(`/warehouses/${id}/zones/${zoneId}`)
-  },
-}
+    },
+    getScanStatus(id: string) {
+    return client.get(`/warehouses/${id}/scan-status`)
+    },
+    }

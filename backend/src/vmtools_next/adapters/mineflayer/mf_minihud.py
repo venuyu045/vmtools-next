@@ -1,8 +1,11 @@
-"""Mineflayer MiniHud Adapter — container reading via WebSocket.
+"""Mineflayer MiniHud Adapter — Servux 容器预览（不打开容器）。
 
-Implements AbstractMiniHudAdapter using MineflayerBridgeClient.
-Follows the same open→read→close three-step protocol as the MCC version,
-but uses container_id (UUID string) instead of MCC's integer inventory_id.
+Implements AbstractMiniHudAdapter using the Servux Entity Data Sync protocol
+(via MineflayerBridgeClient → node bot's servux handler).
+
+Unlike the old open→read→close flow, this adapter requests the BlockEntity NBT
+directly by position — the container is NEVER opened in-game. If the server
+does not have Servux (handshake fails), reads fail with a clear error.
 """
 
 from __future__ import annotations
@@ -24,7 +27,7 @@ logger = logging.getLogger("vmtools.mf_minihud")
 
 
 class MfMiniHudAdapter(AbstractMiniHudAdapter):
-    """Container reading via mineflayer WebSocket bridge."""
+    """Servux container preview via mineflayer WebSocket bridge."""
 
     def __init__(self, client: MineflayerBridgeClient):
         self._client = client
@@ -32,59 +35,48 @@ class MfMiniHudAdapter(AbstractMiniHudAdapter):
     def is_available(self) -> bool:
         return self._client.is_connected
 
+    async def ensure_servux(self, timeout_ms: int = 4000) -> bool:
+        """Ensure the bot has successfully handshaken with the server's Servux plugin."""
+        try:
+            result = await self._client.servux_handshake(timeout_ms=timeout_ms)
+            return bool(result.get("success"))
+        except Exception as e:
+            logger.warning("Servux handshake failed: %s", e)
+            return False
+
     async def read_container_items(self, x: int, y: int, z: int,
                                     timeout_ms: int = 5000) -> ReadResult:
-        """Open container, read contents, close container.
+        """Read container contents via Servux preview — never opens the container.
 
-        Returns ReadResult with items on success, or ReadResult.failed() on error.
+        Returns ReadResult with items on success, or ReadResult.failed() on error
+        (e.g. Servux not available on the server).
         """
         if not self._client.is_connected:
             return ReadResult.failed("Not connected to mineflayer bot")
 
-        container_id: Optional[str] = None
         try:
-            # 1. 打开容器
-            open_result = await self._client.open_container_at(x, y, z, timeout_ms=timeout_ms)
-            if not open_result.get("success"):
-                return ReadResult.failed(open_result.get("error", "Failed to open container"))
+            result = await self._client.preview_container_at(x, y, z, timeout_ms=timeout_ms)
+            if not result.get("success"):
+                return ReadResult.failed(result.get("error", "Servux read failed"))
 
-            container_id = open_result.get("container_id")
-            if not container_id:
-                return ReadResult.failed("No container_id in response")
-
-            # 2. 读取容器快照
-            snapshot = await self._client.get_container_snapshot(container_id)
-            items_raw = snapshot.get("items", [])
-
-            # 3. 转换为 MaterialStack
+            items_raw = result.get("items", [])
             items = [
                 MaterialStack(
-                    item_id=item.get("name", item.get("type", "")),
+                    item_id=item.get("item_id", item.get("name", item.get("type", ""))),
                     display_name=item.get("display_name", ""),
                     count=item.get("count", 0),
                     slot=item.get("slot", -1),
                 )
                 for item in items_raw
             ]
-
-            return ReadResult.ok(items, source="mineflayer_ws")
+            return ReadResult.ok(items, source="servux")
 
         except MineflayerError as e:
             return ReadResult.failed(str(e))
         except Exception as e:
             logger.error("read_container_items error at (%d,%d,%d): %s", x, y, z, e)
             return ReadResult.failed(str(e))
-        finally:
-            # 确保关闭容器
-            if container_id:
-                try:
-                    await self._client.close_container(container_id, timeout_ms=timeout_ms)
-                except Exception as e:
-                    logger.warning("Failed to close container %s: %s", container_id, e)
 
     async def prefetch_container(self, x: int, y: int, z: int) -> None:
-        """Pre-fetch container data.
-
-        Not implemented for WebSocket mode (no pre-fetch capability yet).
-        """
-        pass  # mineflayer mode has no pre-fetch yet
+        """No-op: Servux reads are direct requests, no pre-fetch concept."""
+        pass
