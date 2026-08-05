@@ -180,6 +180,8 @@ function createServuxHandlers(bot) {
   let servuxVersion = null;
   let handshakePromise = null;
   let handshakeResolve = null;
+  // v1 协议（minihud LTS/1.21.11, PROTOCOL_VERSION=1）：block/entity request 需带自增 transactionId
+  let nextTxnId = 0;
 
   // ── 发送原始 payload ──
   function sendPayload(payloadBuffer) {
@@ -203,12 +205,14 @@ function createServuxHandlers(bot) {
     handshakePromise = new Promise((resolve) => {
       handshakeResolve = resolve;
 
-      // 注意：旧版 Servux（v1，如 servux-lophine-1.21.11-DEV）不识别带 NBT 的
-      // C2S_METADATA_REQUEST（v2 才用 DataByteBufUtils 写 NBT）。发送标准 NBT 请求
-      // 会被服务端解码为 "found N bytes extra" 并直接踢下线。
-      // Servux 服务端在客户端注册通道后【主动推送】S2C_METADATA，因此这里只等待
-      // 推送即可，不主动发包（如需主动请求，只能发裸 type：varint(2) 无 NBT）。
-      // sendPayload(writeVarInt(TYPE_C2S_METADATA_REQUEST));
+      // v1 协议 C2S_METADATA_REQUEST = varint(2) + MC网络NBT{version:1}（无 root name）。
+      // 服务器（servux-lophine, 协议v1）能正常解析，且会回/推 S2C_METADATA。
+      const metaNbt = Buffer.from([
+        0x0a, 0x03, 0x00, 0x07, 0x76, 0x65, 0x72, 0x73, 0x69, 0x6f, 0x6e, // compound + int + "version"
+        0x00, 0x00, 0x00, 0x01, // version = 1
+        0x00, // end
+      ]);
+      sendPayload(Buffer.concat([writeVarInt(TYPE_C2S_METADATA_REQUEST), metaNbt]));
 
       // 握手结果由 custom_payload 接收侧在收到 S2C_METADATA 时回填（resolve）；
       // 这里用超时兜底，避免等待时挂死。
@@ -340,10 +344,16 @@ function createServuxHandlers(bot) {
       return { success: false, error: `Duplicate request for container at ${key}` };
     }
 
-    // 编码：type(3) + pos long
+    // 编码（v1 协议，minihud LTS/1.21.11）：
+    // C2S_BLOCK_ENTITY_REQUEST = varint(type=3) + varint(transactionId) + BlockPos(long)
+    // 注意：v1 必须带 transactionId，否则服务端读取 BlockPos 时数据不足会解码失败踢人。
     const posBuf = Buffer.alloc(8);
     posBuf.writeBigInt64BE(posToLong(x, y, z), 0);
-    const payload = Buffer.concat([writeVarInt(TYPE_C2S_BLOCK_ENTITY_REQUEST), posBuf]);
+    const payload = Buffer.concat([
+      writeVarInt(TYPE_C2S_BLOCK_ENTITY_REQUEST),
+      writeVarInt(nextTxnId++),
+      posBuf,
+    ]);
     if (!sendPayload(payload)) {
       return { success: false, error: 'Failed to send Servux request' };
     }
