@@ -1,5 +1,9 @@
 import { defineStore } from 'pinia'
 import { mccInstanceApi, type MccAccountConfig, type MccAccountProfile, type MccAccountProfilePayload, type MccFileBreadcrumb, type MccFileContent, type MccFileEntry, type MccFileTreeNode, type MccInstance, type MccInstanceCreatePayload, type MccTerminalLine } from '@/api/mccInstance'
+import { useSocketIO } from '@/composables/useSocketIO'
+
+/** Max terminal lines kept in the Pinia store (push & merge stay in sync). */
+export const TERMINAL_MAX_LINES = 1000
 
 export const useMccInstanceStore = defineStore('mccInstance', {
   state: () => ({
@@ -93,7 +97,7 @@ export const useMccInstanceStore = defineStore('mccInstance', {
       if (!Array.isArray(items) || !items.length) return
       const existing = this.terminalLines[instanceId] || []
       const existingSeqs = new Set(existing.map(l => l.seq))
-      const merged = existing.filter(l => existingSeqs.has(l.seq))
+      const merged = [...existing]
       for (const line of items) {
         if (!existingSeqs.has(line.seq)) {
           existingSeqs.add(line.seq)
@@ -101,10 +105,16 @@ export const useMccInstanceStore = defineStore('mccInstance', {
         }
       }
       merged.sort((a, b) => a.seq - b.seq)
-      this.terminalLines[instanceId] = merged.slice(-800)
+      this.terminalLines[instanceId] = merged.slice(-TERMINAL_MAX_LINES)
     },
     async sendInput(instanceId: string, input: string) {
-      await mccInstanceApi.input(instanceId, input)
+      // Terminal input goes through the Socket.IO channel (real-time + audited
+      // server-side); REST /terminal/input remains for legacy clients.
+      useSocketIO().emit('mcc_terminal_input', {
+        instance_id: instanceId,
+        input,
+        append_newline: true,
+      })
     },
     async fetchFiles(instanceId: string, path = '') {
       const { data } = await mccInstanceApi.listFiles(instanceId, path)
@@ -186,8 +196,9 @@ export const useMccInstanceStore = defineStore('mccInstance', {
           stream: payload.stream,
           content: payload.content,
           created_at: payload.created_at,
+          from_sid: payload.from_sid,
         },
-      ].slice(-500)
+      ].slice(-TERMINAL_MAX_LINES)
     },
   },
 })

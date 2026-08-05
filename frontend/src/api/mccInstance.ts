@@ -49,6 +49,8 @@ export interface MccTerminalLine {
   stream: string
   content: string
   created_at: string
+  /** Socket id that submitted the input (stdin echo only; used to skip re-rendering own input). */
+  from_sid?: string
 }
 
 export interface MccFileEntry {
@@ -195,8 +197,12 @@ export const mccInstanceApi = {
   restart(instanceId: string) {
     return client.post(`/mcc/instances/${instanceId}/restart`)
   },
-  history(instanceId: string, tail = 200) {
+  history(instanceId: string, tail = 1000) {
     return client.get<{ items: MccTerminalLine[]; last_seq: number }>(`/mcc/instances/${instanceId}/terminal/history`, { params: { tail } })
+  },
+  exportLog(instanceId: string) {
+    // Full terminal log export (plain text) — not capped by the ring buffer.
+    return client.get(`/mcc/instances/${instanceId}/terminal/log`, { responseType: 'blob' })
   },
   input(instanceId: string, input: string, append_newline = true) {
     return client.post(`/mcc/instances/${instanceId}/terminal/input`, { input, append_newline })
