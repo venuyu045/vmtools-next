@@ -173,6 +173,13 @@ class MineflayerProcessManager:
 
                 # 从账号配置获取 auth server URL
                 auth_url = account_profile.auth_server_url if account_profile else ""
+                # authlib-injector 兼容：若"认证服务器"填的是根域名、API Path 单独填
+                # （如 root=https://littleskin.cn + path=/api/yggdrasil），拼接成完整
+                # API base（https://littleskin.cn/api/yggdrasil），否则直接请求根下的
+                # /authserver 会 404。
+                api_path = (account_profile.auth_api_path or "") if account_profile else ""
+                if api_path and auth_url and not auth_url.rstrip("/").endswith(api_path.rstrip("/")):
+                    auth_url = auth_url.rstrip("/") + "/" + api_path.lstrip("/")
                 if not auth_url:
                     mf_config = get_config().mineflayer
                     auth_url = getattr(mf_config, "yggdrasil_auth_server_url", "")
