@@ -10,19 +10,44 @@
     <nav class="sidebar-nav">
       <template v-for="group in visibleGroups" :key="group.title">
         <div v-if="group.items.length" class="nav-group">
-          <span class="nav-group-title" v-show="!collapsed">{{ group.title }}</span>
-          <router-link
-            v-for="item in group.items"
-            :key="item.path"
-            :to="item.path"
-            class="nav-item"
-            :class="{ active: isActive(item) }"
-            :title="item.label"
-            @click="onNavClick"
+          <button
+            class="nav-group-title-btn"
+            :title="group.title"
+            @click="toggleGroup(group.title)"
           >
-            <span class="nav-dot"></span>
-            <span class="nav-label" v-show="!collapsed">{{ item.label }}</span>
-          </router-link>
+            <span class="group-arrow" v-show="!collapsed">{{ expanded[group.title] ? '▾' : '▸' }}</span>
+            <span class="group-dot" v-show="collapsed"></span>
+            <span class="nav-group-title" v-show="!collapsed">{{ group.title }}</span>
+          </button>
+          <template v-if="!collapsed">
+            <div v-show="expanded[group.title]" class="group-items">
+              <router-link
+                v-for="item in group.items"
+                :key="item.path"
+                :to="item.path"
+                class="nav-item"
+                :class="{ active: isActive(item) }"
+                :title="item.label"
+                @click="onNavClick"
+              >
+                <span class="nav-dot"></span>
+                <span class="nav-label">{{ item.label }}</span>
+              </router-link>
+            </div>
+          </template>
+          <template v-else>
+            <router-link
+              v-for="item in group.items"
+              :key="item.path"
+              :to="item.path"
+              class="nav-item"
+              :class="{ active: isActive(item) }"
+              :title="item.label"
+              @click="onNavClick"
+            >
+              <span class="nav-dot"></span>
+            </router-link>
+          </template>
         </div>
       </template>
     </nav>
@@ -35,7 +60,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, reactive } from 'vue'
 import { useRoute } from 'vue-router'
 import { useBotStore } from '@/stores/bot'
 import { useAuthStore } from '@/stores/auth'
@@ -53,6 +78,9 @@ interface NavGroup {
   title: string
   items: NavItem[]
 }
+
+/** localStorage key：分组折叠状态 */
+const GROUP_STATE_KEY = 'vmtools-sidebar-group-collapsed'
 
 const props = defineProps<{
   collapsed?: boolean
@@ -84,9 +112,9 @@ function onNavClick() {
 }
 
 /**
- * 侧边栏导航（按权限分组）
+ * 侧边栏导航（抽屉式，分组可折叠）
  * - 组织成员(1)：仪表盘、玩家追踪、妙妙工具
- * - 组织管理员(2)：+ 仓库管理、建造任务、地图画建造、物流管理、Bot 管理
+ * - 组织管理员(2)：+ MCC 管理、MF 管理、仓库管理、地图画建造、物流管理
  * - 站点管理员(3)：全部 + 成员管理、系统配置、插件管理、系统监控
  */
 const navGroups: NavGroup[] = [
@@ -106,7 +134,8 @@ const navGroups: NavGroup[] = [
   {
     title: '管理',
     items: [
-      { path: '/bots', label: 'Bot 管理', minRole: 2 },
+      { path: '/mcc-instances', label: 'MCC 管理', minRole: 2 },
+      { path: '/mf-instances', label: 'MF 管理', minRole: 2 },
       { path: '/warehouses', label: '仓库管理', minRole: 2 },
       { path: '/map-art-tasks', label: '地图画建造', minRole: 2 },
       { path: '/logistics/waypoints', label: '物流管理', minRole: 2 },
@@ -134,10 +163,48 @@ const visibleGroups = computed<NavGroup[]>(() => {
     .filter(group => group.items.length > 0)
 })
 
+/** 分组折叠状态（默认展开，localStorage 持久化） */
+const expanded = reactive<Record<string, boolean>>({})
+
+function loadGroupState() {
+  try {
+    const raw = localStorage.getItem(GROUP_STATE_KEY)
+    if (raw) {
+      const saved: Record<string, boolean> = JSON.parse(raw)
+      for (const g of navGroups) {
+        expanded[g.title] = saved[g.title] !== false // 默认展开
+      }
+    }
+  } catch { /* 忽略损坏的状态 */ }
+  for (const g of navGroups) {
+    if (expanded[g.title] === undefined) expanded[g.title] = true
+  }
+}
+
+function toggleGroup(title: string) {
+  if (props.collapsed) return // 整栏收起时不响应分组折叠
+  expanded[title] = !expanded[title]
+  try {
+    localStorage.setItem(GROUP_STATE_KEY, JSON.stringify({ ...expanded }))
+  } catch { /* 忽略 */ }
+}
+
+loadGroupState()
+
 function isActive(item: { path: string }): boolean {
-  return route.path === item.path ||
-    (item.path === '/bots' && (route.path.startsWith('/bots') || route.path.startsWith('/mcc'))) ||
-    (item.path === '/logistics/waypoints' && route.path.startsWith('/logistics'))
+  const detailOf = (base: string): boolean =>
+    route.path === base || route.path.startsWith(base + '/')
+  if (item.path === '/mcc-instances') {
+    // 终端/文件详情路由仍为 /bots/:id/...，归属 MCC 管理高亮
+    return detailOf('/mcc-instances') || route.path.startsWith('/bots/')
+  }
+  if (item.path === '/mf-instances') return detailOf('/mf-instances')
+  if (item.path === '/warehouses') return detailOf('/warehouses')
+  if (item.path === '/map-art-tasks') {
+    return detailOf('/map-art-tasks') || route.path.startsWith('/map-art/')
+  }
+  if (item.path === '/logistics/waypoints') return route.path.startsWith('/logistics')
+  return detailOf(item.path)
 }
 </script>
 
@@ -204,27 +271,71 @@ function isActive(item: { path: string }): boolean {
   -webkit-overflow-scrolling: touch;
 }
 
-/* ---- 分组标题 ---- */
+/* ---- 分组（抽屉式可折叠） ---- */
 .nav-group {
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  padding-top: 8px;
+  padding-top: 6px;
 }
 
 .nav-group:first-child {
   padding-top: 0;
 }
 
-.nav-group-title {
-  padding: 6px 20px 4px;
+/* 分组标题按钮：点击折叠/展开 */
+.nav-group-title-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 16px;
+  background: none;
+  border: none;
+  cursor: pointer;
   color: var(--text-muted);
   font-family: var(--font-mono);
   font-size: 11px;
   letter-spacing: 1px;
   text-transform: uppercase;
-  opacity: 0.6;
+  opacity: 0.75;
+  transition: all 0.12s;
+  text-align: left;
+  min-height: 34px;
+}
+
+.nav-group-title-btn:hover {
+  opacity: 1;
+  color: var(--green-primary);
+  background: var(--green-glow);
+}
+
+.group-arrow {
+  width: 12px;
+  flex-shrink: 0;
+  color: var(--text-muted);
+  transition: transform 0.15s ease;
+}
+
+.nav-group-title-btn:hover .group-arrow {
+  color: var(--green-primary);
+}
+
+.group-dot {
+  width: 6px;
+  height: 6px;
+  background: var(--green-primary);
+  opacity: 0.5;
+  flex-shrink: 0;
+}
+
+.nav-group-title {
   white-space: nowrap;
+}
+
+.group-items {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
 }
 
 .nav-item {
@@ -275,7 +386,6 @@ function isActive(item: { path: string }): boolean {
 .nav-label {
   flex: 1;
   white-space: nowrap;
-  transition: opacity 0.2s ease;
 }
 
 .sidebar-status {

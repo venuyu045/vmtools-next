@@ -57,7 +57,7 @@
               :value="bot.bot_id"
             />
           </el-select>
-          <span v-if="!allBots.length" style="color: #888; font-size: 12px;">暂无 Bot，请先在 Bot 管理中注册</span>
+          <span v-if="!allBots.length" style="color: #888; font-size: 12px;">暂无 Mineflayer Bot，请先在 MF 管理中创建 Mineflayer 实例并绑定 Bot</span>
         </el-form-item>
       </el-form>
       <template #footer>
@@ -73,9 +73,11 @@ import { ref, onMounted } from 'vue'
 import { mapArtApi } from '@/api/mapArt'
 import { botApi } from '@/api/bot'
 import { useBotStore } from '@/stores/bot'
+import { useMccInstanceStore } from '@/stores/mccInstance'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
 const botStore = useBotStore()
+const mccStore = useMccInstanceStore()
 const tasks = ref<any[]>([])
 const loading = ref(false)
 const showCreate = ref(false)
@@ -87,16 +89,26 @@ const form = ref({ name: '', origin_x: 0, origin_y: 64, origin_z: 0, bot_ids: []
 
 async function loadBots() {
   try {
-    // Use store (Socket.IO real-time status) + fallback to API
-    await botStore.fetchBots()
-    allBots.value = botStore.bots || []
+    // 地图画建造使用 Mineflayer Bot：只列出 Mineflayer 引擎实例绑定的 Bot
+    await Promise.all([botStore.fetchBots(), mccStore.fetchInstances()])
+    allBots.value = filterMineflayerBots(botStore.bots || [])
     if (!allBots.value.length) {
       const { data } = await botApi.list()
-      allBots.value = Array.isArray(data) ? data : (data.bots || data.items || [])
+      const fallback = Array.isArray(data) ? data : (data.bots || data.items || [])
+      allBots.value = filterMineflayerBots(fallback)
     }
   } catch (e) {
     console.error('加载 Bot 列表失败:', e)
   }
+}
+
+function filterMineflayerBots(bots: any[]): any[] {
+  const mfBotIds = new Set(
+    mccStore.instances
+      .filter(i => (i.bot_engine || '') === 'mineflayer' && i.bot_id)
+      .map(i => i.bot_id as string)
+  )
+  return bots.filter(b => mfBotIds.has(b.bot_id))
 }
 
 function botStatus(bot: any): string {

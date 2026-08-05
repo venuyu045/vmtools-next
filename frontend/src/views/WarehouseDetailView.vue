@@ -132,12 +132,14 @@ import { useRoute } from 'vue-router'
 import { ElNotification, ElMessage } from 'element-plus'
 import { useWarehouseStore, type WarehouseZone } from '@/stores/warehouse'
 import { useBotStore } from '@/stores/bot'
+import { useMccInstanceStore } from '@/stores/mccInstance'
 import { useSocketIO } from '@/composables/useSocketIO'
 import { warehouseApi } from '@/api/warehouse'
 
 const route = useRoute()
 const warehouseStore = useWarehouseStore()
 const botStore = useBotStore()
+const mccStore = useMccInstanceStore()
 const { emit, getSocket } = useSocketIO()
 
 const warehouseId = computed(() => route.params.id as string)
@@ -187,7 +189,15 @@ async function deleteZone(zoneId: string) {
   await fetchZones()
 }
 
-const availableBots = computed(() => botStore.bots)
+const availableBots = computed(() => {
+  // 仓库扫描走 Servux（mineflayer），只列出 Mineflayer 引擎实例绑定的 Bot
+  const mfBotIds = new Set(
+    mccStore.instances
+      .filter(i => (i.bot_engine || '') === 'mineflayer' && i.bot_id)
+      .map(i => i.bot_id as string)
+  )
+  return botStore.bots.filter(b => mfBotIds.has(b.bot_id))
+})
 
 const isScanning = computed(() =>
   ['scanning', 'paused'].includes(warehouseStore.scanStatus)
@@ -259,7 +269,7 @@ function onScanAlert(payload: any) {
 }
 
 onMounted(async () => {
-  await Promise.all([botStore.fetchBots(), refreshAll()])
+  await Promise.all([botStore.fetchBots(), mccStore.fetchInstances(), refreshAll()])
   getSocket()?.on('scan_progress', onScanProgress)
   getSocket()?.on('scan_alert', onScanAlert)
 })

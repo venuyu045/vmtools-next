@@ -8,7 +8,7 @@
         </div>
       </div>
       <div class="header-actions">
-        <router-link to="/bots" class="pixel-btn outline page-link">返回实例</router-link>
+        <router-link to="/mcc-instances" class="pixel-btn outline page-link">返回实例</router-link>
         <button class="pixel-btn outline" @click="refreshPage">刷新</button>
         <button class="pixel-btn" :disabled="!instance || instance.status === 'running' || isBusy" @click="startInstance">启动</button>
         <button class="pixel-btn warning" :disabled="!instance || instance.status !== 'running' || isBusy" @click="stopInstance">停止</button>
