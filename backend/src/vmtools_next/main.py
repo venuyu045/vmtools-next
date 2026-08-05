@@ -20,6 +20,7 @@ from vmtools_next.infra.logging import setup_logging, get_logger
 from vmtools_next.data.db import init_db, sio
 from vmtools_next.api.routers.health import router as health_router
 from vmtools_next.api.routers.auth import router as auth_router
+from vmtools_next.api.routers.admin_users import router as admin_users_router
 from vmtools_next.api.routers.warehouse import router as warehouse_router
 from vmtools_next.api.routers.build import router as build_router
 from vmtools_next.api.routers.mcc_bot import router as mcc_bot_router
@@ -325,6 +326,7 @@ def create_app() -> FastAPI:
     # Routers
     app.include_router(health_router)
     app.include_router(auth_router)
+    app.include_router(admin_users_router)
     app.include_router(warehouse_router)
     app.include_router(build_router)
     app.include_router(mcc_bot_router)
