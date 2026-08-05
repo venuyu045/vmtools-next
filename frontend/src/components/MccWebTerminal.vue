@@ -85,6 +85,65 @@ let commandHistory: string[] = []
 let pendingDraft = '' // input preserved while browsing history
 let joinConfirmTimer: ReturnType<typeof setTimeout> | null = null
 
+// ── Mobile touch scrolling ────────────────────────────────────────────
+// 框内纵向滑动滚动 xterm 历史；滑到历史边界后放行给页面滚动。
+let touchLastY = 0
+let touchActive = false
+
+function handleTerminalTouchStart() {
+  // 从事件里取第一个触点（事件对象由 addEventListener 传入）
+  const t = arguments[0] as TouchEvent
+  const p = t.touches[0]
+  if (!p) return
+  touchLastY = p.clientY
+  touchActive = true
+}
+
+function handleTerminalTouchMove(e: TouchEvent) {
+  if (!terminal || !touchActive) return
+  const t = e.touches[0]
+  if (!t) return
+  const deltaY = t.clientY - touchLastY
+  touchLastY = t.clientY
+  if (Math.abs(deltaY) < 2) return
+
+  const buffer = terminal.buffer.active
+  const maxScroll = Math.max(0, buffer.length - terminal.rows)
+  const lineHeight = estimateLineHeight()
+  // 上滑（deltaY<0）→ 想向上看历史 → xterm scrollLines(正数)
+  const amount = Math.round(-deltaY / lineHeight)
+
+  if (amount > 0 && buffer.baseY < maxScroll) {
+    // 历史里还有更早内容：接管手势，滚动终端
+    e.preventDefault()
+    e.stopPropagation()
+    terminal.scrollLines(Math.min(amount, maxScroll - buffer.baseY))
+    if (autoScroll.value) autoScroll.value = false // 手动浏览历史时停止自动跟随
+  } else if (amount < 0 && buffer.baseY > 0) {
+    // 正在回看历史且还未到底部：继续接管，向下滚回
+    e.preventDefault()
+    e.stopPropagation()
+    terminal.scrollLines(Math.max(amount, -buffer.baseY))
+    if (autoScroll.value) autoScroll.value = false
+  }
+  // 到达边界：不 preventDefault → 交给页面滚动（框外滑动同理）
+}
+
+function handleTerminalTouchEnd() {
+  touchActive = false
+}
+
+/** 估算一行文本的高度（px），用于把触摸位移换算成滚动行数。 */
+function estimateLineHeight(): number {
+  const el = terminalContainer.value
+  if (el && terminal) {
+    const rowsEl = el.querySelector('.xterm-rows')
+    if (rowsEl) return Math.max(10, rowsEl.clientHeight / terminal.rows)
+    return Math.max(10, el.clientHeight / terminal.rows)
+  }
+  return 14
+}
+
 const commandDictionary = [
   'help', 'status', 'exit', 'connect', 'disconnect', 'respawn', 'inventory', 'move',
   'login', 'logout', 'reco', 'script', 'send', 'list', 'look', 'dig', 'place', 'useitem', 'drop', 'dropall', 'hotbar', 'health', 'food', 'position', 'players', 'terrain', 'help settings', 'set', 'reload', 'quit', '/help', '/list', '/tell', '/msg', '/tpaccept', '/spawn', '/home', '/back']
@@ -135,15 +194,16 @@ function initTerminal() {
   terminal.open(terminalContainer.value)
   console.log('[Terminal] initTerminal: xterm opened on container', terminalContainer.value)
 
-  // Prevent touch scrolling from propagating to the page
-  terminalContainer.value.addEventListener('touchmove', (e) => {
-    e.stopPropagation()
-  }, { passive: false })
-
   terminal.onData(handleTerminalInput)
   terminal.writeln('\x1b[32mVMTools MCC Web Terminal\x1b[0m')
   terminal.writeln('\x1b[90m以 / 开头的内容作为服务器命令；其他内容自动作为游戏聊天发送。\x1b[0m')
   terminal.write(`\r\n${promptText()}`)
+
+  // 移动端触摸滚动：框内纵向滑动 = 滚动终端历史内容；
+  // 滑到历史边界后继续滑 = 放行给页面滚动（框外滑动本来就滚动页面）。
+  terminalContainer.value.addEventListener('touchstart', handleTerminalTouchStart, { passive: true })
+  terminalContainer.value.addEventListener('touchmove', handleTerminalTouchMove, { passive: false })
+  terminalContainer.value.addEventListener('touchend', handleTerminalTouchEnd, { passive: true })
 
   resizeObserver = new ResizeObserver(() => fitTerminal())
   resizeObserver.observe(terminalContainer.value)
@@ -505,7 +565,7 @@ onBeforeUnmount(() => {
 .terminal-toolbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 .search-input { width: 220px; }
 .terminal-toolbar .pixel-btn { padding: 8px 14px; }
-.xterm-shell { width: 100%; min-height: 260px; padding: 8px; background: #000; border: 1px solid var(--border-card); overflow: hidden; touch-action: none; }
+.xterm-shell { width: 100%; min-height: 260px; padding: 8px; background: #000; border: 1px solid var(--border-card); overflow: hidden; touch-action: pan-y; }
 .terminal-status { display: flex; justify-content: space-between; gap: 12px; color: var(--text-muted); font-size: 12px; }
 .conn-state { display: inline-flex; align-items: center; gap: 6px; }
 .conn-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
