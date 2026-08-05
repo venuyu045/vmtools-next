@@ -75,6 +75,34 @@ export interface MarkerEntry {
   detail: string
 }
 
+export interface LandmarkEntry {
+  id: string
+  world: string
+  label: string
+  position: { x: number; y: number; z: number } | null
+  type: string
+  detail: string
+}
+
+export interface MetroLineEntry {
+  id: string
+  world: string
+  label: string
+  line: { x: number; y: number; z: number }[]
+  line_color?: string
+  detail: string
+  position: { x: number; y: number; z: number } | null
+}
+
+export interface MetroStationEntry {
+  id: string
+  world: string
+  label: string
+  position: { x: number; y: number; z: number } | null
+  type: string
+  detail: string
+}
+
 const WORLD_LABELS: Record<string, string> = {
   world: '主世界',
   world_nether: '地狱',
@@ -90,6 +118,9 @@ export const useOnlinePlayersStore = defineStore('onlinePlayers', () => {
   const residences = ref<ResidenceEntry[]>([])
   const regions = ref<RegionEntry[]>([])
   const markers = ref<MarkerEntry[]>([])
+  const landmarks = ref<LandmarkEntry[]>([])
+  const metroLines = ref<MetroLineEntry[]>([])
+  const metroStations = ref<MetroStationEntry[]>([])
 
   const count = computed(() => players.value.length)
   const byWorld = computed(() => {
@@ -181,6 +212,28 @@ export const useOnlinePlayersStore = defineStore('onlinePlayers', () => {
     return Object.values(map).sort((a, b) => b.totalArea - a.totalArea)
   })
 
+  // Landmark groupings — by type (e.g. 地铁轻轨 / 商店金融 / 停车场 ...)
+  const landmarkTypes = computed(() => {
+    const map: Record<string, number> = {}
+    for (const lm of landmarks.value) {
+      const t = lm.type || '未分类'
+      map[t] = (map[t] || 0) + 1
+    }
+    return Object.entries(map)
+      .sort((a, b) => b[1] - a[1])
+      .map(([type, count]) => ({ type, count }))
+  })
+
+  const landmarksByType = computed(() => {
+    const map: Record<string, LandmarkEntry[]> = {}
+    for (const lm of landmarks.value) {
+      const t = lm.type || '未分类'
+      if (!map[t]) map[t] = []
+      map[t].push(lm)
+    }
+    return map
+  })
+
   function setPlayers(list: OnlinePlayer[]) {
     players.value = list
     lastUpdate.value = Date.now()
@@ -198,6 +251,18 @@ export const useOnlinePlayersStore = defineStore('onlinePlayers', () => {
     markers.value = list
   }
 
+  function setLandmarks(list: LandmarkEntry[]) {
+    landmarks.value = list
+  }
+
+  function setMetroLines(list: MetroLineEntry[]) {
+    metroLines.value = list
+  }
+
+  function setMetroStations(list: MetroStationEntry[]) {
+    metroStations.value = list
+  }
+
   function addEvent(ev: PlayerEvent) {
     events.value.unshift({ ...ev, time: Date.now() })
     if (events.value.length > 100) {
@@ -211,10 +276,12 @@ export const useOnlinePlayersStore = defineStore('onlinePlayers', () => {
 
   return {
     players, events, lastUpdate, count, byWorld, worldLabels,
-    residences, regions, markers,
+    residences, regions, markers, landmarks, metroLines, metroStations,
     residenceRankings, ownerRankings, regionRankings,
+    landmarkTypes, landmarksByType,
     regionResidences, regionOnlinePlayers,
     setPlayers, setResidences, setRegions, setMarkers,
+    setLandmarks, setMetroLines, setMetroStations,
     addEvent, getWorldLabel,
   }
 })
