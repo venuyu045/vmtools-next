@@ -204,6 +204,18 @@ def update_warehouse(warehouse_id: str, data: WarehouseUpdate,
     return _to_response(wh)
 
 
+@router.get("/scan-queue")
+def list_scan_queue(db: Session = Depends(get_db),
+                    user=Depends(get_current_user)):
+    """返回扫描队列列表（由 ScanQueueManager 调度）。注意：须定义在 /{warehouse_id} 之前。"""
+    from vmtools_next.main import get_scan_queue_manager
+    import asyncio
+    qm = get_scan_queue_manager()
+    if not qm:
+        return {"items": []}
+    return {"items": asyncio.run(qm.list_queue())}
+
+
 @router.get("/{warehouse_id}", response_model=WarehouseResponse)
 def get_warehouse(warehouse_id: str, db: Session = Depends(get_db),
                   user=Depends(get_current_user)):
@@ -390,15 +402,3 @@ def get_scan_status(warehouse_id: str, db: Session = Depends(get_db),
         started_at=st.started_at.isoformat() if st.started_at else None,
         finished_at=st.finished_at.isoformat() if st.finished_at else None,
     )
-
-
-@router.get("/scan-queue")
-def list_scan_queue(db: Session = Depends(get_db),
-                    user=Depends(get_current_user)):
-    """返回扫描队列列表（由 ScanQueueManager 调度）。"""
-    from vmtools_next.main import get_scan_queue_manager
-    import asyncio
-    qm = get_scan_queue_manager()
-    if not qm:
-        return {"items": []}
-    return {"items": asyncio.run(qm.list_queue())}
