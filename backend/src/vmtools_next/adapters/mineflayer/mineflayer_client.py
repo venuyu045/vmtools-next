@@ -34,6 +34,8 @@ from .protocol import (
     METHOD_GET_CONTAINER_SNAPSHOT,
     METHOD_WITHDRAW_CONTAINER_ITEM,
     METHOD_DEPOSIT_CONTAINER_ITEM,
+    METHOD_SERVUX_HANDSHAKE,
+    METHOD_PREVIEW_CONTAINER_AT,
     METHOD_SEND_CHAT,
     METHOD_RUN_COMMAND,
     METHOD_GET_SERVER_INFO,
@@ -388,6 +390,26 @@ class MineflayerBridgeClient(AbstractBotAgent):
             "count": count,
             "container_id": container_id,
         }, timeout=DEFAULT_CMD_TIMEOUT)
+
+    # ── Servux 容器预览（不打开容器） ──
+
+    async def servux_handshake(self, timeout_ms: int = 4000) -> dict:
+        """与服务器 Servux 插件握手，返回 {success, version?, error?}."""
+        return await self._send_request(METHOD_SERVUX_HANDSHAKE, {
+            "timeout_ms": timeout_ms,
+        }, timeout=max(3.0, timeout_ms / 1000 + 2.0))
+
+    async def preview_container_at(self, x: int, y: int, z: int,
+                                    timeout_ms: int = 5000) -> dict:
+        """通过 Servux 协议预览容器内容（不打开容器）。
+
+        Returns:
+            {"success": True, "items": [{item_id, display_name, count, slot}], "source": "servux"}
+            或 {"success": False, "error": "..."}
+        """
+        return await self._send_request(METHOD_PREVIEW_CONTAINER_AT, {
+            "x": x, "y": y, "z": z, "timeout_ms": timeout_ms,
+        }, timeout=timeout_ms / 1000 + 5.0)
 
     # ── 聊天 ──
 

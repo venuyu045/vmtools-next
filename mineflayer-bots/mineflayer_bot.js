@@ -18,6 +18,7 @@ const { createBlockHandlers } = require('./handlers/blocks');
 const { createInventoryHandlers } = require('./handlers/inventory');
 const { createWorldHandlers } = require('./handlers/world');
 const { createChatHandlers } = require('./handlers/chat');
+const { createServuxHandlers } = require('./handlers/servux');
 const {
   createSuccessResponse,
   createErrorResponse,
@@ -227,12 +228,15 @@ async function createBotProcess(options) {
       console.log('[bot] logged in as', bot.username);
 
       // ── 4. 创建 handlers 并注册 ──
+      const servuxHandlers = createServuxHandlers(bot);
+      servuxHandlers._register(); // 注册 custom_payload 监听
       handlers = {
         ...createMovementHandlers(bot),
         ...createBlockHandlers(bot),
         ...createInventoryHandlers(bot),
         ...createWorldHandlers(bot),
         ...createChatHandlers(bot),
+        ...servuxHandlers,
       };
 
       // 注册所有方法

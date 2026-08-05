@@ -9,6 +9,8 @@ from __future__ import annotations
 from vmtools_next.data.db import sio, get_session_factory
 from vmtools_next.infra.logging import get_logger
 
+import asyncio
+
 logger = get_logger("socketio")
 
 
@@ -247,13 +249,63 @@ async def mcc_terminal_resize(sid, data):
         logger.warning("MCC terminal resize error: {}", e)
 
 
+# 仓库扫描实例管理：warehouse_id → {"scanner": WarehouseScanner, "bot_id": str}
+_SCANNERS: dict[str, dict] = {}
+
+
+async def _watch_scan_completion(warehouse_id: str) -> None:
+    """Wait for a scanner task to finish, then persist results and clean up."""
+    from vmtools_next.core.warehouse_scanner import ScanState
+    entry = _SCANNERS.get(warehouse_id)
+    if not entry:
+        return
+    scanner = entry["scanner"]
+    try:
+        await scanner._scan_task
+    except asyncio.CancelledError:
+        return
+
+    from vmtools_next.core.warehouse_scan_service import persist_scan_results
+    Session = get_session_factory()
+    db = Session()
+    try:
+        total = len(scanner._scan_queue) if scanner._scan_queue else 0
+        scanned = len(scanner.results)
+        failed = max(0, total - scanned)
+        if scanner.state == ScanState.COMPLETED:
+            summary = persist_scan_results(
+                db, warehouse_id, scanner.results,
+                total_containers=total, scanned_containers=scanned,
+                failed_containers=failed, status="finished",
+            )
+            await sio.emit("scan_alert", {
+                "type": "success",
+                "message": f"扫描完成: {summary['containers']} 容器 / {summary['materials']} 种材料 / {summary['total_items']} 物品",
+            })
+        elif scanner.state == ScanState.CANCELED:
+            # 保留已扫描部分
+            if scanner.results:
+                persist_scan_results(db, warehouse_id, scanner.results,
+                                     total_containers=total, scanned_containers=scanned,
+                                     failed_containers=failed, status="cancelled")
+            await sio.emit("scan_alert", {"type": "info", "message": f"扫描已取消（已保存 {scanned}/{total} 容器）"})
+        elif scanner.state == ScanState.FAILED:
+            await sio.emit("scan_alert", {"type": "error", "message": "扫描失败"})
+    except Exception as e:
+        logger.error("Persist scan results failed for {}: {}", warehouse_id, e)
+        await sio.emit("scan_alert", {"type": "error", "message": f"扫描结果保存失败: {e}"})
+    finally:
+        db.close()
+        _SCANNERS.pop(warehouse_id, None)
+
+
 @sio.on("scan_control")
 async def scan_control(sid, data):
     """Handle scan_control from web UI.
 
     Supported actions: start, pause, resume, cancel
     Required data: action, warehouse_id
-    Optional data: bot_id (for start)
+    Optional data: bot_id (for start), start_index (resume from)
     """
     if not isinstance(data, dict):
         await sio.emit("scan_alert", {"type": "error", "message": "Invalid data format"}, to=sid)
@@ -261,7 +313,7 @@ async def scan_control(sid, data):
     action = data.get("action", "")
     warehouse_id = data.get("warehouse_id", "")
     bot_id = data.get("bot_id", "")
-    logger.info("Scan control from {}: action={} warehouse={}", sid, action, warehouse_id)
+    logger.info("Scan control from {}: action={} warehouse={} bot={}", sid, action, warehouse_id, bot_id)
 
     try:
         from vmtools_next.main import get_task_engine
@@ -270,95 +322,140 @@ async def scan_control(sid, data):
             await sio.emit("scan_alert", {"type": "error", "message": "Task engine not initialized"}, to=sid)
             return
 
-        if action == "start" and warehouse_id:
-            # Look up warehouse and start scan
-            from vmtools_next.data.db import get_session_factory
-            from vmtools_next.data.models.warehouse import WarehouseModel, StorageZoneModel
-            Session = get_session_factory()
-            db = Session()
-            try:
-                wh = db.query(WarehouseModel).filter(
-                    WarehouseModel.warehouse_id == warehouse_id
-                ).first()
-                if not wh:
-                    await sio.emit("scan_alert", {"type": "error", "message": "Warehouse not found"}, to=sid)
-                    return
+        # pause / resume / cancel —— 复用已启动的 scanner 实例
+        if action in ("pause", "resume", "cancel"):
+            entry = _SCANNERS.get(warehouse_id)
+            if not entry:
+                await sio.emit("scan_alert", {"type": "error", "message": f"No active scan for warehouse {warehouse_id}"}, to=sid)
+                return
+            scanner = entry["scanner"]
+            if action == "pause":
+                await scanner.pause()
+                await sio.emit("scan_alert", {"type": "info", "message": "扫描已暂停"}, to=sid)
+            elif action == "resume":
+                await scanner.resume()
+                await sio.emit("scan_alert", {"type": "info", "message": "扫描已继续"}, to=sid)
+            else:  # cancel
+                await scanner.cancel()
+                await sio.emit("scan_alert", {"type": "info", "message": "扫描取消中..."}, to=sid)
+            return
 
-                # Get container positions from storage zones
-                zones = db.query(StorageZoneModel).filter(
-                    StorageZoneModel.warehouse_fk == warehouse_id
-                ).all()
+        if action != "start" or not warehouse_id:
+            await sio.emit("scan_alert", {"type": "error", "message": f"Unknown scan action: {action}"}, to=sid)
+            return
 
-                container_positions = []
-                max_positions = 10000  # Safety limit
-                for zone in zones:
-                    for x in range(zone.range_min_x, zone.range_max_x + 1):
-                        for y in range(zone.range_min_y, zone.range_max_y + 1):
-                            for z in range(zone.range_min_z, zone.range_max_z + 1):
-                                container_positions.append((x, y, z))
-                                if len(container_positions) >= max_positions:
-                                    break
+        # 已有进行中的扫描 → 拒绝重复启动
+        if warehouse_id in _SCANNERS:
+            await sio.emit("scan_alert", {"type": "error", "message": "该仓库已有扫描正在进行"}, to=sid)
+            return
+
+        from vmtools_next.data.db import get_session_factory as _gsf
+        from vmtools_next.data.models.warehouse import WarehouseModel, StorageZoneModel
+        from vmtools_next.core.warehouse_scan_service import mark_scan_started
+
+        Session = get_session_factory()
+        db = Session()
+        try:
+            wh = db.query(WarehouseModel).filter(
+                WarehouseModel.warehouse_id == warehouse_id
+            ).first()
+            if not wh:
+                await sio.emit("scan_alert", {"type": "error", "message": "Warehouse not found"}, to=sid)
+                return
+
+            # Get container positions from storage zones
+            zones = db.query(StorageZoneModel).filter(
+                StorageZoneModel.warehouse_fk == warehouse_id
+            ).all()
+
+            container_positions = []
+            max_positions = 10000  # Safety limit
+            for zone in zones:
+                for x in range(zone.range_min_x, zone.range_max_x + 1):
+                    for y in range(zone.range_min_y, zone.range_max_y + 1):
+                        for z in range(zone.range_min_z, zone.range_max_z + 1):
+                            container_positions.append((x, y, z))
                             if len(container_positions) >= max_positions:
                                 break
                         if len(container_positions) >= max_positions:
                             break
                     if len(container_positions) >= max_positions:
                         break
-
                 if len(container_positions) >= max_positions:
-                    logger.warning("Container positions truncated to %d for warehouse %s",
-                                   max_positions, warehouse_id)
+                    break
 
-                if not container_positions:
-                    await sio.emit("scan_alert", {"type": "error", "message": "No containers found in warehouse zones"}, to=sid)
+            if len(container_positions) >= max_positions:
+                logger.warning("Container positions truncated to %d for warehouse %s",
+                               max_positions, warehouse_id)
+
+            if not container_positions:
+                await sio.emit("scan_alert", {"type": "error", "message": "No containers found in warehouse zones"}, to=sid)
+                return
+
+            if not bot_id:
+                await sio.emit("scan_alert", {"type": "error", "message": "bot_id required for scan"}, to=sid)
+                return
+
+            # 按 bot 的引擎路由到对应 pool（MCC MCP vs mineflayer WS）
+            from vmtools_next.main import get_pool_for_engine
+            from vmtools_next.core.bot_engine import resolve_bot_engine
+            engine_type = resolve_bot_engine(bot_id, db)
+            pool = get_pool_for_engine(engine_type)
+            client = pool.get_client(bot_id) if pool else None
+            if not client:
+                await sio.emit("scan_alert", {"type": "error", "message": f"Bot {bot_id} not connected"}, to=sid)
+                return
+
+            # 按 bot 的引擎选择对应的 MiniHud 适配器
+            from vmtools_next.adapters.abstract.minihud import AbstractMiniHudAdapter
+            if engine_type == "mineflayer":
+                from vmtools_next.adapters.mineflayer.mf_minihud import MfMiniHudAdapter
+                minihud: AbstractMiniHudAdapter = MfMiniHudAdapter(client)
+                # mineflayer 底层强制走 Servux 容器预览：先握手，失败直接报错（不降级打开容器）
+                if not await minihud.ensure_servux(timeout_ms=4000):
+                    await sio.emit("scan_alert", {
+                        "type": "error",
+                        "message": "Servux 未就绪：服务器未安装 Servux 插件或握手失败（mineflayer 扫描仅支持 Servux 容器预览）",
+                    }, to=sid)
                     return
+            else:
+                from vmtools_next.adapters.mcc.mcc_minihud import MccMiniHudAdapter
+                minihud = MccMiniHudAdapter(client)
 
-                # Use the bot's scanner (requires bot_id)
-                if not bot_id:
-                    await sio.emit("scan_alert", {"type": "error", "message": "bot_id required for scan"}, to=sid)
-                    return
+            from vmtools_next.core.warehouse_scanner import WarehouseScanner
+            scanner = WarehouseScanner(client, minihud)
 
-                # 按 bot 的引擎路由到对应 pool（MCC MCP vs mineflayer WS）
-                from vmtools_next.main import get_pool_for_engine
-                from vmtools_next.core.bot_engine import resolve_bot_engine
-                pool = get_pool_for_engine(resolve_bot_engine(bot_id, db))
-                client = pool.get_client(bot_id) if pool else None
-                if not client:
-                    await sio.emit("scan_alert", {"type": "error", "message": f"Bot {bot_id} not connected"}, to=sid)
-                    return
+            # 进度回调：Socket.IO 推送 + scan_status 落库
+            async def on_progress(scanned, total, pos):
+                await sio.emit("scan_progress", {
+                    "warehouse_id": warehouse_id,
+                    "scanned": scanned,
+                    "total": total,
+                    "current_pos": {"x": pos[0], "y": pos[1], "z": pos[2]},
+                    "progress": round(scanned / total * 100, 1) if total > 0 else 0,
+                })
+                # 进度落库（新开 session，避免占用扫描线程的 db）
+                S2 = get_session_factory()
+                db2 = S2()
+                try:
+                    from vmtools_next.core.warehouse_scan_service import update_scan_progress
+                    update_scan_progress(db2, warehouse_id, scanned, total, pos)
+                finally:
+                    db2.close()
 
-                # 按 bot 的引擎选择对应的 MiniHud 适配器（MCC MCP vs mineflayer WS）
-                from vmtools_next.adapters.abstract.minihud import AbstractMiniHudAdapter
-                if resolve_bot_engine(bot_id, db) == "mineflayer":
-                    from vmtools_next.adapters.mineflayer.mf_minihud import MfMiniHudAdapter
-                    minihud: AbstractMiniHudAdapter = MfMiniHudAdapter(client)
-                else:
-                    from vmtools_next.adapters.mcc.mcc_minihud import MccMiniHudAdapter
-                    minihud = MccMiniHudAdapter(client)
-                from vmtools_next.core.warehouse_scanner import WarehouseScanner
-
-                scanner = WarehouseScanner(client, minihud)
-
-                # Set up progress callback to emit updates via Socket.IO
-                async def on_progress(scanned, total, pos):
-                    await sio.emit("scan_progress", {
-                        "warehouse_id": warehouse_id,
-                        "scanned": scanned,
-                        "total": total,
-                        "current_pos": {"x": pos[0], "y": pos[1], "z": pos[2]},
-                        "progress": round(scanned / total * 100, 1) if total > 0 else 0,
-                    })
-
-                scanner.set_progress_callback(on_progress)
-                success = await scanner.start_scan(container_positions)
-                if success:
-                    await sio.emit("scan_alert", {"type": "info", "message": f"Scan started: {len(container_positions)} containers"}, to=sid)
-                else:
-                    await sio.emit("scan_alert", {"type": "error", "message": "Failed to start scan"}, to=sid)
-            finally:
-                db.close()
-        else:
-            await sio.emit("scan_alert", {"type": "error", "message": f"Unknown scan action: {action}"}, to=sid)
+            start_index = int(data.get("start_index", 0) or 0)
+            mark_scan_started(db, warehouse_id, len(container_positions))
+            scanner.set_progress_callback(on_progress)
+            _SCANNERS[warehouse_id] = {"scanner": scanner, "bot_id": bot_id}
+            success = await scanner.start_scan(container_positions, start_index=start_index)
+            if success:
+                asyncio.create_task(_watch_scan_completion(warehouse_id))
+                await sio.emit("scan_alert", {"type": "info", "message": f"扫描开始: {len(container_positions)} 容器"}, to=sid)
+            else:
+                _SCANNERS.pop(warehouse_id, None)
+                await sio.emit("scan_alert", {"type": "error", "message": "Failed to start scan"}, to=sid)
+        finally:
+            db.close()
     except Exception as e:
         logger.error("Scan control error: {}", e)
         await sio.emit("scan_alert", {"type": "error", "message": str(e)}, to=sid)
