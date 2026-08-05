@@ -296,10 +296,11 @@ function createServuxHandlers(bot) {
   // ── 注册 custom_payload 监听 ──
   function register() {
     if (!bot._client) return false;
-    // 显式注册 Servux 通道（1.13+ 需注册后服务端才会推送），失败可忽略
-    try {
-      bot._client.write('register_channels', { channels: [CHANNEL] });
-    } catch (e) { /* 旧协议版本无 register_channels 则忽略 */ }
+    // 注意：不要发送 register_channels！
+    // 实测 minecraft-data 1.21.11 的 register_channels 包 ID 与服务器实际协议不匹配，
+    // 发送会导致服务器按 accept_teleportation 解码失败直接踢下线
+    // （"Failed to decode packet 'serverbound/minecraft:accept_teleportation'"）。
+    // Servux 服务端会在客户端进入游戏后【主动推送】S2C_METADATA，无需注册通道。
     bot._client.on('custom_payload', handlePayload);
     return true;
   }
