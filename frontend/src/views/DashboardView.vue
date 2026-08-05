@@ -47,21 +47,21 @@
         <div class="pixel-card quick-actions">
           <h3 class="pixel section-title">快速操作</h3>
           <div class="action-btns">
-            <button class="pixel-btn" @click="$router.push('/build?create=1')">新建任务</button>
+            <button class="pixel-btn" @click="$router.push('/map-art-tasks')">新建任务</button>
             <button class="pixel-btn outline" @click="$router.push('/warehouses')">扫描仓库</button>
-            <button class="pixel-btn outline" @click="$router.push('/build?create=1')">上传投影</button>
+            <button class="pixel-btn outline" @click="$router.push('/map-art-tasks')">上传投影</button>
           </div>
         </div>
         <div class="pixel-card build-status">
           <div class="section-header">
             <h3 class="pixel section-title">建造状态</h3>
-            <router-link to="/build" class="view-all mono">查看全部 ></router-link>
+            <router-link to="/map-art-tasks" class="view-all mono">查看全部 ></router-link>
           </div>
-          <div v-if="buildStore.tasks.length === 0" class="empty-text mono">-- 暂无任务 --</div>
-          <div v-for="task in buildStore.tasks.slice(0, 2)" :key="task.task_id" class="task-row">
+          <div v-if="mapArtStore.tasks.length === 0" class="empty-text mono">-- 暂无任务 --</div>
+          <div v-for="task in mapArtStore.tasks.slice(0, 2)" :key="task.task_id" class="task-row">
             <div class="task-info">
-              <div class="task-name">{{ task.projection_name || task.task_id }}</div>
-              <div class="task-meta mono">层: {{ task.current_layer }}/{{ task.total_layers }}</div>
+              <div class="task-name">{{ task.name || task.projection_name || task.task_id }}</div>
+              <div class="task-meta mono">进度: {{ task.placed_blocks || 0 }}/{{ task.total_blocks || 0 }} 块</div>
               <div class="pixel-progress">
                 <div class="pixel-progress-fill green" :style="{ width: taskPct(task) + '%' }"></div>
               </div>
@@ -69,7 +69,7 @@
             <span class="pixel task-pct">{{ taskPct(task) }}%</span>
             <span :class="['pixel-badge', task.status === 'running' ? 'green' : 'yellow']">
               <span class="badge-dot"></span>
-              {{ task.status === 'running' ? '运行中' : '已暂停' }}
+              {{ task.status === 'running' ? '运行中' : (task.status === 'paused' ? '已暂停' : task.status) }}
             </span>
           </div>
         </div>
@@ -116,17 +116,17 @@
 import { computed, onBeforeUnmount, onMounted } from 'vue'
 import { useBotStore } from '@/stores/bot'
 import { useWarehouseStore } from '@/stores/warehouse'
-import { useBuildStore } from '@/stores/build'
+import { useMapArtStore } from '@/stores/mapArt'
 import { useMonitorStore } from '@/stores/monitor'
 import { useLogisticsStore } from '@/stores/logistics'
 
 const botStore = useBotStore()
 const warehouseStore = useWarehouseStore()
-const buildStore = useBuildStore()
+const mapArtStore = useMapArtStore()
 const monitorStore = useMonitorStore()
 const logisticsStore = useLogisticsStore()
 
-const runningTasks = computed(() => buildStore.tasks.filter(t => t.status === 'running').length)
+const runningTasks = computed(() => mapArtStore.tasks.filter(t => t.status === 'running').length)
 const totalItems = computed(() => warehouseStore.warehouses.reduce((sum, w) => sum + (w.total_items || 0), 0))
 const latestMetrics = computed(() => monitorStore.metrics?.[monitorStore.metrics.length - 1])
 const uptime = computed(() => {
@@ -139,7 +139,7 @@ const uptime = computed(() => {
   return `${d}d ${h}h`
 })
 function taskPct(task: any): number {
-  return task.total_layers > 0 ? Math.round(task.current_layer / task.total_layers * 100) : 0
+  return task.total_blocks > 0 ? Math.round((task.placed_blocks || 0) / task.total_blocks * 100) : 0
 }
 function fmtGB(bytes: number): string {
   if (!bytes) return '0'
@@ -152,7 +152,7 @@ onMounted(async () => {
   await Promise.all([
     botStore.fetchBots(),
     warehouseStore.fetchWarehouses(),
-    buildStore.fetchTasks(),
+    mapArtStore.fetchTasks(),
     monitorStore.fetchAlerts(),
     monitorStore.fetchMetrics(),
   ])

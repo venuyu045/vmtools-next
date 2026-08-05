@@ -31,10 +31,11 @@ const routes = [
       // --- 组织管理员及以上可见 ---
       { path: 'warehouses', name: 'Warehouses', component: () => import('@/views/WarehouseListView.vue'), meta: { title: '仓库管理', roles: [...ROLES.orgAdmin, ...ROLES.siteAdmin] } },
       { path: 'warehouses/:id', name: 'WarehouseDetail', component: () => import('@/views/WarehouseDetailView.vue'), meta: { title: '仓库详情', roles: [...ROLES.orgAdmin, ...ROLES.siteAdmin] } },
-      { path: 'build', name: 'BuildTasks', component: () => import('@/views/BuildTaskListView.vue'), meta: { title: '建造任务', roles: [...ROLES.orgAdmin, ...ROLES.siteAdmin] } },
-      { path: 'build/:id', name: 'BuildTaskDetail', component: () => import('@/views/BuildTaskDetailView.vue'), meta: { title: '任务详情', roles: [...ROLES.orgAdmin, ...ROLES.siteAdmin] } },
       { path: 'map-art/:taskId', name: 'MapArtBuild', component: () => import('@/views/MapArtBuildView.vue'), meta: { title: '地图画建造', roles: [...ROLES.orgAdmin, ...ROLES.siteAdmin] } },
       { path: 'map-art-tasks', name: 'MapArtTasks', component: () => import('@/views/MapArtTaskList.vue'), meta: { title: '地图画任务', roles: [...ROLES.orgAdmin, ...ROLES.siteAdmin] } },
+      // 旧建造任务入口 → 合并到地图画建造
+      { path: 'build', redirect: '/map-art-tasks' },
+      { path: 'build/:id', redirect: '/map-art-tasks' },
       { path: 'logistics/waypoints', name: 'Waypoints', component: () => import('@/views/LogisticsWaypointView.vue'), meta: { title: '路径点', roles: [...ROLES.orgAdmin, ...ROLES.siteAdmin] } },
       { path: 'logistics/drop-points', name: 'DropPoints', component: () => import('@/views/LogisticsDropPointView.vue'), meta: { title: '投放点', roles: [...ROLES.orgAdmin, ...ROLES.siteAdmin] } },
       { path: 'logistics/templates', name: 'Templates', component: () => import('@/views/LogisticsTemplateView.vue'), meta: { title: '任务模板', roles: [...ROLES.orgAdmin, ...ROLES.siteAdmin] } },
