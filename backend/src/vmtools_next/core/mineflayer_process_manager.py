@@ -26,6 +26,7 @@ from sqlalchemy.orm import Session
 
 from vmtools_next.config import get_config
 from vmtools_next.core.mcc_port_allocator import MccPortAllocator
+from vmtools_next.core.terminal_log_buffer import TerminalLogBuffer
 from vmtools_next.data.models.mcc_remote import MccAccountProfileModel, MccInstanceModel, MccProcessEventModel
 
 logger = logging.getLogger("vmtools.mineflayer_pm")
@@ -61,6 +62,9 @@ class MineflayerProcessManager:
         )
         self._node_path = self._find_node()
         self._script_path = self._find_script()
+        # 终端日志缓冲：与 MccProcessManager 共用 TerminalLogBuffer，
+        # tail_logs / mcc_terminal_output 事件格式完全兼容前端 MccWebTerminal。
+        self._buffer = TerminalLogBuffer()
 
     @staticmethod
     def _find_node() -> str:
@@ -321,6 +325,8 @@ class MineflayerProcessManager:
                 text = line.decode("utf-8", errors="replace").rstrip()
                 if text:
                     logger.debug("[%s] %s", handle.instance_id[:8], text)
+                    # 终端日志：入缓冲 + 推送 mcc_terminal_output（前端 MccWebTerminal 直接显示）
+                    self._append_line(handle.instance_id, "stdout", text)
                     # 检测 READY 信号
                     if "READY" in text:
                         logger.info("Mineflayer bot %s is ready (ws_port=%d)",
@@ -340,6 +346,76 @@ class MineflayerProcessManager:
             pass
         except Exception as e:
             logger.error("Output read error for %s: %s", handle.instance_id[:8], e)
+
+    # ── 终端接口（与 MccProcessManager 对齐，供 MccWebTerminal / socketio 复用） ──
+
+    def tail_logs(self, instance_id: str, tail: int = 500, after_seq: int | None = None) -> list:
+        """Return the most recent terminal lines (TerminalLine objects)."""
+        return self._buffer.tail(instance_id, tail, after_seq)
+
+    async def write_stdin(self, instance_id: str, text: str,
+                          append_newline: bool = True,
+                          source_sid: str | None = None) -> None:
+        """Send terminal input to the bot: /xxx → run_command, else send_chat.
+
+        MF 没有 PTY：输入通过 bot 的 WS 通道转发（与 MCC 的 write_stdin 语义一致），
+        同时回显一行 stdin 到终端缓冲/房间。
+        """
+        if not text:
+            return
+        ws_port = self.get_ws_port(instance_id)
+        if not ws_port:
+            raise RuntimeError("mineflayer bot 未运行（无法发送终端输入）")
+
+        stripped = text.strip()
+        import json as _json
+        import uuid as _uuid
+        method = "run_command" if stripped.startswith("/") else "send_chat"
+        params = {"command": stripped.lstrip("/")} if method == "run_command" else {"message": stripped}
+
+        import websockets
+        try:
+            async with websockets.connect(
+                f"ws://127.0.0.1:{ws_port}",
+                ping_interval=10, ping_timeout=5, open_timeout=5,
+            ) as ws:
+                await ws.send(_json.dumps({
+                    "type": "request",
+                    "request_id": str(_uuid.uuid4()),
+                    "method": method,
+                    "params": params,
+                }))
+        except Exception as exc:
+            raise RuntimeError(f"向 mineflayer bot 发送失败: {exc}") from exc
+
+        self._append_line(instance_id, "stdin", f"> {text}", from_sid=source_sid)
+
+    async def resize_terminal(self, instance_id: str, cols: int, rows: int) -> None:
+        """MF bot 无 PTY，resize 为 no-op（与 MCC 语义对齐保持接口一致）。"""
+        return None
+
+    def _append_line(self, instance_id: str, stream: str, content: str,
+                     from_sid: str | None = None) -> None:
+        """Append a line to the ring buffer and broadcast to the terminal room."""
+        try:
+            line = self._buffer.append(instance_id, stream, content)
+            from vmtools_next.data.db import sio
+            payload = {
+                "instance_id": instance_id,
+                "seq": line.seq,
+                "stream": stream,
+                "content": content,
+                "from_sid": from_sid,
+                "created_at": line.created_at.isoformat(),
+            }
+            try:
+                asyncio.create_task(
+                    sio.emit("mcc_terminal_output", payload, room=f"mcc:{instance_id}")
+                )
+            except Exception:
+                pass
+        except Exception as e:
+            logger.debug("_append_line skipped for %s: %s", instance_id, e)
 
     async def _watch_exit_loop(self, handle: ProcessHandle) -> None:
         """Monitor the process for unexpected exits and auto-restart."""

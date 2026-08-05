@@ -70,8 +70,8 @@
             @click="handleDisconnect(instance)"
           >断开</button>
 
-          <router-link :to="'/bots/' + instance.instance_id + '/terminal'" class="pixel-btn outline terminal-link" @click.stop>终端</router-link>
-          <router-link :to="'/bots/' + instance.instance_id + '/files'" class="pixel-btn outline terminal-link" @click.stop>文件</router-link>
+          <router-link :to="`${engineListPath}/${instance.instance_id}/terminal`" class="pixel-btn outline terminal-link" @click.stop>终端</router-link>
+<router-link :to="`${engineListPath}/${instance.instance_id}/files`" class="pixel-btn outline terminal-link" @click.stop>文件</router-link>
           <button class="pixel-btn danger" :disabled="instance.status === 'running'" @click="handleDelete(instance)">删除</button>
           <label class="reconnect-toggle" :title="instance.auto_reconnect ? '已开启自动重连' : '开启自动重连'">
             <input type="checkbox" :checked="instance.auto_reconnect" @change="toggleReconnect(instance, $event)" />
@@ -246,6 +246,8 @@ const botStore = useBotStore()
 const engine = computed(() => (route.meta.engine as 'mcc' | 'mineflayer') || 'mcc')
 const engineName = computed(() => (engine.value === 'mcc' ? 'MCC' : 'MF'))
 const pageTitle = computed(() => (engine.value === 'mcc' ? 'MCC 管理' : 'MF 管理'))
+/** 本引擎的列表路由前缀（终端/文件链接用，保证 MF 实例跳 MF 管理路径） */
+const engineListPath = computed(() => (engine.value === 'mineflayer' ? '/mf-instances' : '/mcc-instances'))
 const emptyText = computed(() =>
   engine.value === 'mcc'
     ? '-- 暂无 MCC 实例，点击右上角新建 --'
