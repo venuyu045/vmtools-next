@@ -94,8 +94,30 @@ function encodeNbt(compoundValue) {
   return nbt.writeUncompressed(tag);
 }
 
-function parseNbt(buf) {
-  return nbt.parse(buf);
+/**
+ * 解析 Servux 返回的 NBT。
+ *
+ * Servux 服务端（Fabric/Forge）用 Minecraft 网络序列化（FriendlyByteBuf.writeNbt）
+ * 发送 NBT：root tag 后【不含 root name】；而 prismarine-nbt 期望标准 NBT
+ * （root tag + 2 字节 root name）。直接解析会报
+ *   "Read error for undefined : Missing characters in string"
+ * 修复：解析失败时在 root tag 后补 2 字节空名（0000）重试。
+ */
+async function parseNbt(buf) {
+  try {
+    return await nbt.parse(buf);
+  } catch (firstErr) {
+    if (buf && buf.length > 1) {
+      // root tag(1B) + 0000(空 root name) + 剩余 payload
+      const fixed = Buffer.concat([buf.subarray(0, 1), Buffer.from([0x00, 0x00]), buf.subarray(1)]);
+      try {
+        return await nbt.parse(fixed);
+      } catch {
+        throw firstErr; // 补名后仍失败 → 抛原始错误
+      }
+    }
+    throw firstErr;
+  }
 }
 
 /**
@@ -228,7 +250,10 @@ function createServuxHandlers(bot) {
         const value = getCompoundValue(parsed);
         const version = value.version?.value;
         const servux = value.servux?.value;
-        if (version === PROTOCOL_VERSION && typeof servux === 'string' && servux.startsWith('servux-')) {
+        // 服务器可能运行旧版 Servux（协议 v1，如 servux-lophine-1.21.11-DEV），
+        // 新版为 v2。v1/v2 的 metadata/block-entity 帧结构一致（差异仅在版本号），
+        // 这里同时接受 1 和 2，实际能力按服务器上报的 servux 版本执行。
+        if ((version === PROTOCOL_VERSION || version === 1) && typeof servux === 'string' && servux.startsWith('servux-')) {
           servuxReady = true;
           servuxVersion = servux;
           console.log('[servux] handshake OK, connected to', servux);
