@@ -212,6 +212,7 @@ class ScanQueueManager:
     async def _schedule_once(self) -> None:
         """启动 pending 队列项，直到达到并发上限。"""
         from vmtools_next.data.models.warehouse import ScanQueueModel
+        from datetime import datetime, timezone
 
         Session = get_session_factory()
         db = Session()
@@ -227,7 +228,13 @@ class ScanQueueManager:
                 ScanQueueModel.priority.desc(),
                 ScanQueueModel.created_at.asc(),
             ).limit(slot).all()
-            items = [q for q in pending]
+            # 立即置为 running，防止调度器下一轮重复选中同一任务（_start_scan
+            # 内部容器发现等耗时阶段会保持 pending，产生竞态导致重复启动）
+            for q in pending:
+                q.status = "running"
+                q.started_at = datetime.now(timezone.utc)
+                db.commit()
+                items.append(q)
         finally:
             db.close()
 
