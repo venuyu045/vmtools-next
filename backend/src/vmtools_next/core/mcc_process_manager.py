@@ -595,16 +595,19 @@ class MccProcessManager:
         command = text.strip()
         first_word = command.split()[0].lower() if command else ""
 
-        # Whitelist: MCC sends ANY unrecognized text as in-game chat.
-        # Only allow /commands, say chat, or known MCC internal commands.
+        # 统一路由（命令/聊天合二为一，无需手动输入 say）：
+        #   /xxx        → 服务器命令（原样发送）
+        #   say xxx     → 游戏聊天（剔除 say 前缀后发送）
+        #   MCC 内部命令 → 内部命令（原样发送）
+        #   其他文本    → 自动作为游戏聊天发送（自动补 say）
         if command and not command.startswith("/") and not command.startswith("say ") and first_word not in self._SAFE_COMMANDS:
-            raise RuntimeError(
-                "拒绝发送: 此文本会被MCC当作游戏聊天发出。请以 / 开头发送指令, 或以 say 开头发送聊天。"
-            )
+            command = f"say {command}"
 
-        # If stdin is available (Windows subprocess.Popen), write directly
         if handle.process.stdin:
-            payload = text + ("\n" if append_newline else "")
+            # Linux: stdin 可用，MCC 会把未识别的行当作游戏聊天发出，
+            # 因此必须剔除 "say " 前缀，否则游戏聊天栏会显示 "say xxx" 而不是 "xxx"。
+            payload_text = command[4:].strip() if command.lower().startswith("say ") else command
+            payload = payload_text + ("\n" if append_newline else "")
             proc = handle.process
             if _is_async_proc(proc):
                 proc.stdin.write(payload.encode("utf-8"))
@@ -614,7 +617,7 @@ class MccProcessManager:
                 await loop.run_in_executor(None, proc.stdin.write, payload.encode("utf-8"))
                 await loop.run_in_executor(None, proc.stdin.flush)
         else:
-            # Linux: stdin is DEVNULL, send via MCP HTTP API instead
+            # Windows: stdin 为 DEVNULL，走 MCP HTTP API
             await self._send_via_mcp(instance_id, command)
 
         await self._append_line(instance_id, "stdin", f"> {text}")

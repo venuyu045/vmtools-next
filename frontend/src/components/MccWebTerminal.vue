@@ -11,10 +11,6 @@
       />
       <button class="pixel-btn outline" @click="findPrevious">上一个</button>
       <button class="pixel-btn outline" @click="findNext">下一个</button>
-      <el-select v-model="inputMode" class="mode-select" size="small">
-        <el-option label="命令模式" value="command" />
-        <el-option label="聊天模式" value="chat" />
-      </el-select>
       <el-checkbox v-model="autoScroll">自动滚动</el-checkbox>
       <button class="pixel-btn outline" @click="fitTerminal">适配</button>
       <button class="pixel-btn outline" @click="clearScreen">清屏</button>
@@ -64,7 +60,6 @@ const store = useMccInstanceStore()
 const socket = useSocketIO()
 const terminalContainer = ref<HTMLElement | null>(null)
 const searchKeyword = ref('')
-const inputMode = ref<'command' | 'chat'>('command')
 const autoScroll = ref(true)
 const connectionHint = ref('ready')
 const lineCount = computed(() => terminalLines.value.length)
@@ -81,7 +76,7 @@ let commandHistory: string[] = []
 
 const commandDictionary = [
   'help', 'status', 'exit', 'connect', 'disconnect', 'respawn', 'inventory', 'move',
-  'login', 'logout', 'reco', 'script', 'send', 'say', 'list', 'look', 'dig', 'place', 'useitem', 'drop', 'dropall', 'hotbar', 'health', 'food', 'position', 'players', 'terrain', 'help settings', 'set', 'reload', 'quit', '/help', '/list', '/tell', '/msg', '/tpaccept', '/spawn', '/home', '/back']
+  'login', 'logout', 'reco', 'script', 'send', 'list', 'look', 'dig', 'place', 'useitem', 'drop', 'dropall', 'hotbar', 'health', 'food', 'position', 'players', 'terrain', 'help settings', 'set', 'reload', 'quit', '/help', '/list', '/tell', '/msg', '/tpaccept', '/spawn', '/home', '/back']
 
 
 function initTerminal() {
@@ -136,7 +131,7 @@ function initTerminal() {
 
   terminal.onData(handleTerminalInput)
   terminal.writeln('\x1b[32mVMTools MCC Web Terminal\x1b[0m')
-  terminal.writeln('\x1b[90mCommand mode sends MCC/internal commands. Chat mode prefixes text with say.\x1b[0m')
+  terminal.writeln('\x1b[90m输入以 / 开头的内容作为服务器命令；其他内容自动作为聊天发送。\x1b[0m')
   terminal.write(`\r\n${promptText()}`)
 
   resizeObserver = new ResizeObserver(() => fitTerminal())
@@ -185,7 +180,7 @@ function recallCommand(direction: number) {
 }
 
 function promptText(): string {
-  return inputMode.value === 'chat' ? '\x1b[35mchat> \x1b[0m' : '\x1b[32m> \x1b[0m'
+  return '\x1b[32m> \x1b[0m'
 }
 
 function autocompleteCommand() {
@@ -196,12 +191,21 @@ function autocompleteCommand() {
   if (match && match !== commandBuffer) replaceInputBuffer(match)
 }
 
+// MCC 内部命令（不以 / 开头，仍按内部命令发送，不当作聊天）
+const MCC_INTERNAL_COMMANDS = new Set([
+  'help', 'status', 'quit', 'exit', 'reco', 'connect', 'disconnect',
+  'respawn', 'login', 'logout', 'reconnect', 'inventory', 'move', 'list',
+])
+
 function normalizeCommand(command: string): string {
   const trimmed = command.trim()
-  if (inputMode.value === 'chat' && trimmed && !trimmed.startsWith('/') && !trimmed.startsWith('say ')) {
-    return `say ${trimmed}`
+  if (!trimmed) return ''
+  const firstWord = trimmed.split(/\s+/)[0].toLowerCase()
+  // /开头 → 服务器命令；MCC内部命令 → 原样发送；其余 → 自动作为聊天发送
+  if (trimmed.startsWith('/') || MCC_INTERNAL_COMMANDS.has(firstWord)) {
+    return trimmed
   }
-  return trimmed
+  return `say ${trimmed}`
 }
 
 async function submitCommand(command: string) {
@@ -410,7 +414,6 @@ onBeforeUnmount(() => {
   .terminal-toolbar { gap: 6px; }
   .search-input { width: 100%; flex-basis: 100%; }
   .terminal-toolbar .pixel-btn { font-size: 12px; padding: 6px 10px; min-height: 36px; }
-  .terminal-toolbar .mode-select { width: 110px; }
   .terminal-status { font-size: 10px; gap: 6px; flex-wrap: wrap; }
   .xterm-shell { min-height: 200px; }
 }
