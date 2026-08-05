@@ -1,6 +1,16 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 
+/** 权限常量：与后端 role 字段对应 */
+export const ROLES = {
+  member: ['org_member', 'user', 'guest'], // 组织成员层级
+  orgAdmin: ['org_admin', 'site_admin'],   // 组织管理员及以上
+  siteAdmin: ['site_admin'],               // 仅站点管理员
+} as const
+
+/** 所有登录用户可见的默认角色集合 */
+const ALL_LOGGED_IN = [...ROLES.member, ...ROLES.orgAdmin, ...ROLES.siteAdmin]
+
 const routes = [
   {
     path: '/login',
@@ -13,30 +23,36 @@ const routes = [
     component: () => import('@/components/layout/AppLayout.vue'),
     children: [
       { path: '', redirect: '/dashboard' },
-      { path: 'dashboard', name: 'Dashboard', component: () => import('@/views/DashboardView.vue'), meta: { title: '仪表盘' } },
-      // --- Bot 管理（统一入口，合并了原 MCC 管理） ---
-      { path: 'bots', name: 'Bots', component: () => import('@/views/BotManageView.vue'), meta: { title: 'Bot 管理' } },
-      { path: 'bots/:id/terminal', name: 'BotTerminal', component: () => import('@/views/MccTerminalView.vue'), meta: { title: 'Bot 终端' } },
-      { path: 'bots/:id/files', name: 'BotFiles', component: () => import('@/views/MccFileManagerView.vue'), meta: { title: 'Bot 文件' } },
+      // --- 组织成员可见 ---
+      { path: 'dashboard', name: 'Dashboard', component: () => import('@/views/DashboardView.vue'), meta: { title: '仪表盘', roles: ALL_LOGGED_IN } },
+      { path: 'player-tracking', name: 'PlayerTracking', component: () => import('@/views/PlayerTrackingView.vue'), meta: { title: '玩家追踪', roles: ALL_LOGGED_IN } },
+      { path: 'miaomiao', name: 'Miaomiao', component: () => import('@/views/MiaomiaoView.vue'), meta: { title: '妙妙工具', roles: ALL_LOGGED_IN } },
+
+      // --- 组织管理员及以上可见 ---
+      { path: 'warehouses', name: 'Warehouses', component: () => import('@/views/WarehouseListView.vue'), meta: { title: '仓库管理', roles: [...ROLES.orgAdmin, ...ROLES.siteAdmin] } },
+      { path: 'warehouses/:id', name: 'WarehouseDetail', component: () => import('@/views/WarehouseDetailView.vue'), meta: { title: '仓库详情', roles: [...ROLES.orgAdmin, ...ROLES.siteAdmin] } },
+      { path: 'build', name: 'BuildTasks', component: () => import('@/views/BuildTaskListView.vue'), meta: { title: '建造任务', roles: [...ROLES.orgAdmin, ...ROLES.siteAdmin] } },
+      { path: 'build/:id', name: 'BuildTaskDetail', component: () => import('@/views/BuildTaskDetailView.vue'), meta: { title: '任务详情', roles: [...ROLES.orgAdmin, ...ROLES.siteAdmin] } },
+      { path: 'map-art/:taskId', name: 'MapArtBuild', component: () => import('@/views/MapArtBuildView.vue'), meta: { title: '地图画建造', roles: [...ROLES.orgAdmin, ...ROLES.siteAdmin] } },
+      { path: 'map-art-tasks', name: 'MapArtTasks', component: () => import('@/views/MapArtTaskList.vue'), meta: { title: '地图画任务', roles: [...ROLES.orgAdmin, ...ROLES.siteAdmin] } },
+      { path: 'logistics/waypoints', name: 'Waypoints', component: () => import('@/views/LogisticsWaypointView.vue'), meta: { title: '路径点', roles: [...ROLES.orgAdmin, ...ROLES.siteAdmin] } },
+      { path: 'logistics/drop-points', name: 'DropPoints', component: () => import('@/views/LogisticsDropPointView.vue'), meta: { title: '投放点', roles: [...ROLES.orgAdmin, ...ROLES.siteAdmin] } },
+      { path: 'logistics/templates', name: 'Templates', component: () => import('@/views/LogisticsTemplateView.vue'), meta: { title: '任务模板', roles: [...ROLES.orgAdmin, ...ROLES.siteAdmin] } },
+      { path: 'logistics/runs', name: 'Runs', component: () => import('@/views/LogisticsRunView.vue'), meta: { title: '任务运行', roles: [...ROLES.orgAdmin, ...ROLES.siteAdmin] } },
+
+      // --- 站点管理员专属 ---
+      { path: 'bots', name: 'Bots', component: () => import('@/views/BotManageView.vue'), meta: { title: 'Bot 管理', roles: [...ROLES.siteAdmin] } },
+      { path: 'bots/:id/terminal', name: 'BotTerminal', component: () => import('@/views/MccTerminalView.vue'), meta: { title: 'Bot 终端', roles: [...ROLES.siteAdmin] } },
+      { path: 'bots/:id/files', name: 'BotFiles', component: () => import('@/views/MccFileManagerView.vue'), meta: { title: 'Bot 文件', roles: [...ROLES.siteAdmin] } },
+      { path: 'members', name: 'Members', component: () => import('@/views/MembersView.vue'), meta: { title: '成员管理', roles: [...ROLES.siteAdmin] } },
+      { path: 'config', name: 'Config', component: () => import('@/views/ConfigView.vue'), meta: { title: '系统配置', roles: [...ROLES.siteAdmin] } },
+      { path: 'plugins', name: 'Plugins', component: () => import('@/views/PluginView.vue'), meta: { title: '插件管理', roles: [...ROLES.siteAdmin] } },
+      { path: 'monitor', name: 'Monitor', component: () => import('@/views/MonitorView.vue'), meta: { title: '系统监控', roles: [...ROLES.siteAdmin] } },
+
       // --- 旧 MCC 路由（重定向到新 Bot 路由） ---
       { path: 'mcc/instances', redirect: '/bots' },
       { path: 'mcc/instances/:id/terminal', redirect: (to: any) => `/bots/${to.params.id}/terminal` },
       { path: 'mcc/instances/:id/files', redirect: (to: any) => `/bots/${to.params.id}/files` },
-      { path: 'player-tracking', name: 'PlayerTracking', component: () => import('@/views/PlayerTrackingView.vue'), meta: { title: '玩家追踪' } },
-      { path: 'miaomiao', name: 'Miaomiao', component: () => import('@/views/MiaomiaoView.vue'), meta: { title: '妙妙工具' } },
-      { path: 'warehouses', name: 'Warehouses', component: () => import('@/views/WarehouseListView.vue'), meta: { title: '仓库管理' } },
-      { path: 'warehouses/:id', name: 'WarehouseDetail', component: () => import('@/views/WarehouseDetailView.vue'), meta: { title: '仓库详情' } },
-      { path: 'build', name: 'BuildTasks', component: () => import('@/views/BuildTaskListView.vue'), meta: { title: '建造任务' } },
-      { path: 'build/:id', name: 'BuildTaskDetail', component: () => import('@/views/BuildTaskDetailView.vue'), meta: { title: '任务详情' } },
-      { path: 'map-art/:taskId', name: 'MapArtBuild', component: () => import('@/views/MapArtBuildView.vue'), meta: { title: '地图画建造' } },
-      { path: 'map-art-tasks', name: 'MapArtTasks', component: () => import('@/views/MapArtTaskList.vue'), meta: { title: '地图画任务' } },
-      { path: 'logistics/waypoints', name: 'Waypoints', component: () => import('@/views/LogisticsWaypointView.vue'), meta: { title: '路径点' } },
-      { path: 'logistics/drop-points', name: 'DropPoints', component: () => import('@/views/LogisticsDropPointView.vue'), meta: { title: '投放点' } },
-      { path: 'logistics/templates', name: 'Templates', component: () => import('@/views/LogisticsTemplateView.vue'), meta: { title: '任务模板' } },
-      { path: 'logistics/runs', name: 'Runs', component: () => import('@/views/LogisticsRunView.vue'), meta: { title: '任务运行' } },
-      { path: 'config', name: 'Config', component: () => import('@/views/ConfigView.vue'), meta: { title: '系统配置' } },
-      { path: 'plugins', name: 'Plugins', component: () => import('@/views/PluginView.vue'), meta: { title: '插件管理' } },
-      { path: 'monitor', name: 'Monitor', component: () => import('@/views/MonitorView.vue'), meta: { title: '系统监控' } },
     ],
   },
 ]
@@ -50,6 +66,12 @@ router.beforeEach((to) => {
   const authStore = useAuthStore()
   if (!to.meta.public && !authStore.isLoggedIn) {
     return '/login'
+  }
+
+  // 角色路由守卫：登录用户无权访问时，回落到其有权限的首页
+  const allowedRoles = to.meta.roles as string[] | undefined
+  if (allowedRoles && authStore.user && !allowedRoles.includes(authStore.user.role)) {
+    return '/dashboard'
   }
 })
 

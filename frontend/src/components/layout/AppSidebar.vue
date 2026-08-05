@@ -8,18 +8,23 @@
     </div>
 
     <nav class="sidebar-nav">
-      <router-link
-        v-for="item in navItems"
-        :key="item.path"
-        :to="item.path"
-        class="nav-item"
-        :class="{ active: isActive(item) }"
-        :title="item.label"
-        @click="onNavClick"
-      >
-        <span class="nav-dot"></span>
-        <span class="nav-label" v-show="!collapsed">{{ item.label }}</span>
-      </router-link>
+      <template v-for="group in visibleGroups" :key="group.title">
+        <div v-if="group.items.length" class="nav-group">
+          <span class="nav-group-title" v-show="!collapsed">{{ group.title }}</span>
+          <router-link
+            v-for="item in group.items"
+            :key="item.path"
+            :to="item.path"
+            class="nav-item"
+            :class="{ active: isActive(item) }"
+            :title="item.label"
+            @click="onNavClick"
+          >
+            <span class="nav-dot"></span>
+            <span class="nav-label" v-show="!collapsed">{{ item.label }}</span>
+          </router-link>
+        </div>
+      </template>
     </nav>
 
     <div class="sidebar-status">
@@ -33,6 +38,21 @@
 import { computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { useBotStore } from '@/stores/bot'
+import { useAuthStore } from '@/stores/auth'
+
+/** 最小权限等级：1=组织成员 2=组织管理员 3=站点管理员 */
+type MinRole = 1 | 2 | 3
+
+interface NavItem {
+  path: string
+  label: string
+  minRole: MinRole
+}
+
+interface NavGroup {
+  title: string
+  items: NavItem[]
+}
 
 const props = defineProps<{
   collapsed?: boolean
@@ -44,6 +64,7 @@ const emit = defineEmits<{
 
 const route = useRoute()
 const botStore = useBotStore()
+const authStore = useAuthStore()
 
 const collapseIcon = computed(() => {
   if (props.isMobile) return '✕'
@@ -62,19 +83,57 @@ function onNavClick() {
   }
 }
 
-const navItems = [
-  { path: '/dashboard', label: '仪表盘' },
-  { path: '/bots', label: 'Bot 管理' },
-  { path: '/player-tracking', label: '玩家追踪' },
-  { path: '/miaomiao', label: '妙妙工具' },
-  { path: '/warehouses', label: '仓库管理' },
-  { path: '/build', label: '建造任务' },
-  { path: '/map-art-tasks', label: '地图画建造' },
-  { path: '/logistics/waypoints', label: '物流管理' },
-  { path: '/config', label: '系统配置' },
-  { path: '/plugins', label: '插件管理' },
-  { path: '/monitor', label: '系统监控' },
+/**
+ * 侧边栏导航（按权限分组）
+ * - 组织成员(1)：仪表盘、玩家追踪、妙妙工具
+ * - 组织管理员(2)：+ 仓库管理、建造任务、地图画建造、物流管理
+ * - 站点管理员(3)：全部 + Bot 管理、成员管理、系统配置、插件管理、系统监控
+ */
+const navGroups: NavGroup[] = [
+  {
+    title: '总览',
+    items: [
+      { path: '/dashboard', label: '仪表盘', minRole: 1 },
+    ],
+  },
+  {
+    title: '工具',
+    items: [
+      { path: '/player-tracking', label: '玩家追踪', minRole: 1 },
+      { path: '/miaomiao', label: '妙妙工具', minRole: 1 },
+    ],
+  },
+  {
+    title: '管理',
+    items: [
+      { path: '/warehouses', label: '仓库管理', minRole: 2 },
+      { path: '/build', label: '建造任务', minRole: 2 },
+      { path: '/map-art-tasks', label: '地图画建造', minRole: 2 },
+      { path: '/logistics/waypoints', label: '物流管理', minRole: 2 },
+    ],
+  },
+  {
+    title: '系统',
+    items: [
+      { path: '/bots', label: 'Bot 管理', minRole: 3 },
+      { path: '/members', label: '成员管理', minRole: 3 },
+      { path: '/config', label: '系统配置', minRole: 3 },
+      { path: '/plugins', label: '插件管理', minRole: 3 },
+      { path: '/monitor', label: '系统监控', minRole: 3 },
+    ],
+  },
 ]
+
+/** 仅保留当前用户权限等级 ≥ minRole 的分组 */
+const visibleGroups = computed<NavGroup[]>(() => {
+  const rank = authStore.roleRank
+  return navGroups
+    .map(group => ({
+      ...group,
+      items: group.items.filter(item => item.minRole <= rank),
+    }))
+    .filter(group => group.items.length > 0)
+})
 
 function isActive(item: { path: string }): boolean {
   return route.path === item.path ||
@@ -144,6 +203,29 @@ function isActive(item: { path: string }): boolean {
   gap: 2px;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
+}
+
+/* ---- 分组标题 ---- */
+.nav-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-top: 8px;
+}
+
+.nav-group:first-child {
+  padding-top: 0;
+}
+
+.nav-group-title {
+  padding: 6px 20px 4px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  opacity: 0.6;
+  white-space: nowrap;
 }
 
 .nav-item {
