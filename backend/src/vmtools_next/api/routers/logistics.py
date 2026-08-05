@@ -40,8 +40,6 @@ def list_waypoints(
     user=Depends(get_current_user),
 ):
     q = db.query(LogisticsWaypointModel)
-    if user.organization_id:
-        q = q.filter(LogisticsWaypointModel.organization_id == user.organization_id)
     items = q.order_by(desc(LogisticsWaypointModel.created_at)).offset((page - 1) * page_size).limit(page_size).all()
     return [_waypoint_to_response(w) for w in items]
 
@@ -96,8 +94,6 @@ def list_drop_points(
     user=Depends(get_current_user),
 ):
     q = db.query(LogisticsDropPointModel)
-    if user.organization_id:
-        q = q.filter(LogisticsDropPointModel.organization_id == user.organization_id)
     items = q.order_by(desc(LogisticsDropPointModel.created_at)).offset((page - 1) * page_size).limit(page_size).all()
     return [_drop_point_to_response(d) for d in items]
 
@@ -152,8 +148,6 @@ def list_templates(
     user=Depends(get_current_user),
 ):
     q = db.query(LogisticsTaskTemplateModel)
-    if user.organization_id:
-        q = q.filter(LogisticsTaskTemplateModel.organization_id == user.organization_id)
     items = q.order_by(desc(LogisticsTaskTemplateModel.created_at)).offset((page - 1) * page_size).limit(page_size).all()
     return [_template_to_response(t) for t in items]
 

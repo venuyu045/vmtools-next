@@ -31,9 +31,17 @@ materials_router = APIRouter(prefix="/api/materials", tags=["materials"])
 
 class WarehouseCreate(BaseModel):
     name: str
+    teleport_cmd: Optional[str] = None
     logistics_enabled: bool = False
     logistics_teleport_cmd: Optional[str] = None
     aisle_lines: list = Field(default_factory=list)
+
+
+class WarehouseUpdate(BaseModel):
+    name: Optional[str] = None
+    teleport_cmd: Optional[str] = None
+    logistics_enabled: Optional[bool] = None
+    aisle_lines: Optional[list] = None
 
 
 class WarehouseResponse(BaseModel):
@@ -47,6 +55,7 @@ class WarehouseResponse(BaseModel):
     organization_id: Optional[str] = None
     logistics_enabled: bool = False
     logistics_teleport_cmd: Optional[str] = None
+    teleport_cmd: Optional[str] = None  # 前往仓库的传送指令（与 logistics_teleport_cmd 同值）
 
 
 class MaterialResponse(BaseModel):
@@ -111,11 +120,8 @@ class ScanStatusResponse(BaseModel):
 # ── Helpers ─────────────────────────────────────────────────────────────
 
 def _scoped_warehouse_query(db: Session, user: UserModel):
-    """Warehouse query scoped by organization (site_admin → all)."""
-    q = db.query(WarehouseModel)
-    if user.role != "site_admin" and user.organization_id:
-        q = q.filter(WarehouseModel.organization_id == user.organization_id)
-    return q
+    """Warehouse query — organization isolation removed (all data visible)."""
+    return db.query(WarehouseModel)
 
 
 def _get_scoped_warehouse(db: Session, user: UserModel, warehouse_id: str) -> WarehouseModel:
@@ -148,6 +154,7 @@ def _to_response(wh: WarehouseModel) -> WarehouseResponse:
         organization_id=wh.organization_id,
         logistics_enabled=wh.logistics_enabled,
         logistics_teleport_cmd=wh.logistics_teleport_cmd,
+        teleport_cmd=wh.logistics_teleport_cmd,
     )
 
 
@@ -168,9 +175,27 @@ def create_warehouse(data: WarehouseCreate, db: Session = Depends(get_db),
         aisle_lines=json.dumps(data.aisle_lines or [], ensure_ascii=False),
         organization_id=user.organization_id,
         logistics_enabled=data.logistics_enabled,
-        logistics_teleport_cmd=data.logistics_teleport_cmd,
+        logistics_teleport_cmd=data.teleport_cmd or data.logistics_teleport_cmd,
     )
     db.add(wh)
+    db.commit()
+    db.refresh(wh)
+    return _to_response(wh)
+
+
+@router.put("/{warehouse_id}", response_model=WarehouseResponse)
+def update_warehouse(warehouse_id: str, data: WarehouseUpdate,
+                     db: Session = Depends(get_db), user=Depends(get_current_user)):
+    """Update warehouse metadata (name / teleport_cmd / aisle_lines / logistics)."""
+    wh = _get_scoped_warehouse(db, user, warehouse_id)
+    if data.name is not None:
+        wh.name = data.name
+    if data.teleport_cmd is not None:
+        wh.logistics_teleport_cmd = data.teleport_cmd
+    if data.logistics_enabled is not None:
+        wh.logistics_enabled = data.logistics_enabled
+    if data.aisle_lines is not None:
+        wh.aisle_lines = json.dumps(data.aisle_lines, ensure_ascii=False)
     db.commit()
     db.refresh(wh)
     return _to_response(wh)

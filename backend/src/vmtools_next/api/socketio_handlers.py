@@ -425,6 +425,25 @@ async def scan_control(sid, data):
             from vmtools_next.core.warehouse_scanner import WarehouseScanner
             scanner = WarehouseScanner(client, minihud)
 
+            # 前往仓库：若仓库配置了传送指令，先让 bot 执行指令传送过去，再开始扫描
+            teleport_cmd = (wh.logistics_teleport_cmd or "").strip()
+            if teleport_cmd and engine_type == "mineflayer":
+                await sio.emit("scan_alert", {
+                    "type": "info",
+                    "message": f"正在传送至仓库: {teleport_cmd}",
+                }, to=sid)
+                try:
+                    await client.run_command(teleport_cmd)
+                    logger.info("Teleported bot %s to warehouse %s via: %s",
+                                bot_id[:8], warehouse_id, teleport_cmd)
+                    await asyncio.sleep(3)  # 等待传送生效/区块加载
+                except Exception as e:
+                    logger.warning("Teleport to warehouse %s failed: %s", warehouse_id, e)
+                    await sio.emit("scan_alert", {
+                        "type": "warning",
+                        "message": f"传送指令执行失败（继续扫描）: {e}",
+                    }, to=sid)
+
             # 进度回调：Socket.IO 推送 + scan_status 落库
             async def on_progress(scanned, total, pos):
                 await sio.emit("scan_progress", {
@@ -553,28 +572,20 @@ async def build_control(sid, data):
 def _build_initial_payload(user_info: dict | None = None) -> dict:
     """Build initial sync payload for newly connected client.
 
-    Scoped to the user's organization. Site admins see all data.
+    Organization isolation removed — all data is visible to any approved user.
     """
-    org_id = (user_info or {}).get("organization_id")
-    user_id = (user_info or {}).get("user_id")
-
     Session = get_session_factory()
     db = Session()
     try:
         from vmtools_next.data.models.logistics import MccBotModel, LogisticsTaskRunModel
         from vmtools_next.data.models.warehouse import WarehouseModel
 
-        # Build bot query, scoped by org
+        # Build bot query
         bot_query = db.query(MccBotModel)
         warehouse_query = db.query(WarehouseModel)
         run_query = db.query(LogisticsTaskRunModel).filter(
             LogisticsTaskRunModel.status.in_(["running", "paused"])
         )
-
-        # For non-site-admin users, filter by organization
-        if org_id:
-            bot_query = bot_query.filter(MccBotModel.organization_id == org_id)
-            warehouse_query = warehouse_query.filter(WarehouseModel.organization_id == org_id)
 
         bots = []
         import json as _json

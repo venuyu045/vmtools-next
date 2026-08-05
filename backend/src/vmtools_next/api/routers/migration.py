@@ -41,7 +41,7 @@ def migrate_warehouses(json_path: str, user=Depends(get_current_user)):
     Session = get_session_factory()
     db = Session()
     try:
-        count = WarehouseMigrator.migrate(json_path, db, user.organization_id)
+        count = WarehouseMigrator.migrate(json_path, db, None)
         return {"status": "migrated", "count": count}
     finally:
         db.close()

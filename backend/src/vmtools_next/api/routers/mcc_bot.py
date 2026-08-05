@@ -18,11 +18,8 @@ router = APIRouter(prefix="/api/mcc-bots", tags=["mcc-bots"])
 
 
 def _scoped_bot_query(db: Session, user: UserModel):
-    """Bot query scoped by organization (site_admin → all, others → same org)."""
-    q = db.query(MccBotModel)
-    if user.role != "site_admin":
-        q = q.filter(MccBotModel.organization_id == user.organization_id)
-    return q
+    """Bot query — organization isolation removed (all data visible)."""
+    return db.query(MccBotModel)
 
 
 def _get_scoped_bot(db: Session, user: UserModel, bot_id: str) -> MccBotModel:
