@@ -202,9 +202,14 @@ function createServuxHandlers(bot) {
 
     handshakePromise = new Promise((resolve) => {
       handshakeResolve = resolve;
-      const meta = encodeNbt({ version: { type: 'int', value: PROTOCOL_VERSION } });
-      const payload = Buffer.concat([writeVarInt(TYPE_C2S_METADATA_REQUEST), meta]);
-      sendPayload(payload);
+
+      // 注意：旧版 Servux（v1，如 servux-lophine-1.21.11-DEV）不识别带 NBT 的
+      // C2S_METADATA_REQUEST（v2 才用 DataByteBufUtils 写 NBT）。发送标准 NBT 请求
+      // 会被服务端解码为 "found N bytes extra" 并直接踢下线。
+      // Servux 服务端在客户端注册通道后【主动推送】S2C_METADATA，因此这里只等待
+      // 推送即可，不主动发包（如需主动请求，只能发裸 type：varint(2) 无 NBT）。
+      // sendPayload(writeVarInt(TYPE_C2S_METADATA_REQUEST));
+
       // 握手结果由 custom_payload 接收侧在收到 S2C_METADATA 时回填（resolve）；
       // 这里用超时兜底，避免等待时挂死。
       setTimeout(() => {
@@ -291,6 +296,10 @@ function createServuxHandlers(bot) {
   // ── 注册 custom_payload 监听 ──
   function register() {
     if (!bot._client) return false;
+    // 显式注册 Servux 通道（1.13+ 需注册后服务端才会推送），失败可忽略
+    try {
+      bot._client.write('register_channels', { channels: [CHANNEL] });
+    } catch (e) { /* 旧协议版本无 register_channels 则忽略 */ }
     bot._client.on('custom_payload', handlePayload);
     return true;
   }
