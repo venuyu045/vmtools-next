@@ -42,8 +42,12 @@ class MineflayerSessionPool:
         return client is not None and client.is_connected
 
     async def connect_bot(self, bot_id: str, host: str = "127.0.0.1",
-                           port: int = 44444) -> bool:
-        """Connect to a mineflayer bot process."""
+                           port: int = 44444, auth_token: str | None = None) -> bool:
+        """Connect to a mineflayer bot process.
+
+        ``auth_token`` 仅为兼容 MCC 引擎的 connect 接口签名，mineflayer WS
+        不校验 token，直接忽略。
+        """
         # 如果已有连接，先断开
         existing = self._clients.get(bot_id)
         if existing:
