@@ -1,7 +1,7 @@
 <template>
   <div class="miaomiao-page">
     <h2>🛠️ 妙妙工具</h2>
-    <p class="subtitle">领地排行榜 · 标记点目录 · 服务器地标 · 地铁线路 · MSPT排行榜</p>
+    <p class="subtitle">领地排行榜 · 标记点目录 · MSPT排行榜</p>
 
     <el-tabs v-model="activeTab" class="mm-tabs">
       <!-- Tab 1: 领地排行榜 -->
