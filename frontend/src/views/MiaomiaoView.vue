@@ -23,7 +23,7 @@
         </div>
 
         <el-table
-          :data="filteredResidences.slice(0, 500)"
+          :data="filteredResidences.slice(0, 200)"
           stripe
           size="small"
           max-height="500"

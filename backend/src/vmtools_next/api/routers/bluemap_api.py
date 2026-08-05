@@ -15,6 +15,16 @@ def _get_monitor():
     return get_bluemap_monitor()
 
 
+def _slim(items: list[dict], keys: list[str]) -> list[dict]:
+    """Keep only the fields the frontend actually needs.
+
+    The raw marker payloads carry large polygon `shape` arrays (and other
+    metadata) that are only used server-side; stripping them shrinks the JSON
+    by 80%+ and removes the main cause of frontend parse/render jank.
+    """
+    return [{k: item[k] for k in keys if k in item} for item in items]
+
+
 def _load_from_db_cache(key: str) -> list[dict]:
     """Fallback: load cached data from bluemap_cache table."""
     try:
@@ -42,6 +52,9 @@ def get_regions(user=Depends(get_current_user)):
     regions = monitor.get_regions() if monitor else []
     if not regions:
         regions = _load_from_db_cache("bluemap_regions")
+    # 保留 shape（MSPT tab 的"附近领地"点-多边形检测需要），剥离无关元数据
+    regions = _slim(regions, ["id", "world", "label", "shape", "shape_y", "position",
+                              "tps", "mspt", "entities", "players_in_region", "chunks", "sections"])
     return {"regions": regions, "count": len(regions)}
 
 
@@ -51,6 +64,8 @@ def get_residences(user=Depends(get_current_user)):
     residences = monitor.get_residences() if monitor else []
     if not residences:
         residences = _load_from_db_cache("bluemap_residences")
+    # 排行榜只用到这些字段；剥离大体积 shape 多边形坐标（前端均未使用）
+    residences = _slim(residences, ["id", "world", "label", "owner", "area", "position"])
     sorted_res = sorted(residences, key=lambda r: r.get("area", 0), reverse=True)
     return {"residences": sorted_res, "count": len(sorted_res)}
 
@@ -61,6 +76,7 @@ def get_markers(user=Depends(get_current_user)):
     markers = monitor.get_markers() if monitor else []
     if not markers:
         markers = _load_from_db_cache("bluemap_markers")
+    markers = _slim(markers, ["id", "world", "label", "position", "type", "detail"])
     return {"markers": markers, "count": len(markers)}
 
 
@@ -71,6 +87,7 @@ def get_landmarks(user=Depends(get_current_user)):
     landmarks = monitor.get_landmarks() if monitor else []
     if not landmarks:
         landmarks = _load_from_db_cache("bluemap_landmarks")
+    landmarks = _slim(landmarks, ["id", "world", "label", "position", "type", "detail"])
     return {"landmarks": landmarks, "count": len(landmarks)}
 
 
@@ -81,6 +98,7 @@ def get_metro_lines(user=Depends(get_current_user)):
     lines = monitor.get_metro_lines() if monitor else []
     if not lines:
         lines = _load_from_db_cache("bluemap_metro_lines")
+    lines = _slim(lines, ["id", "world", "label", "line", "line_color", "detail", "position"])
     return {"metro_lines": lines, "count": len(lines)}
 
 
@@ -91,6 +109,7 @@ def get_metro_stations(user=Depends(get_current_user)):
     stations = monitor.get_metro_stations() if monitor else []
     if not stations:
         stations = _load_from_db_cache("bluemap_metro_stations")
+    stations = _slim(stations, ["id", "world", "label", "position", "type", "detail"])
     return {"metro_stations": stations, "count": len(stations)}
 
 
