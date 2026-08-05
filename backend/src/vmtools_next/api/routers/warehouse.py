@@ -115,6 +115,9 @@ class ScanStatusResponse(BaseModel):
     total_containers: int
     scanned_containers: int
     failed_containers: int
+    items_scanned: int = 0
+    started_at: Optional[str] = None
+    finished_at: Optional[str] = None
 
 
 # ── Helpers ─────────────────────────────────────────────────────────────
@@ -383,4 +386,19 @@ def get_scan_status(warehouse_id: str, db: Session = Depends(get_db),
         total_containers=st.total_containers or 0,
         scanned_containers=st.scanned_containers or 0,
         failed_containers=st.failed_containers or 0,
+        items_scanned=st.items_scanned or 0,
+        started_at=st.started_at.isoformat() if st.started_at else None,
+        finished_at=st.finished_at.isoformat() if st.finished_at else None,
     )
+
+
+@router.get("/scan-queue")
+def list_scan_queue(db: Session = Depends(get_db),
+                    user=Depends(get_current_user)):
+    """返回扫描队列列表（由 ScanQueueManager 调度）。"""
+    from vmtools_next.main import get_scan_queue_manager
+    import asyncio
+    qm = get_scan_queue_manager()
+    if not qm:
+        return {"items": []}
+    return {"items": asyncio.run(qm.list_queue())}

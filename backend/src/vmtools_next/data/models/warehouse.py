@@ -81,18 +81,41 @@ class ContainerItemModel(Base):
 
 class ScanStatusModel(Base):
     """Live scan progress for a warehouse."""
-
     __tablename__ = "scan_status"
-
     warehouse_fk = Column(String, ForeignKey("warehouses.warehouse_id"), primary_key=True)
-    status = Column(String, default="idle")  # idle|scanning|paused|finished|cancelled
+    status = Column(String, default="idle")  # idle|scanning|paused|finished|cancelled|queued
     progress = Column(Float, default=0.0)
     current_pos = Column(String, nullable=True)
     total_containers = Column(BigInteger, default=0)
     scanned_containers = Column(BigInteger, default=0)
     failed_containers = Column(BigInteger, default=0)
-
+    items_scanned = Column(BigInteger, default=0)   # 已扫描到的物品总数量
+    started_at = Column(DateTime, nullable=True)   # 本次扫描开始时间
+    finished_at = Column(DateTime, nullable=True)  # 本次扫描结束时间
     warehouse = relationship("WarehouseModel", back_populates="scan_status")
+
+
+class ScanQueueModel(Base):
+    """Scan queue — warehouses waiting to be scanned, managed by ScanQueueManager.
+
+    status: pending | running | paused | completed | failed | cancelled
+    """
+    __tablename__ = "scan_queue"
+    queue_id = Column(String, primary_key=True)
+    warehouse_id = Column(String, ForeignKey("warehouses.warehouse_id"), index=True)
+    bot_id = Column(String, index=True)
+    priority = Column(Integer, default=0)
+    status = Column(String, default="pending", index=True)
+    error = Column(Text, nullable=True)
+    total_containers = Column(BigInteger, default=0)
+    scanned_containers = Column(BigInteger, default=0)
+    items_scanned = Column(BigInteger, default=0)
+    failed_containers = Column(BigInteger, default=0)
+    progress = Column(Float, default=0.0)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    started_at = Column(DateTime, nullable=True)
+    finished_at = Column(DateTime, nullable=True)
+    warehouse = relationship("WarehouseModel")
 
 
 class StorageZoneModel(Base):

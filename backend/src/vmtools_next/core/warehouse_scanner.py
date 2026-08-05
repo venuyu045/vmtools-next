@@ -30,8 +30,8 @@ class ScanState(Enum):
     CANCELED = auto()
 
 
-# Progress callback: (scanned_count, total_count, current_container_pos)
-ScanProgressCallback = Callable[[int, int, tuple[int, int, int]], Awaitable[None]]
+# Progress callback: (scanned_count, total_count, current_container_pos, items_scanned)
+ScanProgressCallback = Callable[[int, int, tuple[int, int, int], int], Awaitable[None]]
 
 
 def _project_point_onto_segment(
@@ -75,6 +75,7 @@ class WarehouseScanner:
         self._scan_queue: list[tuple[int, int, int]] = []
         self._current_index: int = 0
         self._scan_task: Optional[asyncio.Task] = None
+        self._scanned_items: int = 0  # 已扫描到的物品总数量（进度展示用）
 
     @property
     def state(self) -> ScanState:
@@ -194,36 +195,33 @@ class WarehouseScanner:
         """Main scan loop with backpressure control."""
         total = len(self._scan_queue)
         scanned = 0
-
+        self._scanned_items = 0
         for i in range(self._current_index, total):
             if self._cancel_requested:
                 self._state = ScanState.CANCELED
                 return
-
             # Wait if paused
             await self._pause_event.wait()
-
             self._current_index = i
             x, y, z = self._scan_queue[i]
-
             # Backpressure: wait if too many pending
             async with self._semaphore:
                 result = await self._read_container(x, y, z)
-
             if result.success:
                 key = f"{x},{y},{z}"
-                self._scan_results[key] = ContainerSnapshot(
+                snapshot = ContainerSnapshot(
                     x=x, y=y, z=z,
                     items=result.items,
                     total_items=sum(item.count for item in result.items),
                     scanned_at=time.time(),
                 )
+                self._scan_results[key] = snapshot
                 scanned += 1
-
-            # Progress callback
+                self._scanned_items += snapshot.total_items
+            # Progress callback（含已扫物品数）
             if self._progress_callback:
                 try:
-                    await self._progress_callback(scanned, total, (x, y, z))
+                    await self._progress_callback(scanned, total, (x, y, z), self._scanned_items)
                 except Exception as e:
                     logger.warning("Progress callback error: %s", e)
 
