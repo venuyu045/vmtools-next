@@ -197,10 +197,18 @@ function createServuxHandlers(bot) {
   }
 
   // ── 收到 Servux 响应 ──
-  async function handlePayload(data) {
-    let buf = data;
-    if (typeof data === 'object' && Buffer.isBuffer(data) === false && data.data) {
-      buf = data.data; // 兼容 packet 对象形态
+  async function handlePayload(packet) {
+    // 关键过滤：minecraft-protocol 会把服务器发来的【所有】custom_payload 都抛到这个事件
+    // （品牌 minecraft:brand、注册表 minecraft:register、聊天建议、其它插件通道等）。
+    // 若不按通道过滤，其它通道的二进制数据会被误当成 Servux NBT 解析，
+    // 产生大量 "Read error ... Missing characters in string" 噪音，甚至可能误触发解析逻辑。
+    if (packet && packet.channel !== undefined && String(packet.channel) !== CHANNEL) {
+      return;
+    }
+
+    let buf = packet && (packet.data || packet);
+    if (typeof buf === 'object' && Buffer.isBuffer(buf) === false && buf.data) {
+      buf = buf.data; // 兼容 packet 对象形态
     }
     if (!Buffer.isBuffer(buf) || buf.length < 1) return;
 
