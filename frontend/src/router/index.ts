@@ -29,6 +29,8 @@ const routes = [
       { path: 'miaomiao', name: 'Miaomiao', component: () => import('@/views/MiaomiaoView.vue'), meta: { title: '妙妙工具', roles: ALL_LOGGED_IN } },
 
       // --- 组织管理员及以上可见 ---
+      { path: 'mcc-instances', name: 'MccInstances', component: () => import('@/views/BotManageView.vue'), meta: { title: 'MCC 管理', engine: 'mcc', roles: [...ROLES.orgAdmin, ...ROLES.siteAdmin] } },
+      { path: 'mf-instances', name: 'MfInstances', component: () => import('@/views/BotManageView.vue'), meta: { title: 'MF 管理', engine: 'mineflayer', roles: [...ROLES.orgAdmin, ...ROLES.siteAdmin] } },
       { path: 'warehouses', name: 'Warehouses', component: () => import('@/views/WarehouseListView.vue'), meta: { title: '仓库管理', roles: [...ROLES.orgAdmin, ...ROLES.siteAdmin] } },
       { path: 'warehouses/:id', name: 'WarehouseDetail', component: () => import('@/views/WarehouseDetailView.vue'), meta: { title: '仓库详情', roles: [...ROLES.orgAdmin, ...ROLES.siteAdmin] } },
       { path: 'map-art/:taskId', name: 'MapArtBuild', component: () => import('@/views/MapArtBuildView.vue'), meta: { title: '地图画建造', roles: [...ROLES.orgAdmin, ...ROLES.siteAdmin] } },
@@ -42,7 +44,8 @@ const routes = [
       { path: 'logistics/runs', name: 'Runs', component: () => import('@/views/LogisticsRunView.vue'), meta: { title: '任务运行', roles: [...ROLES.orgAdmin, ...ROLES.siteAdmin] } },
 
       // --- 组织管理员及以上可见 ---
-      { path: 'bots', name: 'Bots', component: () => import('@/views/BotManageView.vue'), meta: { title: 'Bot 管理', roles: [...ROLES.orgAdmin, ...ROLES.siteAdmin] } },
+      // 旧 Bot 管理路由（拆分后重定向到 MCC 管理）
+      { path: 'bots', redirect: '/mcc-instances' },
       { path: 'bots/:id/terminal', name: 'BotTerminal', component: () => import('@/views/MccTerminalView.vue'), meta: { title: 'Bot 终端', roles: [...ROLES.orgAdmin, ...ROLES.siteAdmin] } },
       { path: 'bots/:id/files', name: 'BotFiles', component: () => import('@/views/MccFileManagerView.vue'), meta: { title: 'Bot 文件', roles: [...ROLES.orgAdmin, ...ROLES.siteAdmin] } },
 
@@ -52,8 +55,8 @@ const routes = [
       { path: 'plugins', name: 'Plugins', component: () => import('@/views/PluginView.vue'), meta: { title: '插件管理', roles: [...ROLES.siteAdmin] } },
       { path: 'monitor', name: 'Monitor', component: () => import('@/views/MonitorView.vue'), meta: { title: '系统监控', roles: [...ROLES.siteAdmin] } },
 
-      // --- 旧 MCC 路由（重定向到新 Bot 路由） ---
-      { path: 'mcc/instances', redirect: '/bots' },
+      // --- 旧 MCC 路由（重定向到新拆分路由） ---
+      { path: 'mcc/instances', redirect: '/mcc-instances' },
       { path: 'mcc/instances/:id/terminal', redirect: (to: any) => `/bots/${to.params.id}/terminal` },
       { path: 'mcc/instances/:id/files', redirect: (to: any) => `/bots/${to.params.id}/files` },
     ],

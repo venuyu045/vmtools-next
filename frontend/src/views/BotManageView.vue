@@ -2,21 +2,21 @@
   <div class="bots-page">
     <div class="page-header">
       <div>
-        <h2 class="pixel page-title">Bot 管理</h2>
-        <div class="mono page-subtitle">{{ mccStore.runningCount }} 运行中 / {{ mccStore.totalCount }} 实例</div>
+        <h2 class="pixel page-title">{{ pageTitle }}</h2>
+        <div class="mono page-subtitle">{{ engineRunningCount }} 运行中 / {{ engineTotalCount }} 实例<span v-if="engine === 'mineflayer'" class="engine-hint">（Mineflayer，服务于仓库/物流/地图画）</span></div>
       </div>
       <div class="header-actions">
         <button class="pixel-btn outline" :class="{ active: sortMode === 'name' }" @click="sortMode = 'name'">按名称</button>
         <button class="pixel-btn outline" :class="{ active: sortMode === 'running' }" @click="sortMode = 'running'">运行优先</button>
-        <button class="pixel-btn warning" :disabled="mccStore.runningCount === 0" @click="stopAll">一键停止</button>
+        <button class="pixel-btn warning" :disabled="engineRunningCount === 0" @click="stopAll">一键停止</button>
         <button class="pixel-btn danger" @click="forceKillAll">强制终止所有</button>
         <button class="pixel-btn outline" @click="refreshAll">刷新</button>
-        <button class="pixel-btn" @click="showCreate = true">+ 新建实例</button>
+        <button class="pixel-btn" @click="showCreate = true">+ 新建{{ engine === 'mcc' ? ' MCC' : ' MF' }}实例</button>
       </div>
     </div>
 
     <div v-loading="mccStore.loading" class="instance-grid">
-      <div v-if="sortedInstances.length === 0" class="empty-text mono">-- 暂无 Bot 实例，点击右上角新建 --</div>
+      <div v-if="sortedInstances.length === 0" class="empty-text mono">{{ emptyText }}</div>
       <div
         v-for="instance in sortedInstances"
         :key="instance.instance_id"
@@ -225,6 +225,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import MccWebTerminal from '@/components/MccWebTerminal.vue'
 import MccFileManagerPanel from '@/components/MccFileManagerPanel.vue'
@@ -235,8 +236,26 @@ import { botApi } from '@/api/bot'
 import type { MccAccountConfig, MccAuthType, MccInstance } from '@/api/mccInstance'
 import { mccInstanceApi } from '@/api/mccInstance'
 
+const route = useRoute()
 const mccStore = useMccInstanceStore()
 const botStore = useBotStore()
+
+/** 当前页面管理的引擎：'mcc'（MCC 管理）| 'mineflayer'（MF 管理） */
+const engine = (route.meta.engine as 'mcc' | 'mineflayer') || 'mcc'
+const engineName = computed(() => (engine === 'mcc' ? 'MCC' : 'MF'))
+const pageTitle = computed(() => (engine === 'mcc' ? 'MCC 管理' : 'MF 管理'))
+const emptyText = computed(() =>
+  engine === 'mcc'
+    ? '-- 暂无 MCC 实例，点击右上角新建 --'
+    : '-- 暂无 Mineflayer 实例，点击右上角新建 --'
+)
+
+/** 本引擎的实例列表 */
+const engineInstances = computed(() =>
+  mccStore.instances.filter(i => (i.bot_engine || 'mcc') === engine)
+)
+const engineRunningCount = computed(() => engineInstances.value.filter(i => i.status === 'running').length)
+const engineTotalCount = computed(() => engineInstances.value.length)
 
 const showCreate = ref(false)
 const showProfileCreate = ref(false)
@@ -252,7 +271,7 @@ const lastDiff = ref('')
 const sortMode = ref<'name' | 'running'>('running')
 
 const sortedInstances = computed(() => {
-  const items = [...mccStore.instances]
+  const items = [...engineInstances.value]
   if (sortMode.value === 'name') {
     return items.sort((a, b) => (a.display_name || a.slug).localeCompare(b.display_name || b.slug))
   }
@@ -361,7 +380,7 @@ async function handleCreate() {
     ElMessage.warning('请输入 slug')
     return
   }
-  const payload: any = { ...createForm }
+  const payload: any = { ...createForm, bot_engine: engine }
   if (!payload.bot_id) delete payload.bot_id
   await mccStore.createInstance(payload)
   showCreate.value = false
@@ -400,7 +419,7 @@ async function stopAll() {
 async function forceKillAll() {
   try {
     await ElMessageBox.confirm(
-      `⚠️ 将立即强制终止服务器上所有 MCC 进程！\n\n包括：正在运行的实例 + 后端重启后残留的孤儿进程。`,
+      `⚠️ 将立即强制终止服务器上所有 Bot 进程！\n\n包括：正在运行的实例 + 后端重启后残留的孤儿进程。`,
       '强制终止所有进程',
       { type: 'error', confirmButtonText: '确认终止', cancelButtonText: '取消' },
     )
@@ -587,6 +606,7 @@ onMounted(() => refreshAll())
 .page-header { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
 .page-title { color: var(--green-primary); font-size: 16px; margin-bottom: 8px; }
 .page-subtitle { color: var(--text-secondary); font-size: 16px; }
+.engine-hint { color: var(--text-muted); font-size: 13px; margin-left: 8px; }
 .header-actions { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
 .instance-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; min-height: 160px; }
 .instance-card { display: flex; flex-direction: column; gap: 12px; cursor: pointer; transition: border-color 0.15s; }
