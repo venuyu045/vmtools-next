@@ -111,9 +111,8 @@ class MccAccountProfileService:
         }
 
     def _scope_query(self, query, user: UserModel):
-        if user.role == "site_admin":
-            return query
-        return query.filter(MccAccountProfileModel.organization_id == user.organization_id)
+        """Organization isolation removed — all data visible."""
+        return query
 
     def _updatable_fields(self) -> Iterable[str]:
         return (

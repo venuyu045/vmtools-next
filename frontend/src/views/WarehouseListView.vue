@@ -41,16 +41,19 @@
       </div>
     </div>
     <el-dialog v-model="showCreate" title="创建仓库" width="480px">
-      <el-form :model="createForm" label-width="60px">
-        <el-form-item label="名称">
-          <el-input v-model="createForm.name" placeholder="仓库名称" />
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="showCreate = false">取消</el-button>
-        <el-button type="primary" @click="handleCreate">创建</el-button>
-      </template>
-    </el-dialog>
+    <el-form :model="createForm" label-width="100px">
+      <el-form-item label="名称">
+        <el-input v-model="createForm.name" placeholder="仓库名称" />
+      </el-form-item>
+      <el-form-item label="前往指令">
+        <el-input v-model="createForm.teleport_cmd" placeholder="例如 /tp 100 64 -200（可稍后编辑）" />
+      </el-form-item>
+    </el-form>
+    <template #footer>
+      <el-button @click="showCreate = false">取消</el-button>
+      <el-button type="primary" @click="handleCreate">创建</el-button>
+    </template>
+  </el-dialog>
   </div>
 </template>
 
@@ -61,18 +64,18 @@ import { ElMessage } from 'element-plus'
 
 const warehouseStore = useWarehouseStore()
 const showCreate = ref(false)
-const createForm = ref({ name: '' })
+  const createForm = ref({ name: '', teleport_cmd: '' })
 
-async function handleCreate() {
-  if (!createForm.value.name) {
-    ElMessage.warning('请输入仓库名称')
-    return
+  async function handleCreate() {
+    if (!createForm.value.name) {
+      ElMessage.warning('请输入仓库名称')
+      return
+    }
+    await warehouseStore.createWarehouse(createForm.value.name, createForm.value.teleport_cmd)
+    showCreate.value = false
+    createForm.value = { name: '', teleport_cmd: '' }
+    ElMessage.success('仓库已创建')
   }
-  await warehouseStore.createWarehouse(createForm.value.name)
-  showCreate.value = false
-  createForm.value.name = ''
-  ElMessage.success('仓库已创建')
-}
 
 onMounted(() => warehouseStore.fetchWarehouses())
 </script>

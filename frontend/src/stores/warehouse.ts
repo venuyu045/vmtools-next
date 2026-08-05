@@ -10,6 +10,22 @@ export interface Warehouse {
   material_count: number
   group_id: string | null
   organization_id: string | null
+  teleport_cmd: string | null
+  logistics_teleport_cmd: string | null
+}
+
+export interface WarehouseZone {
+  zone_id: string
+  warehouse_fk: string
+  name: string
+  range_min_x: number
+  range_min_y: number
+  range_min_z: number
+  range_max_x: number
+  range_max_y: number
+  range_max_z: number
+  aisle_lines: any[]
+  created_at: string | null
 }
 
 export interface MaterialItem {
@@ -47,10 +63,15 @@ export const useWarehouseStore = defineStore('warehouse', {
       this.currentWarehouse = data
       return data
     },
-    async createWarehouse(name: string) {
-      const { data } = await warehouseApi.create({ name })
+    async createWarehouse(name: string, teleportCmd?: string) {
+      const { data } = await warehouseApi.create({ name, teleport_cmd: teleportCmd || undefined })
       this.warehouses.push(data)
       return data
+    },
+    async updateWarehouse(id: string, data: any) {
+      const res = await warehouseApi.update(id, data)
+      this.currentWarehouse = res.data
+      return res.data
     },
     async deleteWarehouse(id: string) {
       await warehouseApi.delete(id)

@@ -7,12 +7,15 @@ export const warehouseApi = {
   get(id: string) {
     return client.get(`/warehouses/${id}`)
   },
-  create(data: { name: string; organization_id?: string }) {
+  create(data: { name: string; teleport_cmd?: string; organization_id?: string }) {
     return client.post('/warehouses', data)
   },
-  delete(id: string) {
+    delete(id: string) {
     return client.delete(`/warehouses/${id}`)
-  },
+    },
+    update(id: string, data: any) {
+    return client.put(`/warehouses/${id}`, data)
+    },
     getMaterials(id: string, page = 1, pageSize = 500) {
     return client.get(`/warehouses/${id}/materials`, { params: { page, page_size: pageSize } })
     },

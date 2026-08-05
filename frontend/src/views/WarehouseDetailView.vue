@@ -19,6 +19,54 @@
       </p>
     </el-card>
 
+    <!-- 仓库设置：前往仓库的传送指令 -->
+    <el-card shadow="never" style="margin-bottom: 20px">
+      <h3>仓库设置</h3>
+      <div class="setting-row">
+        <span class="setting-label">前往仓库指令：</span>
+        <el-input
+          v-model="teleportCmd"
+          placeholder="例如 /tp 100 64 -200（扫描前 bot 会先执行该指令传送过去）"
+          style="max-width: 480px"
+          clearable
+        />
+        <el-button type="primary" :disabled="!teleportCmdChanged" @click="saveTeleportCmd">保存</el-button>
+      </div>
+      <p class="mono hint">提示：扫描时 bot 会先执行此指令传送到仓库，再扫描范围内容器（Servux 不打开容器）。</p>
+
+      <el-divider />
+
+      <h3>仓库范围（Storage Zones）</h3>
+      <p class="mono hint">扫描时按这些范围枚举容器坐标（可添加多个范围，覆盖不同坐标的仓库区域）。</p>
+
+      <el-table v-if="zones.length" :data="zones" style="margin: 12px 0" size="small" max-height="240">
+        <el-table-column prop="name" label="名称" width="140" />
+        <el-table-column label="范围 (min → max)" min-width="260">
+          <template #default="{ row }">
+            <span class="mono">X {{ row.range_min_x }}→{{ row.range_max_x }} | Y {{ row.range_min_y }}→{{ row.range_max_y }} | Z {{ row.range_min_z }}→{{ row.range_max_z }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="80">
+          <template #default="{ row }">
+            <el-button link type="danger" @click="deleteZone(row.zone_id)">删除</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+      <el-empty v-else description="暂无范围，请添加至少一个范围才能扫描" :image-size="60" />
+
+      <div class="zone-form">
+        <el-input v-model="zoneForm.name" placeholder="范围名称（如 A区）" style="width: 140px" />
+        <el-input-number v-model="zoneForm.minX" :controls="false" placeholder="minX" style="width: 110px" />
+        <el-input-number v-model="zoneForm.minY" :controls="false" placeholder="minY" style="width: 110px" />
+        <el-input-number v-model="zoneForm.minZ" :controls="false" placeholder="minZ" style="width: 110px" />
+        <span class="mono">→</span>
+        <el-input-number v-model="zoneForm.maxX" :controls="false" placeholder="maxX" style="width: 110px" />
+        <el-input-number v-model="zoneForm.maxY" :controls="false" placeholder="maxY" style="width: 110px" />
+        <el-input-number v-model="zoneForm.maxZ" :controls="false" placeholder="maxZ" style="width: 110px" />
+        <el-button type="primary" @click="addZone">添加范围</el-button>
+      </div>
+    </el-card>
+
     <!-- 扫描控制 -->
     <el-card shadow="never" style="margin-bottom: 20px">
       <h3>容器扫描（Servux 容器预览 · 不打开容器）</h3>
@@ -81,10 +129,11 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
-import { ElNotification } from 'element-plus'
-import { useWarehouseStore } from '@/stores/warehouse'
+import { ElNotification, ElMessage } from 'element-plus'
+import { useWarehouseStore, type WarehouseZone } from '@/stores/warehouse'
 import { useBotStore } from '@/stores/bot'
 import { useSocketIO } from '@/composables/useSocketIO'
+import { warehouseApi } from '@/api/warehouse'
 
 const route = useRoute()
 const warehouseStore = useWarehouseStore()
@@ -93,6 +142,50 @@ const { emit, getSocket } = useSocketIO()
 
 const warehouseId = computed(() => route.params.id as string)
 const selectedBot = ref('')
+
+// 仓库设置
+const teleportCmd = ref('')
+const teleportCmdChanged = computed(() => teleportCmd.value !== (warehouseStore.currentWarehouse?.teleport_cmd ?? warehouseStore.currentWarehouse?.logistics_teleport_cmd ?? ''))
+const zones = ref<WarehouseZone[]>([])
+const zoneForm = ref({
+  name: '', minX: 0, minY: 0, minZ: 0, maxX: 0, maxY: 0, maxZ: 0,
+})
+
+async function fetchZones() {
+  try {
+    const { data } = await warehouseApi.getZones(warehouseId.value)
+    zones.value = data ?? []
+  } catch { zones.value = [] }
+}
+
+async function saveTeleportCmd() {
+  await warehouseStore.updateWarehouse(warehouseId.value, { teleport_cmd: teleportCmd.value })
+  ElMessage.success('传送指令已保存')
+  await refreshAll()
+}
+
+async function addZone() {
+  const f = zoneForm.value
+  if (!f.name) { ElMessage.warning('请输入范围名称'); return }
+  if (f.maxX < f.minX || f.maxY < f.minY || f.maxZ < f.minZ) {
+    ElMessage.warning('max 必须 ≥ min')
+    return
+  }
+  await warehouseApi.createZone(warehouseId.value, {
+    name: f.name,
+    range_min_x: f.minX, range_min_y: f.minY, range_min_z: f.minZ,
+    range_max_x: f.maxX, range_max_y: f.maxY, range_max_z: f.maxZ,
+  })
+  ElMessage.success('范围已添加')
+  zoneForm.value = { name: '', minX: 0, minY: 0, minZ: 0, maxX: 0, maxY: 0, maxZ: 0 }
+  await fetchZones()
+}
+
+async function deleteZone(zoneId: string) {
+  await warehouseApi.deleteZone(warehouseId.value, zoneId)
+  ElMessage.success('范围已删除')
+  await fetchZones()
+}
 
 const availableBots = computed(() => botStore.bots)
 
@@ -122,7 +215,9 @@ async function refreshAll() {
     warehouseStore.fetchWarehouse(warehouseId.value),
     warehouseStore.fetchMaterials(warehouseId.value),
     warehouseStore.fetchScanStatus(warehouseId.value),
+    fetchZones(),
   ])
+  teleportCmd.value = warehouseStore.currentWarehouse?.teleport_cmd ?? warehouseStore.currentWarehouse?.logistics_teleport_cmd ?? ''
 }
 
 function startScan() {
@@ -181,4 +276,8 @@ onBeforeUnmount(() => {
 .scan-progress { margin-top: 8px; }
 .scan-hint { color: var(--text-secondary); margin-top: 6px; font-size: 13px; }
 .count-badge { color: var(--text-secondary); font-size: 13px; margin-left: 8px; }
+.setting-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.setting-label { white-space: nowrap; }
+.hint { color: var(--text-secondary); font-size: 13px; margin-top: 4px; }
+.zone-form { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
 </style>

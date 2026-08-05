@@ -125,9 +125,8 @@ class MccInstanceService:
         return instance
 
     def _scope_query(self, query, user: UserModel):
-        if user.role == "site_admin":
-            return query
-        return query.filter(MccInstanceModel.organization_id == user.organization_id)
+        """Organization isolation removed — all data visible."""
+        return query
 
     def _prepare_binary(self, instance_dir: Path, binary_mode: str) -> Path | None:
         source = Path(self.config.binary_path).expanduser()
