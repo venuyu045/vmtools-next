@@ -240,19 +240,21 @@ const route = useRoute()
 const mccStore = useMccInstanceStore()
 const botStore = useBotStore()
 
-/** 当前页面管理的引擎：'mcc'（MCC 管理）| 'mineflayer'（MF 管理） */
-const engine = (route.meta.engine as 'mcc' | 'mineflayer') || 'mcc'
-const engineName = computed(() => (engine === 'mcc' ? 'MCC' : 'MF'))
-const pageTitle = computed(() => (engine === 'mcc' ? 'MCC 管理' : 'MF 管理'))
+/** 当前页面管理的引擎：'mcc'（MCC 管理）| 'mineflayer'（MF 管理）
+ *  注意：/mcc-instances 与 /mf-instances 复用同一组件，路由切换时组件不会重新挂载，
+ *  因此必须用 computed 保持响应式，否则切换后仍显示旧引擎的列表 */
+const engine = computed(() => (route.meta.engine as 'mcc' | 'mineflayer') || 'mcc')
+const engineName = computed(() => (engine.value === 'mcc' ? 'MCC' : 'MF'))
+const pageTitle = computed(() => (engine.value === 'mcc' ? 'MCC 管理' : 'MF 管理'))
 const emptyText = computed(() =>
-  engine === 'mcc'
+  engine.value === 'mcc'
     ? '-- 暂无 MCC 实例，点击右上角新建 --'
     : '-- 暂无 Mineflayer 实例，点击右上角新建 --'
 )
 
 /** 本引擎的实例列表 */
 const engineInstances = computed(() =>
-  mccStore.instances.filter(i => (i.bot_engine || 'mcc') === engine)
+  mccStore.instances.filter(i => (i.bot_engine || 'mcc') === engine.value)
 )
 const engineRunningCount = computed(() => engineInstances.value.filter(i => i.status === 'running').length)
 const engineTotalCount = computed(() => engineInstances.value.length)
@@ -380,7 +382,7 @@ async function handleCreate() {
     ElMessage.warning('请输入 slug')
     return
   }
-  const payload: any = { ...createForm, bot_engine: engine }
+  const payload: any = { ...createForm, bot_engine: engine.value }
   if (!payload.bot_id) delete payload.bot_id
   await mccStore.createInstance(payload)
   showCreate.value = false
@@ -406,7 +408,7 @@ async function handleStop(instance: MccInstance) {
 
 async function stopAll() {
   try {
-    await ElMessageBox.confirm(`确认停止所有 ${mccStore.runningCount} 个运行中的实例？`, '一键停止', { type: 'warning' })
+    await ElMessageBox.confirm(`确认停止所有 ${engineRunningCount.value} 个运行中的实例？`, '一键停止', { type: 'warning' })
   } catch { return }
   const running = sortedInstances.value.filter(i => i.status === 'running')
   // 并行强制停止：从 N×10s 降到 ~2-3s
@@ -599,6 +601,17 @@ watch(detailOpen, (open) => {
 })
 
 onMounted(() => refreshAll())
+
+// 同一组件在 /mcc-instances 与 /mf-instances 间切换时（组件复用、不重新挂载），
+// 重新拉取实例列表，确保切换到 MCC 管理时列表立即更新
+watch(
+  () => route.meta.engine,
+  () => {
+    detailOpen.value = false
+    selectedInstance.value = null
+    refreshAll()
+  }
+)
 </script>
 
 <style scoped>
