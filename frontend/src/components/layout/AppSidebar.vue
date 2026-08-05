@@ -108,7 +108,6 @@ const navGroups: NavGroup[] = [
     items: [
       { path: '/bots', label: 'Bot 管理', minRole: 2 },
       { path: '/warehouses', label: '仓库管理', minRole: 2 },
-      { path: '/build', label: '建造任务', minRole: 2 },
       { path: '/map-art-tasks', label: '地图画建造', minRole: 2 },
       { path: '/logistics/waypoints', label: '物流管理', minRole: 2 },
     ],

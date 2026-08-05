@@ -1,7 +1,7 @@
 import { io, Socket } from 'socket.io-client'
 import { useBotStore } from '@/stores/bot'
 import { useWarehouseStore } from '@/stores/warehouse'
-import { useBuildStore } from '@/stores/build'
+import { useMapArtStore } from '@/stores/mapArt'
 import { useLogisticsStore } from '@/stores/logistics'
 import { useMonitorStore } from '@/stores/monitor'
 import { useMccInstanceStore } from '@/stores/mccInstance'
@@ -74,10 +74,10 @@ export function useSocketIO() {
       })
     })
 
-    // Build progress
+    // Build progress（地图画建造任务进度）
     socket.on('build_progress', (payload) => {
-      const buildStore = useBuildStore()
-      buildStore.updateTaskFromSocket(payload)
+      const mapArtStore = useMapArtStore()
+      mapArtStore.updateFromSocket(payload)
     })
 
     // Scan progress
