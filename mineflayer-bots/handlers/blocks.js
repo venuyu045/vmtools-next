@@ -115,8 +115,11 @@ function createBlockHandlers(bot) {
             const block = bot.blockAt(new Vec3(bx, by, bz));
             if (!block || block.type === 0) continue;
 
-            // 如果指定了 matching 过滤
-            if (matching && block.name !== matching) continue;
+            // 如果指定了 matching 过滤（支持逗号分隔的多个方块名，如 "chest,barrel"）
+            if (matching) {
+              const names = String(matching).split(',').map(s => s.trim()).filter(Boolean);
+              if (names.length > 0 && !names.includes(block.name)) continue;
+            }
 
             blocks.push({
               x: bx, y: by, z: bz,

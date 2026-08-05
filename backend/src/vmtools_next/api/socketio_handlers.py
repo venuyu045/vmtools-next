@@ -252,6 +252,15 @@ async def mcc_terminal_resize(sid, data):
 # 仓库扫描实例管理：warehouse_id → {"scanner": WarehouseScanner, "bot_id": str}
 _SCANNERS: dict[str, dict] = {}
 
+# mineflayer scan_nearby_blocks 匹配的容器方块（逗号分隔）
+_CONTAINER_MATCHING = (
+    "chest,trapped_chest,barrel,hopper,dispenser,dropper,furnace,blast_furnace,"
+    "smoker,brewing_stand,ender_chest,shulker_box,white_shulker_box,orange_shulker_box,"
+    "magenta_shulker_box,light_blue_shulker_box,yellow_shulker_box,lime_shulker_box,"
+    "pink_shulker_box,gray_shulker_box,light_gray_shulker_box,cyan_shulker_box,"
+    "purple_shulker_box,blue_shulker_box,brown_shulker_box,green_shulker_box,red_shulker_box,black_shulker_box"
+)
+
 
 async def _watch_scan_completion(warehouse_id: str) -> None:
     """Wait for a scanner task to finish, then persist results and clean up."""
@@ -443,6 +452,19 @@ async def scan_control(sid, data):
                         "type": "warning",
                         "message": f"传送指令执行失败（继续扫描）: {e}",
                     }, to=sid)
+
+            # mineflayer：传送后以假人为中心扫描半径15格，用 scan_nearby_blocks 发现真实容器
+            # （避免对 zones 立方体内每个方块发起 Servux 请求的低效枚举）
+            if engine_type == "mineflayer":
+                try:
+                    scan_res = await client.scan_nearby_blocks(
+                        radius=15, max_count=max_positions, matching=_CONTAINER_MATCHING)
+                    blocks = (scan_res or {}).get("blocks") or []
+                    if blocks:
+                        container_positions = [(b["x"], b["y"], b["z"]) for b in blocks]
+                        logger.info("Mineflayer scan discovered %d containers nearby", len(container_positions))
+                except Exception as e:
+                    logger.warning("scan_nearby_blocks failed, fallback to zones: %s", e)
 
             # 进度回调：Socket.IO 推送 + scan_status 落库
             async def on_progress(scanned, total, pos):
