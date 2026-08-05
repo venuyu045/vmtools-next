@@ -9,6 +9,7 @@ export interface MccBot {
   mc_server_host: string
   current_health: number
   current_food: number
+  current_location: { x: number; y: number; z: number } | null
   current_task_run_id: string | null
   current_build_task_id: string | null
   organization_id: string | null

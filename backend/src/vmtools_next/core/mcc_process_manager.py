@@ -405,6 +405,9 @@ class MccProcessManager:
                     ))
                     db.commit()
                     await self._emit_status(instance_id, instance.status, pid=None, mcp_port=instance.mcp_port)
+                # 同步关联 Bot 为离线（前端立即隐藏血量/坐标）
+                if instance and instance.bot_id:
+                    await self._sync_bot_offline(instance.bot_id)
                 self._processes.pop(instance_id, None)
                 return {"status": instance.status if instance else "stopped", "pid": None, "message": "stopped"}
             finally:
@@ -689,6 +692,10 @@ class MccProcessManager:
             await self._append_system_line(instance_id, f"MCC exited with code {returncode}")
             await self._emit_status(instance_id, instance.status, pid=None, mcp_port=instance.mcp_port)
 
+            # 同步关联 Bot 为离线（前端血量/坐标随之隐藏；自动重连场景跳过避免闪烁）
+            if instance and instance.bot_id and not should_reconnect:
+                await self._sync_bot_offline(instance.bot_id)
+
             # Trigger actual restart in background
             if should_reconnect:
                 try:
@@ -712,6 +719,26 @@ class MccProcessManager:
 
     async def _append_system_line(self, instance_id: str, content: str) -> TerminalLine:
         return await self._append_line(instance_id, "system", content)
+
+    async def _sync_bot_offline(self, bot_id: str) -> None:
+        """同步 Bot 为离线状态（写库 + Socket.IO 推送）。"""
+        from vmtools_next.data.models.logistics import MccBotModel
+
+        Session = get_session_factory()
+        db = Session()
+        try:
+            bot = db.query(MccBotModel).filter(MccBotModel.bot_id == bot_id).first()
+            if bot and bot.status != "offline":
+                bot.status = "offline"
+                db.commit()
+        except Exception as exc:
+            logger.warning("Sync bot offline failed for %s: %s", bot_id, exc)
+        finally:
+            db.close()
+        try:
+            await sio.emit("bot_status_update", {"bot_id": bot_id, "status": "offline"})
+        except Exception as exc:
+            logger.warning("Emit bot offline failed for %s: %s", bot_id, exc)
 
     def _ensure_detection_loop(self, instance_id: str) -> None:
         """Start (once) the per-instance serialized stdout detection consumer."""

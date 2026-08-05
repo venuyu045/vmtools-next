@@ -41,21 +41,14 @@
           <span class="mono bot-server">{{ serverLabel(instance) }}</span>
         </div>
 
-        <!-- HP / Food bars (only when bot is online) -->
+        <!-- HP / Food（仅 bot 在线时显示；改为小号数字 + 坐标） -->
         <div v-if="getBot(instance)?.status === 'online'" class="bot-bars">
           <div class="bar-row">
             <span class="bar-label hp">HP</span>
-            <div class="pixel-progress">
-              <div class="pixel-progress-fill red" :style="{ width: getBot(instance)!.current_health + '%' }"></div>
-            </div>
-            <span class="bar-val mono">{{ getBot(instance)!.current_health }}</span>
-          </div>
-          <div class="bar-row">
+            <span class="bar-val mono">{{ fmtNum(getBot(instance)!.current_health) }}</span>
             <span class="bar-label fd">FD</span>
-            <div class="pixel-progress">
-              <div class="pixel-progress-fill yellow" :style="{ width: getBot(instance)!.current_food + '%' }"></div>
-            </div>
-            <span class="bar-val mono">{{ getBot(instance)!.current_food }}</span>
+            <span class="bar-val mono">{{ fmtNum(getBot(instance)!.current_food) }}</span>
+            <span class="bar-pos mono" :title="'坐标: ' + fmtPos(getBot(instance)!.current_location)">📍 {{ fmtPos(getBot(instance)!.current_location) }}</span>
           </div>
         </div>
 
@@ -341,6 +334,20 @@ function serverLabel(instance: MccInstance): string {
   return `${instance.mc_server_host}:${instance.mc_server_port}`
 }
 
+/** 数字格式化：整数直接显示，小数保留 1 位 */
+function fmtNum(v: any): string {
+  if (v == null || isNaN(Number(v))) return '--'
+  const n = Number(v)
+  return Number.isInteger(n) ? String(n) : n.toFixed(1)
+}
+
+/** 坐标格式化：x, y, z（四舍五入） */
+function fmtPos(loc: any): string {
+  if (!loc || loc.x == null) return '--, --, --'
+  const f = (v: any) => Math.round(Number(v) || 0)
+  return `${f(loc.x)}, ${f(loc.y)}, ${f(loc.z)}`
+}
+
 function isBusy(instanceId: string): boolean {
   return !!mccStore.actionLoading[instanceId]
 }
@@ -607,17 +614,14 @@ onMounted(() => refreshAll())
 .bot-status-label { font-family: var(--font-body); font-size: 13px; color: var(--text-secondary); }
 .bot-server { font-size: 13px; color: var(--text-muted); margin-left: auto; }
 
-/* HP / Food bars */
-.bot-bars { display: flex; flex-direction: column; gap: 8px; }
+/* HP / Food 数字行 */
+.bot-bars { display: flex; flex-direction: column; gap: 6px; }
 .bar-row { display: flex; align-items: center; gap: 8px; }
 .bar-label { font-family: var(--font-mono); font-size: 12px; width: 20px; flex-shrink: 0; }
 .bar-label.hp { color: #ff0000; }
 .bar-label.fd { color: #ffff00; }
-.bar-val { font-size: 12px; color: var(--text-secondary); width: 32px; text-align: right; }
-.pixel-progress { flex: 1; height: 10px; background: #111; border: 1px solid var(--border-subtle); overflow: hidden; }
-.pixel-progress-fill { height: 100%; }
-.pixel-progress-fill.red { background: #cc0000; }
-.pixel-progress-fill.yellow { background: #ccaa00; }
+.bar-val { font-size: 13px; color: var(--text-primary); min-width: 26px; }
+.bar-pos { font-size: 12px; color: var(--text-secondary); margin-left: auto; white-space: nowrap; }
 
 .actions { display: flex; flex-wrap: wrap; gap: 10px; }
 .actions .pixel-btn { padding: 8px 14px; }
