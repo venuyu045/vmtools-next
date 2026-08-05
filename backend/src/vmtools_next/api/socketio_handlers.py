@@ -480,7 +480,12 @@ def _build_initial_payload(user_info: dict | None = None) -> dict:
             warehouse_query = warehouse_query.filter(WarehouseModel.organization_id == org_id)
 
         bots = []
+        import json as _json
         for b in bot_query.all():
+            try:
+                _loc = _json.loads(b.current_location) if b.current_location else None
+            except Exception:
+                _loc = None
             bots.append({
                 "bot_id": b.bot_id,
                 "name": b.name,
@@ -488,6 +493,7 @@ def _build_initial_payload(user_info: dict | None = None) -> dict:
                 "mc_username": b.mc_username,
                 "current_health": b.current_health,
                 "current_food": b.current_food,
+                "current_location": _loc,
             })
 
         warehouses = []

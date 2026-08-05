@@ -3,7 +3,8 @@
 One MccMcpClient per bot_id. Provides:
   - connect_bot / disconnect_bot: manage individual bot connections
   - get_client: get the MccMcpClient for a bot_id
-  - health_check_loop: periodic heartbeat via get_session_status()
+  - health_check_loop: periodic heartbeat via get_session_status() + realtime
+    sync (health/food/position) to DB and Socket.IO
   - event_poll_loop: poll get_recent_events() every 500ms and dispatch
 
 Ported from vmtools-backend/mcc_connection_manager.py with MCP protocol.
@@ -11,6 +12,7 @@ Ported from vmtools-backend/mcc_connection_manager.py with MCP protocol.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from datetime import datetime, timezone
 from typing import Awaitable, Callable, Optional
@@ -82,6 +84,59 @@ class MccSessionPool:
     def get_bot_status(self, bot_id: str) -> dict:
         return self._bot_status.get(bot_id, {"status": "offline"})
 
+    async def _persist_bot_state(self, bot_id: str, status: str, pstate: dict | None = None) -> None:
+        """Write bot realtime state (status/health/food/position) to DB and push to clients."""
+        health: float | None = None
+        food: int | None = None
+        location: dict | None = None
+
+        if pstate and isinstance(pstate, dict):
+            health = pstate.get("health", pstate.get("Health"))
+            food = pstate.get("food", pstate.get("Food"))
+            loc = pstate.get("location") or pstate.get("position") or pstate.get("pos")
+            if isinstance(loc, dict):
+                try:
+                    location = {
+                        "x": round(float(loc.get("x", 0)), 1),
+                        "y": round(float(loc.get("y", 0)), 1),
+                        "z": round(float(loc.get("z", 0)), 1),
+                    }
+                except (TypeError, ValueError):
+                    location = None
+
+        from vmtools_next.data.db import get_session_factory, sio
+        from vmtools_next.data.models.logistics import MccBotModel
+
+        Session = get_session_factory()
+        db = Session()
+        try:
+            bot = db.query(MccBotModel).filter(MccBotModel.bot_id == bot_id).first()
+            if bot:
+                bot.status = status
+                if health is not None:
+                    bot.current_health = float(health)
+                if food is not None:
+                    bot.current_food = int(food)
+                if location is not None:
+                    bot.current_location = json.dumps(location, ensure_ascii=False)
+                db.commit()
+        except Exception as e:
+            logger.warning("Persist bot state failed for %s: %s", bot_id, e)
+        finally:
+            db.close()
+
+        payload: dict = {"bot_id": bot_id, "status": status}
+        if health is not None:
+            payload["current_health"] = float(health)
+        if food is not None:
+            payload["current_food"] = int(food)
+        if location is not None:
+            payload["current_location"] = location
+        try:
+            await sio.emit("bot_status_update", payload)
+        except Exception as e:
+            logger.warning("Emit bot_status_update failed for %s: %s", bot_id, e)
+
     async def connect_bot(self, bot_id: str, host: str = "127.0.0.1",
                            port: int = 33333, auth_token: Optional[str] = None,
                            auth_token_env: Optional[str] = None) -> bool:
@@ -119,6 +174,8 @@ class MccSessionPool:
 
         if connected:
             logger.info("Bot %s connected to MCP at %s:%d", bot_id, host, port)
+            # 连接成功立即同步在线状态到前端
+            await self._persist_bot_state(bot_id, "online")
         else:
             logger.warning("Bot %s failed to connect to MCP at %s:%d", bot_id, host, port)
 
@@ -133,6 +190,8 @@ class MccSessionPool:
         self._last_event_ids.pop(bot_id, None)
         self._consecutive_failures.pop(bot_id, None)
         logger.info("Bot %s disconnected", bot_id)
+        # 断开后立即同步离线状态（前端血量/坐标随之隐藏）
+        await self._persist_bot_state(bot_id, "offline")
 
     async def start(self) -> None:
         """Start background health check and event polling loops."""
@@ -156,22 +215,30 @@ class MccSessionPool:
         logger.info("MccSessionPool stopped")
 
     async def _health_check_loop(self) -> None:
-        """Periodically check each bot's health via get_session_status()."""
+        """Periodically check each bot via get_session_status() + realtime sync."""
         while self._running:
             try:
                 for bot_id, client in list(self._clients.items()):
                     if not client.is_connected:
                         continue
                     try:
-                        status = await client.get_session_status()
+                        await client.get_session_status()
                         self._bot_status[bot_id]["status"] = "online"
                         self._bot_status[bot_id]["last_heartbeat"] = datetime.now(timezone.utc).isoformat()
                         self._consecutive_failures[bot_id] = 0
+                        # 实时同步：读取玩家状态（血量/饱食度/坐标）写库并推送
+                        try:
+                            pstate = await client.get_player_state()
+                            await self._persist_bot_state(bot_id, "online", pstate)
+                        except Exception:
+                            pass
                     except MccMcpError as e:
                         self._consecutive_failures[bot_id] = self._consecutive_failures.get(bot_id, 0) + 1
                         if self._consecutive_failures[bot_id] >= 3:
                             self._bot_status[bot_id]["status"] = "error"
                             logger.warning("Bot %s health check failed 3x: %s", bot_id, e)
+                            # 健康检查连续失败 → 视为离线，同步前端
+                            await self._persist_bot_state(bot_id, "offline")
             except Exception as e:
                 logger.error("Health check loop error: %s", e)
             await asyncio.sleep(self._health_check_interval)

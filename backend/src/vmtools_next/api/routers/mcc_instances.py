@@ -71,6 +71,39 @@ def _process_manager(bot_engine: str = "mcc"):
     return manager
 
 
+async def _auto_connect_mcp_after_start(instance: "MccInstanceModel", engine: str) -> None:
+    """After instance start, wait for the MCP server to come up, then auto-connect.
+
+    Replaces the old manual "连接" step: MCC needs a few seconds after launch
+    before its MCP HTTP server is reachable, so we retry in the background.
+    """
+    import asyncio as _asyncio
+
+    from vmtools_next.main import get_pool_for_engine
+
+    bot_id = instance.bot_id
+    if not bot_id:
+        return
+    pool = get_pool_for_engine(engine)
+    if not pool:
+        return
+    host = instance.mcp_host or "127.0.0.1"
+    port = instance.mcp_port or 33333
+    token = instance.mcp_auth_token_secret or None
+
+    # 重试最多 20 次 × 3s = 60s，覆盖 MCC 慢启动场景
+    for attempt in range(20):
+        await _asyncio.sleep(3)
+        try:
+            ok = await pool.connect_bot(bot_id, host=host, port=port, auth_token=token)
+            if ok:
+                logger.info("Auto-connected MCP for instance {} bot={} (attempt {})", instance.instance_id, bot_id, attempt + 1)
+                return
+        except Exception as exc:
+            logger.warning("Auto-connect attempt {} for {} failed: {}", attempt + 1, instance.instance_id, exc)
+    logger.warning("Auto-connect MCP timed out for instance {} bot={}", instance.instance_id, bot_id)
+
+
 def _resolve_engine(db: Session, instance_id: str) -> str:
     """Determine the bot engine type for an instance."""
     instance = db.query(MccInstanceModel).filter(
@@ -235,6 +268,10 @@ async def start_instance(
         db.refresh(instance)
         audit.log(db, user=user, action="instance.start", instance_id=instance_id, after=result)
         db.commit()
+        # 启动后自动连接 MCP（后台重试，无需手动点"连接"）
+        if instance.bot_id:
+            import asyncio
+            asyncio.create_task(_auto_connect_mcp_after_start(instance, engine))
         return _status_response(instance, result)
     except Exception as exc:
         db.rollback()
