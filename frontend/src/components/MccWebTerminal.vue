@@ -322,14 +322,25 @@ function appendNewLines(lines: MccTerminalLine[]) {
   if (autoScroll.value) terminal.scrollToBottom()
 }
 
+let joinRetries = 0
 function joinTerminalRoom() {
   socket.connect()
   connState.value = { text: 'joining…', color: '#ffcc00' }
   socket.emit('mcc_join_instance', { instance_id: props.instanceId, tail_lines: props.tailLines })
-  // 5s 内未收到 snapshot 则提示超时
+  scheduleJoinConfirm()
+}
+
+/** 5s 内未收到 snapshot 则重试 join（最多 2 次），仍失败才提示超时。 */
+function scheduleJoinConfirm() {
   if (joinConfirmTimer) clearTimeout(joinConfirmTimer)
   joinConfirmTimer = setTimeout(() => {
-    if (connState.value.text === 'joining…') {
+    if (connState.value.text !== 'joining…') return
+    if (joinRetries < 2) {
+      joinRetries += 1
+      socket.connect()
+      socket.emit('mcc_join_instance', { instance_id: props.instanceId, tail_lines: props.tailLines })
+      scheduleJoinConfirm()
+    } else {
       connState.value = { text: 'timeout', color: '#ff4d4f' }
       terminal?.writeln('\x1b[31m[error] 加入终端房间超时，请检查连接\x1b[0m')
       terminal?.write(promptText() + commandBuffer)
@@ -339,12 +350,14 @@ function joinTerminalRoom() {
 
 function leaveTerminalRoom() {
   if (joinConfirmTimer) { clearTimeout(joinConfirmTimer); joinConfirmTimer = null }
+  joinRetries = 0
   socket.emit('mcc_leave_instance', { instance_id: props.instanceId })
 }
 
 function onTerminalSnapshot(payload: any) {
   if (!payload || payload.instance_id !== props.instanceId) return
   if (joinConfirmTimer) { clearTimeout(joinConfirmTimer); joinConfirmTimer = null }
+  joinRetries = 0
   connState.value = { text: 'joined', color: '#00ff41' }
 }
 
@@ -449,6 +462,7 @@ watch(() => props.instanceId, async () => {
   lastSeq = 0
   commandBuffer = ''
   pendingDraft = ''
+  joinRetries = 0
   loadCommandHistory()
   // Clear terminal display for new instance
   if (terminal) {

@@ -15,6 +15,15 @@ export function useSocketIO() {
   function connect() {
     if (socket?.connected) return
 
+    // Reuse an existing (disconnected) instance instead of recreating it:
+    // recreating via io() drops every component-level handler registered on
+    // the old instance (e.g. mcc_terminal_snapshot), which makes terminal
+    // join handshakes time out even though the backend responds normally.
+    if (socket) {
+      socket.connect()
+      return
+    }
+
     const authStore = useAuthStore()
     socket = io(window.location.origin, {
       transports: ['websocket', 'polling'],
