@@ -1,7 +1,7 @@
 <template>
   <div class="miaomiao-page">
     <h2>🛠️ 妙妙工具</h2>
-    <p class="subtitle">领地排行榜 · 标记点目录 · MSPT排行榜</p>
+    <p class="subtitle">领地排行榜 · 标记点目录 · 服务器地标 · 地铁线路 · MSPT排行榜</p>
 
     <el-tabs v-model="activeTab" class="mm-tabs">
       <!-- Tab 1: 领地排行榜 -->
@@ -95,6 +95,98 @@
           </div>
         </div>
         <div v-if="filteredMarkers.length === 0 && playerStore.markers.length > 0" class="empty-hint">没有匹配的标记点</div>
+      </el-tab-pane>
+
+      <!-- Tab 2.5: 服务器地标目录（新） -->
+      <el-tab-pane label="🏛️ 服务器地标" name="landmarks">
+        <div class="tab-toolbar">
+          <el-input
+            v-model="lmSearch"
+            placeholder="搜索地标..."
+            size="small"
+            clearable
+            style="width: 220px"
+          />
+          <span class="mk-count">共 {{ playerStore.landmarks.length }} 个地标 · {{ playerStore.landmarkTypes.length }} 类</span>
+          <el-button size="small" :loading="refreshing" @click="refreshMarkers">🔄 刷新</el-button>
+        </div>
+
+        <!-- 类型统计 -->
+        <div class="landmark-type-stats">
+          <el-tag
+            v-for="t in playerStore.landmarkTypes"
+            :key="t.type"
+            size="small"
+            effect="plain"
+            class="lm-type-tag"
+            :type="activeLandmarkType === t.type ? 'primary' : 'info'"
+            @click="activeLandmarkType = activeLandmarkType === t.type ? '' : t.type"
+          >
+            {{ t.type }} · {{ t.count }}
+          </el-tag>
+        </div>
+
+        <div class="markers-grid">
+          <div
+            v-for="lm in filteredLandmarks.slice(0, 300)"
+            :key="lm.id"
+            class="marker-card"
+          >
+            <div class="mk-name">
+              <span class="world-tag world-tag-sm">{{ playerStore.getWorldLabel(lm.world || 'world') }}</span>
+              {{ lm.label }}
+            </div>
+            <div class="mk-pos" v-if="lm.position">
+              {{ lm.position.x.toFixed(0) }}, {{ lm.position.y.toFixed(0) }}, {{ lm.position.z.toFixed(0) }}
+            </div>
+            <div class="mk-detail" v-if="lm.type"><span class="lm-type-badge">{{ lm.type }}</span></div>
+            <div class="mk-detail" v-if="lm.detail">{{ lm.detail }}</div>
+          </div>
+        </div>
+        <div v-if="filteredLandmarks.length === 0 && playerStore.landmarks.length > 0" class="empty-hint">没有匹配的地标</div>
+      </el-tab-pane>
+
+      <!-- Tab 2.6: 地铁线路（新） -->
+      <el-tab-pane label="🚇 地铁线路" name="metro">
+        <div class="tab-toolbar">
+          <span class="mk-count">共 {{ playerStore.metroLines.length }} 条线路 · {{ playerStore.metroStations.length }} 个站点</span>
+          <el-button size="small" :loading="refreshing" @click="refreshMarkers">🔄 刷新</el-button>
+        </div>
+
+        <div v-if="playerStore.metroLines.length === 0" class="empty-hint">暂无地铁线路数据</div>
+
+        <div class="metro-lines-list">
+          <div v-for="line in playerStore.metroLines" :key="line.id" class="metro-line-card">
+            <div class="metro-line-header">
+              <span class="metro-line-dot" :style="{ background: line.line_color || '#409eff' }"></span>
+              <span class="metro-line-name">{{ line.label }}</span>
+              <span class="world-tag world-tag-sm">{{ playerStore.getWorldLabel(line.world || 'world') }}</span>
+            </div>
+            <div class="metro-line-detail" v-if="line.detail">{{ line.detail }}</div>
+            <div class="metro-line-meta" v-if="line.line && line.line.length">
+              途经 {{ line.line.length }} 个坐标点
+              <template v-if="line.position">
+                · 起点 {{ line.position.x.toFixed(0) }}, {{ line.position.y.toFixed(0) }}, {{ line.position.z.toFixed(0) }}
+              </template>
+            </div>
+          </div>
+        </div>
+
+        <div class="metro-stations-list" v-if="playerStore.metroStations.length > 0">
+          <h4>站点</h4>
+          <div class="markers-grid">
+            <div v-for="st in playerStore.metroStations" :key="st.id" class="marker-card">
+              <div class="mk-name">
+                <span class="world-tag world-tag-sm">{{ playerStore.getWorldLabel(st.world || 'world') }}</span>
+                {{ st.label }}
+              </div>
+              <div class="mk-pos" v-if="st.position">
+                {{ st.position.x.toFixed(0) }}, {{ st.position.y.toFixed(0) }}, {{ st.position.z.toFixed(0) }}
+              </div>
+              <div class="mk-detail" v-if="st.detail">{{ st.detail }}</div>
+            </div>
+          </div>
+        </div>
       </el-tab-pane>
 
       <!-- Tab 3: 区域 MSPT 排行榜 -->
@@ -209,12 +301,14 @@ import client from '@/api/client'
 const playerStore = useOnlinePlayersStore()
 const route = useRoute()
 // Support ?tab=mspt|residences|markers for deep links (e.g. QQ leaderboard link)
-const activeTab = ref(['mspt', 'residences', 'markers'].includes(String(route.query.tab || ''))
+const activeTab = ref(['mspt', 'residences', 'markers', 'landmarks', 'metro'].includes(String(route.query.tab || ''))
   ? String(route.query.tab)
   : 'residences')
 const resSort = ref('area')
 const resSearch = ref('')
 const mkSearch = ref('')
+const lmSearch = ref('')
+const activeLandmarkType = ref('')
 const msptSort = ref('mspt')
 const msptSearch = ref('')
 const refreshing = ref(false)
@@ -237,6 +331,18 @@ onMounted(async () => {
   try {
     const { data: rg } = await client.get('/bluemap/regions')
     playerStore.setRegions(rg.regions || [])
+  } catch { /* Socket.IO will populate */ }
+  try {
+    const { data: ld } = await client.get('/bluemap/landmarks')
+    playerStore.setLandmarks(ld.landmarks || [])
+  } catch { /* Socket.IO will populate */ }
+  try {
+    const { data: ml } = await client.get('/bluemap/metro-lines')
+    playerStore.setMetroLines(ml.metro_lines || [])
+  } catch { /* Socket.IO will populate */ }
+  try {
+    const { data: ms } = await client.get('/bluemap/metro-stations')
+    playerStore.setMetroStations(ms.metro_stations || [])
   } catch { /* Socket.IO will populate */ }
 })
 
@@ -267,6 +373,22 @@ const filteredMarkers = computed(() => {
   return list
 })
 
+const filteredLandmarks = computed(() => {
+  let list = playerStore.landmarks
+  if (activeLandmarkType.value) {
+    list = list.filter(lm => (lm.type || '未分类') === activeLandmarkType.value)
+  }
+  if (lmSearch.value) {
+    const q = lmSearch.value.toLowerCase()
+    list = list.filter(lm =>
+      lm.label.toLowerCase().includes(q)
+      || (lm.type || '').toLowerCase().includes(q)
+      || playerStore.getWorldLabel(lm.world || 'world').toLowerCase().includes(q)
+    )
+  }
+  return list
+})
+
 function refreshResTable() { /* computed auto-refreshes */ }
 
 async function refreshMarkers() {
@@ -275,15 +397,21 @@ async function refreshMarkers() {
     const { data: result } = await client.post('/bluemap/refresh')
     if (result.ok) {
       // Re-fetch all data after refresh
-      const [rd, md, rg] = await Promise.all([
+      const [rd, md, rg, ld, ml, ms] = await Promise.all([
         client.get('/bluemap/residences'),
         client.get('/bluemap/markers'),
         client.get('/bluemap/regions'),
+        client.get('/bluemap/landmarks'),
+        client.get('/bluemap/metro-lines'),
+        client.get('/bluemap/metro-stations'),
       ])
       playerStore.setResidences(rd.data.residences || [])
       playerStore.setMarkers(md.data.markers || [])
       playerStore.setRegions(rg.data.regions || [])
-      ElMessage.success(`刷新完成: ${result.residences} 领地, ${result.regions} 区域, ${result.markers} 标记`)
+      playerStore.setLandmarks(ld.data.landmarks || [])
+      playerStore.setMetroLines(ml.data.metro_lines || [])
+      playerStore.setMetroStations(ms.data.metro_stations || [])
+      ElMessage.success(`刷新完成: ${result.residences} 领地, ${result.regions} 区域, ${result.markers} 标记, ${result.landmarks} 地标`)
     } else {
       ElMessage.error(result.message || '刷新失败')
     }
@@ -472,5 +600,74 @@ function tpsClass(v: number | null): string {
   white-space: nowrap;
   display: block;
   max-width: 180px;
+}
+
+/* Landmark type stats & badges */
+.landmark-type-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 14px;
+}
+.lm-type-tag {
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.lm-type-tag:hover {
+  transform: translateY(-1px);
+}
+.lm-type-badge {
+  display: inline-block;
+  background: rgba(255, 152, 0, 0.15);
+  color: #ff9800;
+  border-radius: 4px;
+  padding: 1px 8px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+/* Metro lines */
+.metro-lines-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 20px;
+}
+.metro-line-card {
+  background: rgba(255,255,255,0.03);
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  padding: 12px 16px;
+}
+.metro-line-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.metro-line-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  display: inline-block;
+}
+.metro-line-name {
+  font-weight: 600;
+  font-size: 14px;
+}
+.metro-line-detail {
+  color: var(--text-secondary);
+  font-size: 12px;
+  margin-top: 6px;
+}
+.metro-line-meta {
+  color: var(--text-disabled);
+  font-size: 11px;
+  margin-top: 4px;
+}
+.metro-stations-list h4 {
+  margin: 0 0 10px 0;
+  font-size: 14px;
+  color: var(--text-secondary);
 }
 </style>

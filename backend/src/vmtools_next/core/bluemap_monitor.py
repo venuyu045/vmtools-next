@@ -88,6 +88,10 @@ class BlueMapMonitor:
         self._residences: list[dict] = []
         self._regions: list[dict] = []
         self._markers: list[dict] = []
+        # New BlueMap 5.16 marker sets
+        self._landmarks: list[dict] = []       # mangopassport-landmarks (服务器地标)
+        self._metro_lines: list[dict] = []     # folia-metro-lines (地铁线路)
+        self._metro_stations: list[dict] = []  # folia-metro-stations (地铁站点)
 
     # ── lifecycle ──────────────────────────────────────────────────
 
@@ -342,12 +346,50 @@ class BlueMapMonitor:
         INTERVAL = 30
         while self._running:
             try:
+                await self._discover_worlds_once()
                 await self._poll_markers_once()
             except asyncio.CancelledError:
                 break
             except Exception as exc:
                 logger.warning("BlueMap markers poll error: {}", exc)
             await asyncio.sleep(INTERVAL)
+
+    async def _discover_worlds_once(self) -> None:
+        """Refresh the configured world list from BlueMap /settings.json.
+
+        BlueMap 5.16 exposes the authoritative world list in the global
+        settings endpoint. If the server adds/removes worlds, the monitor
+        picks it up automatically instead of being hardcoded.
+        """
+        try:
+            cfg = get_config().bluemap
+            url = f"{cfg.api_base_url}/settings.json"
+            async with httpx.AsyncClient(timeout=httpx.Timeout(10.0)) as client:
+                resp = await client.get(url)
+                if resp.status_code != 200:
+                    return
+                data = resp.json()
+            discovered = data.get("maps", [])
+            if not isinstance(discovered, list) or not discovered:
+                return
+            # Preserve configured order for known worlds, then append new ones
+            known = ["world", "world_nether", "world_the_end"]
+            merged: list[str] = []
+            for w in known:
+                if w in discovered and w not in merged:
+                    merged.append(w)
+            for w in discovered:
+                if w not in merged:
+                    merged.append(w)
+            if merged != list(cfg.worlds):
+                old = list(cfg.worlds)
+                cfg.worlds = merged
+                logger.info(
+                    "BlueMap world list updated: {} -> {}",
+                    old, merged,
+                )
+        except Exception as exc:
+            logger.debug("BlueMap world discovery failed (keeps configured list): {}", exc)
 
     async def _poll_markers_once(self) -> None:
         cfg = get_config().bluemap
@@ -357,7 +399,10 @@ class BlueMapMonitor:
         residences: list[dict] = []
         regions: list[dict] = []
         markers: list[dict] = []
-        per_world_counts: dict[str, tuple[int, int, int]] = {}
+        landmarks: list[dict] = []
+        metro_lines: list[dict] = []
+        metro_stations: list[dict] = []
+        per_world_counts: dict[str, tuple[int, int, int, int, int, int]] = {}
 
         async with httpx.AsyncClient(timeout=httpx.Timeout(15.0)) as client:
             for world in cfg.worlds:
@@ -372,19 +417,28 @@ class BlueMapMonitor:
                     logger.warning("BlueMap markers poll failed for {}: {}", world, exc)
                     continue
 
-                w_res, w_reg, w_mk = self._parse_markers_data(data, world)
+                (w_res, w_reg, w_mk,
+                 w_lm, w_ml, w_ms) = self._parse_markers_data(data, world)
                 residences.extend(w_res)
                 regions.extend(w_reg)
                 markers.extend(w_mk)
-                per_world_counts[world] = (len(w_res), len(w_reg), len(w_mk))
+                landmarks.extend(w_lm)
+                metro_lines.extend(w_ml)
+                metro_stations.extend(w_ms)
+                per_world_counts[world] = (len(w_res), len(w_reg), len(w_mk), len(w_lm), len(w_ml), len(w_ms))
 
         self._residences = residences
         self._regions = regions
         self._markers = markers
+        self._landmarks = landmarks
+        self._metro_lines = metro_lines
+        self._metro_stations = metro_stations
         logger.info(
-            "BlueMap markers refreshed: {} residences, {} regions, {} markers (per world: {})",
+            "BlueMap markers refreshed: {} residences, {} regions, {} markers, "
+            "{} landmarks, {} metro lines, {} metro stations (per world: {})",
             len(residences), len(regions), len(markers),
-            {w: f"res={c[0]} reg={c[1]} mk={c[2]}" for w, c in per_world_counts.items()},
+            len(landmarks), len(metro_lines), len(metro_stations),
+            {w: f"res={c[0]} reg={c[1]} mk={c[2]} lm={c[3]} ml={c[4]} ms={c[5]}" for w, c in per_world_counts.items()},
         )
 
         # Save to DB for persistence across restarts
@@ -394,12 +448,20 @@ class BlueMapMonitor:
         await sio.emit("regions_update", {"regions": regions, "timestamp": time.time()})
         await sio.emit("residences_update", {"residences": residences, "timestamp": time.time()})
         await sio.emit("markers_update", {"markers": markers, "timestamp": time.time()})
+        await sio.emit("landmarks_update", {"landmarks": landmarks, "timestamp": time.time()})
+        await sio.emit("metro_lines_update", {"metro_lines": metro_lines, "timestamp": time.time()})
+        await sio.emit("metro_stations_update", {"metro_stations": metro_stations, "timestamp": time.time()})
 
-    def _parse_markers_data(self, data: dict, world: str) -> tuple[list[dict], list[dict], list[dict]]:
-        """Parse one world's markers.json into (residences, regions, custom markers).
+    def _parse_markers_data(
+        self,
+        data: dict,
+        world: str,
+    ) -> tuple[list[dict], list[dict], list[dict], list[dict], list[dict], list[dict]]:
+        """Parse one world's markers.json into 6 marker-set lists.
 
         Every entry is tagged with its ``world`` id so leaderboards and
         point-in-polygon lookups can distinguish same-named regions across maps.
+        Returns (residences, regions, markers, landmarks, metro_lines, metro_stations).
         """
         # Parse residences
         residences: list[dict] = []
@@ -463,7 +525,55 @@ class BlueMapMonitor:
                 "detail": _strip_html(mk.get("detail", ""))[:200],
             })
 
-        return residences, regions, markers
+        # Parse server landmarks (mangopassport-landmarks) — 地标含类型分类
+        landmarks: list[dict] = []
+        lm_group = data.get("mangopassport-landmarks", {}).get("markers", {})
+        for key, mk in lm_group.items():
+            detail_html = mk.get("detail", "")
+            detail_text = _strip_html(detail_html)
+            # 类型字段: "类型：停车场<br>..." — match on raw HTML so <br>
+            # acts as a terminator (strip_html removes <br> without newline).
+            lm_type = ""
+            m_type = re.search(r"类型\s*[:：]\s*([^<，,]+?)(?=<br|坐标|$)", detail_html)
+            if m_type:
+                lm_type = m_type.group(1).strip()
+            landmarks.append({
+                "id": key,
+                "world": world,
+                "label": mk.get("label", key),
+                "position": mk.get("position"),
+                "type": lm_type,
+                "detail": detail_text[:200],
+            })
+
+        # Parse metro lines (folia-metro-lines) — 地铁线路（含 line 几何数据）
+        metro_lines: list[dict] = []
+        ml_group = data.get("folia-metro-lines", {}).get("markers", {})
+        for key, mk in ml_group.items():
+            metro_lines.append({
+                "id": key,
+                "world": world,
+                "label": mk.get("label", key),
+                "line": mk.get("line", []),
+                "line_color": _rgba_to_css(mk.get("lineColor")),
+                "detail": _strip_html(mk.get("detail", ""))[:200],
+                "position": mk.get("position"),
+            })
+
+        # Parse metro stations (folia-metro-stations) — 地铁站点
+        metro_stations: list[dict] = []
+        ms_group = data.get("folia-metro-stations", {}).get("markers", {})
+        for key, mk in ms_group.items():
+            metro_stations.append({
+                "id": key,
+                "world": world,
+                "label": mk.get("label", key),
+                "position": mk.get("position"),
+                "type": mk.get("type", ""),
+                "detail": _strip_html(mk.get("detail", ""))[:200],
+            })
+
+        return residences, regions, markers, landmarks, metro_lines, metro_stations
 
     # ── DB cache persistence ─────────────────────────────────────────
 
@@ -481,6 +591,9 @@ class BlueMapMonitor:
                     ("bluemap_residences", self._residences),
                     ("bluemap_regions", self._regions),
                     ("bluemap_markers", self._markers),
+                    ("bluemap_landmarks", self._landmarks),
+                    ("bluemap_metro_lines", self._metro_lines),
+                    ("bluemap_metro_stations", self._metro_stations),
                 ]:
                     payload = _json.dumps(data, ensure_ascii=False)
                     db.execute(
@@ -523,6 +636,12 @@ class BlueMapMonitor:
                         self._regions = data
                     elif key == "bluemap_markers":
                         self._markers = data
+                    elif key == "bluemap_landmarks":
+                        self._landmarks = data
+                    elif key == "bluemap_metro_lines":
+                        self._metro_lines = data
+                    elif key == "bluemap_metro_stations":
+                        self._metro_stations = data
                 if self._residences or self._markers:
                     logger.info(
                         "BlueMap: loaded cache from DB ({} residences, {} markers)",
@@ -643,6 +762,20 @@ class BlueMapMonitor:
     def get_markers(self) -> list[dict]:
         return self._markers
 
+    def get_landmarks(self) -> list[dict]:
+        return self._landmarks
+
+    def get_metro_lines(self) -> list[dict]:
+        return self._metro_lines
+
+    def get_metro_stations(self) -> list[dict]:
+        return self._metro_stations
+
+    def get_worlds(self) -> list[str]:
+        """Return the list of worlds the monitor polls (config or discovered)."""
+        cfg = get_config().bluemap
+        return list(cfg.worlds)
+
 
 # ── helpers ────────────────────────────────────────────────────────
 
@@ -658,3 +791,20 @@ def _extract_int(text: str, pattern: str) -> Optional[int]:
 
 def _strip_html(text: str) -> str:
     return re.sub(r"<[^>]+>", "", text).strip()
+
+
+def _rgba_to_css(color) -> Optional[str]:
+    """Convert BlueMap lineColor (dict {r,g,b,a} or hex string) to CSS color."""
+    if color is None:
+        return None
+    if isinstance(color, str):
+        return color if color.startswith("#") else f"#{color}"
+    if isinstance(color, dict):
+        r = int(color.get("r", 0) * 255) if isinstance(color.get("r"), float) else int(color.get("r", 0))
+        g = int(color.get("g", 0) * 255) if isinstance(color.get("g"), float) else int(color.get("g", 0))
+        b = int(color.get("b", 0) * 255) if isinstance(color.get("b"), float) else int(color.get("b", 0))
+        a = color.get("a")
+        if a is not None and a < 1.0:
+            return f"rgba({r},{g},{b},{a})"
+        return f"rgb({r},{g},{b})"
+    return None

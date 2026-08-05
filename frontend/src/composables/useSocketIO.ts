@@ -159,6 +159,25 @@ export function useSocketIO() {
         useOnlinePlayersStore().setMarkers(payload.markers)
       }
     })
+
+    // BlueMap new marker sets: landmarks / metro lines / metro stations
+    socket.on('landmarks_update', (payload) => {
+      if (payload?.landmarks) {
+        useOnlinePlayersStore().setLandmarks(payload.landmarks)
+      }
+    })
+
+    socket.on('metro_lines_update', (payload) => {
+      if (payload?.metro_lines) {
+        useOnlinePlayersStore().setMetroLines(payload.metro_lines)
+      }
+    })
+
+    socket.on('metro_stations_update', (payload) => {
+      if (payload?.metro_stations) {
+        useOnlinePlayersStore().setMetroStations(payload.metro_stations)
+      }
+    })
   }
 
   function disconnect() {
