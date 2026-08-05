@@ -354,17 +354,13 @@ async def kill_all_instances(
     except Exception as exc:
         logger.warning("kill-all: Mineflayer manager unavailable: {}", exc)
 
-    # Engine 3 (belt & braces): orphan MCC processes that belong to no
-    # initialized manager — handled inside stop_all_instances via psutil,
-    # but when Mineflayer is the active engine (MCC manager is None) those
-    # leftovers are invisible to it, so sweep here. Also sweeps when the
-    # active manager errored out and killed nothing.
+    # Engine 3 (belt & braces): 仅当 MCC 引擎不可用时才额外扫一次孤儿进程
+    # （MCC 引擎的 stop_all_instances 内部已包含 psutil 全进程扫描，避免重复）
     killed = [r for r in results if r.get("status", "") not in ("error",)]
-    if manager_mcc is None or not killed:
+    if manager_mcc is None:
         try:
             sweep = await _sweep_orphan_mcc_processes()
             results.extend(sweep)
-            killed = [r for r in results if r.get("status", "") not in ("error",)]
         except Exception as exc:
             logger.warning("kill-all: orphan sweep error: {}", exc)
 

@@ -372,7 +372,8 @@ async function handleCreate() {
 async function handleStart(instance: MccInstance) {
   try {
     await mccStore.startInstance(instance.instance_id)
-    await mccStore.fetchTerminalHistory(instance.instance_id)
+    // 终端历史后台加载，不阻塞启停反馈
+    mccStore.fetchTerminalHistory(instance.instance_id).catch(() => {})
     ElMessage.success('启动命令已发送')
   } catch (error: any) {
     ElMessage.error(error.response?.data?.detail || '启动失败，请检查 MCC 程序路径')
@@ -389,9 +390,10 @@ async function stopAll() {
     await ElMessageBox.confirm(`确认停止所有 ${mccStore.runningCount} 个运行中的实例？`, '一键停止', { type: 'warning' })
   } catch { return }
   const running = sortedInstances.value.filter(i => i.status === 'running')
-  for (const instance of running) {
-    try { await mccStore.stopInstance(instance.instance_id) } catch { /* skip */ }
-  }
+  // 并行强制停止：从 N×10s 降到 ~2-3s
+  await Promise.all(
+    running.map(instance => mccStore.stopInstance(instance.instance_id, true).catch(() => {}))
+  )
   ElMessage.success(`已停止 ${running.length} 个实例`)
 }
 
