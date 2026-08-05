@@ -1,13 +1,11 @@
 <template>
   <router-view />
-  <DevConsole />
 </template>
 
 <script setup lang="ts">
 import { onMounted, onUnmounted, watch } from 'vue'
 import { useAuthStore } from '@/stores/auth'
 import { useSocketIO } from '@/composables/useSocketIO'
-import DevConsole from '@/components/DevConsole.vue'
 
 const authStore = useAuthStore()
 const { connect, disconnect } = useSocketIO()
