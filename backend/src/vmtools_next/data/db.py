@@ -170,6 +170,17 @@ def _run_lightweight_migrations(engine) -> None:
                     conn.execute(text("ALTER TABLE mcc_instances ADD COLUMN bot_engine VARCHAR DEFAULT 'mcc'"))
                 if "mcp_host" not in columns:
                     conn.execute(text("ALTER TABLE mcc_instances ADD COLUMN mcp_host VARCHAR DEFAULT '127.0.0.1'"))
+                # scan_status 实时进度扩展列（扫描队列）
+                try:
+                    s_columns = {row[1] for row in conn.execute(text("PRAGMA table_info(scan_status)")).fetchall()}
+                    if "items_scanned" not in s_columns:
+                        conn.execute(text("ALTER TABLE scan_status ADD COLUMN items_scanned BIGINT DEFAULT 0"))
+                    if "started_at" not in s_columns:
+                        conn.execute(text("ALTER TABLE scan_status ADD COLUMN started_at DATETIME"))
+                    if "finished_at" not in s_columns:
+                        conn.execute(text("ALTER TABLE scan_status ADD COLUMN finished_at DATETIME"))
+                except Exception as _e:
+                    logger.warning("scan_status migration check: %s", _e)
             conn.commit()
     except Exception as e:
         logger.warning("Lightweight migration check: {}", e)

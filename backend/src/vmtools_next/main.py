@@ -59,6 +59,7 @@ _alert_engine: AlertEngine = None
 _mcc_process_manager: MccProcessManager = None
 _mineflayer_process_manager: MineflayerProcessManager = None
 _bluemap_monitor: "BlueMapMonitor" = None
+_scan_queue_manager: "ScanQueueManager" = None
 
 
 def get_pool() -> MccSessionPool | MineflayerSessionPool:
@@ -125,6 +126,11 @@ def get_mineflayer_process_manager() -> MineflayerProcessManager:
 
 def get_bluemap_monitor() -> "BlueMapMonitor":
     return _bluemap_monitor
+
+
+def get_scan_queue_manager() -> "ScanQueueManager":
+    """返回全局扫描队列管理器（lifespan 初始化）。"""
+    return _scan_queue_manager
 
 
 @asynccontextmanager
@@ -212,6 +218,15 @@ async def lifespan(app: FastAPI):
     import vmtools_next.api.socketio_handlers  # noqa: F401
     logger.info("Socket.IO event handlers registered")
 
+    # 7.5 扫描队列管理器（依赖 sio / pools）
+    from vmtools_next.core.scan_queue_manager import ScanQueueManager
+    global _scan_queue_manager
+    _scan_queue_manager = ScanQueueManager(
+        max_concurrent_scans=getattr(config, "scan_max_concurrent_scans", 2),
+    )
+    await _scan_queue_manager.start()
+    logger.info("Scan Queue Manager started")
+
     # 8. QQ Bot notification service
     from vmtools_next.core.qqbot_notify import start as qqbot_start
     await qqbot_start()
@@ -245,6 +260,8 @@ async def lifespan(app: FastAPI):
         await _mcc_process_manager.stop()
     if _mineflayer_process_manager:
         await _mineflayer_process_manager.stop_all()
+    if _scan_queue_manager:
+        await _scan_queue_manager.stop()
     if _pool:
         await _pool.stop()
     if _mcc_pool:
