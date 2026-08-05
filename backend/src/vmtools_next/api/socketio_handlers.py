@@ -73,34 +73,45 @@ async def _verify_socketio_token(sid: str, auth: dict | None) -> dict | None:
 async def _check_mcc_permission(sid: str, instance_id: str) -> bool:
     """Check if the connected user has permission to access the MCC instance terminal.
 
-    All authenticated users in the same organization can access the terminal.
+    Delegates to ``MccInstanceService.get_instance`` so Socket.IO and REST share
+    exactly the same scoping rules (site_admin → all, otherwise same org).
     """
     session = await sio.get_session(sid)
-    user = session.get("user")
-    if not user:
+    user_info = session.get("user")
+    if not user_info:
         return False
     try:
+        from vmtools_next.core.mcc_instance_service import MccInstanceService
         Session = get_session_factory()
         db = Session()
         try:
-            from vmtools_next.data.models.mcc_remote import MccInstanceModel
-            instance = db.query(MccInstanceModel).filter(
-                MccInstanceModel.instance_id == instance_id,
-                MccInstanceModel.deleted_at.is_(None),
-            ).first()
-            if not instance:
+            from vmtools_next.data.models.auth import UserModel
+            user = db.query(UserModel).filter(UserModel.id == user_info.get("user_id")).first()
+            if not user:
                 return False
-            # Site admin can access everything
-            if user.get("role") == "site_admin":
-                return True
-            # Same org: allow (including both None = no org restriction)
-            if instance.organization_id == user.get("organization_id"):
-                return True
+            MccInstanceService().get_instance(db, user, instance_id)
+            return True
+        except Exception:
             return False
         finally:
             db.close()
     except Exception:
         return False
+
+
+async def _user_from_session(sid: str):
+    """Resolve the UserModel for a socket sid, or None when unavailable."""
+    session = await sio.get_session(sid)
+    user_info = session.get("user")
+    if not user_info or not user_info.get("user_id"):
+        return None
+    Session = get_session_factory()
+    db = Session()
+    try:
+        from vmtools_next.data.models.auth import UserModel
+        return db.query(UserModel).filter(UserModel.id == user_info["user_id"]).first()
+    finally:
+        db.close()
 
 
 @sio.event
@@ -187,6 +198,12 @@ async def mcc_terminal_input(sid, data):
     if not await _check_mcc_permission(sid, instance_id):
         await sio.emit("mcc_terminal_error", {"instance_id": instance_id, "message": "Permission denied"}, to=sid)
         return
+
+    # Audit terminal input, mirroring the REST endpoint's action semantics.
+    from vmtools_next.core.mcc_audit_log_service import MccAuditLogService
+    audit = MccAuditLogService()
+    user = await _user_from_session(sid)
+    db = get_session_factory()()
     try:
         from vmtools_next.main import get_mcc_process_manager
 
@@ -194,10 +211,40 @@ async def mcc_terminal_input(sid, data):
         if not manager:
             await sio.emit("mcc_terminal_error", {"instance_id": instance_id, "message": "MCC process manager not initialized"}, to=sid)
             return
-        await manager.write_stdin(instance_id, input_text, append_newline=append_newline)
+        await manager.write_stdin(instance_id, input_text, append_newline=append_newline, source_sid=sid)
+        audit.log(db, user=user, action="terminal.input", resource_type="terminal", instance_id=instance_id)
+        db.commit()
     except Exception as e:
+        db.rollback()
         logger.error("MCC terminal input error: {}", e)
+        audit.log(db, user=user, action="terminal.input", resource_type="terminal", instance_id=instance_id, success=False, error_message=str(e))
+        db.commit()
         await sio.emit("mcc_terminal_error", {"instance_id": instance_id, "message": str(e)}, to=sid)
+    finally:
+        db.close()
+
+
+@sio.on("mcc_terminal_resize")
+async def mcc_terminal_resize(sid, data):
+    """Resize the PTY window for a running MCC instance."""
+    if not isinstance(data, dict):
+        return
+    instance_id = data.get("instance_id")
+    cols = data.get("cols")
+    rows = data.get("rows")
+    if not instance_id or cols is None or rows is None:
+        return
+    if not await _check_mcc_permission(sid, instance_id):
+        return
+    try:
+        from vmtools_next.main import get_mcc_process_manager
+
+        manager = get_mcc_process_manager()
+        if not manager:
+            return
+        await manager.resize_terminal(instance_id, int(cols), int(rows))
+    except Exception as e:
+        logger.warning("MCC terminal resize error: {}", e)
 
 
 @sio.on("scan_control")

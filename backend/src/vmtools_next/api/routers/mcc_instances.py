@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy.orm import Session
 
 from vmtools_next.api.deps import get_current_user, get_db
@@ -43,7 +43,7 @@ from vmtools_next.core.mcc_file_service import MccFileService
 from vmtools_next.core.mcc_instance_service import MccInstanceService
 from vmtools_next.data.db import get_session_factory
 from vmtools_next.data.models.auth import UserModel
-from vmtools_next.data.models.mcc_remote import MccInstanceModel, MccProcessEventModel
+from vmtools_next.data.models.mcc_remote import MccInstanceModel, MccProcessEventModel, MccTerminalLogModel
 from vmtools_next.infra.logging import get_logger
 
 logger = get_logger("mcc.api")
@@ -478,6 +478,33 @@ async def terminal_input(
         audit.log(db, user=user, action="terminal.input", resource_type="terminal", instance_id=instance_id, success=False, error_message=str(exc))
         db.commit()
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/{instance_id}/terminal/log")
+def terminal_log_export(
+    instance_id: str,
+    db: Session = Depends(get_db),
+    user: UserModel = Depends(get_current_user),
+):
+    """Export the full terminal log for an instance as plain text.
+
+    Returns every persisted line (oldest → newest); unlike /history this is not
+    capped by the in-memory ring buffer.
+    """
+    service.get_instance(db, user, instance_id)
+    rows = (
+        db.query(MccTerminalLogModel)
+        .filter(MccTerminalLogModel.instance_id == instance_id)
+        .order_by(MccTerminalLogModel.seq.asc())
+        .all()
+    )
+    audit.log(db, user=user, action="terminal.export", resource_type="terminal", instance_id=instance_id)
+    db.commit()
+    content = "".join(
+        f"[{row.created_at.isoformat()}] [{row.stream}] {row.content_masked or row.content}\n"
+        for row in rows
+    )
+    return Response(content=content, media_type="text/plain; charset=utf-8")
 
 
 @router.get("/{instance_id}/events", response_model=list[MccProcessEventResponse])

@@ -107,7 +107,7 @@
         <el-form-item label="游戏版本"><el-input v-model="createForm.mc_version" placeholder="1.21.1" /></el-form-item>
         <el-form-item label="程序模式">
           <el-select v-model="createForm.binary_mode">
-            <el-option label="���号链接（推荐）" value="symlink" />
+            <el-option label="符号链接（推荐）" value="symlink" />
             <el-option label="复制程序" value="copy" />
             <el-option label="外部路径" value="external" />
           </el-select>

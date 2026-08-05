@@ -28,7 +28,7 @@ logger = get_logger("mcc.process")
 @dataclass
 class ProcessHandle:
     instance_id: str
-    process: asyncio.subprocess.Process | subprocess.Popen
+    process: "asyncio.subprocess.Process | subprocess.Popen | PtyProcess"
     output_task: asyncio.Task
     exit_task: asyncio.Task | None = None
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
@@ -41,10 +41,15 @@ def _is_async_proc(proc) -> bool:
 
 
 class _PtyStdout:
-    """Async reader wrapper for PTY master fd."""
+    """Async reader wrapper for PTY master fd.
+
+    Reads in 4096-byte chunks into an internal buffer and splits on
+    newlines, avoiding the previous one-byte-per-syscall hot loop.
+    """
 
     def __init__(self, fd: int):
         self._fd = fd
+        self._buf = b""
 
     async def read(self, n: int = 4096) -> bytes:
         loop = asyncio.get_event_loop()
@@ -61,15 +66,15 @@ class _PtyStdout:
             return b""
 
     def _blocking_readline(self) -> bytes:
-        buf = b""
-        while True:
-            ch = os.read(self._fd, 1)
-            if not ch:
-                break
-            buf += ch
-            if ch == b"\n":
-                break
-        return buf
+        while b"\n" not in self._buf:
+            chunk = os.read(self._fd, 4096)
+            if not chunk:
+                # EOF: flush any remaining buffered content as the final line
+                line, self._buf = self._buf, b""
+                return line
+            self._buf += chunk
+        line, self._buf = self._buf.split(b"\n", 1)
+        return line + b"\n"
 
 
 class _PtyStdin:
@@ -79,7 +84,11 @@ class _PtyStdin:
         self._fd = fd
 
     def write(self, data: bytes):
-        os.write(self._fd, data)
+        try:
+            os.write(self._fd, data)
+        except (BrokenPipeError, OSError):
+            # Process exited / PTY closed — ignore writes to a dead fd.
+            pass
 
     async def drain(self):
         pass
@@ -94,6 +103,20 @@ class PtyProcess:
         self.returncode: int | None = None
         self.stdout = _PtyStdout(master_fd)
         self.stdin = _PtyStdin(master_fd)
+
+    def resize(self, cols: int, rows: int) -> None:
+        """Resize the pseudo-terminal window (TIOCSWINSZ)."""
+        import fcntl
+        import struct
+        import termios
+        try:
+            fcntl.ioctl(
+                self._master_fd,
+                termios.TIOCSWINSZ,
+                struct.pack("HHHH", rows, cols, 0, 0),
+            )
+        except OSError:
+            pass
 
     def terminate(self):
         import signal
@@ -150,6 +173,17 @@ class MccProcessManager:
         self._locks: dict[str, asyncio.Lock] = {}
         self._started = False
         self._sentinel_id: str | None = None  # cached sentinel instance UUID
+
+        # Serialized terminal-event detection (per instance): stdout lines are
+        # pushed to a queue and consumed strictly in order, so disconnect/kick
+        # reason matching never races across lines.
+        self._detection_queues: dict[str, asyncio.Queue[str]] = {}
+        self._detection_tasks: dict[str, asyncio.Task] = {}
+
+        # Batched DB persistence: lines are accumulated and flushed every 0.5s
+        # (or on process exit) instead of one transaction per line.
+        self._pending_db: dict[str, list] = {}
+        self._db_flush_tasks: dict[str, asyncio.Task] = {}
 
     async def start(self) -> None:
         self._started = True
@@ -256,36 +290,6 @@ class MccProcessManager:
             return False
         proc = handle.process
         return proc.returncode is None
-
-    async def _tail_log(self, instance_id: str, log_path: str) -> None:
-        """Tail the MCC output log file and feed lines to the terminal."""
-        import time as _time
-        # Wait for log file to appear and have content
-        waited = 0
-        while not os.path.exists(log_path) or os.path.getsize(log_path) == 0:
-            if waited > 30:
-                logger.warning("Log file %s never appeared", log_path)
-                return
-            await asyncio.sleep(0.5)
-            waited += 0.5
-
-        with open(log_path, "r", encoding="utf-8", errors="replace") as fh:
-            fh.seek(0, 2)  # start at end
-            while True:
-                line = fh.readline()
-                if line:
-                    line = line.rstrip("\r\n")
-                    # Skip script(1) header if present
-                    if line and not line.startswith("Script "):
-                        try:
-                            await self._append_line(instance_id, "stdout", line)
-                        except Exception:
-                            pass
-                else:
-                    await asyncio.sleep(0.1)
-                    # Check if log file was rotated/deleted
-                    if not os.path.exists(log_path):
-                        break
 
     async def _spawn_pty(self, command: list[str], cwd: str, env: dict) -> PtyProcess:
         """Spawn process with PTY for line-buffered output.
@@ -399,18 +403,11 @@ class MccProcessManager:
                     )
                     logger.info("MCC started on Windows with DEVNULL stdin (pid={})", process.pid)
                 else:
-                    # Linux: simple asyncio PIPE. readline() handles line
-                    # buffering fine — Mono may buffer output on a PIPE,
-                    # but the network thread is separate from Console.ReadLine.
-                    process = await asyncio.create_subprocess_exec(
-                        *command,
-                        cwd=instance.instance_dir,
-                        env=env,
-                        stdin=asyncio.subprocess.PIPE,
-                        stdout=asyncio.subprocess.PIPE,
-                        stderr=asyncio.subprocess.STDOUT,
-                    )
-                    logger.info("MCC started on Linux with PIPE stdin (pid={})", process.pid)
+                    # Linux: spawn through a real PTY so MCC sees a TTY
+                    # (Console.ReadLine works, output is line-buffered, and the
+                    # terminal window can be resized via TIOCSWINSZ).
+                    process = await self._spawn_pty(command, str(instance.instance_dir), env)
+                    logger.info("MCC started on Linux with PTY (pid={})", process.pid)
 
                 instance.status = "running"
                 instance.desired_state = "running"
@@ -587,7 +584,19 @@ class MccProcessManager:
         "inventory", "move", "list",
     }
 
-    async def write_stdin(self, instance_id: str, text: str, append_newline: bool = True) -> None:
+    async def write_stdin(
+        self,
+        instance_id: str,
+        text: str,
+        append_newline: bool = True,
+        source_sid: str | None = None,
+    ) -> None:
+        """Write a line to the MCC process stdin.
+
+        `source_sid` is the socket id that submitted the input; it is echoed in
+        the broadcast payload so the originating client can skip re-rendering
+        its own locally-echoed input line.
+        """
         handle = self._processes.get(instance_id)
         if not handle or handle.process.returncode is not None:
             raise RuntimeError("MCC process is not running")
@@ -620,7 +629,21 @@ class MccProcessManager:
             # Windows: stdin 为 DEVNULL，走 MCP HTTP API
             await self._send_via_mcp(instance_id, command)
 
-        await self._append_line(instance_id, "stdin", f"> {text}")
+        await self._append_line(instance_id, "stdin", f"> {text}", from_sid=source_sid)
+
+    async def resize_terminal(self, instance_id: str, cols: int, rows: int) -> None:
+        """Resize the PTY window of a running instance (TIOCSWINSZ)."""
+        if not (1 <= int(cols) <= 500 and 1 <= int(rows) <= 200):
+            raise ValueError("Invalid terminal size")
+        handle = self._processes.get(instance_id)
+        if not handle or handle.process.returncode is not None:
+            raise RuntimeError("MCC process is not running")
+        resize = getattr(handle.process, "resize", None)
+        if resize is None:
+            # PIPE-based fallback (Windows) has no PTY to resize.
+            return
+        resize(int(cols), int(rows))
+        logger.info("Resized terminal for instance {} to {}x{}", instance_id, cols, rows)
 
     async def _send_via_mcp(self, instance_id: str, command: str) -> None:
         """Send an MCC command via MCP HTTP API. Handles chat vs internal command routing."""
@@ -692,20 +715,35 @@ class MccProcessManager:
         raise RuntimeError("MCP RunInternalCommand not available")
 
     def tail_logs(self, instance_id: str, tail: int = 500, after_seq: int | None = None) -> list[TerminalLine]:
-        lines = self.buffer.tail(instance_id, tail, after_seq)
-        if lines:
-            return lines
+        """Return the most recent terminal lines.
+
+        The in-memory ring buffer is authoritative for recent lines; when the
+        buffer holds fewer than `tail` lines (e.g. right after a backend restart
+        or when the ring dropped older entries), older history is filled in from
+        the DB and merged by sequence number.
+        """
+        buf_lines = self.buffer.tail(instance_id, tail, after_seq)
+        if after_seq is not None:
+            buf_lines = [line for line in buf_lines if line.seq > after_seq]
+
+        # Buffer alone is sufficient only if it already covers the whole window.
+        if len(buf_lines) >= tail:
+            return buf_lines[-max(0, tail):]
+
         Session = get_session_factory()
         db = Session()
         try:
             query = db.query(MccTerminalLogModel).filter(MccTerminalLogModel.instance_id == instance_id)
             if after_seq is not None:
                 query = query.filter(MccTerminalLogModel.seq > after_seq)
+            covered = {line.seq for line in buf_lines}
+            if covered:
+                query = query.filter(MccTerminalLogModel.seq.notin_(covered))
             rows = query.order_by(MccTerminalLogModel.seq.desc()).limit(tail).all()
             rows.reverse()
             for row in rows:
                 self.buffer.sync_seq(instance_id, row.seq)
-            return [
+            db_rows = [
                 TerminalLine(
                     instance_id=row.instance_id,
                     seq=row.seq,
@@ -718,7 +756,26 @@ class MccProcessManager:
         finally:
             db.close()
 
-    async def _read_output_loop(self, instance_id: str, process: asyncio.subprocess.Process | subprocess.Popen) -> None:
+        merged = sorted(db_rows + buf_lines, key=lambda line: line.seq)
+        return merged[-max(0, tail):]
+
+    @staticmethod
+    def _sanitize_ansi(line: str) -> str:
+        """Strip ANSI sequences that would corrupt line-by-line terminal rendering.
+
+        Keeps SGR color/style sequences (ending in ``m``) so xterm still renders
+        colors, but removes clear-screen, cursor-move, cursor-visibility and
+        other CSI sequences that assume a full-screen raw terminal.
+        """
+        import re
+
+        def _repl(match: "re.Match[str]") -> str:
+            seq = match.group(0)
+            return seq if seq.endswith("m") else ""
+
+        return re.sub(r"\x1b\[[0-9;?]*[A-Za-z]", _repl, line)
+
+    async def _read_output_loop(self, instance_id: str, process: "asyncio.subprocess.Process | subprocess.Popen") -> None:
         """Read process stdout line by line."""
         if process.stdout is None:
             return
@@ -732,6 +789,7 @@ class MccProcessManager:
             if not raw:
                 break
             content = raw.decode("utf-8", errors="replace").rstrip("\r\n")
+            content = self._sanitize_ansi(content)
             if content:
                 try:
                     await self._append_line(instance_id, "stdout", content)
@@ -807,43 +865,136 @@ class MccProcessManager:
             current = self._processes.get(instance_id)
             if current is not None and current.process is process:
                 self._processes.pop(instance_id, None)
+            # Stop serialized detection loop and flush any queued DB writes.
+            self._stop_detection_loop(instance_id)
+            try:
+                await self._flush_db_now(instance_id)
+            except Exception:
+                pass
 
     async def _append_system_line(self, instance_id: str, content: str) -> TerminalLine:
         return await self._append_line(instance_id, "system", content)
 
-    async def _append_line(self, instance_id: str, stream: str, content: str) -> TerminalLine:
-        masked = mask_text(content)
-        line = self.buffer.append(instance_id, stream, masked)
-        Session = get_session_factory()
-        db = Session()
+    def _ensure_detection_loop(self, instance_id: str) -> None:
+        """Start (once) the per-instance serialized stdout detection consumer."""
+        if instance_id in self._detection_tasks:
+            return
+        queue: asyncio.Queue[str] = asyncio.Queue()
+        self._detection_queues[instance_id] = queue
+        self._detection_tasks[instance_id] = asyncio.create_task(
+            self._detection_loop(instance_id, queue)
+        )
+
+    def _stop_detection_loop(self, instance_id: str) -> None:
+        task = self._detection_tasks.pop(instance_id, None)
+        self._detection_queues.pop(instance_id, None)
+        if task and not task.done():
+            task.cancel()
+
+    async def _detection_loop(self, instance_id: str, queue: asyncio.Queue[str]) -> None:
+        """Consume stdout lines strictly in order and run event detection."""
         try:
-            db.add(MccTerminalLogModel(
+            while True:
+                content = await queue.get()
+                try:
+                    await self._detect_disconnect(instance_id, content)
+                    # Player join/leave detection via terminal is disabled when BlueMap is active
+                    if not get_config().bluemap.enabled:
+                        await self._detect_player_events(instance_id, content)
+                except Exception:
+                    pass
+                finally:
+                    queue.task_done()
+        except asyncio.CancelledError:
+            pass
+
+    def _queue_db_write(self, instance_id: str, stream: str, raw_content: str, line: TerminalLine) -> None:
+        """Queue a terminal line for batched DB persistence."""
+        self._pending_db.setdefault(instance_id, []).append(
+            MccTerminalLogModel(
                 instance_id=instance_id,
                 stream=stream,
                 seq=line.seq,
-                content=content,
-                content_masked=masked,
+                content=raw_content,
+                content_masked=line.content,
                 created_at=line.created_at,
-            ))
+            )
+        )
+        task = self._db_flush_tasks.get(instance_id)
+        if task is None or task.done():
+            self._db_flush_tasks[instance_id] = asyncio.create_task(
+                self._flush_db_loop(instance_id)
+            )
+
+    async def _flush_db_loop(self, instance_id: str) -> None:
+        """Periodically flush queued terminal lines for an instance."""
+        try:
+            while True:
+                await asyncio.sleep(0.5)
+                rows = self._pending_db.get(instance_id)
+                if not rows:
+                    # Double-sleep so lines that arrived during the first wait
+                    # still get flushed before the task exits.
+                    await asyncio.sleep(0.5)
+                    rows = self._pending_db.get(instance_id)
+                    if not rows:
+                        return
+                self._pending_db[instance_id] = []
+                await self._persist_rows(instance_id, rows)
+        except asyncio.CancelledError:
+            pass
+
+    async def _flush_db_now(self, instance_id: str) -> None:
+        """Immediately persist all queued lines (used on process exit)."""
+        # Stop the background flush loop first so it cannot double-write the
+        # same batch we are about to take.
+        task = self._db_flush_tasks.pop(instance_id, None)
+        if task and not task.done():
+            task.cancel()
+            try:
+                await task
+            except (asyncio.CancelledError, Exception):
+                pass
+        rows = self._pending_db.pop(instance_id, [])
+        if rows:
+            await self._persist_rows(instance_id, rows)
+
+    async def _persist_rows(self, instance_id: str, rows: list) -> None:
+        Session = get_session_factory()
+        db = Session()
+        try:
+            db.add_all(rows)
             db.commit()
         except Exception as exc:
             db.rollback()
-            logger.debug("Failed to persist MCC terminal line: {}", exc)
+            logger.debug("Failed to persist {} MCC terminal lines: {}", len(rows), exc)
         finally:
             db.close()
 
-        # Fire-and-forget: don't block the read loop
+    async def _append_line(
+        self,
+        instance_id: str,
+        stream: str,
+        content: str,
+        from_sid: str | None = None,
+    ) -> TerminalLine:
+        masked = mask_text(content)
+        line = self.buffer.append(instance_id, stream, masked)
+
+        # Batched DB persistence (non-blocking for the read loop).
+        self._queue_db_write(instance_id, stream, content, line)
+
+        # Serialized stdout event detection: enqueue strictly in order.
         if stream == "stdout":
-            asyncio.create_task(self._detect_disconnect(instance_id, content))
-            # Player join/leave detection via terminal is disabled when BlueMap is active
-            if not get_config().bluemap.enabled:
-                asyncio.create_task(self._detect_player_events(instance_id, content))
+            self._ensure_detection_loop(instance_id)
+            self._detection_queues[instance_id].put_nowait(content)
 
         await sio.emit("mcc_terminal_output", {
             "instance_id": instance_id,
             "seq": line.seq,
             "stream": stream,
             "content": masked,
+            "from_sid": from_sid,
             "created_at": line.created_at.isoformat(),
         }, room=f"mcc:{instance_id}")
         return line
@@ -1003,9 +1154,14 @@ class MccProcessManager:
 
     async def _detect_disconnect(self, instance_id: str, content: str) -> None:
         """Check terminal output for known MCC disconnect patterns and trigger alerts."""
-        # If we have a pending disconnect, this line is the kick reason
-        pending = self._pending_disconnect.pop(instance_id, None)
+        # If we have a pending disconnect, this line is the kick reason.
+        # Use get() + non-empty check so a stray blank line does not consume
+        # the pending marker before the real reason line arrives.
+        pending = self._pending_disconnect.get(instance_id)
         if pending:
+            if not content.strip():
+                return
+            self._pending_disconnect.pop(instance_id, None)
             import asyncio as _asyncio
             from vmtools_next.core.qqbot_notify import notify_mcc_event
             try:
