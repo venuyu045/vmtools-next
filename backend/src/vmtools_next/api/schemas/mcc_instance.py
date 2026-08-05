@@ -55,7 +55,7 @@ class MccInstanceStartRequest(BaseModel):
 
 class MccInstanceStopRequest(BaseModel):
     force: bool = False
-    timeout_seconds: float = 10.0
+    timeout_seconds: float = 3.0
 
 
 class MccTerminalInputRequest(BaseModel):

@@ -77,7 +77,8 @@ class MccProcessManager:
                 logger.warning("Failed to stop MCC instance {} during shutdown: {}", instance_id, exc)
         self._started = False
 
-    async def stop_all_instances(self, force: bool = True, timeout_seconds: float = 5.0) -> dict:
+    async def stop_all_instances(self, force: bool = True, timeout_seconds: float = 5.0,
+                                 include_sweep: bool = True) -> dict:
         """Force-kill all running MCC processes (tracked + orphaned). Returns summary dict."""
         results: list[dict] = []
         killed_pids: set[int] = set()
@@ -98,8 +99,41 @@ class MccProcessManager:
             results.extend(await asyncio.gather(*(_kill_tracked(iid) for iid in tracked_ids)))
 
         # 2. Kill orphaned processes by scanning system process table
-        #    (handles backend-restart scenarios where _processes is empty and DB status is stale)
-        import psutil  # local import: step 1 must run even if psutil is missing
+        #    (handles backend-restart scenarios where _processes is empty and DB status is stale).
+        #    include_sweep=False 用于 kill-all 多引擎场景，避免重复全进程扫描。
+        if include_sweep:
+            self._sweep_orphan_processes(killed_pids, results)
+
+        # 3. Update DB: mark all instances as stopped
+        Session2 = get_session_factory()
+        db2 = Session2()
+        try:
+            db2.query(MccInstanceModel).filter(
+                MccInstanceModel.status.in_(["running", "stopping"]),
+            ).update({"status": "stopped", "pid": None, "exit_code": None, "last_stopped_at": datetime.now(timezone.utc)}, synchronize_session=False)
+            db2.commit()
+        except Exception as exc:
+            logger.warning("Error updating DB after force-kill: {}", exc)
+            db2.rollback()
+        finally:
+            db2.close()
+
+        return {"killed": len(results), "results": results}
+
+    def is_running(self, instance_id: str) -> bool:
+        handle = self._processes.get(instance_id)
+        if not handle:
+            return False
+        proc = handle.process
+        return proc.returncode is None
+
+    def _sweep_orphan_processes(self, known_pids: set[int], results: list[dict]) -> None:
+        """Scan system process table for leftover MCC processes and kill them.
+
+        Handles backend-restart scenarios where _processes is empty and DB status is stale.
+        Mutates `known_pids` and appends kill records to `results`.
+        """
+        import psutil  # local import: tracked-kill step must run even if psutil is missing
         Session = get_session_factory()
         db = Session()
         try:
@@ -135,9 +169,9 @@ class MccProcessManager:
                     if not _match(cmdline_str, proc.info.get("name") or ""):
                         continue
                     pid = proc.pid
-                    if pid not in killed_pids:
+                    if pid not in known_pids:
                         proc.kill()
-                        killed_pids.add(pid)
+                        known_pids.add(pid)
                         logger.warning("Force-killed orphaned MCC pid={} cmdline={}", pid, cmdline_str[:200])
                         results.append({"instance_id": "orphan", "status": "killed", "pid": pid, "message": "found via psutil scan"})
                 except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
@@ -146,29 +180,6 @@ class MccProcessManager:
             logger.warning("Error during psutil orphan scan: {}", exc)
         finally:
             db.close()
-
-        # 3. Update DB: mark all instances as stopped
-        Session2 = get_session_factory()
-        db2 = Session2()
-        try:
-            db2.query(MccInstanceModel).filter(
-                MccInstanceModel.status.in_(["running", "stopping"]),
-            ).update({"status": "stopped", "pid": None, "exit_code": None, "last_stopped_at": datetime.now(timezone.utc)}, synchronize_session=False)
-            db2.commit()
-        except Exception as exc:
-            logger.warning("Error updating DB after force-kill: {}", exc)
-            db2.rollback()
-        finally:
-            db2.close()
-
-        return {"killed": len(results), "results": results}
-
-    def is_running(self, instance_id: str) -> bool:
-        handle = self._processes.get(instance_id)
-        if not handle:
-            return False
-        proc = handle.process
-        return proc.returncode is None
 
     async def start_instance(self, instance_id: str, extra_env: dict[str, str] | None = None) -> dict:
         lock = self._locks.setdefault(instance_id, asyncio.Lock())
@@ -373,20 +384,20 @@ class MccProcessManager:
                             loop = asyncio.get_event_loop()
                             await asyncio.wait_for(loop.run_in_executor(None, handle.process.wait), timeout=timeout_seconds)
                     except asyncio.TimeoutError:
-                        handle.process.terminate()
+                        # 优雅停止超时 → 直接强杀，绝不再无限等待
+                        logger.warning("Graceful stop timed out for instance {} pid={}, force killing", instance_id, handle.process.pid)
+                        try:
+                            handle.process.kill()
+                        except Exception:
+                            pass
                         try:
                             if _is_async_proc(handle.process):
-                                await asyncio.wait_for(handle.process.wait(), timeout=5)
+                                await asyncio.wait_for(handle.process.wait(), timeout=3)
                             else:
                                 loop = asyncio.get_event_loop()
-                                await asyncio.wait_for(loop.run_in_executor(None, handle.process.wait), timeout=5)
+                                await asyncio.wait_for(loop.run_in_executor(None, handle.process.wait), timeout=3)
                         except asyncio.TimeoutError:
-                            handle.process.kill()
-                            if _is_async_proc(handle.process):
-                                await handle.process.wait()
-                            else:
-                                loop = asyncio.get_event_loop()
-                                await loop.run_in_executor(None, handle.process.wait)
+                            logger.warning("Force-kill wait timed out for instance {} pid={} (left for psutil sweep)", instance_id, handle.process.pid)
 
                 returncode = handle.process.returncode
                 if instance:

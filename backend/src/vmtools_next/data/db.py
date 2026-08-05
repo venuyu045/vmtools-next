@@ -61,6 +61,23 @@ def get_engine():
         connect_args["check_same_thread"] = False
 
     _engine = create_engine(_DATABASE_URL, connect_args=connect_args, echo=False)
+
+    # SQLite 并发优化：WAL 模式（读写不互斥）+ busy_timeout（写锁等待而非秒失败）
+    if _DATABASE_URL.startswith("sqlite"):
+        from sqlalchemy import event
+
+        @event.listens_for(_engine, "connect")
+        def _set_sqlite_pragma(dbapi_connection, connection_record):
+            cursor = dbapi_connection.cursor()
+            try:
+                cursor.execute("PRAGMA journal_mode=WAL")
+                cursor.execute("PRAGMA busy_timeout=5000")
+                cursor.execute("PRAGMA synchronous=NORMAL")
+            except Exception:
+                pass
+            finally:
+                cursor.close()
+
     _SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=_engine)
     return _engine
 
