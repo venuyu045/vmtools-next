@@ -188,11 +188,17 @@ class MineflayerProcessManager:
                     cmd += ["--auth-server-url", auth_url]
 
                 if account_profile and account_profile.password_secret:
-                    cmd += ["--password", account_profile.password_secret]
+                    from vmtools_next.core.mcc_security import reveal_secret
+                    plain_password = reveal_secret(account_profile.password_secret)
+                    if plain_password:
+                        cmd += ["--password", plain_password]
             else:
                 cmd += ["--auth", auth_type]
                 if account_profile and account_profile.password_secret:
-                    cmd += ["--password", account_profile.password_secret]
+                    from vmtools_next.core.mcc_security import reveal_secret
+                    plain_password = reveal_secret(account_profile.password_secret)
+                    if plain_password:
+                        cmd += ["--password", plain_password]
 
             # 环境变量
             env = os.environ.copy()
