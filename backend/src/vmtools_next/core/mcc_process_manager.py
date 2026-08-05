@@ -28,7 +28,7 @@ logger = get_logger("mcc.process")
 @dataclass
 class ProcessHandle:
     instance_id: str
-    process: "asyncio.subprocess.Process | subprocess.Popen | PtyProcess"
+    process: "asyncio.subprocess.Process | subprocess.Popen"
     output_task: asyncio.Task
     exit_task: asyncio.Task | None = None
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
@@ -38,127 +38,6 @@ def _is_async_proc(proc) -> bool:
     """Check if a process object is an asyncio subprocess (has async stdout)."""
     import asyncio as _asyncio
     return hasattr(proc.stdout, "readline") and _asyncio.iscoroutinefunction(proc.stdout.readline)
-
-
-class _PtyStdout:
-    """Async reader wrapper for PTY master fd.
-
-    Reads in 4096-byte chunks into an internal buffer and splits on
-    newlines, avoiding the previous one-byte-per-syscall hot loop.
-    """
-
-    def __init__(self, fd: int):
-        self._fd = fd
-        self._buf = b""
-
-    async def read(self, n: int = 4096) -> bytes:
-        loop = asyncio.get_event_loop()
-        try:
-            return await loop.run_in_executor(None, os.read, self._fd, n)
-        except OSError:
-            return b""
-
-    async def readline(self) -> bytes:
-        loop = asyncio.get_event_loop()
-        try:
-            return await loop.run_in_executor(None, self._blocking_readline)
-        except OSError:
-            return b""
-
-    def _blocking_readline(self) -> bytes:
-        while b"\n" not in self._buf:
-            chunk = os.read(self._fd, 4096)
-            if not chunk:
-                # EOF: flush any remaining buffered content as the final line
-                line, self._buf = self._buf, b""
-                return line
-            self._buf += chunk
-        line, self._buf = self._buf.split(b"\n", 1)
-        return line + b"\n"
-
-
-class _PtyStdin:
-    """Async writer wrapper for PTY master fd."""
-
-    def __init__(self, fd: int):
-        self._fd = fd
-
-    def write(self, data: bytes):
-        try:
-            os.write(self._fd, data)
-        except (BrokenPipeError, OSError):
-            # Process exited / PTY closed — ignore writes to a dead fd.
-            pass
-
-    async def drain(self):
-        pass
-
-
-class PtyProcess:
-    """Mimics asyncio.subprocess.Process but backed by a PTY."""
-
-    def __init__(self, master_fd: int, pid: int):
-        self._master_fd = master_fd
-        self.pid = pid
-        self.returncode: int | None = None
-        self.stdout = _PtyStdout(master_fd)
-        self.stdin = _PtyStdin(master_fd)
-
-    def resize(self, cols: int, rows: int) -> None:
-        """Resize the pseudo-terminal window (TIOCSWINSZ)."""
-        import fcntl
-        import struct
-        import termios
-        try:
-            fcntl.ioctl(
-                self._master_fd,
-                termios.TIOCSWINSZ,
-                struct.pack("HHHH", rows, cols, 0, 0),
-            )
-        except OSError:
-            pass
-
-    def terminate(self):
-        import signal
-        try:
-            os.kill(self.pid, signal.SIGTERM)
-        except OSError:
-            pass
-
-    def kill(self):
-        import signal
-        try:
-            os.kill(self.pid, signal.SIGKILL)
-        except OSError:
-            pass
-
-    async def wait(self, timeout=None):
-        import signal
-        loop = asyncio.get_event_loop()
-        try:
-            if timeout:
-                pid, status = await asyncio.wait_for(
-                    loop.run_in_executor(None, os.waitpid, self.pid, 0),
-                    timeout=timeout,
-                )
-            else:
-                pid, status = await loop.run_in_executor(None, os.waitpid, self.pid, 0)
-            self.returncode = os.waitstatus_to_exitcode(status)
-        except asyncio.TimeoutError:
-            os.kill(self.pid, signal.SIGKILL)
-            try:
-                pid, status = await loop.run_in_executor(None, os.waitpid, self.pid, 0)
-                self.returncode = os.waitstatus_to_exitcode(status)
-            except (ChildProcessError, ProcessLookupError):
-                self.returncode = -9  # killed
-        except (ChildProcessError, ProcessLookupError):
-            # Process already reaped (e.g. auto-reconnect restarted it)
-            self.returncode = self.returncode or 0
-        try:
-            os.close(self._master_fd)
-        except OSError:
-            pass
-        return self.returncode
 
 
 class MccProcessManager:
@@ -291,62 +170,6 @@ class MccProcessManager:
         proc = handle.process
         return proc.returncode is None
 
-    async def _spawn_pty(self, command: list[str], cwd: str, env: dict) -> PtyProcess:
-        """Spawn process with PTY for line-buffered output.
-
-        Creates a pseudo-terminal, forks, and execs the command with the
-        PTY slave as stdin/stdout/stderr. Echo is disabled to prevent
-        input from being reflected back to stdout.
-
-        Also redirects MCC output to a log file for reliable reading.
-        """
-        import pty
-        import termios
-
-        master_fd, slave_fd = pty.openpty()
-
-        # Disable echo only — keep cooked mode so Console.ReadLine() works.
-        # Re-enable ONLCR: MCC writes \n, PTY outputs \r\n (normal terminal).
-        try:
-            attrs = termios.tcgetattr(slave_fd)
-            attrs[3] &= ~termios.ECHO   # don't echo input back
-            attrs[3] &= ~termios.ECHOE  # don't echo erase
-            # Keep ONLCR enabled (default): NL → CR-NL on output
-            termios.tcsetattr(slave_fd, termios.TCSANOW, attrs)
-        except Exception:
-            pass
-
-        pid = os.fork()
-        if pid == 0:
-            # ── Child process ──
-            try:
-                os.close(master_fd)
-                os.setsid()
-
-                # Set controlling terminal (required for Console.ReadLine on some Mono versions)
-                try:
-                    import fcntl
-                    fcntl.ioctl(slave_fd, termios.TIOCSCTTY, 0)
-                except OSError:
-                    pass
-
-                # Redirect stdin/stdout/stderr to PTY slave
-                os.dup2(slave_fd, 0)
-                os.dup2(slave_fd, 1)
-                os.dup2(slave_fd, 2)
-                if slave_fd > 2:
-                    os.close(slave_fd)
-
-                os.chdir(cwd)
-                os.execvpe(command[0], command, env)
-            except Exception:
-                pass
-            os._exit(1)  # Must exit if exec fails!
-        else:
-            # ── Parent process ──
-            os.close(slave_fd)
-            return PtyProcess(master_fd, pid)
-
     async def start_instance(self, instance_id: str, extra_env: dict[str, str] | None = None) -> dict:
         lock = self._locks.setdefault(instance_id, asyncio.Lock())
         async with lock:
@@ -403,11 +226,21 @@ class MccProcessManager:
                     )
                     logger.info("MCC started on Windows with DEVNULL stdin (pid={})", process.pid)
                 else:
-                    # Linux: spawn through a real PTY so MCC sees a TTY
-                    # (Console.ReadLine works, output is line-buffered, and the
-                    # terminal window can be resized via TIOCSWINSZ).
-                    process = await self._spawn_pty(command, str(instance.instance_dir), env)
-                    logger.info("MCC started on Linux with PTY (pid={})", process.pid)
+                    # Linux: PIPE mode. MCC 26.x detects a TTY and switches to
+                    # interactive input-echo mode (garbled "Input:" lines) and
+                    # repeatedly drops the connection (~20-30s after login),
+                    # so we keep the historical PIPE startup for stability.
+                    # Terminal resize is silently ignored for PIPE processes
+                    # (resize_terminal guards via getattr).
+                    process = await asyncio.create_subprocess_exec(
+                        *command,
+                        cwd=instance.instance_dir,
+                        env=env,
+                        stdin=asyncio.subprocess.PIPE,
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.STDOUT,
+                    )
+                    logger.info("MCC started on Linux with PIPE stdin (pid={})", process.pid)
 
                 instance.status = "running"
                 instance.desired_state = "running"
@@ -632,7 +465,12 @@ class MccProcessManager:
         await self._append_line(instance_id, "stdin", f"> {text}", from_sid=source_sid)
 
     async def resize_terminal(self, instance_id: str, cols: int, rows: int) -> None:
-        """Resize the PTY window of a running instance (TIOCSWINSZ)."""
+        """Resize the terminal of a running instance.
+
+        Current Linux/Windows startup uses PIPE/DEVNULL processes without a
+        PTY, so this is a no-op (kept for forward-compatibility with a future
+        PTY-based launch; validated bounds and process checks still apply).
+        """
         if not (1 <= int(cols) <= 500 and 1 <= int(rows) <= 200):
             raise ValueError("Invalid terminal size")
         handle = self._processes.get(instance_id)
@@ -640,7 +478,7 @@ class MccProcessManager:
             raise RuntimeError("MCC process is not running")
         resize = getattr(handle.process, "resize", None)
         if resize is None:
-            # PIPE-based fallback (Windows) has no PTY to resize.
+            # PIPE/DEVNULL-based processes have no PTY to resize.
             return
         resize(int(cols), int(rows))
         logger.info("Resized terminal for instance {} to {}x{}", instance_id, cols, rows)
@@ -831,7 +669,7 @@ class MccProcessManager:
             )
             if should_reconnect:
                 db.refresh(instance)
-                logger.info("Auto-reconnect: restarting crashed instance %s", instance_id)
+                logger.info("Auto-reconnect: restarting crashed instance {}", instance_id)
                 await self._append_system_line(instance_id, "Auto-reconnect: restarting...")
                 # Send QQ notification
                 try:
@@ -1052,7 +890,7 @@ class MccProcessManager:
                 instance_id, f"自动重连可能失败（{int(self._wait_for_player_online.__defaults__[0])}s 内未检测到在线）"
             )
             logger.warning(
-                "Auto-reconnect: player %s not detected online for instance %s", mc_username, instance_name
+                "Auto-reconnect: player {} not detected online for instance {}", mc_username, instance_name
             )
 
     async def _wait_for_player_online(
@@ -1084,13 +922,13 @@ class MccProcessManager:
                                 continue
                             if p.get("name") == mc_username:
                                 logger.info(
-                                    "Auto-reconnect: player %s detected online via BlueMap", mc_username
+                                    "Auto-reconnect: player {} detected online via BlueMap", mc_username
                                 )
                                 return True
             except Exception as exc:
                 logger.debug("BlueMap poll (reconnect wait) error: {}", exc)
             await asyncio.sleep(5)
-        logger.warning("Auto-reconnect: player %s not detected online within %.0fs", mc_username, timeout)
+        logger.warning("Auto-reconnect: player {} not detected online within {:.0f}s", mc_username, timeout)
         return False
 
     # ── Disconnect detection patterns (from MCC source) ──────────────
@@ -1105,7 +943,7 @@ class MccProcessManager:
                 MccInstanceModel.instance_id == instance_id
             ).first()
             if inst and inst.auto_reconnect and inst.desired_state == "running":
-                logger.info("Auto-reconnect triggered by disconnect: %s", instance_id)
+                logger.info("Auto-reconnect triggered by disconnect: {}", instance_id)
                 await self._append_system_line(instance_id, "检测到断联，自动重连...")
 
                 # Send QQ notification: auto-reconnect started
@@ -1185,7 +1023,7 @@ class MccProcessManager:
 
         for pattern, category in self._DISCONNECT_PATTERNS:
             if pattern.lower() in content.lower():
-                logger.warning("MCC disconnect detected: instance=%s category=%s pattern=%s",
+                logger.warning("MCC disconnect detected: instance={} category={} pattern={}",
                                instance_id, category, pattern)
                 if category == "kicked":
                     # Wait for next line to get the real kick reason
