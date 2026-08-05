@@ -23,6 +23,23 @@
 
     <div ref="terminalContainer" class="xterm-shell" :style="{ height }"></div>
 
+    <div class="terminal-input-row">
+      <el-input
+        ref="cmdInputRef"
+        v-model="inputDraft"
+        class="terminal-input"
+        placeholder="输入命令或聊天内容，回车发送（↑/↓ 历史 · Tab 补全）"
+        clearable
+        @keydown.enter.prevent="submitFromInput"
+        @keydown.up.prevent="recallFromInput(-1)"
+        @keydown.down.prevent="recallFromInput(1)"
+        @keydown.tab.prevent="autocompleteFromInput"
+      >
+        <template #prefix><span class="mono input-prefix">&gt;</span></template>
+      </el-input>
+      <button class="pixel-btn" @click="submitFromInput">发送</button>
+    </div>
+
     <div class="terminal-status mono">
       <span>{{ title || slug || instanceId }}</span>
       <span>{{ lineCount }} lines</span>
@@ -71,6 +88,10 @@ const autoScroll = ref(true)
 const lineCount = computed(() => terminalLines.value.length)
 const terminalLines = computed(() => store.terminalLines[props.instanceId] || [])
 
+/** 独立输入框：xterm 只做显示，输入统一走这里，避免输出行截断输入。 */
+const inputDraft = ref('')
+const cmdInputRef = ref()
+
 type ConnState = { text: string; color: string }
 const connState = ref<ConnState>({ text: 'ready', color: '#888' })
 
@@ -79,7 +100,6 @@ let fitAddon: FitAddon | null = null
 let searchAddon: SearchAddon | null = null
 let resizeObserver: ResizeObserver | null = null
 let lastSeq = 0
-let commandBuffer = ''
 let historyCursor = -1
 let commandHistory: string[] = []
 let pendingDraft = '' // input preserved while browsing history
@@ -158,7 +178,8 @@ function initTerminal() {
     allowProposedApi: true,
     convertEol: true,
     cursorBlink: true,
-    disableStdin: false,
+    // 输入统一走下方输入框，xterm 仅作显示（避免输出行截断输入）
+    disableStdin: true,
     fontFamily: 'Consolas, "Courier New", monospace',
     fontSize: 14,
     lineHeight: 1.25,
@@ -194,10 +215,9 @@ function initTerminal() {
   terminal.open(terminalContainer.value)
   console.log('[Terminal] initTerminal: xterm opened on container', terminalContainer.value)
 
-  terminal.onData(handleTerminalInput)
   terminal.writeln('\x1b[32mVMTools MCC Web Terminal\x1b[0m')
-  terminal.writeln('\x1b[90m以 / 开头的内容作为服务器命令；其他内容自动作为游戏聊天发送。\x1b[0m')
-  terminal.write(`\r\n${promptText()}`)
+  terminal.writeln('\x1b[90m请在下方输入框输入：/xxx 为服务器命令，其他内容自动作为游戏聊天发送。\x1b[0m')
+  terminal.writeln('')
 
   // 移动端触摸滚动：框内纵向滑动 = 滚动终端历史内容；
   // 滑到历史边界后继续滑 = 放行给页面滚动（框外滑动本来就滚动页面）。
@@ -228,117 +248,48 @@ function saveCommand(command: string) {
   localStorage.setItem(historyKey(), JSON.stringify(commandHistory))
 }
 
-/** Display width of a code point (CJK/full-width chars take 2 columns). */
-function charWidth(ch: string): number {
-  const code = ch.codePointAt(0)!
-  if (code >= 0x1100 && (
-    code <= 0x115f || // Hangul Jamo
-    code === 0x2329 || code === 0x232a ||
-    (code >= 0x2e80 && code <= 0xa4cf && code !== 0x303f) ||
-    (code >= 0xac00 && code <= 0xd7a3) ||
-    (code >= 0xf900 && code <= 0xfaff) ||
-    (code >= 0xfe10 && code <= 0xfe19) ||
-    (code >= 0xfe30 && code <= 0xfe6f) ||
-    (code >= 0xff00 && code <= 0xff60) ||
-    (code >= 0xffe0 && code <= 0xffe6) ||
-    (code >= 0x1f300 && code <= 0x1faff) ||
-    (code >= 0x20000 && code <= 0x3fffd)
-  )) return 2
-  return 1
-}
-
-function eraseChars(count: number) {
-  if (!terminal) return
-  for (let i = 0; i < count; i++) terminal.write('\b \b')
-}
-
-function replaceInputBuffer(value: string) {
-  if (!terminal) return
-  // Erase current input, accounting for wide (CJK) characters.
-  const chars = [...commandBuffer]
-  let cols = 0
-  for (const ch of chars) cols += charWidth(ch)
-  eraseChars(cols)
-  commandBuffer = value
-  terminal.write(value)
-}
-
-function recallCommand(direction: number) {
+/** ↑/↓ 浏览命令历史（方向键操作输入框内容）。 */
+function recallFromInput(direction: number) {
   if (!commandHistory.length) return
-  // Preserve the user's in-progress draft on the first arrow press.
-  if (historyCursor === -1) pendingDraft = commandBuffer
+  // 首次按键时暂存用户正在输入的内容
+  if (historyCursor === -1) pendingDraft = inputDraft.value
   historyCursor += direction < 0 ? 1 : -1
   if (historyCursor < 0) {
     historyCursor = -1
-    replaceInputBuffer(pendingDraft)
+    inputDraft.value = pendingDraft
     pendingDraft = ''
     return
   }
   if (historyCursor >= commandHistory.length) historyCursor = commandHistory.length - 1
-  replaceInputBuffer(commandHistory[historyCursor])
+  inputDraft.value = commandHistory[historyCursor]
 }
 
-function promptText(): string {
-  return '\x1b[32m> \x1b[0m'
-}
-
-function autocompleteCommand() {
-  const token = commandBuffer.trimStart().toLowerCase()
+/** Tab 自动补全（历史 + 内置命令字典）。 */
+function autocompleteFromInput() {
+  const token = inputDraft.value.trimStart().toLowerCase()
   if (!token) return
   const candidates = [...commandHistory, ...commandDictionary]
   const match = candidates.find(command => command.toLowerCase().startsWith(token))
-  if (match && match !== commandBuffer) replaceInputBuffer(match)
+  if (match && match !== inputDraft.value) inputDraft.value = match
 }
-
-let lastSubmitted = ''
 
 async function submitCommand(command: string) {
   const trimmed = command.trim()
   if (!trimmed) return
-  lastSubmitted = trimmed
   // 原样发送：/xxx 走服务器命令、其余自动作为聊天，路由统一由后端处理
   await store.sendInput(props.instanceId, trimmed)
   saveCommand(trimmed)
   connState.value = { text: 'sent', color: '#00ff41' }
 }
 
-function handleTerminalInput(data: string) {
-  if (!terminal) return
-  if (data === '\r') {
-    const command = commandBuffer.trim()
-    terminal.write('\r\n')
-    commandBuffer = ''
-    historyCursor = -1
-    pendingDraft = ''
-    if (command) void submitCommand(command)
-    terminal.write(promptText())
-    return
-  }
-  if (data === '\u007F') {
-    const chars = [...commandBuffer]
-    if (chars.length > 0) {
-      const last = chars[chars.length - 1]
-      commandBuffer = chars.slice(0, -1).join('')
-      eraseChars(charWidth(last))
-    }
-    return
-  }
-  if (data === '\t') {
-    autocompleteCommand()
-    return
-  }
-  if (data === '\x1b[A') {
-    recallCommand(-1)
-    return
-  }
-  if (data === '\x1b[B') {
-    recallCommand(1)
-    return
-  }
-  if (data >= ' ' && !data.startsWith('\x1b')) {
-    commandBuffer += data
-    terminal.write(data)
-  }
+/** 输入框回车 / 发送按钮。 */
+function submitFromInput() {
+  const command = inputDraft.value.trim()
+  if (!command) return
+  void submitCommand(command)
+  inputDraft.value = ''
+  historyCursor = -1
+  pendingDraft = ''
 }
 
 function formatLine(line: MccTerminalLine): string {
@@ -366,7 +317,6 @@ function renderAllLines() {
     terminal.writeln(formatLine(line))
     lastSeq = Math.max(lastSeq, line.seq)
   }
-  terminal.write('\r\n\x1b[32m> \x1b[0m' + commandBuffer)
   if (autoScroll.value) terminal.scrollToBottom()
 }
 
@@ -403,7 +353,6 @@ function scheduleJoinConfirm() {
     } else {
       connState.value = { text: 'timeout', color: '#ff4d4f' }
       terminal?.writeln('\x1b[31m[error] 加入终端房间超时，请检查连接\x1b[0m')
-      terminal?.write(promptText() + commandBuffer)
     }
   }, 5000)
 }
@@ -426,7 +375,6 @@ function onTerminalError(payload: any) {
   connState.value = { text: 'error', color: '#ff4d4f' }
   if (terminal) {
     terminal.writeln(`\x1b[31m[error] ${payload.message || '终端错误'}\x1b[0m`)
-    terminal.write(promptText() + commandBuffer)
   }
   ElMessage.error(payload.message || '终端错误')
 }
@@ -492,7 +440,6 @@ function clearSearch() {
 
 function clearScreen() {
   terminal?.clear()
-  terminal?.write('\x1b[32m> \x1b[0m' + commandBuffer)
 }
 
 async function downloadLog() {
@@ -520,15 +467,17 @@ watch(terminalLines, (lines) => {
 })
 watch(() => props.instanceId, async () => {
   lastSeq = 0
-  commandBuffer = ''
+  inputDraft.value = ''
   pendingDraft = ''
   joinRetries = 0
+  historyCursor = -1
   loadCommandHistory()
   // Clear terminal display for new instance
   if (terminal) {
     terminal.clear()
     terminal.writeln('\x1b[32mVMTools MCC Web Terminal\x1b[0m')
-    terminal.write('\r\n' + promptText())
+    terminal.writeln('\x1b[90m请在下方输入框输入：/xxx 为服务器命令，其他内容自动作为游戏聊天发送。\x1b[0m')
+    terminal.writeln('')
   }
   await joinTerminalRoom()
   await reloadHistory()
@@ -566,6 +515,12 @@ onBeforeUnmount(() => {
 .search-input { width: 220px; }
 .terminal-toolbar .pixel-btn { padding: 8px 14px; }
 .xterm-shell { width: 100%; min-height: 260px; padding: 8px; background: #000; border: 1px solid var(--border-card); overflow: hidden; touch-action: pan-y; }
+.terminal-input-row { display: flex; gap: 10px; align-items: center; }
+.terminal-input { flex: 1; }
+.terminal-input :deep(.el-input__wrapper) { background: #000; border: 1px solid var(--border-card); box-shadow: none; }
+.terminal-input :deep(.el-input__wrapper.is-focus) { border-color: var(--green-primary); }
+.terminal-input :deep(.el-input__inner) { font-family: var(--font-mono); color: #00ff41; }
+.input-prefix { color: var(--green-primary); font-weight: bold; }
 .terminal-status { display: flex; justify-content: space-between; gap: 12px; color: var(--text-muted); font-size: 12px; }
 .conn-state { display: inline-flex; align-items: center; gap: 6px; }
 .conn-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
