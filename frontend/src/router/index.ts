@@ -40,10 +40,12 @@ const routes = [
       { path: 'logistics/templates', name: 'Templates', component: () => import('@/views/LogisticsTemplateView.vue'), meta: { title: '任务模板', roles: [...ROLES.orgAdmin, ...ROLES.siteAdmin] } },
       { path: 'logistics/runs', name: 'Runs', component: () => import('@/views/LogisticsRunView.vue'), meta: { title: '任务运行', roles: [...ROLES.orgAdmin, ...ROLES.siteAdmin] } },
 
+      // --- 组织管理员及以上可见 ---
+      { path: 'bots', name: 'Bots', component: () => import('@/views/BotManageView.vue'), meta: { title: 'Bot 管理', roles: [...ROLES.orgAdmin, ...ROLES.siteAdmin] } },
+      { path: 'bots/:id/terminal', name: 'BotTerminal', component: () => import('@/views/MccTerminalView.vue'), meta: { title: 'Bot 终端', roles: [...ROLES.orgAdmin, ...ROLES.siteAdmin] } },
+      { path: 'bots/:id/files', name: 'BotFiles', component: () => import('@/views/MccFileManagerView.vue'), meta: { title: 'Bot 文件', roles: [...ROLES.orgAdmin, ...ROLES.siteAdmin] } },
+
       // --- 站点管理员专属 ---
-      { path: 'bots', name: 'Bots', component: () => import('@/views/BotManageView.vue'), meta: { title: 'Bot 管理', roles: [...ROLES.siteAdmin] } },
-      { path: 'bots/:id/terminal', name: 'BotTerminal', component: () => import('@/views/MccTerminalView.vue'), meta: { title: 'Bot 终端', roles: [...ROLES.siteAdmin] } },
-      { path: 'bots/:id/files', name: 'BotFiles', component: () => import('@/views/MccFileManagerView.vue'), meta: { title: 'Bot 文件', roles: [...ROLES.siteAdmin] } },
       { path: 'members', name: 'Members', component: () => import('@/views/MembersView.vue'), meta: { title: '成员管理', roles: [...ROLES.siteAdmin] } },
       { path: 'config', name: 'Config', component: () => import('@/views/ConfigView.vue'), meta: { title: '系统配置', roles: [...ROLES.siteAdmin] } },
       { path: 'plugins', name: 'Plugins', component: () => import('@/views/PluginView.vue'), meta: { title: '插件管理', roles: [...ROLES.siteAdmin] } },

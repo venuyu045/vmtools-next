@@ -86,8 +86,8 @@ function onNavClick() {
 /**
  * 侧边栏导航（按权限分组）
  * - 组织成员(1)：仪表盘、玩家追踪、妙妙工具
- * - 组织管理员(2)：+ 仓库管理、建造任务、地图画建造、物流管理
- * - 站点管理员(3)：全部 + Bot 管理、成员管理、系统配置、插件管理、系统监控
+ * - 组织管理员(2)：+ 仓库管理、建造任务、地图画建造、物流管理、Bot 管理
+ * - 站点管理员(3)：全部 + 成员管理、系统配置、插件管理、系统监控
  */
 const navGroups: NavGroup[] = [
   {
@@ -106,6 +106,7 @@ const navGroups: NavGroup[] = [
   {
     title: '管理',
     items: [
+      { path: '/bots', label: 'Bot 管理', minRole: 2 },
       { path: '/warehouses', label: '仓库管理', minRole: 2 },
       { path: '/build', label: '建造任务', minRole: 2 },
       { path: '/map-art-tasks', label: '地图画建造', minRole: 2 },
@@ -115,7 +116,6 @@ const navGroups: NavGroup[] = [
   {
     title: '系统',
     items: [
-      { path: '/bots', label: 'Bot 管理', minRole: 3 },
       { path: '/members', label: '成员管理', minRole: 3 },
       { path: '/config', label: '系统配置', minRole: 3 },
       { path: '/plugins', label: '插件管理', minRole: 3 },
