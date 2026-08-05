@@ -18,6 +18,7 @@ import pathlib
 import shutil
 import signal
 import time
+from datetime import datetime
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -431,7 +432,7 @@ class MineflayerProcessManager:
                     instance_id=instance_id,
                     event_type="process",
                     message=message,
-                    created_at=time.time(),
+                    created_at=datetime.now(),
                 )
                 db.add(event)
                 db.commit()
