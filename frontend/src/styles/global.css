@@ -702,3 +702,99 @@ html, body, #app {
     margin-bottom: 12px !important;
   }
 }
+
+/* ============================================================
+   DEEP-DARK 主题强化（像素终端 · 绿色品牌）
+   - html.dark 已在 index.html 开启，此处将 Element Plus 主题色对齐品牌绿
+   - 补齐未覆盖组件的暗色质感：抽屉 / 轻提示 / 空状态 / 复选框 / 进度条 / 聚焦反馈
+   ============================================================ */
+html.dark {
+  /* Element Plus 主题色 → 品牌绿（tabs / switch / checkbox / link / progress /
+     select 选中项 / pagination 悬停 / 表格排序图标 / 对话框关闭按钮等统一生效） */
+  --el-color-primary: #00ff00;
+  --el-color-primary-light-3: #00cc00;
+  --el-color-primary-light-5: #00aa00;
+  --el-color-primary-light-7: #008800;
+  --el-color-primary-light-8: #006600;
+  --el-color-primary-light-9: rgba(0, 255, 0, 0.1);
+  --el-color-primary-dark-2: #00aa00;
+}
+
+/* 输入框聚焦：绿色描边 + 内发光（替代默认蓝色，深色下清晰不刺眼） */
+.el-input__wrapper.is-focus {
+  border-color: var(--green-primary) !important;
+  box-shadow: 0 0 0 1px rgba(0, 255, 0, 0.35) inset !important;
+}
+.el-textarea__inner:focus {
+  border-color: var(--green-primary) !important;
+  box-shadow: 0 0 0 1px rgba(0, 255, 0, 0.35) inset !important;
+}
+
+/* 进度条：默认状态用品牌绿（success/exception 状态色由 EP 保留） */
+.el-progress {
+  --el-progress-bar-color: var(--green-primary);
+}
+
+/* 抽屉：背景与标题对齐像素卡片（消除浅色底 + 蓝色标题） */
+.el-drawer {
+  --el-drawer-bg-color: var(--bg-card);
+}
+.el-drawer__title {
+  color: var(--text-primary) !important;
+  font-family: var(--font-pixel) !important;
+  font-size: 14px !important;
+}
+
+/* popper 箭头：与卡片背景无缝（消除白色三角） */
+.el-popper {
+  --el-popper-bg-color: var(--bg-card);
+}
+.el-popper__arrow::before {
+  background: var(--bg-card) !important;
+}
+
+/* 轻提示 Toast：像素暗色卡片 */
+.el-message {
+  background: var(--bg-card) !important;
+  border: 1px solid var(--border-card) !important;
+  border-radius: 0 !important;
+  box-shadow: var(--shadow-card) !important;
+}
+.el-message .el-message__content {
+  color: var(--text-primary) !important;
+}
+
+/* 复选框：勾选态品牌绿 + 黑色对勾（绿色底上白勾不可见） */
+.el-checkbox__input.is-checked .el-checkbox__inner::after {
+  border-color: #000 !important;
+}
+
+/* 空状态：说明文字对齐主题色，插图降饱和避免浅色突兀 */
+.el-empty__description p {
+  color: var(--text-secondary) !important;
+}
+.el-empty__image {
+  opacity: 0.65;
+}
+
+/* 像素风圆角归一：消除工具/追踪/提醒页遗留的圆角卡片、标签、徽章，
+   与全站 0 圆角（--radius-none）统一（纯色圆点 .dot 除外） */
+.marker-card,
+.summary-box,
+.legend-box,
+.owner-item,
+.perf-badge,
+.world-tag,
+.lm-type-badge,
+.metro-line-card,
+.online-panel,
+.events-panel,
+.count-badge,
+.settings-bar,
+.owner-card,
+.help-box,
+.owner-id,
+.profile-role-tag,
+.profile-item {
+  border-radius: 0 !important;
+}

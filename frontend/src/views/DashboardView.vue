@@ -176,7 +176,7 @@ onBeforeUnmount(() => {
 .stat-item {
   flex: 1 1 150px;
   min-width: 170px;
-  background: #0d0d0d;
+  background: var(--bg-card);
   border: 1px solid var(--border-subtle);
   padding: 18px 20px;
   display: flex;
