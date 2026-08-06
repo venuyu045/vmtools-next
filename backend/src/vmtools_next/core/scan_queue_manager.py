@@ -323,6 +323,22 @@ class ScanQueueManager:
                 from vmtools_next.adapters.mineflayer.mf_minihud import MfMiniHudAdapter
                 minihud = MfMiniHudAdapter(client)
                 if not await minihud.ensure_servux(timeout_ms=4000):
+                    # bot 崩溃自动重启后，pool 里可能是指向旧进程的死连接
+                    # （TCP 已断但 is_connected 仍 True，请求超时）。重建连接重试一次。
+                    try:
+                        from vmtools_next.main import get_mineflayer_process_manager
+                        pm2 = get_mineflayer_process_manager()
+                        port2 = pm2.get_ws_port(bot_id) if pm2 else None
+                        logger.warning("Servux not ready for %s, reconnecting to ws port %s...", bot_id, port2)
+                        if pool and port2:
+                            await pool.disconnect_bot(bot_id)
+                            await pool.connect_bot(bot_id, port=port2)
+                            client = pool.get_client(bot_id)
+                            if client:
+                                minihud = MfMiniHudAdapter(client)
+                    except Exception as re_exc:
+                        logger.warning("Reconnect attempt failed for %s: %s", bot_id, re_exc)
+                if not await minihud.ensure_servux(timeout_ms=4000):
                     q.status = "failed"
                     q.error = "Servux 未就绪：服务器未安装 Servux 插件或握手失败"
                     db.commit()
