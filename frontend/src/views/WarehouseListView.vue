@@ -84,14 +84,14 @@ onMounted(() => warehouseStore.fetchWarehouses())
 .page-header { margin-bottom: 24px; }
 .wh-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; }
 .empty-text { color: var(--text-muted); text-align: center; padding: 60px 0; font-size: 18px; }
-.wh-card { cursor: pointer; }
+.wh-card { cursor: pointer; min-width: 0; }
 .wh-card:hover { border-color: var(--border-active); }
-.wh-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
-.wh-name { font-size: 14px; color: var(--text-primary); }
-.wh-stats { display: flex; gap: 0; margin-bottom: 16px; }
-.wh-stat { flex: 1; display: flex; flex-direction: column; gap: 4px; padding-right: 20px; }
+.wh-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; min-width: 0; }
+.wh-name { font-size: 14px; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wh-stats { display: flex; gap: 0; margin-bottom: 16px; min-width: 0; }
+.wh-stat { flex: 1; display: flex; flex-direction: column; gap: 4px; padding-right: 20px; min-width: 0; }
 .wh-stat:last-child { padding-right: 0; }
-.wh-stat-val { font-size: 20px; color: var(--green-primary); }
+.wh-stat-val { font-size: 20px; color: var(--green-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .wh-stat-lbl { font-size: 14px; color: var(--text-secondary); }
 .wh-actions { display: flex; gap: 8px; }
 @media (max-width: 1000px) { .wh-grid { grid-template-columns: 1fr; } }
