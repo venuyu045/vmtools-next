@@ -40,12 +40,28 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { onBeforeUnmount, onMounted, ref } from 'vue'
 import AppSidebar from './AppSidebar.vue'
 import AppHeader from './AppHeader.vue'
 
 const isCollapsed = ref(false)
 const mobileDrawerOpen = ref(false)
+
+/** 桌面宽度下强制关闭移动抽屉，避免「窗口拉宽后桌面栏+抽屉并存」出现两个侧边栏 */
+function handleViewportChange() {
+  if (window.matchMedia('(min-width: 769px)').matches) {
+    mobileDrawerOpen.value = false
+  }
+}
+
+onMounted(() => {
+  window.addEventListener('resize', handleViewportChange)
+  handleViewportChange()
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('resize', handleViewportChange)
+})
 </script>
 
 <style scoped>
@@ -72,6 +88,7 @@ const mobileDrawerOpen = ref(false)
 
 /* ---- Mobile Drawer Sidebar ---- */
 .mobile-drawer {
+  display: none; /* 兜底：桌面宽度下即使状态残留也不显示，避免双侧边栏 */
   position: fixed;
   top: 0;
   left: 0;
@@ -164,6 +181,10 @@ const mobileDrawerOpen = ref(false)
 @media (max-width: 768px) {
   .desktop-only {
     display: none !important;
+  }
+
+  .mobile-drawer {
+    display: block; /* 覆盖上面的 display:none 兜底，小屏才显示抽屉 */
   }
 
   .app-header {
