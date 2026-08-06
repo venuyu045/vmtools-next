@@ -202,6 +202,13 @@ function collectListItems(listTag, depth, maxDepth, out) {
       slot: Number(slot),
     });
     // 潜影盒内容递归展开（深度限制，防嵌套潜影盒无限递归）
+    if (isShulkerBoxItem(itemId)) {
+      // [debug] 打印潜影盒物品的原始 entry 结构，用于排查 NBT 格式
+      console.log(`\x1b[33m[servux][dbg]\x1b[0m shulker entry keys=${Object.keys(entry).join(',')} id=${itemId}`);
+      console.log(`\x1b[33m[servux][dbg]\x1b[0m entry JSON=${JSON.stringify(entry).slice(0, 1000)}`);
+      const be = findBlockEntityData(entry);
+      console.log(`\x1b[33m[servux][dbg]\x1b[0m blockEntityData=${be ? JSON.stringify(be).slice(0, 1000) : 'null'}`);
+    }
     if (isShulkerBoxItem(itemId) && depth < maxDepth) {
       const be = findBlockEntityData(entry);
       if (be && be.value) {
