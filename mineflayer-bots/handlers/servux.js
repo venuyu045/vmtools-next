@@ -192,7 +192,7 @@ function createServuxHandlers(bot) {
       });
       return true;
     } catch (err) {
-      console.error('[servux] send payload failed:', err.message);
+      console.error(`\x1b[31m[servux]\x1b[0m send payload failed:`, err.message);
       return false;
     }
   }
@@ -265,7 +265,7 @@ function createServuxHandlers(bot) {
         if ((version === PROTOCOL_VERSION || version === 1) && typeof servux === 'string' && servux.startsWith('servux-')) {
           servuxReady = true;
           servuxVersion = servux;
-          console.log('[servux] handshake OK, connected to', servux);
+          console.log(`\x1b[36m[servux]\x1b[0m handshake OK, connected to`, servux);
           // 唤醒等待中的握手调用方
           if (handshakeResolve) {
             const resolveHs = handshakeResolve;
@@ -273,7 +273,7 @@ function createServuxHandlers(bot) {
             resolveHs({ success: true, version: servux });
           }
         } else {
-          console.warn('[servux] handshake mismatch: version=%s servux=%s', version, servux);
+          console.warn(`\x1b[33m[servux]\x1b[0m handshake mismatch: version=%s servux=%s`, version, servux);
           sendPayload(Buffer.concat([writeVarInt(TYPE_C2S_UNREGISTER_REPLY), encodeNbt({})]));
         }
       } else if (type === TYPE_S2C_BLOCK_NBT_RESPONSE_SIMPLE) {
@@ -293,7 +293,7 @@ function createServuxHandlers(bot) {
         // 实体响应：暂不处理（仓库扫描只用方块实体）
       }
     } catch (err) {
-      console.error('[servux] handle payload error:', err.message);
+      console.error(`\x1b[31m[servux]\x1b[0m handle payload error:`, err.message);
     }
   }
 

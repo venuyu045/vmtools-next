@@ -22,6 +22,16 @@
 
 const { createBotProcess } = require('./mineflayer_bot');
 
+// ── ANSI 颜色（终端显示用，与 mineflayer_bot.js 一致） ──
+const ANSI = {
+  reset: '\x1b[0m',
+  green: '\x1b[32m',
+  yellow: '\x1b[33m',
+  red: '\x1b[31m',
+  cyan: '\x1b[36m',
+  dim: '\x1b[90m',
+};
+
 // ── 解析命令行参数 ──
 function parseArgs() {
   const args = {};
@@ -53,11 +63,11 @@ async function main() {
     authServerUrl: args.auth_server_url || process.env.AUTH_SERVER_URL || '',
   };
 
-  console.log(`[bot_main] starting mineflayer bot...`);
-  console.log(`[bot_main] ws_port=${options.wsPort} mc_host=${options.mcHost}:${options.mcPort}`);
-  console.log(`[bot_main] username=${options.username} auth=${options.auth} version=${options.version}`);
+  console.log(`${ANSI.dim}[bot_main]${ANSI.reset} starting mineflayer bot...`);
+  console.log(`${ANSI.dim}[bot_main]${ANSI.reset} ws_port=${options.wsPort} mc_host=${options.mcHost}:${options.mcPort}`);
+  console.log(`${ANSI.dim}[bot_main]${ANSI.reset} username=${options.username} auth=${options.auth} version=${options.version}`);
   if (options.authServerUrl) {
-    console.log(`[bot_main] auth_server_url=${options.authServerUrl}`);
+    console.log(`${ANSI.dim}[bot_main]${ANSI.reset} auth_server_url=${options.authServerUrl}`);
   }
 
   try {
@@ -65,7 +75,7 @@ async function main() {
 
     // 优雅退出
     const shutdown = async (signal) => {
-      console.log(`[bot_main] received ${signal}, shutting down...`);
+      console.log(`${ANSI.yellow}[bot_main]${ANSI.reset} received ${signal}, shutting down...`);
       await botProcess.stop();
       process.exit(0);
     };
@@ -73,10 +83,10 @@ async function main() {
     process.on('SIGINT', () => shutdown('SIGINT'));
 
     // 告诉父进程（Python）已经准备好了
-    console.log(`[bot_main] READY`);
+    console.log(`${ANSI.green}[bot_main] READY${ANSI.reset}`);
 
   } catch (err) {
-    console.error(`[bot_main] FAILED: ${err.message}`);
+    console.error(`${ANSI.red}[bot_main] FAILED:${ANSI.reset} ${err.message}`);
     process.exit(1);
   }
 }
