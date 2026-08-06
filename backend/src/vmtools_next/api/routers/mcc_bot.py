@@ -104,9 +104,67 @@ def _nearest_residence(loc: dict, residences: list[dict]):
     }
 
 
+def _get_bot_current_task(db: Session, bot_id: str):
+    """查 bot 当前进行中的工作：物流 > 地图画 > 仓库扫描。无则 None（空闲）。"""
+    # 1) 物流运行（logistics_task_runs）
+    from vmtools_next.data.models.logistics import LogisticsTaskRunModel, LogisticsTaskTemplateModel
+    run = db.query(LogisticsTaskRunModel).filter(
+        LogisticsTaskRunModel.bot_id == bot_id,
+        LogisticsTaskRunModel.status.in_(["running", "paused"]),
+    ).order_by(LogisticsTaskRunModel.started_at.desc()).first()
+    if run:
+        tpl_name = run.template_id
+        tpl = db.query(LogisticsTaskTemplateModel).filter(
+            LogisticsTaskTemplateModel.template_id == run.template_id
+        ).first()
+        if tpl:
+            tpl_name = getattr(tpl, "name", None) or tpl_name
+        return {"type": "logistics", "name": f"物流·{tpl_name}",
+                "status": run.status, "progress": run.progress}
+
+    # 2) 地图画（map_art_bot_assignments + map_art_tasks）
+    from vmtools_next.data.models.build_map_art import MapArtBotAssignment, MapArtTask
+    assign = db.query(MapArtBotAssignment).filter(
+        MapArtBotAssignment.bot_id == bot_id,
+    ).first()
+    if assign:
+        task = db.query(MapArtTask).filter(
+            MapArtTask.task_id == assign.task_id,
+            MapArtTask.status == "running",
+        ).first()
+        if task:
+            progress = None
+            if assign.blocks_total:
+                progress = round(assign.blocks_placed / assign.blocks_total * 100, 1)
+            return {"type": "mapart", "name": f"地图画·{task.name}",
+                    "status": "running", "progress": progress}
+
+    # 3) 仓库扫描（scan_queue）
+    from vmtools_next.data.models.warehouse import ScanQueueModel, WarehouseModel
+    scan = db.query(ScanQueueModel).filter(
+        ScanQueueModel.bot_id == bot_id,
+        ScanQueueModel.status.in_(["running", "paused"]),
+    ).first()
+    if scan:
+        wh_name = scan.warehouse_id
+        wh = db.query(WarehouseModel).filter(
+            WarehouseModel.warehouse_id == scan.warehouse_id
+        ).first()
+        if wh:
+            wh_name = getattr(wh, "name", None) or wh_name
+        return {"type": "scan", "name": f"仓库扫描·{wh_name}",
+                "status": scan.status, "progress": scan.progress}
+
+    return None
+
+
 @router.get("/status/overview", response_model=MccBotStatusList)
-def bot_status_overview(db: Session = Depends(get_db), user=Depends(get_current_user)):
-    """每个 MCC bot 的实时状态：在线情况/血量/饱食度/坐标/最近领地。"""
+def bot_status_overview(engine: str = "mcc",
+                        db: Session = Depends(get_db), user=Depends(get_current_user)):
+    """每个 bot 的实时状态：在线情况/血量/饱食度/坐标/最近领地/当前工作。
+
+    ``engine``：'mcc' | 'mineflayer'（MCC 状态与 MF 状态共用同一接口）。
+    """
     import json as _json
 
     bots = _scoped_bot_query(db, user).all()
@@ -118,13 +176,13 @@ def bot_status_overview(db: Session = Depends(get_db), user=Depends(get_current_
 
     items: list[MccBotStatusItem] = []
     for b in bots:
-        # 只展示 MCC 引擎的 bot（MF bot 由 MF 管理/状态覆盖）
+        # 只展示指定引擎的 bot
         try:
-            if resolve_bot_engine(b.bot_id, db) != "mcc":
+            if resolve_bot_engine(b.bot_id, db) != engine:
                 continue
         except Exception:
             pass
-        # 解析坐标（MccSessionPool 每 5s 写入的 JSON）
+        # 解析坐标（MccSessionPool/MineflayerSessionPool 定期写入的 JSON）
         loc = None
         if b.current_location:
             try:
@@ -166,6 +224,7 @@ def bot_status_overview(db: Session = Depends(get_db), user=Depends(get_current_
             mcp_port=mcp_port,
             last_heartbeat=last_hb,
             nearest_residence=nearest,
+            current_task=_get_bot_current_task(db, b.bot_id),
         ))
 
     # 在线优先排序
