@@ -296,12 +296,16 @@ function createServuxHandlers(bot) {
     handshakePromise = new Promise((resolve) => {
       handshakeResolve = resolve;
 
-      // v1 协议 C2S_METADATA_REQUEST = varint(2) + MC网络NBT{version:1}（无 root name）。
-      // 服务器（servux-lophine, 协议v1）能正常解析，且会回/推 S2C_METADATA。
-      const metaNbt = Buffer.from([
-        0x0a, 0x03, 0x00, 0x07, 0x76, 0x65, 0x72, 0x73, 0x69, 0x6f, 0x6e, // compound + int + "version"
-        0x00, 0x00, 0x00, 0x01, // version = 1
-        0x00, // end
+      // 握手 NBT：模仿 MiniHUD（version 为字符串 MOD_STRING）。
+      // 实测：服务器(servux-lophine)对 int version=1 的握手返回"简化NBT"(Items无组件)；
+      // 对 MiniHUD 的 string version 握手可能返回"完整NBT"(Items含组件/潜影盒内容)。
+      const verStr = 'minihud-fabric-1.21.11-26.2';
+      const metaNbt = Buffer.concat([
+        Buffer.from([0x0a, 0x08, 0x00, 0x07]),
+        Buffer.from('version'),
+        Buffer.from([0x00, 0x1b]),
+        Buffer.from(verStr),
+        Buffer.from([0x00]),
       ]);
       sendPayload(Buffer.concat([writeVarInt(TYPE_C2S_METADATA_REQUEST), metaNbt]));
 
