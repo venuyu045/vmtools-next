@@ -125,34 +125,9 @@ class MineflayerProcessManager:
             try:
                 logger.info("Restoring mineflayer instance %s (desired_state=running)",
                             inst.instance_id[:8])
-                result = await self.start_instance(inst.instance_id)
-                # 自动连接 Session Pool（与 REST start 的 _auto_connect_mcp_after_start 对齐），
-                # 否则 bot 进程在跑但 pool 无连接，扫描会报 "Bot not connected"
-                # ws 端口监听需要时间，带重试（20 次 × 3s ≈ 60s，覆盖 bot 慢启动）
-                if inst.bot_id:
-                    try:
-                        from vmtools_next.main import get_pool_for_engine
-                        pool = get_pool_for_engine("mineflayer")
-                        port = (result or {}).get("ws_port") or self.get_ws_port(inst.instance_id)
-                        if pool and port:
-                            connected = False
-                            for attempt in range(20):
-                                await asyncio.sleep(3)
-                                try:
-                                    ok = await pool.connect_bot(inst.bot_id, port=port)
-                                    if ok:
-                                        connected = True
-                                        logger.info("Mineflayer restore connect bot %s -> OK (attempt %d)",
-                                                    inst.bot_id, attempt + 1)
-                                        break
-                                except Exception as conn_exc:
-                                    logger.debug("Mineflayer restore connect attempt %d: %s",
-                                                 attempt + 1, conn_exc)
-                            if not connected:
-                                logger.warning("Mineflayer restore connect timed out for %s", inst.bot_id)
-                    except Exception as conn_exc:
-                        logger.warning("Mineflayer restore connect failed for %s: %s",
-                                       inst.bot_id, conn_exc)
+                # start_instance 内部会自动连接 Session Pool（_auto_connect_ws），
+                # 无需在此重复连接
+                await self.start_instance(inst.instance_id)
             except Exception as exc:
                 logger.warning("Failed to restore mineflayer %s: %s", inst.instance_id[:8], exc)
 
@@ -308,6 +283,15 @@ class MineflayerProcessManager:
             )
             await self._sync_desired_state(instance_id, "running")
 
+            # 启动后自动连接 Session Pool（后台重试，覆盖 REST start / restart / 崩溃自启 / 启动恢复）。
+            # WS 端口监听需要时间，重试 20 次 × 3s ≈ 60s。提前取出基本类型避免 DetachedInstanceError。
+            if instance and instance.bot_id:
+                import asyncio as _asyncio
+                _iid = instance.instance_id
+                _bot_id = instance.bot_id
+                _ws_port = ws_port
+                _asyncio.ensure_future(self._auto_connect_ws(_iid, _bot_id, _ws_port))
+
             return {
                 "status": "started",
                 "pid": process.pid,
@@ -364,6 +348,27 @@ class MineflayerProcessManager:
             pid=None,
             message="mineflayer process stopped",
         )
+
+        # 断开 Session Pool 连接并同步 bot offline（否则状态页要等健康检查 ~5s 才更新）
+        if not preserve_desired_state:
+            try:
+                from vmtools_next.data.db import get_session_factory
+                Session = get_session_factory()
+                db = Session()
+                try:
+                    inst = db.query(MccInstanceModel).filter(
+                        MccInstanceModel.instance_id == instance_id,
+                    ).first()
+                    bot_id = inst.bot_id if inst else None
+                finally:
+                    db.close()
+                if bot_id:
+                    from vmtools_next.main import get_pool_for_engine
+                    pool = get_pool_for_engine("mineflayer")
+                    if pool:
+                        await pool.disconnect_bot(bot_id)
+            except Exception as exc:
+                logger.warning("Disconnect pool client failed for %s: %s", instance_id, exc)
 
         return {"status": "stopped"}
 
@@ -530,6 +535,29 @@ class MineflayerProcessManager:
                     await self.start_instance(instance_id)
         except Exception as exc:
             logger.warning("Auto-restart failed for %s: %s", instance_id[:8], exc)
+
+    async def _auto_connect_ws(self, instance_id: str, bot_id: str, ws_port: int) -> None:
+        """启动后自动连接 mineflayer WS（后台重试 20 次 × 3s ≈ 60s，覆盖 bot 慢启动）。
+
+        由 start_instance 统一调度，覆盖 REST start / restart / 崩溃自启 / 启动恢复；
+        端口用启动时分配的 ws_port（不是 mcp_port），修正历史端口错误。
+        """
+        from vmtools_next.main import get_pool_for_engine
+        pool = get_pool_for_engine("mineflayer")
+        if not pool:
+            return
+        for attempt in range(20):
+            await asyncio.sleep(3)
+            try:
+                ok = await pool.connect_bot(bot_id, port=ws_port)
+                if ok:
+                    logger.info("Auto-connected mineflayer WS for instance {} bot={} (attempt {})",
+                                instance_id, bot_id, attempt + 1)
+                    return
+            except Exception as exc:
+                logger.warning("Auto-connect attempt {} for {} failed: {}",
+                               attempt + 1, instance_id, exc)
+        logger.warning("Auto-connect mineflayer WS timed out for instance {} bot={}", instance_id, bot_id)
 
     async def _desired_state_is(self, instance_id: str, state: str) -> bool:
         """Check the instance's desired_state in the DB."""

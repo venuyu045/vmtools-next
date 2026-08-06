@@ -168,23 +168,9 @@ async def lifespan(app: FastAPI):
     _mcc_process_manager = MccProcessManager()
     await _mcc_process_manager.start()
     logger.info("MCC Process Manager started")
-    # MCC 实例恢复（desired_state=running）后自动连接 MCP —— 与 REST 启动的
-    # _auto_connect_mcp_after_start 一致，保证服务重启后恢复的实例也能实时
-    # 上报血量/饱食度/坐标（否则页面只见 online 无实时数据）。
-    import asyncio as _asyncio
-    from vmtools_next.api.routers.mcc_instances import _auto_connect_mcp_after_start
-    from vmtools_next.data.models.mcc_remote import MccInstanceModel
-    from vmtools_next.data.db import get_session_factory as _gsf
-    with _gsf()() as _db:
-        _restored_mcc = _db.query(MccInstanceModel).filter(
-            MccInstanceModel.deleted_at.is_(None),
-            MccInstanceModel.desired_state == "running",
-            MccInstanceModel.bot_engine != "mineflayer",
-        ).all()
-    for _inst in _restored_mcc:
-        _asyncio.ensure_future(_auto_connect_mcp_after_start(_inst, "mcc"))
-        logger.info("Scheduled MCP auto-connect for restored MCC instance {} bot={}",
-                    _inst.instance_id, _inst.bot_id)
+    # 说明：MCC 实例恢复（desired_state=running）后的 MCP 自动连接由
+    # MccProcessManager.start_instance 内部统一调度（_auto_connect_mcp），
+    # 覆盖 REST start / restart / 崩溃自启 / 启动恢复全部路径，此处不再重复调度。
     _mineflayer_process_manager = MineflayerProcessManager()
     await _mineflayer_process_manager.start()  # 恢复 desired_state=running 的 MF 实例
     logger.info("Mineflayer Process Manager started")
@@ -254,9 +240,10 @@ async def lifespan(app: FastAPI):
     _bluemap_monitor = BlueMapMonitor()
     await _bluemap_monitor.start()
 
-    # 9. Periodic broadcast task
+    # 9. Periodic broadcast task + MCP 连接对账（兜底补连）
     import asyncio
     broadcast_task = asyncio.create_task(_periodic_broadcast())
+    mcp_reconcile_task = asyncio.create_task(_mcp_reconcile_loop())
 
     logger.info("Startup complete — listening on {}:{}", config.server.host, config.server.port)
     yield
@@ -266,6 +253,7 @@ async def lifespan(app: FastAPI):
     from vmtools_next.core.qqbot_notify import stop as qqbot_stop
     await qqbot_stop()
     broadcast_task.cancel()
+    mcp_reconcile_task.cancel()
     if _bluemap_monitor:
         await _bluemap_monitor.stop()
     if _monitor:
@@ -286,6 +274,73 @@ async def lifespan(app: FastAPI):
         await _mcc_pool.stop()
     if _mineflayer_pool:
         await _mineflayer_pool.stop()
+
+
+async def _mcp_reconcile_loop(interval: float = 30.0):
+    """周期性对账：status=running 且有 bot_id 的实例，若对应引擎池无连接则补连。
+
+    兜底场景：bot 在实例启动后才绑定、自动连接全部失败、后端重启竞态等，
+    确保「实例上线但 MCP/WS 未自动连接」时状态仍能及时更新。
+    单实例 60s 内不重复尝试，避免连接风暴。
+    """
+    import asyncio
+    import time as _time
+
+    _last_attempt: dict[str, float] = {}
+    while True:
+        await asyncio.sleep(interval)
+        try:
+            from vmtools_next.data.db import get_session_factory
+            from vmtools_next.data.models.mcc_remote import MccInstanceModel
+
+            Session = get_session_factory()
+            db = Session()
+            try:
+                instances = db.query(MccInstanceModel).filter(
+                    MccInstanceModel.deleted_at.is_(None),
+                    MccInstanceModel.status == "running",
+                    MccInstanceModel.bot_id.isnot(None),
+                ).all()
+                rows = [
+                    (i.instance_id, i.bot_id, i.bot_engine or "mcc",
+                     i.mcp_host or "127.0.0.1", i.mcp_port or 33333,
+                     i.mcp_auth_token_secret or None)
+                    for i in instances
+                ]
+            finally:
+                db.close()
+
+            now = _time.monotonic()
+            for instance_id, bot_id, engine, host, port, token in rows:
+                if now - _last_attempt.get(instance_id, 0.0) < 60.0:
+                    continue
+                _last_attempt[instance_id] = now
+                try:
+                    from vmtools_next.main import get_pool_for_engine
+                    pool = get_pool_for_engine(engine)
+                    if not pool:
+                        continue
+                    st = pool.get_bot_status(bot_id)
+                    if st.get("status") == "online":
+                        continue
+                    logger.info("MCP reconcile: connecting running instance {} bot={} engine={}",
+                                instance_id[:8], bot_id, engine)
+                    if engine == "mineflayer":
+                        from vmtools_next.main import get_mineflayer_process_manager
+                        mgr = get_mineflayer_process_manager()
+                        ws_port = mgr.get_ws_port(instance_id) if mgr else None
+                        if ws_port:
+                            await pool.connect_bot(bot_id, port=ws_port)
+                    else:
+                        await pool.connect_bot(bot_id, host=host, port=port, auth_token=token)
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    logger.debug("MCP reconcile attempt failed for {}: {}", instance_id, exc)
+        except asyncio.CancelledError:
+            break
+        except Exception as exc:
+            logger.warning("MCP reconcile loop error: {}", exc)
 
 
 async def _periodic_broadcast():
