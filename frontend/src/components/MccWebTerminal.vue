@@ -156,7 +156,7 @@ function initTerminal() {
   terminal.open(terminalContainer.value)
   console.log('[Terminal] initTerminal: xterm opened on container', terminalContainer.value)
 
-  terminal.writeln('\x1b[32mVMTools MCC Web Terminal\x1b[0m')
+  terminal.writeln('\x1b[32mVMTools Bot Web Terminal\x1b[0m')
   terminal.writeln('\x1b[90m请在下方输入框输入：/xxx 为服务器命令，其他内容自动作为游戏聊天发送。\x1b[0m')
   terminal.writeln('')
 
@@ -426,7 +426,7 @@ watch(() => props.instanceId, async () => {
   // Clear terminal display for new instance
   if (terminal) {
     terminal.clear()
-    terminal.writeln('\x1b[32mVMTools MCC Web Terminal\x1b[0m')
+    terminal.writeln('\x1b[32mVMTools Bot Web Terminal\x1b[0m')
     terminal.writeln('\x1b[90m请在下方输入框输入：/xxx 为服务器命令，其他内容自动作为游戏聊天发送。\x1b[0m')
     terminal.writeln('')
   }
