@@ -26,7 +26,13 @@
         />
       </header>
       <main class="app-main">
-        <router-view />
+        <!-- keep-alive 缓存状态页与妙妙工具：切换路由不重新挂载/不重复拉大体积数据，
+             解决"从其他页面进入卡顿"；BotStatusView 内部 watch engine 立即刷新 -->
+        <router-view v-slot="{ Component }">
+          <keep-alive :include="['BotStatusView', 'MiaomiaoView']">
+            <component :is="Component" />
+          </keep-alive>
+        </router-view>
       </main>
       <footer class="app-footer">
         <a
