@@ -26,6 +26,19 @@ const {
   createStatusUpdate,
 } = require('./ws_protocol');
 
+// ── ANSI 颜色（终端显示用） ──
+// Node console 输出到管道（PIPE）时会自动禁用颜色，这里手动嵌入 ANSI 码，
+// 让 MF 终端（xterm 渲染 stdout）像 MCC 终端一样显示彩色内容。
+const ANSI = {
+  reset: '\x1b[0m',
+  green: '\x1b[32m',
+  yellow: '\x1b[33m',
+  red: '\x1b[31m',
+  cyan: '\x1b[36m',
+  dim: '\x1b[90m',
+  bold: '\x1b[1m',
+};
+
 // ── 方法 → handler 映射 ──
 const METHOD_MAP = Symbol('methodMap');
 
@@ -157,7 +170,7 @@ async function createBotProcess(options) {
       try {
         setupPathfinder(bot);
       } catch (err) {
-        console.error('[pathfinder] setup failed:', err.message);
+        console.error(`${ANSI.yellow}[pathfinder]${ANSI.reset} setup failed:`, err.message);
       }
     });
 
@@ -165,8 +178,8 @@ async function createBotProcess(options) {
       // 登录成功标志（同 login 事件）：WS 服务在 login 后才开启，若 Python 端
       // 恰好没抓到 login 的 stdout 行（缓冲/竞态），spawn 是第二次确定性信号。
       if (!bot.username) return;
-      console.log('[bot] LOGIN_OK', bot.username);
-      console.log('[bot] spawned at', bot.entity.position);
+      console.log(`${ANSI.green}[bot] LOGIN_OK${ANSI.reset}`, bot.username);
+      console.log(`${ANSI.green}[bot] spawned at${ANSI.reset}`, bot.entity.position);
       broadcast(createEvent('bot_spawned', {
         position: {
           x: bot.entity.position.x,
@@ -177,7 +190,7 @@ async function createBotProcess(options) {
     });
 
     bot.on('death', () => {
-      console.log('[bot] died');
+      console.log(`${ANSI.red}[bot] died${ANSI.reset}`);
       broadcast(createEvent('bot_death', {}));
     });
 
@@ -186,17 +199,17 @@ async function createBotProcess(options) {
     });
 
     bot.on('kicked', (reason) => {
-      console.log('[bot] kicked:', reason);
+      console.log(`${ANSI.red}[bot] kicked:${ANSI.reset}`, reason);
       broadcast(createEvent('bot_kicked', { reason: String(reason) }));
     });
 
     bot.on('error', (err) => {
-      console.error('[bot] error:', err.message);
+      console.error(`${ANSI.red}[bot] error:${ANSI.reset}`, err.message);
       broadcast(createEvent('bot_error', { error: err.message }));
     });
 
     bot.on('end', (reason) => {
-      console.log('[bot] disconnected:', reason);
+      console.log(`${ANSI.yellow}[bot] disconnected:${ANSI.reset}`, reason);
       broadcast(createEvent('bot_disconnected', { reason }));
       // 不在这里 stop WS，让进程管理器处理重启
     });
@@ -207,7 +220,7 @@ async function createBotProcess(options) {
       }
     });
 
-    // ── 服务器聊天/系统消息 → stdout（MF 终端可见） ──
+    // ── 服务器聊天/系统消息 → stdout（MF 终端可见，绿色） ──
     // mineflayer 在 1.19+ 签名聊天协议下 `chat` 事件并不可靠（签名玩家消息
     // 只走 system_chat/player_chat 包），`message` 事件覆盖所有服务器聊天内容
     // （玩家消息 + 系统消息 + 命令回显），toString() 提取纯文本。
@@ -217,7 +230,7 @@ async function createBotProcess(options) {
           ? jsonMsg.toString()
           : String(jsonMsg);
         if (text) {
-          console.log(`[chat] ${text}`);
+          console.log(`${ANSI.green}[chat]${ANSI.reset} ${text}`);
         }
       } catch (err) {
         // 忽略单条消息解析失败，不影响后续
@@ -238,11 +251,11 @@ async function createBotProcess(options) {
 
     // ── 连接成功 ──
     bot.once('login', () => {
-      console.log('[bot] LOGIN_OK', bot.username);
+      console.log(`${ANSI.green}[bot] LOGIN_OK${ANSI.reset}`, bot.username);
       // 登录成功标志：由 Python 端通过 stdout 解析，作为 bot 已进入服务器且
       // 已经通过 yggdrasil 认证的确定性信号（mineflayer 没有独立的 login 事件标志，
       // 只有这里能可靠区分「进程存活」与「真正登录成功」）。
-      console.log('[bot] logged in as', bot.username);
+      console.log(`${ANSI.green}[bot] logged in as${ANSI.reset}`, bot.username);
 
       // ── 4. 创建 handlers 并注册 ──
       const servuxHandlers = createServuxHandlers(bot);
@@ -279,8 +292,8 @@ async function createBotProcess(options) {
         broadcast(createStatusUpdate(bot));
       }, statusInterval);
 
-      console.log(`[ws] WebSocket server listening on port ${wsPort}`);
-      console.log(`[bot] connected to ${mcHost}:${mcPort} as ${bot.username}`);
+      console.log(`${ANSI.cyan}[ws]${ANSI.reset} WebSocket server listening on port ${wsPort}`);
+      console.log(`${ANSI.green}[bot] connected to${ANSI.reset} ${mcHost}:${mcPort} as ${bot.username}`);
 
       resolve({
         bot,
