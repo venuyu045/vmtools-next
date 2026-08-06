@@ -95,4 +95,19 @@ onMounted(() => warehouseStore.fetchWarehouses())
 .wh-stat-lbl { font-size: 14px; color: var(--text-secondary); }
 .wh-actions { display: flex; gap: 8px; }
 @media (max-width: 1000px) { .wh-grid { grid-template-columns: 1fr; } }
+
+/* ============ 移动端适配 ============ */
+@media (max-width: 768px) {
+  .page-header { display: flex; }
+  .page-header .pixel-btn { width: 100%; padding: 12px 0; font-size: 14px; }
+  .wh-header { margin-bottom: 14px; }
+  .wh-stats { flex-wrap: wrap; }
+  .wh-stat { min-width: 50%; padding-right: 8px; }
+  .wh-stat:nth-child(3) { min-width: 100%; padding-top: 8px; }
+  .wh-stat-val { font-size: 18px; }
+  .wh-stat-lbl { font-size: 13px; }
+}
+@media (max-width: 480px) {
+  .wh-stat-val { font-size: 16px; }
+}
 </style>

@@ -338,4 +338,25 @@ onBeforeUnmount(() => {
 .setting-label { white-space: nowrap; }
 .hint { color: var(--text-secondary); font-size: 13px; margin-top: 4px; }
 .zone-form { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+
+/* ============ 移动端适配 ============ */
+@media (max-width: 768px) {
+  .page-header { flex-direction: column; align-items: flex-start; gap: 10px; }
+  .setting-row { flex-direction: column; align-items: stretch; }
+  .setting-row .el-input { max-width: 100% !important; }
+  .zone-form { align-items: stretch; }
+  .zone-form .el-input,
+  .zone-form .el-input-number { width: calc(50% - 4px) !important; }
+  .scan-control { align-items: stretch; }
+  .scan-control .el-select { width: 100% !important; margin-right: 0 !important; }
+  .scan-control .el-button { margin-left: 0; }
+  .scan-hint { font-size: 12px; line-height: 1.6; }
+  /* 表格横向滚动（el-table 自带，确保不挤压列） */
+  :deep(.el-table) { min-width: 560px; }
+}
+@media (max-width: 480px) {
+  .zone-form .el-input,
+  .zone-form .el-input-number { width: 100% !important; }
+  :deep(.el-table) { min-width: 480px; }
+}
 </style>
