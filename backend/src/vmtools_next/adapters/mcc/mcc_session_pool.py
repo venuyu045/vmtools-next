@@ -91,9 +91,12 @@ class MccSessionPool:
         location: dict | None = None
 
         if pstate and isinstance(pstate, dict):
-            health = pstate.get("health", pstate.get("Health"))
-            food = pstate.get("food", pstate.get("Food"))
-            loc = pstate.get("location") or pstate.get("position") or pstate.get("pos")
+            # MCC MCP 返回 {success, data:{health, saturation, location, ...}}；
+            # mineflayer 直接返回 {health, food, location}。统一取 data 层（若有）。
+            data = pstate.get("data") if isinstance(pstate.get("data"), dict) else pstate
+            health = data.get("health", data.get("Health"))
+            food = data.get("food", data.get("Food")) or data.get("saturation", data.get("Saturation"))
+            loc = data.get("location") or data.get("position") or data.get("pos")
             if isinstance(loc, dict):
                 try:
                     location = {
