@@ -31,7 +31,9 @@ const routes = [
       // --- 组织管理员及以上可见 ---
       { path: 'mcc-instances', name: 'MccInstances', component: () => import('@/views/BotManageView.vue'), meta: { title: 'MCC 管理', engine: 'mcc', roles: [...ROLES.orgAdmin, ...ROLES.siteAdmin] } },
     { path: 'mf-instances', name: 'MfInstances', component: () => import('@/views/BotManageView.vue'), meta: { title: 'MF 管理', engine: 'mineflayer', roles: [...ROLES.orgAdmin, ...ROLES.siteAdmin] } },
-    // MF 实例的终端/文件视图（与 MCC 共用视图组件，按实例 bot_engine 动态返回对应列表）
+    // MCC/MF 实例的终端/文件视图（共用视图组件，按实例 bot_engine 动态返回对应列表）
+    { path: 'mcc-instances/:id/terminal', name: 'MccTerminal', component: () => import('@/views/MccTerminalView.vue'), meta: { title: 'MCC 终端', roles: [...ROLES.orgAdmin, ...ROLES.siteAdmin] } },
+    { path: 'mcc-instances/:id/files', name: 'MccFiles', component: () => import('@/views/MccFileManagerView.vue'), meta: { title: 'MCC 文件', roles: [...ROLES.orgAdmin, ...ROLES.siteAdmin] } },
     { path: 'mf-instances/:id/terminal', name: 'MfTerminal', component: () => import('@/views/MccTerminalView.vue'), meta: { title: 'MF 终端', roles: [...ROLES.orgAdmin, ...ROLES.siteAdmin] } },
     { path: 'mf-instances/:id/files', name: 'MfFiles', component: () => import('@/views/MccFileManagerView.vue'), meta: { title: 'MF 文件', roles: [...ROLES.orgAdmin, ...ROLES.siteAdmin] } },
       { path: 'warehouses', name: 'Warehouses', component: () => import('@/views/WarehouseListView.vue'), meta: { title: '仓库管理', roles: [...ROLES.orgAdmin, ...ROLES.siteAdmin] } },
