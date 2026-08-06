@@ -44,6 +44,34 @@ class MccBotConnectRequest(BaseModel):
     auth_token: Optional[str] = None
 
 
+# ── MCC 状态概览（与 MCC 管理页隔离，只读） ──────────────────
+
+class NearestResidence(BaseModel):
+    label: str
+    owner: str
+    world: str
+    distance: float  # 与 bot 的水平距离（方块）
+    position: dict
+
+
+class MccBotStatusItem(BaseModel):
+    bot_id: str
+    name: str
+    status: str                # online / offline / error
+    mc_username: str
+    current_health: Optional[float] = None
+    current_food: Optional[int] = None
+    current_location: Optional[dict] = None
+    mcp_port: Optional[int] = None
+    last_heartbeat: Optional[str] = None
+    nearest_residence: Optional[NearestResidence] = None
+
+
+class MccBotStatusList(BaseModel):
+    items: list[MccBotStatusItem]
+    residences_total: int = 0
+
+
 # ── Inventory schemas ──────────────────────
 
 class InventorySlot(BaseModel):
