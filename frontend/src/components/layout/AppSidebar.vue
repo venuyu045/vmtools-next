@@ -129,6 +129,7 @@ const navGroups: NavGroup[] = [
     items: [
       { path: '/player-tracking', label: '玩家列表', minRole: 1 },
       { path: '/miaomiao', label: '妙妙工具', minRole: 1 },
+      { path: '/mcc-status', label: 'MCC 状态', minRole: 1 },
       { path: '/warehouse-status', label: '仓库状态', minRole: 1 },
     ],
   },
@@ -136,7 +137,6 @@ const navGroups: NavGroup[] = [
     title: '管理',
     items: [
       { path: '/mcc-instances', label: 'MCC 管理', minRole: 2 },
-      { path: '/mcc-status', label: 'MCC 状态', minRole: 2 },
       { path: '/mf-instances', label: 'MF 管理', minRole: 2 },
       { path: '/player-alerts', label: '上下线提醒', minRole: 2 },
       { path: '/warehouses', label: '仓库管理', minRole: 2 },
