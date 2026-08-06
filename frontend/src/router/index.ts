@@ -24,6 +24,13 @@ const routes = [
     component: () => import('@/views/RegisterView.vue'),
     meta: { public: true },
   },
+  // 妙妙工具：访客无需登录即可访问（脱离 AppLayout，未登录无侧边栏）
+  {
+    path: '/miaomiao',
+    name: 'Miaomiao',
+    component: () => import('@/views/MiaomiaoView.vue'),
+    meta: { public: true },
+  },
   {
     path: '/',
     component: () => import('@/components/layout/AppLayout.vue'),
@@ -31,8 +38,9 @@ const routes = [
       { path: '', redirect: '/dashboard' },
       // --- 组织成员可见 ---
       { path: 'dashboard', name: 'Dashboard', component: () => import('@/views/DashboardView.vue'), meta: { title: '仪表盘', roles: ALL_LOGGED_IN } },
-      { path: 'player-tracking', name: 'PlayerTracking', component: () => import('@/views/PlayerTrackingView.vue'), meta: { title: '玩家追踪', roles: ALL_LOGGED_IN } },
-      { path: 'miaomiao', name: 'Miaomiao', component: () => import('@/views/MiaomiaoView.vue'), meta: { title: '妙妙工具', roles: ALL_LOGGED_IN } },
+      { path: 'player-tracking', name: 'PlayerTracking', component: () => import('@/views/PlayerTrackingView.vue'), meta: { title: '玩家列表', roles: ALL_LOGGED_IN } },
+      // 上下线提醒（管理栏，独立入口）——追踪配置 + 上下线事件
+      { path: 'player-alerts', name: 'PlayerAlerts', component: () => import('@/views/PlayerAlertsView.vue'), meta: { title: '上下线提醒', roles: [...ROLES.orgAdmin, ...ROLES.siteAdmin] } },
       { path: 'warehouse-status', name: 'WarehouseStatus', component: () => import('@/views/WarehouseStatusView.vue'), meta: { title: '仓库状态', roles: ALL_LOGGED_IN } },
       { path: 'warehouse-status/:id', name: 'WarehouseItems', component: () => import('@/views/WarehouseItemsView.vue'), meta: { title: '仓库物品', roles: ALL_LOGGED_IN } },
 

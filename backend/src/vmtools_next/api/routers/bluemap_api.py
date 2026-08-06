@@ -5,7 +5,7 @@ import json
 
 from fastapi import APIRouter, Depends
 
-from vmtools_next.api.deps import get_current_user
+from vmtools_next.api.deps import get_optional_user
 
 router = APIRouter(prefix="/api/bluemap", tags=["bluemap"])
 
@@ -47,7 +47,7 @@ def _load_from_db_cache(key: str) -> list[dict]:
 
 
 @router.get("/regions")
-def get_regions(user=Depends(get_current_user)):
+def get_regions(user=Depends(get_optional_user)):
     monitor = _get_monitor()
     regions = monitor.get_regions() if monitor else []
     if not regions:
@@ -59,7 +59,7 @@ def get_regions(user=Depends(get_current_user)):
 
 
 @router.get("/residences")
-def get_residences(user=Depends(get_current_user)):
+def get_residences(user=Depends(get_optional_user)):
     monitor = _get_monitor()
     residences = monitor.get_residences() if monitor else []
     if not residences:
@@ -71,7 +71,7 @@ def get_residences(user=Depends(get_current_user)):
 
 
 @router.get("/markers")
-def get_markers(user=Depends(get_current_user)):
+def get_markers(user=Depends(get_optional_user)):
     monitor = _get_monitor()
     markers = monitor.get_markers() if monitor else []
     if not markers:
@@ -81,7 +81,7 @@ def get_markers(user=Depends(get_current_user)):
 
 
 @router.get("/landmarks")
-def get_landmarks(user=Depends(get_current_user)):
+def get_landmarks(user=Depends(get_optional_user)):
     """服务器地标（mangopassport-landmarks，含类型分类）。"""
     monitor = _get_monitor()
     landmarks = monitor.get_landmarks() if monitor else []
@@ -92,7 +92,7 @@ def get_landmarks(user=Depends(get_current_user)):
 
 
 @router.get("/metro-lines")
-def get_metro_lines(user=Depends(get_current_user)):
+def get_metro_lines(user=Depends(get_optional_user)):
     """地铁线路（folia-metro-lines，含线几何数据）。"""
     monitor = _get_monitor()
     lines = monitor.get_metro_lines() if monitor else []
@@ -103,7 +103,7 @@ def get_metro_lines(user=Depends(get_current_user)):
 
 
 @router.get("/metro-stations")
-def get_metro_stations(user=Depends(get_current_user)):
+def get_metro_stations(user=Depends(get_optional_user)):
     """地铁站点（folia-metro-stations）。"""
     monitor = _get_monitor()
     stations = monitor.get_metro_stations() if monitor else []
@@ -114,7 +114,7 @@ def get_metro_stations(user=Depends(get_current_user)):
 
 
 @router.get("/worlds")
-def get_worlds(user=Depends(get_current_user)):
+def get_worlds(user=Depends(get_optional_user)):
     """当前监控的世界列表（可动态发现）。"""
     monitor = _get_monitor()
     worlds = monitor.get_worlds() if monitor else []
@@ -122,7 +122,7 @@ def get_worlds(user=Depends(get_current_user)):
 
 
 @router.post("/refresh")
-async def refresh_markers(user=Depends(get_current_user)):
+async def refresh_markers(user=Depends(get_optional_user)):
     """Manually trigger a markers poll and return updated data."""
     monitor = _get_monitor()
     if not monitor:
