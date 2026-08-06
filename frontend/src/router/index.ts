@@ -27,6 +27,7 @@ const routes = [
       { path: 'dashboard', name: 'Dashboard', component: () => import('@/views/DashboardView.vue'), meta: { title: '仪表盘', roles: ALL_LOGGED_IN } },
       { path: 'player-tracking', name: 'PlayerTracking', component: () => import('@/views/PlayerTrackingView.vue'), meta: { title: '玩家追踪', roles: ALL_LOGGED_IN } },
       { path: 'miaomiao', name: 'Miaomiao', component: () => import('@/views/MiaomiaoView.vue'), meta: { title: '妙妙工具', roles: ALL_LOGGED_IN } },
+      { path: 'warehouse-status', name: 'WarehouseStatus', component: () => import('@/views/WarehouseStatusView.vue'), meta: { title: '仓库状态', roles: ALL_LOGGED_IN } },
 
       // --- 组织管理员及以上可见 ---
       { path: 'mcc-instances', name: 'MccInstances', component: () => import('@/views/BotManageView.vue'), meta: { title: 'MCC 管理', engine: 'mcc', roles: [...ROLES.orgAdmin, ...ROLES.siteAdmin] } },

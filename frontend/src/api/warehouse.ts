@@ -21,7 +21,11 @@ export const warehouseApi = {
     },
     searchMaterials(q: string, page = 1) {
     return client.get('/materials/search', { params: { q, page } })
-    },
+  },
+  // 仓库状态页：跨仓库物品搜索（中文名/英文名/id），返回物品→仓库→箱子明细
+  searchItemDetails(q: string, limit = 50) {
+    return client.get('/warehouses/items/search', { params: { q, limit } })
+  },
     getAisles(id: string) {
     return client.get(`/warehouses/${id}/aisles`)
     },

@@ -129,6 +129,7 @@ const navGroups: NavGroup[] = [
     items: [
       { path: '/player-tracking', label: '玩家追踪', minRole: 1 },
       { path: '/miaomiao', label: '妙妙工具', minRole: 1 },
+      { path: '/warehouse-status', label: '仓库状态', minRole: 1 },
     ],
   },
   {
