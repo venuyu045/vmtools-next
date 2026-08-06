@@ -101,6 +101,34 @@ class MineflayerProcessManager:
             return False
         return handle.process.returncode is None
 
+    async def start(self) -> None:
+        """服务启动时恢复 desired_state=running 的 mineflayer 实例（与 MCC 对齐）。"""
+        await self._recover_desired_running_instances()
+
+    async def _recover_desired_running_instances(self) -> None:
+        """Backend 重启后，自动拉起上次仍在期望运行的 MF 实例。"""
+        from vmtools_next.data.db import get_session_factory
+        Session = get_session_factory()
+        db = Session()
+        try:
+            rows = db.query(MccInstanceModel).filter(
+                MccInstanceModel.deleted_at.is_(None),
+                MccInstanceModel.desired_state == "running",
+                MccInstanceModel.bot_engine == "mineflayer",
+            ).all()
+        except Exception as exc:
+            logger.warning("Mineflayer recover query failed: %s", exc)
+            rows = []
+        finally:
+            db.close()
+        for inst in rows:
+            try:
+                logger.info("Restoring mineflayer instance %s (desired_state=running)",
+                            inst.instance_id[:8])
+                await self.start_instance(inst.instance_id)
+            except Exception as exc:
+                logger.warning("Failed to restore mineflayer %s: %s", inst.instance_id[:8], exc)
+
     async def start_instance(self, instance_id: str,
                               extra_env: dict[str, str] | None = None) -> dict:
         """Start a mineflayer bot process for the given instance."""
