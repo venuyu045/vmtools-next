@@ -127,17 +127,17 @@ function initTerminal() {
     scrollback: 5000,
     theme: {
       background: '#000000',
-      foreground: '#00ff41',
-      cursor: '#00ff41',
-      selectionBackground: '#00ff4166',
+      foreground: '#e8e8e8', // 默认文本白色（原绿色）
+      cursor: '#e8e8e8',     // 光标白色
+      selectionBackground: '#ffffff44',
       black: '#000000',
       red: '#ff4d4f',
-      green: '#00ff41',
+      green: '#00ff41',      // ANSI 色板保留：chat/成功等仍可显示绿色
       yellow: '#ffcc00',
       blue: '#2f80ff',
       magenta: '#ff00ff',
       cyan: '#00ffff',
-      white: '#d6ffe0',
+      white: '#e8e8e8',
       brightBlack: '#555555',
       brightRed: '#ff7875',
       brightGreen: '#7cff9b',
@@ -485,7 +485,7 @@ onBeforeUnmount(() => {
   /* 老 iOS 惯性滚动 */
   -webkit-overflow-scrolling: touch;
 }
-:deep(.xterm-screen) { text-shadow: 0 0 6px rgba(0, 255, 65, .28); }
+:deep(.xterm-screen) { /* 去掉绿色辉光，默认白色文本更干净 */ }
 
 /* ============ RESPONSIVE ============ */
 @media (max-width: 768px) {
