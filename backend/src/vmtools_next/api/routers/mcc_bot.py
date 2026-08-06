@@ -118,6 +118,12 @@ def bot_status_overview(db: Session = Depends(get_db), user=Depends(get_current_
 
     items: list[MccBotStatusItem] = []
     for b in bots:
+        # 只展示 MCC 引擎的 bot（MF bot 由 MF 管理/状态覆盖）
+        try:
+            if resolve_bot_engine(b.bot_id, db) != "mcc":
+                continue
+        except Exception:
+            pass
         # 解析坐标（MccSessionPool 每 5s 写入的 JSON）
         loc = None
         if b.current_location:
