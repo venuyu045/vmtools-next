@@ -125,7 +125,20 @@ class MineflayerProcessManager:
             try:
                 logger.info("Restoring mineflayer instance %s (desired_state=running)",
                             inst.instance_id[:8])
-                await self.start_instance(inst.instance_id)
+                result = await self.start_instance(inst.instance_id)
+                # 自动连接 Session Pool（与 REST start 的 _auto_connect_mcp_after_start 对齐），
+                # 否则 bot 进程在跑但 pool 无连接，扫描会报 "Bot not connected"
+                if inst.bot_id:
+                    try:
+                        from vmtools_next.main import get_pool_for_engine
+                        pool = get_pool_for_engine("mineflayer")
+                        port = (result or {}).get("ws_port") or self.get_ws_port(inst.instance_id)
+                        if pool and port:
+                            ok = await pool.connect_bot(inst.bot_id, port=port)
+                            logger.info("Mineflayer restore connect bot %s -> %s", inst.bot_id, ok)
+                    except Exception as conn_exc:
+                        logger.warning("Mineflayer restore connect failed for %s: %s",
+                                       inst.bot_id, conn_exc)
             except Exception as exc:
                 logger.warning("Failed to restore mineflayer %s: %s", inst.instance_id[:8], exc)
 
