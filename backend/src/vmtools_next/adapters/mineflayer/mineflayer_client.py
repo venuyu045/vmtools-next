@@ -246,6 +246,15 @@ class MineflayerBridgeClient(AbstractBotAgent):
         from datetime import datetime, timezone
         self.last_heartbeat_at = datetime.now(timezone.utc).isoformat()
         logger.debug("Status update: connected=%s", status.get("connected"))
+        # 状态推送分发到事件处理器（SessionPool 据此把坐标/血量/饱食度
+        # 同步到 DB + Socket.IO，状态页才能显示 MF 实例的坐标与最近领地）
+        for handler in list(self._event_handlers):
+            try:
+                result = handler("status", status)
+                if asyncio.iscoroutine(result):
+                    asyncio.create_task(result)
+            except Exception as e:
+                logger.warning("Event handler error for status: %s", e)
 
     # ── 请求-响应核心 ──
 

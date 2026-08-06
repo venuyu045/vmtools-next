@@ -151,6 +151,77 @@ class MineflayerSessionPool:
         except Exception as e:
             logger.warning("Failed to sync bot status for %s: %s", bot_id, e)
 
+    @staticmethod
+    async def _persist_bot_state(bot_id: str, status: dict) -> None:
+        """把 mineflayer status 推送（坐标/血量/饱食度）写入 DB 并广播 Socket.IO。
+
+        与 MccSessionPool._persist_bot_state 对齐：状态页 bot_status_overview
+        从 mcc_bots.current_location 读取坐标计算最近领地，MF 必须写库。
+        """
+        if not isinstance(status, dict) or not status.get("connected"):
+            return
+        import json as _json
+
+        health: float | None = None
+        food: int | None = None
+        location: dict | None = None
+
+        health_raw = status.get("health")
+        if health_raw is not None:
+            try:
+                health = float(health_raw)
+            except (TypeError, ValueError):
+                health = None
+        food_raw = status.get("food")
+        if food_raw is not None:
+            try:
+                food = int(food_raw)
+            except (TypeError, ValueError):
+                food = None
+        loc = status.get("position") or status.get("location") or status.get("pos")
+        if isinstance(loc, dict):
+            try:
+                location = {
+                    "x": round(float(loc.get("x", 0)), 1),
+                    "y": round(float(loc.get("y", 0)), 1),
+                    "z": round(float(loc.get("z", 0)), 1),
+                }
+            except (TypeError, ValueError):
+                location = None
+
+        from vmtools_next.data.db import get_session_factory, sio
+        from vmtools_next.data.models.logistics import MccBotModel
+
+        Session = get_session_factory()
+        db = Session()
+        try:
+            bot = db.query(MccBotModel).filter(MccBotModel.bot_id == bot_id).first()
+            if bot:
+                bot.status = "online"
+                if health is not None:
+                    bot.current_health = health
+                if food is not None:
+                    bot.current_food = food
+                if location is not None:
+                    bot.current_location = _json.dumps(location, ensure_ascii=False)
+                db.commit()
+        except Exception as e:
+            logger.warning("Persist MF bot state failed for %s: %s", bot_id, e)
+        finally:
+            db.close()
+
+        payload: dict = {"bot_id": bot_id, "status": "online"}
+        if health is not None:
+            payload["current_health"] = health
+        if food is not None:
+            payload["current_food"] = food
+        if location is not None:
+            payload["current_location"] = location
+        try:
+            await sio.emit("bot_status_update", payload)
+        except Exception as e:
+            logger.warning("Emit bot_status_update failed for %s: %s", bot_id, e)
+
     def _on_bot_event(self, bot_id: str):
         """Return an event handler that syncs instance status on bot_ready/kicked/end."""
         from vmtools_next.data.models.mcc_remote import MccInstanceModel
@@ -176,6 +247,10 @@ class MineflayerSessionPool:
                         db.close()
                 except Exception as e:
                     logger.warning("Failed to sync instance status: %s", e)
+            elif event == "status":
+                # 定期状态推送（默认 5s，含 position/health/food）：
+                # 同步坐标/血量/饱食度到 DB + Socket.IO，状态页据此显示坐标与最近领地
+                await self._persist_bot_state(bot_id, data)
             elif event in ("bot_kicked", "bot_disconnected", "bot_error"):
                 logger.info("Bot %s event %s: %s", bot_id, event, data)
                 await self._sync_bot_status(bot_id, "error" if event == "bot_error" else "offline")
