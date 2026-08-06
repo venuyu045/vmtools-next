@@ -128,14 +128,28 @@ class MineflayerProcessManager:
                 result = await self.start_instance(inst.instance_id)
                 # 自动连接 Session Pool（与 REST start 的 _auto_connect_mcp_after_start 对齐），
                 # 否则 bot 进程在跑但 pool 无连接，扫描会报 "Bot not connected"
+                # ws 端口监听需要时间，带重试（20 次 × 3s ≈ 60s，覆盖 bot 慢启动）
                 if inst.bot_id:
                     try:
                         from vmtools_next.main import get_pool_for_engine
                         pool = get_pool_for_engine("mineflayer")
                         port = (result or {}).get("ws_port") or self.get_ws_port(inst.instance_id)
                         if pool and port:
-                            ok = await pool.connect_bot(inst.bot_id, port=port)
-                            logger.info("Mineflayer restore connect bot %s -> %s", inst.bot_id, ok)
+                            connected = False
+                            for attempt in range(20):
+                                await asyncio.sleep(3)
+                                try:
+                                    ok = await pool.connect_bot(inst.bot_id, port=port)
+                                    if ok:
+                                        connected = True
+                                        logger.info("Mineflayer restore connect bot %s -> OK (attempt %d)",
+                                                    inst.bot_id, attempt + 1)
+                                        break
+                                except Exception as conn_exc:
+                                    logger.debug("Mineflayer restore connect attempt %d: %s",
+                                                 attempt + 1, conn_exc)
+                            if not connected:
+                                logger.warning("Mineflayer restore connect timed out for %s", inst.bot_id)
                     except Exception as conn_exc:
                         logger.warning("Mineflayer restore connect failed for %s: %s",
                                        inst.bot_id, conn_exc)
