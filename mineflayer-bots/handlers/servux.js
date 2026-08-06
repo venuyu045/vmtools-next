@@ -373,6 +373,9 @@ function createServuxHandlers(bot) {
         offset = posRes.offset;
         const parsed = await parseNbt(buf.subarray(offset));
         const compoundValue = getCompoundValue(parsed);
+        // [debug] 打印容器 NBT 顶层结构，排查潜影盒内容 NBT 位置
+        console.log(`\x1b[33m[servux][dbg]\x1b[0m container(${key}) top keys=${Object.keys(compoundValue).join(',')}`);
+        console.log(`\x1b[33m[servux][dbg]\x1b[0m container NBT=${JSON.stringify(compoundValue).slice(0, 2500)}`);
         const items = extractItems(compoundValue);
         const entry = pending.get(key);
         if (entry) {
