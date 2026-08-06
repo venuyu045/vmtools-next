@@ -230,19 +230,21 @@ class ScanQueueManager:
             ).limit(slot).all()
             # 立即置为 running，防止调度器下一轮重复选中同一任务（_start_scan
             # 内部容器发现等耗时阶段会保持 pending，产生竞态导致重复启动）
+            # 注意：commit 会 expire 所有 ORM 对象，session 关闭后不能再用这些对象，
+            # 因此只把 queue_id 传给 _start_scan，由它在新 session 内重新查询。
             for q in pending:
                 q.status = "running"
                 q.started_at = datetime.now(timezone.utc)
                 db.commit()
-                items.append(q)
+                items.append(q.queue_id)
         finally:
             db.close()
 
-        for q in items:
-            await self._start_scan(q)
+        for queue_id in items:
+            await self._start_scan(queue_id)
 
     # ── 容器发现 ──
-    async def _discover_containers(self, db, q, client, engine_type: str) -> list[tuple[int, int, int]]:
+    async def _discover_containers(self, db, qid: str, wh_id: str, client, engine_type: str) -> list[tuple[int, int, int]]:
         """mineflayer：scan_nearby_blocks 发现半径15格真实容器；失败回退 zone 枚举。"""
         from vmtools_next.data.models.warehouse import StorageZoneModel
 
@@ -256,14 +258,14 @@ class ScanQueueManager:
                 blocks = (scan_res or {}).get("blocks") or []
                 if blocks:
                     positions = [(b["x"], b["y"], b["z"]) for b in blocks[:max_positions]]
-                    logger.info("Scan queue %s discovered %d containers nearby", q.queue_id[:8], len(positions))
+                    logger.info("Scan queue %s discovered %d containers nearby", qid[:8], len(positions))
                     return positions
             except Exception as e:
                 logger.warning("scan_nearby_blocks failed, fallback to zones: %s", e)
 
         # zone 枚举兜底
         zones = db.query(StorageZoneModel).filter(
-            StorageZoneModel.warehouse_fk == q.warehouse_id).all()
+            StorageZoneModel.warehouse_fk == wh_id).all()
         for zone in zones:
             for x in range(zone.range_min_x, zone.range_max_x + 1):
                 for y in range(zone.range_min_y, zone.range_max_y + 1):
@@ -280,22 +282,38 @@ class ScanQueueManager:
         return positions
 
     # ── 启动单个扫描 ──
-    async def _start_scan(self, q) -> None:
-        """为队列项启动实际扫描。失败则标记 failed 并继续调度。"""
+    async def _start_scan(self, queue_id: str) -> None:
+        """为队列项启动实际扫描。失败则标记 failed 并继续调度。
+
+        ``queue_id`` 来自调度器；本方法在新 session 内重新查询队列项，
+        并把 qid/bot_id/warehouse_id 复制到本地，避免 commit 后 ORM 对象
+        expire 导致的 DetachedInstanceError（异步进度回调也用本地值）。
+        """
         from vmtools_next.core.warehouse_scan_service import mark_scan_started
-        from vmtools_next.data.models.warehouse import WarehouseModel
+        from vmtools_next.data.models.warehouse import ScanQueueModel, WarehouseModel
         from vmtools_next.main import get_pool_for_engine
         from vmtools_next.core.bot_engine import resolve_bot_engine
 
         Session = get_session_factory()
         db = Session()
+        qid = queue_id
+        bot_id = ""
+        wh_id = ""
         try:
-            engine_type = resolve_bot_engine(q.bot_id, db)
+            q = db.query(ScanQueueModel).filter(
+                ScanQueueModel.queue_id == queue_id).first()
+            if not q:
+                return
+            bot_id = q.bot_id or ""
+            wh_id = q.warehouse_id or ""
+            # q 保持绑定 session 用于 DB 写入；bot_id/wh_id/qid 用于跨 session 回调
+
+            engine_type = resolve_bot_engine(bot_id, db)
             pool = get_pool_for_engine(engine_type)
-            client = pool.get_client(q.bot_id) if pool else None
+            client = pool.get_client(bot_id) if pool else None
             if not client:
                 q.status = "failed"
-                q.error = f"Bot {q.bot_id} not connected"
+                q.error = f"Bot {bot_id} not connected"
                 db.commit()
                 await self._broadcast_queue()
                 return
@@ -315,7 +333,7 @@ class ScanQueueManager:
                 minihud = MccMiniHudAdapter(client)
 
             # 容器坐标
-            container_positions = await self._discover_containers(db, q, client, engine_type)
+            container_positions = await self._discover_containers(db, qid, wh_id, client, engine_type)
             if not container_positions:
                 q.status = "failed"
                 q.error = "未发现容器（zone 为空且 scan_nearby_blocks 无结果）"
@@ -325,14 +343,14 @@ class ScanQueueManager:
 
             # 传送（仓库 teleport_cmd）
             wh = db.query(WarehouseModel).filter(
-                WarehouseModel.warehouse_id == q.warehouse_id).first()
+                WarehouseModel.warehouse_id == wh_id).first()
             teleport_cmd = (wh.logistics_teleport_cmd or "").strip() if wh else ""
             if teleport_cmd and engine_type == "mineflayer":
                 try:
                     await client.run_command(teleport_cmd)
                     await asyncio.sleep(3)
                 except Exception as e:
-                    logger.warning("Teleport to warehouse %s failed: %s", q.warehouse_id, e)
+                    logger.warning("Teleport to warehouse %s failed: %s", wh_id, e)
 
             from vmtools_next.core.warehouse_scanner import WarehouseScanner
             scanner = WarehouseScanner(client, minihud)
@@ -344,20 +362,20 @@ class ScanQueueManager:
             q.scanned_containers = 0
             q.items_scanned = 0
             db.commit()
-            mark_scan_started(db, q.warehouse_id, len(container_positions))
-            self._scanners[q.queue_id] = scanner
-            self._started_at[q.queue_id] = time.time()
+            mark_scan_started(db, wh_id, len(container_positions))
+            self._scanners[qid] = scanner
+            self._started_at[qid] = time.time()
         finally:
             db.close()
 
-        # 进度回调：Socket.IO + scan_status 落库 + 队列项计数
+        # 进度回调：Socket.IO + scan_status 落库 + 队列项计数（只用本地 qid/wh_id/bot_id）
         async def on_progress(scanned, total, pos, items):
-            elapsed = max(0.001, time.time() - self._started_at[q.queue_id])
+            elapsed = max(0.001, time.time() - self._started_at[qid])
             speed = round(scanned / elapsed, 2) if elapsed > 0 else 0.0
             eta = round((total - scanned) / speed, 1) if speed > 0 else None
             await sio.emit("scan_progress", {
-                "warehouse_id": q.warehouse_id,
-                "queue_id": q.queue_id,
+                "warehouse_id": wh_id,
+                "queue_id": qid,
                 "scanned": scanned,
                 "total": total,
                 "items_scanned": items,
@@ -372,9 +390,9 @@ class ScanQueueManager:
             try:
                 from vmtools_next.data.models.warehouse import ScanQueueModel, ScanStatusModel
                 from vmtools_next.core.warehouse_scan_service import update_scan_progress
-                update_scan_progress(db2, q.warehouse_id, scanned, total, pos, items)
+                update_scan_progress(db2, wh_id, scanned, total, pos, items)
                 qq = db2.query(ScanQueueModel).filter(
-                    ScanQueueModel.queue_id == q.queue_id).first()
+                    ScanQueueModel.queue_id == qid).first()
                 if qq:
                     qq.scanned_containers = scanned
                     qq.items_scanned = items
@@ -387,16 +405,17 @@ class ScanQueueManager:
         scanner.set_progress_callback(on_progress)
         success = await scanner.start_scan(container_positions)
         if success:
-            asyncio.create_task(self._watch_completion(q.queue_id, scanner))
+            asyncio.create_task(self._watch_completion(qid, scanner))
             await self._broadcast_queue()
         else:
-            self._scanners.pop(q.queue_id, None)
-            self._started_at.pop(q.queue_id, None)
+            self._scanners.pop(qid, None)
+            self._started_at.pop(qid, None)
             S3 = get_session_factory()
             db3 = S3()
             try:
-                qq = db3.query(type(q)).filter(
-                    type(q).queue_id == q.queue_id).first()
+                from vmtools_next.data.models.warehouse import ScanQueueModel
+                qq = db3.query(ScanQueueModel).filter(
+                    ScanQueueModel.queue_id == qid).first()
                 if qq:
                     qq.status = "failed"
                     qq.error = "Failed to start scan"
