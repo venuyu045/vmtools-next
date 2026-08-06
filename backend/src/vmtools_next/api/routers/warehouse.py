@@ -64,6 +64,7 @@ class WarehouseResponse(BaseModel):
 class MaterialResponse(BaseModel):
     item_id: str
     display_name: str
+    item_name_zh: str = ""
     count: int
 
 
@@ -362,6 +363,7 @@ def list_materials(warehouse_id: str, page: int = 1, page_size: int = 500,
 
     return MaterialsPage(
         items=[MaterialResponse(item_id=r.item_id, display_name=r.display_name or r.item_id,
+                                item_name_zh=get_item_zh(r.item_id, r.display_name or r.item_id),
                                 count=r.count or 0) for r in rows],
         total=total, page=page, page_size=page_size,
     )
@@ -389,6 +391,7 @@ def search_materials(q: str = "", page: int = 1, page_size: int = 100,
     rows = query.order_by(MaterialItemModel.count.desc()).offset((page - 1) * page_size).limit(page_size).all()
     return MaterialsPage(
         items=[MaterialResponse(item_id=r.item_id, display_name=r.display_name or r.item_id,
+                                item_name_zh=get_item_zh(r.item_id, r.display_name or r.item_id),
                                 count=r.count or 0) for r in rows],
         total=total, page=page, page_size=page_size,
     )
