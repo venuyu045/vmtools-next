@@ -326,10 +326,22 @@ class ScanQueueManager:
                     # bot 崩溃自动重启后，pool 里可能是指向旧进程的死连接
                     # （TCP 已断但 is_connected 仍 True，请求超时）。重建连接重试一次。
                     try:
+                        # 端口从旧 client 的 url 取（进程表 key 是 instance_id 不是 bot_id）
+                        port2 = None
+                        if client:
+                            try:
+                                from urllib.parse import urlparse
+                                port2 = urlparse(client._ws_url).port
+                            except Exception:
+                                pass
                         from vmtools_next.main import get_mineflayer_process_manager
                         pm2 = get_mineflayer_process_manager()
-                        port2 = pm2.get_ws_port(bot_id) if pm2 else None
-                        logger.warning("Servux not ready for %s, reconnecting to ws port %s...", bot_id, port2)
+                        if not port2 and pm2:
+                            for iid in list(pm2._processes.keys()):
+                                if iid == bot_id or iid.startswith(bot_id) or bot_id in iid:
+                                    port2 = pm2.get_ws_port(iid)
+                                    break
+                        logger.warning("Servux not ready for {}, reconnecting to ws port {}...", bot_id, port2)
                         if pool and port2:
                             await pool.disconnect_bot(bot_id)
                             await pool.connect_bot(bot_id, port=port2)
@@ -337,7 +349,7 @@ class ScanQueueManager:
                             if client:
                                 minihud = MfMiniHudAdapter(client)
                     except Exception as re_exc:
-                        logger.warning("Reconnect attempt failed for %s: %s", bot_id, re_exc)
+                        logger.warning("Reconnect attempt failed for {}: {}", bot_id, re_exc)
                 if not await minihud.ensure_servux(timeout_ms=4000):
                     q.status = "failed"
                     q.error = "Servux 未就绪：服务器未安装 Servux 插件或握手失败"
