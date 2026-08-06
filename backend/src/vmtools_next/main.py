@@ -168,6 +168,23 @@ async def lifespan(app: FastAPI):
     _mcc_process_manager = MccProcessManager()
     await _mcc_process_manager.start()
     logger.info("MCC Process Manager started")
+    # MCC 实例恢复（desired_state=running）后自动连接 MCP —— 与 REST 启动的
+    # _auto_connect_mcp_after_start 一致，保证服务重启后恢复的实例也能实时
+    # 上报血量/饱食度/坐标（否则页面只见 online 无实时数据）。
+    import asyncio as _asyncio
+    from vmtools_next.api.routers.mcc_instances import _auto_connect_mcp_after_start
+    from vmtools_next.data.models.mcc_remote import MccInstanceModel
+    from vmtools_next.data.db import get_session_factory as _gsf
+    with _gsf()() as _db:
+        _restored_mcc = _db.query(MccInstanceModel).filter(
+            MccInstanceModel.deleted_at.is_(None),
+            MccInstanceModel.desired_state == "running",
+            MccInstanceModel.bot_engine != "mineflayer",
+        ).all()
+    for _inst in _restored_mcc:
+        _asyncio.ensure_future(_auto_connect_mcp_after_start(_inst, "mcc"))
+        logger.info("Scheduled MCP auto-connect for restored MCC instance {} bot={}",
+                    _inst.instance_id, _inst.bot_id)
     _mineflayer_process_manager = MineflayerProcessManager()
     await _mineflayer_process_manager.start()  # 恢复 desired_state=running 的 MF 实例
     logger.info("Mineflayer Process Manager started")
