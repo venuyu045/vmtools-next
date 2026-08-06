@@ -347,7 +347,8 @@ async def kill_all_instances(
                     mf_result = await manager_mf.stop_all_instances(force=True, timeout_seconds=2)
                     results.extend(mf_result.get("results", []))
                 else:
-                    await manager_mf.stop_all()
+                    # kill-all：清除 desired_state（与 shutdown 保留语义区分）
+                    await manager_mf.stop_all(preserve_desired_state=False)
                     results.append({"instance_id": "mineflayer", "status": "killed", "message": "mineflayer stop_all"})
             except Exception as exc:
                 logger.warning("kill-all: Mineflayer engine error: {}", exc)
