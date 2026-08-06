@@ -2,45 +2,53 @@
   <div class="login-page">
     <div class="login-card pixel-card">
       <div class="login-header">
-        <h1 class="pixel">VMTools</h1>
-        <p>MCC 自动化管理平台</p>
+        <h1 class="pixel">注册账号</h1>
+        <p>提交后等待管理员审核</p>
       </div>
-      <el-form @submit.prevent="handleLogin" class="login-form">
+      <el-form @submit.prevent="handleRegister" class="login-form">
         <el-form-item>
           <el-input
             v-model="form.game_id"
             placeholder="Game ID"
             size="large"
+            autocomplete="username"
           />
         </el-form-item>
         <el-form-item>
           <el-input
             v-model="form.password"
             type="password"
-            placeholder="Password"
+            placeholder="密码"
             size="large"
             show-password
+            autocomplete="new-password"
+          />
+        </el-form-item>
+        <el-form-item>
+          <el-input
+            v-model="form.confirm_password"
+            type="password"
+            placeholder="确认密码"
+            size="large"
+            show-password
+            autocomplete="new-password"
           />
         </el-form-item>
         <el-button
           type="primary"
           size="large"
           :loading="loading"
-          @click="handleLogin"
+          @click="handleRegister"
           style="width: 100%"
         >
-          > 登录
+          > 提交注册申请
         </el-button>
-        <div class="login-register">
-          <span class="register-hint">还没有账号？</span>
-          <el-link type="primary" @click="goRegister">立即注册</el-link>
+        <div class="back-login">
+          <el-link type="primary" @click="goBack">← 返回登录</el-link>
         </div>
       </el-form>
       <div class="login-footer mono">
         v3.0 · MCC Server · Build Automation
-      </div>
-      <div class="login-icp">
-        <a href="https://beian.miit.gov.cn" target="_blank" rel="noopener noreferrer">渝ICP备2026011793号-1</a>
       </div>
     </div>
   </div>
@@ -55,26 +63,39 @@ import { ElMessage } from 'element-plus'
 const router = useRouter()
 const authStore = useAuthStore()
 const loading = ref(false)
-const form = reactive({ game_id: '', password: '' })
+const form = reactive({ game_id: '', password: '', confirm_password: '' })
 
-async function handleLogin() {
-  if (!form.game_id || !form.password) {
-    ElMessage.warning('请输入 Game ID 和密码')
+async function handleRegister() {
+  if (!form.game_id.trim()) {
+    ElMessage.warning('请输入游戏 Game ID')
+    return
+  }
+  if (!form.password) {
+    ElMessage.warning('请输入密码')
+    return
+  }
+  if (form.password.length < 6) {
+    ElMessage.warning('密码长度至少 6 位')
+    return
+  }
+  if (form.password !== form.confirm_password) {
+    ElMessage.warning('两次输入的密码不一致')
     return
   }
   loading.value = true
   try {
-    await authStore.login(form.game_id, form.password)
-    router.push('/dashboard')
+    await authStore.register(form.game_id.trim(), form.password)
+    ElMessage.success('注册申请已提交，请等待管理员审核')
+    router.push('/login')
   } catch (e: any) {
-    ElMessage.error(e.response?.data?.detail || '登录失败')
+    ElMessage.error(e.response?.data?.detail || '注册失败')
   } finally {
     loading.value = false
   }
 }
 
-function goRegister() {
-  router.push('/register')
+function goBack() {
+  router.push('/login')
 }
 </script>
 
@@ -126,6 +147,11 @@ function goRegister() {
   font-family: var(--font-body);
 }
 
+.back-login {
+  text-align: center;
+  margin-top: 16px;
+}
+
 .login-footer {
   text-align: center;
   margin-top: 24px;
@@ -133,46 +159,6 @@ function goRegister() {
   font-size: 14px;
 }
 
-.login-register {
-  margin-top: 16px;
-  text-align: center;
-  font-size: 14px;
-}
-
-.register-hint {
-  color: var(--text-secondary);
-  margin-right: 4px;
-}
-
-.login-icp {
-  text-align: center;
-  margin-top: 12px;
-  padding-bottom: 4px;
-}
-
-.login-icp a {
-  color: #666;
-  font-size: 12px;
-  text-decoration: none;
-  transition: color 0.2s;
-}
-
-.login-icp a:hover {
-  color: #999;
-}
-
-/* Override browser autofill white background */
-:deep(.el-input__inner:-webkit-autofill),
-:deep(.el-input__inner:-webkit-autofill:hover),
-:deep(.el-input__inner:-webkit-autofill:focus),
-:deep(.el-input__inner:-webkit-autofill:active) {
-  -webkit-box-shadow: 0 0 0 30px #0a0a0a inset !important;
-  -webkit-text-fill-color: var(--text-primary) !important;
-  transition: background-color 5000s ease-in-out 0s;
-  caret-color: var(--text-primary);
-}
-
-/* ============ RESPONSIVE ============ */
 @media (max-width: 480px) {
   .login-card {
     width: 100%;
@@ -188,10 +174,6 @@ function goRegister() {
 
   .login-header p {
     font-size: 12px;
-  }
-
-  .login-header {
-    margin-bottom: 24px;
   }
 
   .login-footer {
