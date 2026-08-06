@@ -10,6 +10,7 @@ from vmtools_next.api.schemas.mcc import (
     MccBotCreate, MccBotResponse, MccBotConnectRequest,
     InventorySnapshot, InventorySlot, InventoryActionRequest,
     InventorySelectHotbarRequest, InventoryDropRequest,
+    MccBotStatusList, MccBotStatusItem,
 )
 from vmtools_next.data.models.logistics import MccBotModel
 from vmtools_next.adapters.mcc.mcc_mcp_client import MccMcpError
@@ -46,6 +47,125 @@ def list_bots(db: Session = Depends(get_db), user=Depends(get_current_user)):
         current_food=b.current_food,
         organization_id=b.organization_id,
     ) for b in bots]
+
+
+# ── MCC 状态概览（只读，与 MCC 管理页隔离） ─────────────────────
+
+def _load_residences():
+    """复用 BluemapMonitor 缓存的领地数据（含中心坐标），失败时回退 DB 缓存。"""
+    try:
+        from vmtools_next.main import get_bluemap_monitor
+        monitor = get_bluemap_monitor()
+        if monitor:
+            rs = monitor.get_residences()
+            if rs:
+                return rs
+    except Exception:
+        pass
+    try:
+        import json as _json
+        from vmtools_next.data.db import get_session_factory
+        from sqlalchemy import text
+        with get_session_factory()() as db:
+            row = db.execute(
+                text("SELECT cache_data FROM bluemap_cache WHERE cache_key = 'bluemap_residences'"),
+            ).fetchone()
+            if row and row[0]:
+                return _json.loads(row[0])
+    except Exception:
+        pass
+    return []
+
+
+def _nearest_residence(loc: dict, residences: list[dict]):
+    """计算 bot 坐标最近的领地（水平距离，欧氏）。"""
+    bx, bz = loc.get("x"), loc.get("z")
+    if bx is None or bz is None or not residences:
+        return None
+    best, best_d2 = None, float("inf")
+    for r in residences:
+        p = r.get("position") or {}
+        rx, rz = p.get("x"), p.get("z")
+        if rx is None or rz is None:
+            continue
+        d2 = (bx - rx) ** 2 + (bz - rz) ** 2
+        if d2 < best_d2:
+            best_d2 = d2
+            best = r
+    if best is None:
+        return None
+    import math
+    return {
+        "label": best.get("label", ""),
+        "owner": best.get("owner", ""),
+        "world": best.get("world", ""),
+        "distance": round(math.sqrt(best_d2), 1),
+        "position": best.get("position", {}),
+    }
+
+
+@router.get("/status/overview", response_model=MccBotStatusList)
+def bot_status_overview(db: Session = Depends(get_db), user=Depends(get_current_user)):
+    """每个 MCC bot 的实时状态：在线情况/血量/饱食度/坐标/最近领地。"""
+    import json as _json
+
+    bots = _scoped_bot_query(db, user).all()
+    residences = _load_residences()
+
+    from vmtools_next.main import get_pool_for_engine
+    from vmtools_next.core.bot_engine import resolve_bot_engine
+    from vmtools_next.data.models.mcc_remote import MccInstanceModel
+
+    items: list[MccBotStatusItem] = []
+    for b in bots:
+        # 解析坐标（MccSessionPool 每 5s 写入的 JSON）
+        loc = None
+        if b.current_location:
+            try:
+                loc = _json.loads(b.current_location)
+            except Exception:
+                loc = None
+
+        # 实时在线情况：优先取会话池状态（online/error），否则用 DB status
+        status = b.status or "offline"
+        last_hb = None
+        mcp_port = None
+        try:
+            pool = get_pool_for_engine(resolve_bot_engine(b.bot_id, db))
+            if pool:
+                st = pool.get_bot_status(b.bot_id)
+                if st.get("status") in ("online", "error"):
+                    status = st["status"]
+                last_hb = st.get("last_heartbeat")
+                mcp_port = st.get("port")
+        except Exception:
+            pass
+        if mcp_port is None:
+            inst = db.query(MccInstanceModel).filter(
+                MccInstanceModel.bot_id == b.bot_id
+            ).first()
+            if inst:
+                mcp_port = inst.mcp_port
+
+        nearest = _nearest_residence(loc, residences) if loc else None
+
+        items.append(MccBotStatusItem(
+            bot_id=b.bot_id,
+            name=b.name or b.bot_id,
+            status=status,
+            mc_username=b.mc_username,
+            current_health=b.current_health,
+            current_food=b.current_food,
+            current_location=loc,
+            mcp_port=mcp_port,
+            last_heartbeat=last_hb,
+            nearest_residence=nearest,
+        ))
+
+    # 在线优先排序
+    order = {"online": 0, "error": 1, "offline": 2, "starting": 1}
+    items.sort(key=lambda x: order.get(x.status, 9))
+    return MccBotStatusList(items=items, residences_total=len(residences))
 
 
 @router.post("", response_model=MccBotResponse)

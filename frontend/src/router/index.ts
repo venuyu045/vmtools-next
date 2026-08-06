@@ -43,6 +43,7 @@ const routes = [
 
       // --- 组织管理员及以上可见 ---
       { path: 'mcc-instances', name: 'MccInstances', component: () => import('@/views/BotManageView.vue'), meta: { title: 'MCC 管理', engine: 'mcc', roles: [...ROLES.orgAdmin, ...ROLES.siteAdmin] } },
+    { path: 'mcc-status', name: 'MccStatus', component: () => import('@/views/MccStatusView.vue'), meta: { title: 'MCC 状态', roles: [...ROLES.orgAdmin, ...ROLES.siteAdmin] } },
     { path: 'mf-instances', name: 'MfInstances', component: () => import('@/views/BotManageView.vue'), meta: { title: 'MF 管理', engine: 'mineflayer', roles: [...ROLES.orgAdmin, ...ROLES.siteAdmin] } },
     // MCC/MF 实例的终端/文件视图（共用视图组件，按实例 bot_engine 动态返回对应列表）
     { path: 'mcc-instances/:id/terminal', name: 'MccTerminal', component: () => import('@/views/MccTerminalView.vue'), meta: { title: 'MCC 终端', roles: [...ROLES.orgAdmin, ...ROLES.siteAdmin] } },
