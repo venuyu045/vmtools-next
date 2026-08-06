@@ -65,7 +65,7 @@ import { useRoute } from 'vue-router'
 import { useBotStore } from '@/stores/bot'
 import { useAuthStore } from '@/stores/auth'
 
-/** 最小权限等级：1=组织成员 2=组织管理员 3=站点管理员 */
+/** 最小权限等级：1=用户 2=管理员 3=站点管理员 */
 type MinRole = 1 | 2 | 3
 
 interface NavItem {
@@ -113,8 +113,8 @@ function onNavClick() {
 
 /**
  * 侧边栏导航（抽屉式，分组可折叠）
- * - 组织成员(1)：仪表盘、玩家追踪、妙妙工具
- * - 组织管理员(2)：+ MCC 管理、MF 管理、仓库管理、地图画建造、物流管理
+ * - 用户(1)：仪表盘、玩家列表、妙妙工具、MCC/MF 状态、仓库状态
+ * - 管理员(2)：+ MCC 管理、MF 管理、上下线提醒、仓库管理、地图画建造、物流管理
  * - 站点管理员(3)：全部 + 成员管理、系统配置、插件管理、系统监控
  */
 const navGroups: NavGroup[] = [

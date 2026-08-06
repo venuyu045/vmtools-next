@@ -33,8 +33,7 @@
               @change="(val: string) => changeRole(row, val)"
             >
               <el-option label="站点管理员" value="site_admin" />
-              <el-option label="组织管理员" value="org_admin" />
-              <el-option label="组织成员" value="org_member" />
+              <el-option label="管理员" value="admin" />
               <el-option label="用户" value="user" />
               <el-option label="访客" value="guest" />
             </el-select>

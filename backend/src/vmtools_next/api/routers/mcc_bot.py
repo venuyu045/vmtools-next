@@ -210,6 +210,19 @@ def bot_status_overview(engine: str = "mcc",
             ).first()
             if inst:
                 mcp_port = inst.mcp_port
+        # 兜底：进程/实例已在运行（如 MF 实例 LOGIN_OK 后 WS 连接尚未建立，
+        # 或后端重启后池未连上），但池状态不是 online/error 时，按实例状态修正，
+        # 避免「MF 实例在线却显示离线」的误报。
+        if status not in ("online", "error"):
+            try:
+                inst = db.query(MccInstanceModel).filter(
+                    MccInstanceModel.bot_id == b.bot_id,
+                    MccInstanceModel.deleted_at.is_(None),
+                ).first()
+                if inst and inst.status == "running":
+                    status = "online"
+            except Exception:
+                pass
 
         nearest = _nearest_residence(loc, residences) if loc else None
 

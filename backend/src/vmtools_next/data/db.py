@@ -160,6 +160,13 @@ def _run_lightweight_migrations(engine) -> None:
     """Apply tiny SQLite-compatible additive migrations for pre-Alembic tables."""
     try:
         with engine.connect() as conn:
+            # ── 权限组重构：org_member→user、org_admin→admin（幂等 UPDATE）──
+            # 合并"用户"与"组织成员"为用户权限组；"组织管理员"更名为"管理员"。
+            try:
+                conn.execute(text("UPDATE users SET role='user' WHERE role='org_member'"))
+                conn.execute(text("UPDATE users SET role='admin' WHERE role='org_admin'"))
+            except Exception as _e:
+                logger.warning("Role migration check: %s", _e)
             if _DATABASE_URL and _DATABASE_URL.startswith("sqlite"):
                 columns = {row[1] for row in conn.execute(text("PRAGMA table_info(mcc_instances)")).fetchall()}
                 if "account_profile_id" not in columns:

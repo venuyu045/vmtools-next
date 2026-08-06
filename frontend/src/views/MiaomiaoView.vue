@@ -23,7 +23,7 @@
         </div>
 
         <el-table
-          :data="filteredResidences.slice(0, 200)"
+          :data="pagedResidences"
           stripe
           size="small"
           max-height="500"
@@ -50,6 +50,18 @@
             </template>
           </el-table-column>
         </el-table>
+
+        <!-- 领地排行榜分页（避免一次渲染过多行） -->
+        <div class="table-pagination">
+          <el-pagination
+            v-model:current-page="resPage"
+            :page-size="resPageSize"
+            :total="filteredResidences.length"
+            layout="total, prev, pager, next"
+            background
+            small
+          />
+        </div>
 
         <!-- Owner rankings -->
         <div class="summary-box" v-if="resSort === 'owner' && playerStore.ownerRankings.length > 0">
@@ -308,6 +320,9 @@ const activeTab = ref(['mspt', 'residences', 'markers', 'landmarks', 'metro'].in
   : 'residences')
 const resSort = ref('area')
 const resSearch = ref('')
+// 领地排行榜分页：每页 100 行，避免一次渲染 1800+ 行导致卡顿
+const resPage = ref(1)
+const resPageSize = 100
 const mkSearch = ref('')
 const lmSearch = ref('')
 const activeLandmarkType = ref('')
@@ -375,6 +390,12 @@ const filteredResidences = computed(() => {
   return list
 })
 
+/** 当前页领地（按分页切片，只渲染一页数据） */
+const pagedResidences = computed(() => {
+  const start = (resPage.value - 1) * resPageSize
+  return filteredResidences.value.slice(start, start + resPageSize)
+})
+
 const filteredMarkers = computed(() => {
   let list = playerStore.markers
   if (mkSearch.value) {
@@ -403,7 +424,10 @@ const filteredLandmarks = computed(() => {
   return list
 })
 
-function refreshResTable() { /* computed auto-refreshes */ }
+function refreshResTable() {
+  // 搜索/排序变化时回到第 1 页
+  resPage.value = 1
+}
 
 async function refreshMarkers() {
   refreshing.value = true
@@ -508,6 +532,13 @@ function tpsClass(v: number | null): string {
 }
 
 .mk-count { font-size: 13px; color: var(--text-disabled); }
+
+/* 领地排行榜分页 */
+.table-pagination {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 12px;
+}
 
 /* Owner rankings */
 .summary-box {
