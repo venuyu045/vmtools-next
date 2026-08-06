@@ -22,15 +22,19 @@
         </div>
         <div class="wh-stats">
           <div class="wh-stat">
-            <span class="wh-stat-val pixel">{{ wh.total_items || 0 }}</span>
+            <span class="wh-stat-val pixel" :title="fmtExact(wh.total_items)">{{ fmtBigNum(wh.total_items || 0) }}</span>
             <span class="wh-stat-lbl mono">物品数</span>
           </div>
           <div class="wh-stat">
-            <span class="wh-stat-val pixel" style="color: #ffff00">{{ wh.container_count || 0 }}</span>
+            <span class="wh-stat-val pixel" style="color: #ffff00">{{ fmtBigNum(wh.container_count || 0) }}</span>
             <span class="wh-stat-lbl mono">容器数</span>
           </div>
           <div class="wh-stat">
-            <span class="wh-stat-val pixel" style="font-size: 16px">{{ wh.last_scan_time || '--' }}</span>
+            <span class="wh-stat-val pixel" style="color: #1890ff">{{ wh.material_count || 0 }}</span>
+            <span class="wh-stat-lbl mono">物品种类</span>
+          </div>
+          <div class="wh-stat">
+            <span class="wh-stat-val pixel" style="font-size: 13px">{{ fmtTime(wh.last_scan_time) }}</span>
             <span class="wh-stat-lbl mono">上次扫描</span>
           </div>
         </div>
@@ -61,6 +65,16 @@
 import { ref, onMounted } from 'vue'
 import { useWarehouseStore } from '@/stores/warehouse'
 import { ElMessage } from 'element-plus'
+import { fmtBigNum, fmtExact } from '@/utils/format'
+
+function fmtTime(iso: string | null): string {
+  if (!iso) return '--'
+  try {
+    return new Date(iso).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
+  } catch {
+    return iso
+  }
+}
 
 const warehouseStore = useWarehouseStore()
 const showCreate = ref(false)

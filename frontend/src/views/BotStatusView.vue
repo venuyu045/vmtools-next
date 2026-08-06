@@ -73,6 +73,7 @@
 <script setup lang="ts">
 import { computed, onActivated, onBeforeUnmount, onDeactivated, onMounted, ref, watch } from 'vue'
 import api from '@/api/client'
+import { useSocketIO } from '@/composables/useSocketIO'
 
 defineOptions({ name: 'BotStatusView' })
 
@@ -116,6 +117,24 @@ const items = ref<BotStatus[]>([])
 const loading = ref(false)
 const lastUpdate = ref('')
 let timer: number | undefined
+// 请求竞态保护：只采纳最新一次请求的响应（切页/切引擎时旧请求不覆盖新数据）
+let loadSeq = 0
+
+// Socket.IO：启停/心跳等 bot 状态变化就地更新卡片，无需等 10s 轮询
+const { on, off } = useSocketIO()
+
+function patchBotStatus(payload: any) {
+  if (!payload?.bot_id) return
+  const idx = items.value.findIndex(b => b.bot_id === payload.bot_id)
+  if (idx < 0) return
+  const cur = items.value[idx]
+  const next: BotStatus = { ...cur }
+  if (payload.status) next.status = payload.status
+  if (payload.current_health != null) next.current_health = payload.current_health
+  if (payload.current_food != null) next.current_food = payload.current_food
+  if (payload.current_location) next.current_location = payload.current_location
+  items.value[idx] = next
+}
 
 function statusLabel(s: string): string {
   const map: Record<string, string> = {
@@ -154,21 +173,31 @@ function coordText(bot: BotStatus): string {
 
 async function load() {
   if (loading.value) return
+  const seq = ++loadSeq
   loading.value = true
   try {
     const resp = await api.get(`/mcc-bots/status/overview?engine=${engine.value}`)
+    if (seq !== loadSeq) return // 过期响应（已切引擎/新请求发出）丢弃
     items.value = resp.data?.items || []
     lastUpdate.value = new Date().toLocaleTimeString('zh-CN', { hour12: false })
   } catch {
     /* 静默失败，保留旧数据 */
   } finally {
-    loading.value = false
+    if (seq === loadSeq) loading.value = false
   }
 }
+
+function onBotStatusUpdate(payload: any) { patchBotStatus(payload) }
+function onBotConnected(payload: any) { patchBotStatus({ bot_id: payload.bot_id, status: 'online' }) }
+function onBotDisconnected(payload: any) { patchBotStatus({ bot_id: payload.bot_id, status: 'offline' }) }
 
 onMounted(() => {
   load()
   timer = window.setInterval(load, 10000)
+  // Socket.IO 订阅（keep-alive 下组件常驻，onMounted 只执行一次）
+  on('bot_status_update', onBotStatusUpdate)
+  on('bot_connected', onBotConnected)
+  on('bot_disconnected', onBotDisconnected)
 })
 
 // keep-alive 下：切走暂停轮询（省请求），切回立即刷新并恢复轮询
@@ -185,13 +214,20 @@ onDeactivated(() => {
 })
 
 // MCC ↔ MF 状态切换：同一组件复用（keep-alive 下不重新挂载），
-// engine prop 变化时立即重新加载，避免等 10s 定时器或手动刷新。
+// engine prop 变化时立即重新加载，避免等 10s 定时器或手动刷新；
+// 同时使在途请求失效并允许新请求立即发出。
 watch(() => props.engine, () => {
+  loadSeq++
+  loading.value = false
+  items.value = []
   load()
 })
 
 onBeforeUnmount(() => {
   if (timer) window.clearInterval(timer)
+  off('bot_status_update', onBotStatusUpdate)
+  off('bot_connected', onBotConnected)
+  off('bot_disconnected', onBotDisconnected)
 })
 </script>
 

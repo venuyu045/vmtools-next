@@ -35,8 +35,8 @@
             <span class="wh-badge">{{ w.container_count }} 箱</span>
           </div>
           <div class="wh-stats">
-            <div class="wh-stat"><span class="val">{{ fmtNum(w.total_items) }}</span><span class="lbl">物品总数</span></div>
-            <div class="wh-stat"><span class="val yellow">{{ fmtNum(w.container_count) }}</span><span class="lbl">容器数</span></div>
+            <div class="wh-stat"><span class="val" :title="fmtExact(w.total_items)">{{ fmtBigNum(w.total_items) }}</span><span class="lbl">物品总数</span></div>
+            <div class="wh-stat"><span class="val yellow">{{ fmtBigNum(w.container_count) }}</span><span class="lbl">容器数</span></div>
             <div class="wh-stat"><span class="val small">{{ w.last_scan_time ? fmtTime(w.last_scan_time) : '--' }}</span><span class="lbl">上次扫描</span></div>
           </div>
         </div>
@@ -59,8 +59,9 @@
               <div class="item-id mono">{{ item.item_id }}</div>
             </div>
             <div class="item-count">
-              <span class="count-val pixel">{{ fmtNum(item.total_count) }}</span>
-              <span class="count-lbl mono">总储量</span>
+              <span class="count-val pixel">{{ fmtBigNum(item.total_count) }}</span>
+              <span class="count-lbl mono" :title="fmtExact(item.total_count)">≈ {{ fmtExact(item.total_count) }}</span>
+              <span class="count-lbl mono">≈ {{ boxCount(item.total_count) }}盒</span>
             </div>
             <span class="expand-arrow" :class="{ open: expanded.has(item.item_id) }">▾</span>
           </div>
@@ -70,7 +71,11 @@
             <div v-for="wh in item.warehouses" :key="wh.warehouse_id" class="wh-detail">
               <div class="wh-detail-head">
                 <span class="wh-detail-name">{{ wh.warehouse_name }}</span>
-                <span class="wh-detail-count pixel">{{ fmtNum(wh.count) }}</span>
+                <div class="wh-detail-nums">
+                  <span class="wh-detail-count pixel">{{ fmtBigNum(wh.count) }}</span>
+                  <span class="wh-detail-exact mono" :title="fmtExact(wh.count)">≈ {{ fmtExact(wh.count) }}</span>
+                  <span class="wh-detail-box mono">≈ {{ boxCount(wh.count) }}盒</span>
+                </div>
               </div>
               <div v-if="wh.containers.length" class="container-list">
                 <div class="container-row head">
@@ -97,6 +102,7 @@ import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import ItemIcon from '@/components/ItemIcon.vue'
 import { warehouseApi } from '@/api/warehouse'
+import { boxCount, fmtBigNum, fmtExact } from '@/utils/format'
 
 interface ItemContainer { x: number; y: number; z: number; count: number; slot: number }
 interface ItemWarehouse { warehouse_id: string; warehouse_name: string; count: number; containers: ItemContainer[] }
@@ -267,9 +273,12 @@ onMounted(async () => {
 .item-detail { border-top: 1px solid var(--border-subtle); background: #060606; padding: 12px 16px; }
 .wh-detail { margin-bottom: 12px; }
 .wh-detail:last-child { margin-bottom: 0; }
-.wh-detail-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
-.wh-detail-name { font-size: 13px; color: var(--text-primary); }
+.wh-detail-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; gap: 8px; flex-wrap: wrap; }
+.wh-detail-name { font-size: 13px; color: var(--text-primary); min-width: 0; }
+.wh-detail-nums { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
 .wh-detail-count { font-size: 15px; color: #ffff00; }
+.wh-detail-exact { font-size: 11px; color: var(--text-muted); }
+.wh-detail-box { font-size: 12px; color: var(--green-primary); white-space: nowrap; }
 .container-list { border: 1px solid var(--border-subtle); background: #000; max-height: 260px; overflow-y: auto; }
 .container-row { display: grid; grid-template-columns: 1fr 80px 90px; gap: 8px; padding: 6px 10px; font-size: 12px; color: var(--text-secondary); border-bottom: 1px solid var(--border-subtle); }
 .container-row:last-child { border-bottom: none; }

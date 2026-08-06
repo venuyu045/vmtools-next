@@ -79,6 +79,10 @@ class MineflayerBridgeClient(AbstractBotAgent):
 
     def __init__(self, host: str = "127.0.0.1", port: int = 44444):
         self._ws_url = f"ws://{host}:{port}"
+        self.host = host
+        self.port = port
+        self.connected_at: str | None = None
+        self.last_heartbeat_at: str | None = None
         self._ws: Optional[websockets.WebSocketClientProtocol] = None
         self._pending: dict[str, asyncio.Future] = {}
         self._connected = False
@@ -122,6 +126,9 @@ class MineflayerBridgeClient(AbstractBotAgent):
             )
             self._connected = True
             self._listen_task = asyncio.create_task(self._listen_loop())
+            from datetime import datetime, timezone
+            self.connected_at = datetime.now(timezone.utc).isoformat()
+            self.last_heartbeat_at = self.connected_at
             logger.info("Connected to mineflayer bot at %s", self._ws_url)
             return True
         except asyncio.TimeoutError:
@@ -235,6 +242,9 @@ class MineflayerBridgeClient(AbstractBotAgent):
     def _handle_status(self, msg: dict) -> None:
         status = msg.get("bot_status", {})
         self._last_status = status
+        # 收到状态推送即视为心跳，供 get_bot_status 的 last_heartbeat 使用
+        from datetime import datetime, timezone
+        self.last_heartbeat_at = datetime.now(timezone.utc).isoformat()
         logger.debug("Status update: connected=%s", status.get("connected"))
 
     # ── 请求-响应核心 ──

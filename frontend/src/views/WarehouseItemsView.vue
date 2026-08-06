@@ -5,7 +5,7 @@
       <div>
         <h2 class="pixel page-title">{{ warehouse?.name || '仓库物品' }}</h2>
         <p v-if="warehouse" class="mono page-subtitle">
-          {{ fmtNum(warehouse.container_count) }} 容器 | {{ fmtNum(warehouse.total_items) }} 物品
+          {{ fmtBigNum(warehouse.container_count) }} 容器 | {{ fmtBigNum(warehouse.total_items) }} 物品
           <template v-if="warehouse.last_scan_time">| 上次扫描 {{ fmtTime(warehouse.last_scan_time) }}</template>
         </p>
       </div>
@@ -27,12 +27,12 @@
           v-for="item in filtered"
           :key="item.item_id"
           class="item-cell pixel-card"
-          :title="`${item.item_name_zh || item.display_name} × ${fmtNum(item.count)}`"
+          :title="`${item.item_name_zh || item.display_name} × ${fmtExact(item.count)}（≈ ${fmtBigNum(item.count)} / ${boxCount(item.count)}盒）`"
           @click="openDetail(item)"
         >
           <ItemIcon :item-id="item.item_id" :name="item.item_name_zh" :size="44" />
           <div class="cell-name" :class="{ mono: !item.item_name_zh }">{{ item.item_name_zh || item.display_name }}</div>
-          <div class="cell-count pixel">{{ fmtNum(item.count) }}</div>
+          <div class="cell-count pixel">{{ fmtBigNum(item.count) }}</div>
         </div>
       </div>
     </el-card>
@@ -59,6 +59,7 @@ import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import ItemIcon from '@/components/ItemIcon.vue'
 import { warehouseApi } from '@/api/warehouse'
+import { boxCount, fmtBigNum, fmtExact } from '@/utils/format'
 
 interface MatItem { item_id: string; display_name: string; item_name_zh: string; count: number }
 interface DetailItem { x: number; y: number; z: number; count: number; slot: number }

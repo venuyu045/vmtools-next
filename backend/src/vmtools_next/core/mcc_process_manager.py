@@ -286,6 +286,17 @@ class MccProcessManager:
                 )
                 await self._emit_status(instance_id, "running", pid=process.pid, mcp_port=instance.mcp_port)
 
+                # 启动后自动连接 MCP（后台重试，覆盖 REST start / restart / 崩溃自启 / 启动恢复）。
+                # 提前取出基本类型，避免 db 会话关闭后访问 ORM 属性触发 DetachedInstanceError。
+                if instance.bot_id:
+                    import asyncio as _asyncio
+                    _iid = instance.instance_id
+                    _bot_id = instance.bot_id
+                    _host = instance.mcp_host or "127.0.0.1"
+                    _port = instance.mcp_port or 33333
+                    _token = instance.mcp_auth_token_secret or None
+                    _asyncio.ensure_future(self._auto_connect_mcp(_iid, _bot_id, _host, _port, _token))
+
                 # Register bot with BlueMap for server-detected online/offline tracking
                 self._register_bot_bluemap(instance)
 
@@ -433,9 +444,18 @@ class MccProcessManager:
                     ))
                     db.commit()
                     await self._emit_status(instance_id, instance.status, pid=None, mcp_port=instance.mcp_port)
-                # 同步关联 Bot 为离线（前端立即隐藏血量/坐标）
+                # 同步关联 Bot 为离线（前端立即隐藏血量/坐标），并断开 SessionPool 的
+                # MCP client——否则池内 _bot_status 仍为 online（健康检查 3 连败约 15s 才
+                # 变 offline），导致状态页仍显示在线（问题：停止后状态不及时刷新）。
                 if instance and instance.bot_id:
                     await self._sync_bot_offline(instance.bot_id)
+                    try:
+                        from vmtools_next.main import get_pool_for_engine
+                        pool = get_pool_for_engine("mcc")
+                        if pool:
+                            await pool.disconnect_bot(instance.bot_id)
+                    except Exception as exc:
+                        logger.warning("Disconnect pool client failed for {}: {}", instance_id, exc)
                 self._processes.pop(instance_id, None)
                 return {"status": instance.status if instance else "stopped", "pid": None, "message": "stopped"}
             finally:
@@ -721,8 +741,16 @@ class MccProcessManager:
             await self._emit_status(instance_id, instance.status, pid=None, mcp_port=instance.mcp_port)
 
             # 同步关联 Bot 为离线（前端血量/坐标随之隐藏；自动重连场景跳过避免闪烁）
+            # 并断开 SessionPool 的 MCP client，使状态页立即反映离线
             if instance and instance.bot_id and not should_reconnect:
                 await self._sync_bot_offline(instance.bot_id)
+                try:
+                    from vmtools_next.main import get_pool_for_engine
+                    pool = get_pool_for_engine("mcc")
+                    if pool:
+                        await pool.disconnect_bot(instance.bot_id)
+                except Exception as exc:
+                    logger.warning("Disconnect pool client failed for {}: {}", instance_id, exc)
 
             # Trigger actual restart in background
             if should_reconnect:
@@ -1196,6 +1224,29 @@ class MccProcessManager:
             return instance_id
         finally:
             db.close()
+
+    async def _auto_connect_mcp(self, instance_id: str, bot_id: str,
+                                host: str, port: int, token: str | None) -> None:
+        """启动后自动连接 MCP（后台重试 20 次 × 3s ≈ 60s，覆盖 MCC 慢启动）。
+
+        由 start_instance 统一调度，覆盖 REST start / restart / 崩溃自启 / 启动恢复。
+        """
+        from vmtools_next.main import get_pool_for_engine
+        pool = get_pool_for_engine("mcc")
+        if not pool:
+            return
+        for attempt in range(20):
+            await asyncio.sleep(3)
+            try:
+                ok = await pool.connect_bot(bot_id, host=host, port=port, auth_token=token)
+                if ok:
+                    logger.info("Auto-connected MCP for instance {} bot={} (attempt {})",
+                                instance_id, bot_id, attempt + 1)
+                    return
+            except Exception as exc:
+                logger.warning("Auto-connect attempt {} for {} failed: {}",
+                               attempt + 1, instance_id, exc)
+        logger.warning("Auto-connect MCP timed out for instance {} bot={}", instance_id, bot_id)
 
     async def _emit_status(
         self,

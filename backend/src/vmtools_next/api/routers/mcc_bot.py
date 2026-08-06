@@ -51,14 +51,29 @@ def list_bots(db: Session = Depends(get_db), user=Depends(get_current_user)):
 
 # ── MCC 状态概览（只读，与 MCC 管理页隔离） ─────────────────────
 
+# 领地数据 TTL 缓存（30s）：状态页每次请求都会计算最近领地，领地数上千时
+# 避免反复回退 DB 加载，显著降低大量 bot 场景下状态页接口的响应耗时。
+_residences_cache: dict = {"ts": 0.0, "data": None}
+_RESIDENCES_TTL = 30.0
+
+
 def _load_residences():
-    """复用 BluemapMonitor 缓存的领地数据（含中心坐标），失败时回退 DB 缓存。"""
+    """复用 BluemapMonitor 缓存的领地数据（含中心坐标），失败时回退 DB 缓存。
+
+    结果带 30s TTL 缓存，避免每次请求都重复加载。
+    """
+    import time as _time
+    now = _time.monotonic()
+    if _residences_cache["data"] is not None and now - _residences_cache["ts"] < _RESIDENCES_TTL:
+        return _residences_cache["data"]
     try:
         from vmtools_next.main import get_bluemap_monitor
         monitor = get_bluemap_monitor()
         if monitor:
             rs = monitor.get_residences()
             if rs:
+                _residences_cache["data"] = rs
+                _residences_cache["ts"] = now
                 return rs
     except Exception:
         pass
@@ -71,7 +86,10 @@ def _load_residences():
                 text("SELECT cache_data FROM bluemap_cache WHERE cache_key = 'bluemap_residences'"),
             ).fetchone()
             if row and row[0]:
-                return _json.loads(row[0])
+                data = _json.loads(row[0])
+                _residences_cache["data"] = data
+                _residences_cache["ts"] = now
+                return data
     except Exception:
         pass
     return []
@@ -164,6 +182,9 @@ def bot_status_overview(engine: str = "mcc",
     """每个 bot 的实时状态：在线情况/血量/饱食度/坐标/最近领地/当前工作。
 
     ``engine``：'mcc' | 'mineflayer'（MCC 状态与 MF 状态共用同一接口）。
+
+    性能：批量预取实例映射/当前任务，替代逐 bot 的多次 DB 查询，
+    避免大量 bot 时状态页切换卡顿。
     """
     import json as _json
 
@@ -171,17 +192,91 @@ def bot_status_overview(engine: str = "mcc",
     residences = _load_residences()
 
     from vmtools_next.main import get_pool_for_engine
-    from vmtools_next.core.bot_engine import resolve_bot_engine
     from vmtools_next.data.models.mcc_remote import MccInstanceModel
+
+    # ── 批量预取：实例映射（bot_id → instance，含 mcp_port/status/bot_engine）──
+    instances = db.query(MccInstanceModel).filter(
+        MccInstanceModel.deleted_at.is_(None),
+    ).all()
+    inst_by_bot: dict[str, MccInstanceModel] = {
+        i.bot_id: i for i in instances if i.bot_id
+    }
+
+    # ── 批量预取：当前任务（物流 > 地图画 > 仓库扫描，与 _get_bot_current_task 同优先级）──
+    task_by_bot: dict[str, dict] = {}
+
+    # 1) 物流运行（logistics_task_runs）
+    from vmtools_next.data.models.logistics import LogisticsTaskRunModel, LogisticsTaskTemplateModel
+    runs = db.query(LogisticsTaskRunModel).filter(
+        LogisticsTaskRunModel.status.in_(["running", "paused"]),
+    ).all()
+    tpl_names: dict[str, str] = {}
+    if runs:
+        tpl_ids = {r.template_id for r in runs}
+        for t in db.query(LogisticsTaskTemplateModel).filter(
+            LogisticsTaskTemplateModel.template_id.in_(tpl_ids)).all():
+            tpl_names[t.template_id] = t.name or t.template_id
+    for r in runs:
+        if r.bot_id and r.bot_id not in task_by_bot:
+            task_by_bot[r.bot_id] = {
+                "type": "logistics",
+                "name": f"物流·{tpl_names.get(r.template_id, r.template_id)}",
+                "status": r.status,
+                "progress": r.progress,
+            }
+
+    # 2) 地图画（map_art_bot_assignments + map_art_tasks）
+    from vmtools_next.data.models.build_map_art import MapArtBotAssignment, MapArtTask
+    assigns = db.query(MapArtBotAssignment).all()
+    running_tasks: dict[str, MapArtTask] = {}
+    if assigns:
+        task_ids = {a.task_id for a in assigns}
+        for t in db.query(MapArtTask).filter(
+            MapArtTask.task_id.in_(task_ids),
+            MapArtTask.status == "running",
+        ).all():
+            running_tasks[t.task_id] = t
+    for a in assigns:
+        if a.bot_id and a.bot_id not in task_by_bot:
+            task = running_tasks.get(a.task_id)
+            if task:
+                progress = None
+                if a.blocks_total:
+                    progress = round(a.blocks_placed / a.blocks_total * 100, 1)
+                task_by_bot[a.bot_id] = {
+                    "type": "mapart",
+                    "name": f"地图画·{task.name}",
+                    "status": "running",
+                    "progress": progress,
+                }
+
+    # 3) 仓库扫描（scan_queue）
+    from vmtools_next.data.models.warehouse import ScanQueueModel, WarehouseModel
+    scans = db.query(ScanQueueModel).filter(
+        ScanQueueModel.status.in_(["running", "paused"]),
+    ).all()
+    wh_names: dict[str, str] = {}
+    if scans:
+        wh_ids = {s.warehouse_id for s in scans}
+        for w in db.query(WarehouseModel).filter(
+            WarehouseModel.warehouse_id.in_(wh_ids)).all():
+            wh_names[w.warehouse_id] = w.name or w.warehouse_id
+    for s in scans:
+        if s.bot_id and s.bot_id not in task_by_bot:
+            task_by_bot[s.bot_id] = {
+                "type": "scan",
+                "name": f"仓库扫描·{wh_names.get(s.warehouse_id, s.warehouse_id)}",
+                "status": s.status,
+                "progress": s.progress,
+            }
 
     items: list[MccBotStatusItem] = []
     for b in bots:
-        # 只展示指定引擎的 bot
-        try:
-            if resolve_bot_engine(b.bot_id, db) != engine:
-                continue
-        except Exception:
-            pass
+        inst = inst_by_bot.get(b.bot_id)
+        # 引擎判定：优先实例声明的 bot_engine，无实例时回退配置默认
+        engine_of_bot = (getattr(inst, "bot_engine", None) or "mcc") if inst else "mcc"
+        if engine_of_bot != engine:
+            continue
         # 解析坐标（MccSessionPool/MineflayerSessionPool 定期写入的 JSON）
         loc = None
         if b.current_location:
@@ -195,7 +290,7 @@ def bot_status_overview(engine: str = "mcc",
         last_hb = None
         mcp_port = None
         try:
-            pool = get_pool_for_engine(resolve_bot_engine(b.bot_id, db))
+            pool = get_pool_for_engine(engine_of_bot)
             if pool:
                 st = pool.get_bot_status(b.bot_id)
                 if st.get("status") in ("online", "error"):
@@ -204,25 +299,13 @@ def bot_status_overview(engine: str = "mcc",
                 mcp_port = st.get("port")
         except Exception:
             pass
-        if mcp_port is None:
-            inst = db.query(MccInstanceModel).filter(
-                MccInstanceModel.bot_id == b.bot_id
-            ).first()
-            if inst:
-                mcp_port = inst.mcp_port
+        if mcp_port is None and inst:
+            mcp_port = inst.mcp_port
         # 兜底：进程/实例已在运行（如 MF 实例 LOGIN_OK 后 WS 连接尚未建立，
         # 或后端重启后池未连上），但池状态不是 online/error 时，按实例状态修正，
-        # 避免「MF 实例在线却显示离线」的误报。
-        if status not in ("online", "error"):
-            try:
-                inst = db.query(MccInstanceModel).filter(
-                    MccInstanceModel.bot_id == b.bot_id,
-                    MccInstanceModel.deleted_at.is_(None),
-                ).first()
-                if inst and inst.status == "running":
-                    status = "online"
-            except Exception:
-                pass
+        # 避免「实例在线却显示离线」的误报。
+        if status not in ("online", "error") and inst and inst.status == "running":
+            status = "online"
 
         nearest = _nearest_residence(loc, residences) if loc else None
 
@@ -237,7 +320,7 @@ def bot_status_overview(engine: str = "mcc",
             mcp_port=mcp_port,
             last_heartbeat=last_hb,
             nearest_residence=nearest,
-            current_task=_get_bot_current_task(db, b.bot_id),
+            current_task=task_by_bot.get(b.bot_id),
         ))
 
     # 在线优先排序

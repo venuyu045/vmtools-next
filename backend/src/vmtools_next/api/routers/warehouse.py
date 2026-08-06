@@ -12,7 +12,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
-from sqlalchemy import or_
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from vmtools_next.api.deps import get_db, get_current_user
@@ -53,6 +53,7 @@ class WarehouseResponse(BaseModel):
     last_scan_time: Optional[str] = None
     container_count: int = 0
     total_items: int = 0
+    material_count: int = 0  # 物品种类数（管理页简略数据用）
     aisle_lines: list = Field(default_factory=list)
     group_id: Optional[str] = None
     organization_id: Optional[str] = None
@@ -179,13 +180,27 @@ def _parse_aisle_lines(raw: Optional[str]) -> list:
         return []
 
 
-def _to_response(wh: WarehouseModel) -> WarehouseResponse:
+def _material_counts(db: Session, wh_ids: list[str]) -> dict[str, int]:
+    """批量统计每个仓库的物品种类数（material_items 行数）。"""
+    if not wh_ids:
+        return {}
+    rows = db.query(
+        MaterialItemModel.warehouse_fk,
+        func.count(MaterialItemModel.id),
+    ).filter(
+        MaterialItemModel.warehouse_fk.in_(wh_ids),
+    ).group_by(MaterialItemModel.warehouse_fk).all()
+    return {wh_fk: int(c) for wh_fk, c in rows}
+
+
+def _to_response(wh: WarehouseModel, material_count: int | None = None) -> WarehouseResponse:
     return WarehouseResponse(
         warehouse_id=wh.warehouse_id,
         name=wh.name,
         last_scan_time=wh.last_scan_time.isoformat() if wh.last_scan_time else None,
         container_count=wh.container_count or 0,
         total_items=wh.total_items or 0,
+        material_count=material_count if material_count is not None else 0,
         aisle_lines=_parse_aisle_lines(wh.aisle_lines),
         group_id=wh.group_id,
         organization_id=wh.organization_id,
@@ -200,7 +215,8 @@ def _to_response(wh: WarehouseModel) -> WarehouseResponse:
 @router.get("", response_model=list[WarehouseResponse])
 def list_warehouses(db: Session = Depends(get_db), user=Depends(get_current_user)):
     whs = _scoped_warehouse_query(db, user).all()
-    return [_to_response(w) for w in whs]
+    counts = _material_counts(db, [w.warehouse_id for w in whs])
+    return [_to_response(w, counts.get(w.warehouse_id, 0)) for w in whs]
 
 
 @router.post("", response_model=WarehouseResponse)
@@ -217,7 +233,7 @@ def create_warehouse(data: WarehouseCreate, db: Session = Depends(get_db),
     db.add(wh)
     db.commit()
     db.refresh(wh)
-    return _to_response(wh)
+    return _to_response(wh, 0)
 
 
 @router.put("/{warehouse_id}", response_model=WarehouseResponse)
@@ -235,7 +251,8 @@ def update_warehouse(warehouse_id: str, data: WarehouseUpdate,
         wh.aisle_lines = json.dumps(data.aisle_lines, ensure_ascii=False)
     db.commit()
     db.refresh(wh)
-    return _to_response(wh)
+    counts = _material_counts(db, [wh.warehouse_id])
+    return _to_response(wh, counts.get(wh.warehouse_id, 0))
 
 
 @router.get("/scan-queue")
@@ -335,7 +352,8 @@ def search_item_details(q: str = "", limit: int = 50,
 def get_warehouse(warehouse_id: str, db: Session = Depends(get_db),
                   user=Depends(get_current_user)):
     wh = _get_scoped_warehouse(db, user, warehouse_id)
-    return _to_response(wh)
+    counts = _material_counts(db, [wh.warehouse_id])
+    return _to_response(wh, counts.get(wh.warehouse_id, 0))
 
 
 @router.delete("/{warehouse_id}")

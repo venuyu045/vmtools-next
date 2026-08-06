@@ -12,7 +12,7 @@
     <el-card v-if="warehouseStore.currentWarehouse" shadow="never" style="margin-bottom: 20px">
       <h3>{{ warehouseStore.currentWarehouse.name }}</h3>
       <p class="mono" style="color: var(--text-secondary); margin-top: 8px">
-        容器: {{ warehouseStore.currentWarehouse.container_count }} | 物品: {{ warehouseStore.currentWarehouse.total_items }}
+        容器: {{ fmtBigNum(warehouseStore.currentWarehouse.container_count) }} | 物品: {{ fmtBigNum(warehouseStore.currentWarehouse.total_items) }}
         <template v-if="warehouseStore.currentWarehouse.last_scan_time">
           | 上次扫描: {{ formatTime(warehouseStore.currentWarehouse.last_scan_time) }}
         </template>
@@ -129,7 +129,11 @@
       <el-table :data="warehouseStore.materials" style="width: 100%; margin-top: 12px" max-height="600">
         <el-table-column prop="item_id" label="物品 ID" show-overflow-tooltip />
         <el-table-column prop="display_name" label="名称" width="200" />
-        <el-table-column prop="count" label="数量" width="120" sortable />
+        <el-table-column label="数量" width="150" sortable prop="count">
+          <template #default="{ row }">
+            <span :title="`≈ ${boxCount(row.count)}盒`">{{ fmtExact(row.count) }}</span>
+          </template>
+        </el-table-column>
       </el-table>
       <el-empty v-if="warehouseStore.materials.length === 0" description="暂无材料数据，请先扫描仓库" />
     </el-card>
@@ -145,6 +149,7 @@ import { useBotStore } from '@/stores/bot'
 import { useMccInstanceStore } from '@/stores/mccInstance'
 import { useSocketIO } from '@/composables/useSocketIO'
 import { warehouseApi } from '@/api/warehouse'
+import { boxCount, fmtBigNum, fmtExact } from '@/utils/format'
 
 const route = useRoute()
 const warehouseStore = useWarehouseStore()

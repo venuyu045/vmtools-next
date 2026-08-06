@@ -26,7 +26,7 @@
         </div>
         <div>
           <div class="stat-label">仓库数量</div>
-          <div class="stat-sub">{{ totalItems }} 物品</div>
+          <div class="stat-sub">{{ fmtBigNum(totalItems) }} 物品</div>
         </div>
       </div>
       <div class="stat-item">
@@ -100,7 +100,7 @@
           <div v-else class="wh-list">
             <div v-for="w in warehouseStore.warehouses.slice(0, 5)" :key="w.warehouse_id" class="wh-row">
               <span class="wh-name">{{ w.name || w.warehouse_id.slice(0, 8) }}</span>
-              <span class="wh-meta mono">{{ w.total_items || 0 }} 物品</span>
+              <span class="wh-meta mono">{{ fmtBigNum(w.total_items || 0) }} 物品</span>
             </div>
           </div>
         </div>
@@ -135,6 +135,7 @@ import { computed, onBeforeUnmount, onMounted } from 'vue'
 import { useBotStore } from '@/stores/bot'
 import { useWarehouseStore } from '@/stores/warehouse'
 import { useOnlinePlayersStore } from '@/stores/onlinePlayers'
+import { fmtBigNum } from '@/utils/format'
 
 const botStore = useBotStore()
 const warehouseStore = useWarehouseStore()
