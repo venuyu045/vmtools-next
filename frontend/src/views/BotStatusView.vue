@@ -298,7 +298,7 @@ onBeforeUnmount(() => {
 }
 
 .bot-card {
-  background: #0d0d0d;
+  background: var(--bg-card);
   border: 1px solid var(--border-subtle);
   padding: 16px;
   display: flex;
