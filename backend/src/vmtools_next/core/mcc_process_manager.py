@@ -1230,7 +1230,11 @@ class MccProcessManager:
         Session = get_session_factory()
         db = Session()
         try:
-            for instance in db.query(MccInstanceModel).filter(MccInstanceModel.status.in_(["starting", "running", "stopping"])).all():
+            # 只标记 MCC 实例；mineflayer 实例由 MineflayerProcessManager 管理
+            for instance in db.query(MccInstanceModel).filter(
+                MccInstanceModel.status.in_(["starting", "running", "stopping"]),
+                MccInstanceModel.bot_engine != "mineflayer",
+            ).all():
                 instance.status = "stopped"
                 instance.pid = None
                 db.add(MccProcessEventModel(
@@ -1246,11 +1250,13 @@ class MccProcessManager:
         Session = get_session_factory()
         db = Session()
         try:
+            # 只恢复 MCC 实例；mineflayer 实例由 MineflayerProcessManager 恢复
             instance_ids = [
                 row.instance_id
                 for row in db.query(MccInstanceModel).filter(
                     MccInstanceModel.deleted_at.is_(None),
                     MccInstanceModel.desired_state == "running",
+                    MccInstanceModel.bot_engine != "mineflayer",
                 ).all()
             ]
         finally:
