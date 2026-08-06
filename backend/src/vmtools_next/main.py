@@ -169,6 +169,7 @@ async def lifespan(app: FastAPI):
     await _mcc_process_manager.start()
     logger.info("MCC Process Manager started")
     _mineflayer_process_manager = MineflayerProcessManager()
+    await _mineflayer_process_manager.start()  # 恢复 desired_state=running 的 MF 实例
     logger.info("Mineflayer Process Manager started")
 
     # 4. Task Engine — one per engine; each TaskEngine's pool is fixed at
