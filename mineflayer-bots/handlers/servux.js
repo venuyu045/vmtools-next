@@ -371,6 +371,8 @@ function createServuxHandlers(bot) {
         const posRes = longToPos(buf, offset);
         const key = `${posRes.x},${posRes.y},${posRes.z}`;
         offset = posRes.offset;
+        // [debug] 打印原始 NBT 字节（前 500B），排查组件是否被旧版 prismarine-nbt 丢弃
+        console.log(`\x1b[33m[servux][dbg]\x1b[0m rawNBT hex=${buf.subarray(offset).subarray(0, 500).toString('hex')}`);
         const parsed = await parseNbt(buf.subarray(offset));
         const compoundValue = getCompoundValue(parsed);
         // [debug] 打印容器 NBT 顶层结构，排查潜影盒内容 NBT 位置
