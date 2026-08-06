@@ -92,7 +92,7 @@
 
         <div class="markers-grid">
           <div
-            v-for="mk in filteredMarkers.slice(0, 200)"
+            v-for="mk in pagedMarkers"
             :key="mk.id"
             class="marker-card"
           >
@@ -105,6 +105,16 @@
             </div>
             <div class="mk-detail" v-if="mk.detail">{{ mk.detail }}</div>
           </div>
+        </div>
+        <div class="table-pagination" v-if="filteredMarkers.length > mkPageSize">
+          <el-pagination
+            v-model:current-page="mkPage"
+            :page-size="mkPageSize"
+            :total="filteredMarkers.length"
+            layout="total, prev, pager, next"
+            background
+            small
+          />
         </div>
         <div v-if="filteredMarkers.length === 0 && playerStore.markers.length > 0" class="empty-hint">没有匹配的标记点</div>
       </el-tab-pane>
@@ -140,7 +150,7 @@
 
         <div class="markers-grid">
           <div
-            v-for="lm in filteredLandmarks.slice(0, 300)"
+            v-for="lm in pagedLandmarks"
             :key="lm.id"
             class="marker-card"
           >
@@ -154,6 +164,16 @@
             <div class="mk-detail" v-if="lm.type"><span class="lm-type-badge">{{ lm.type }}</span></div>
             <div class="mk-detail" v-if="lm.detail">{{ lm.detail }}</div>
           </div>
+        </div>
+        <div class="table-pagination" v-if="filteredLandmarks.length > lmPageSize">
+          <el-pagination
+            v-model:current-page="lmPage"
+            :page-size="lmPageSize"
+            :total="filteredLandmarks.length"
+            layout="total, prev, pager, next"
+            background
+            small
+          />
         </div>
         <div v-if="filteredLandmarks.length === 0 && playerStore.landmarks.length > 0" class="empty-hint">没有匹配的地标</div>
       </el-tab-pane>
@@ -222,7 +242,7 @@
         </div>
 
         <el-table
-          :data="filteredRegions.slice(0, 500)"
+          :data="pagedRegions"
           stripe
           size="small"
           max-height="500"
@@ -287,6 +307,18 @@
           <el-table-column prop="sections" label="Section" width="80" sortable />
         </el-table>
 
+        <!-- MSPT 分页 -->
+        <div class="table-pagination" v-if="filteredRegions.length > msptPageSize">
+          <el-pagination
+            v-model:current-page="msptPage"
+            :page-size="msptPageSize"
+            :total="filteredRegions.length"
+            layout="total, prev, pager, next"
+            background
+            small
+          />
+        </div>
+
         <!-- MSPT 颜色图例 -->
         <div class="legend-box">
           <span class="legend-title">颜色说明：</span>
@@ -304,7 +336,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { useOnlinePlayersStore } from '@/stores/onlinePlayers'
@@ -323,6 +355,13 @@ const resSearch = ref('')
 // 领地排行榜分页：每页 100 行，避免一次渲染 1800+ 行导致卡顿
 const resPage = ref(1)
 const resPageSize = 100
+// 标记点 / 地标 / MSPT 分页（与领地榜一致，避免一次渲染数百行）
+const mkPage = ref(1)
+const mkPageSize = 100
+const lmPage = ref(1)
+const lmPageSize = 100
+const msptPage = ref(1)
+const msptPageSize = 100
 const mkSearch = ref('')
 const lmSearch = ref('')
 const activeLandmarkType = ref('')
@@ -408,6 +447,12 @@ const filteredMarkers = computed(() => {
   return list
 })
 
+/** 标记点当前页（分页切片） */
+const pagedMarkers = computed(() => {
+  const start = (mkPage.value - 1) * mkPageSize
+  return filteredMarkers.value.slice(start, start + mkPageSize)
+})
+
 const filteredLandmarks = computed(() => {
   let list = playerStore.landmarks
   if (activeLandmarkType.value) {
@@ -422,6 +467,12 @@ const filteredLandmarks = computed(() => {
     )
   }
   return list
+})
+
+/** 地标当前页（分页切片） */
+const pagedLandmarks = computed(() => {
+  const start = (lmPage.value - 1) * lmPageSize
+  return filteredLandmarks.value.slice(start, start + lmPageSize)
 })
 
 function refreshResTable() {
@@ -495,6 +546,17 @@ const filteredRegions = computed(() => {
   }
   return list
 })
+
+/** MSPT 区域当前页（分页切片） */
+const pagedRegions = computed(() => {
+  const start = (msptPage.value - 1) * msptPageSize
+  return filteredRegions.value.slice(start, start + msptPageSize)
+})
+
+// 搜索/筛选/排序变化时回到第 1 页（与领地榜 refreshResTable 行为一致）
+watch(mkSearch, () => { mkPage.value = 1 })
+watch([lmSearch, activeLandmarkType], () => { lmPage.value = 1 })
+watch([msptSearch, msptSort], () => { msptPage.value = 1 })
 
 function msptClass(v: number | null): string {
   if (v == null) return ''
