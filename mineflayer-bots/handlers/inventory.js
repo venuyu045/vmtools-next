@@ -163,6 +163,8 @@ function createInventoryHandlers(bot) {
         type: item.type,
         count: item.count,
         display_name: item.displayName,
+        // 完整物品 NBT（1.21.x 组件化数据，潜影盒内容在此）——仅用于诊断/展开
+        nbt: item.nbt ? JSON.stringify(item.nbt) : null,
       }));
       return { success: true, items, container_id };
     } catch (err) {
