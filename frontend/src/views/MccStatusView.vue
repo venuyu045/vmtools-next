@@ -140,7 +140,7 @@ async function load() {
   if (loading.value) return
   loading.value = true
   try {
-    const resp = await api.get('/api/mcc-bots/status/overview')
+    const resp = await api.get('/mcc-bots/status/overview')
     items.value = resp.data?.items || []
     lastUpdate.value = new Date().toLocaleTimeString('zh-CN', { hour12: false })
   } catch {
