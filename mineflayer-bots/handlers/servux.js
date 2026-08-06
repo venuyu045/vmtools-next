@@ -202,18 +202,8 @@ function collectListItems(listTag, depth, maxDepth, out) {
       slot: Number(slot),
     });
     // 潜影盒内容递归展开（深度限制，防嵌套潜影盒无限递归）
-    if (isShulkerBoxItem(itemId)) {
-      // [debug] 打印潜影盒物品的原始 entry 结构，用于排查 NBT 格式
-      console.log(`\x1b[33m[servux][dbg]\x1b[0m shulker entry keys=${Object.keys(entry).join(',')} id=${itemId}`);
-      console.log(`\x1b[33m[servux][dbg]\x1b[0m entry JSON=${JSON.stringify(entry).slice(0, 1000)}`);
-      const be = findBlockEntityData(entry);
-      console.log(`\x1b[33m[servux][dbg]\x1b[0m blockEntityData=${be ? JSON.stringify(be).slice(0, 1000) : 'null'}`);
-    }
     if (isShulkerBoxItem(itemId) && depth < maxDepth) {
-      const be = findBlockEntityData(entry);
-      if (be && be.value) {
-        collectShulkerContents(be.value, depth + 1, maxDepth, out);
-      }
+      collectShulkerFromEntry(entry, depth + 1, maxDepth, out);
     }
   }
 }
@@ -233,6 +223,72 @@ function collectShulkerContents(beValue, depth, maxDepth, out) {
   const listTag = target.Items || target.Inventory || target.Container;
   if (getListArray(listTag)) {
     collectListItems(listTag, depth, maxDepth, out);
+  }
+}
+
+/**
+ * 展开 1.21.x 潜影盒内容组件 minecraft:container：
+ *   components["minecraft:container"] = [{ slot:int, item:{id,count,...} }, ...]
+ * @param {object} listTag prismarine-nbt list tag
+ * @param {number} depth 当前递归深度
+ * @param {number} maxDepth 潜影盒最大展开深度
+ * @param {Array} out 结果数组
+ */
+function collectContainerComponent(listTag, depth, maxDepth, out) {
+  const arr = getListArray(listTag);
+  if (!arr) return;
+  for (const entry of arr) {
+    if (!entry || typeof entry !== 'object') continue;
+    const itemTag = entry.item; // {type:'compound', value:{id,count,...}}
+    if (!itemTag || !itemTag.value) continue;
+    const iv = itemTag.value;
+    const id = iv.id?.value || iv.Id?.value || '';
+    if (!id) continue;
+    const count = iv.count?.value ?? iv.Count?.value ?? 1;
+    const slot = entry.slot?.value ?? entry.Slot?.value ?? -1;
+    const itemId = String(id);
+    out.push({
+      item_id: itemId,
+      display_name: friendlyName(itemId),
+      count: Number(count) || 0,
+      slot: Number(slot),
+    });
+    // 潜影盒内可能再嵌套潜影盒（深度限制）
+    if (isShulkerBoxItem(itemId) && depth < maxDepth) {
+      const be = findBlockEntityData(itemTag);
+      if (be && be.value) {
+        collectShulkerContents(be.value, depth + 1, maxDepth, out);
+      }
+      const innerComp = itemTag.value.components && itemTag.value.components.value
+        ? itemTag.value.components.value['minecraft:container'] : null;
+      if (innerComp && innerComp.type === 'list') {
+        collectContainerComponent(innerComp, depth + 1, maxDepth, out);
+      }
+    }
+  }
+}
+
+/**
+ * 从物品 entry 中展开潜影盒内容（兼容 1.21.x components 与旧 tag 格式）。
+ * @param {object} entry 物品扁平 entry（{id,count,Slot,components?,tag?}）
+ * @param {number} depth 当前递归深度
+ * @param {number} maxDepth 潜影盒最大展开深度
+ * @param {Array} out 结果数组
+ */
+function collectShulkerFromEntry(entry, depth, maxDepth, out) {
+  // 1.21.x 潜影盒内容组件：components["minecraft:container"]
+  try {
+    const cc = entry.components && entry.components.value
+      ? entry.components.value['minecraft:container'] : null;
+    if (cc && cc.type === 'list') {
+      collectContainerComponent(cc, depth, maxDepth, out);
+      return;
+    }
+  } catch (e) { /* ignore */ }
+  // 旧格式：tag.BlockEntityTag
+  const be = findBlockEntityData(entry);
+  if (be && be.value) {
+    collectShulkerContents(be.value, depth + 1, maxDepth, out);
   }
 }
 
@@ -375,13 +431,8 @@ function createServuxHandlers(bot) {
         const posRes = longToPos(buf, offset);
         const key = `${posRes.x},${posRes.y},${posRes.z}`;
         offset = posRes.offset;
-        // [debug] 打印原始 NBT 字节（前 500B），排查组件是否被旧版 prismarine-nbt 丢弃
-        console.log(`\x1b[33m[servux][dbg]\x1b[0m rawNBT hex=${buf.subarray(offset).subarray(0, 500).toString('hex')}`);
         const parsed = await parseNbt(buf.subarray(offset));
         const compoundValue = getCompoundValue(parsed);
-        // [debug] 打印容器 NBT 顶层结构，排查潜影盒内容 NBT 位置
-        console.log(`\x1b[33m[servux][dbg]\x1b[0m container(${key}) top keys=${Object.keys(compoundValue).join(',')}`);
-        console.log(`\x1b[33m[servux][dbg]\x1b[0m container NBT=${JSON.stringify(compoundValue).slice(0, 2500)}`);
         const items = extractItems(compoundValue);
         const entry = pending.get(key);
         if (entry) {
