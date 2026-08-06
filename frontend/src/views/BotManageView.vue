@@ -686,7 +686,7 @@ watch(
   .page-title { font-size: 14px; }
   .page-subtitle { font-size: 14px; }
   .header-actions { justify-content: flex-start; }
-  .header-actions .pixel-btn { flex: 1; text-align: center; }
+  .header-actions .pixel-btn { flex: 1; min-width: 44%; text-align: center; }
   .instance-name { font-size: 14px; }
   .instance-slug { font-size: 12px; }
   .instance-dir { font-size: 12px; }
@@ -696,8 +696,11 @@ watch(
   .account-toolbar .el-select { width: 100%; }
   .account-form { max-width: 100%; }
   .terminal-meta { font-size: 12px; gap: 10px; }
+  /* 详情抽屉移动端全宽 */
+  :deep(.el-drawer) { width: 100% !important; }
 }
 @media (max-width: 480px) {
   .actions .pixel-btn { flex: 1 1 45%; font-size: 11px; }
+  .header-actions .pixel-btn { min-width: 100%; }
 }
 </style>
