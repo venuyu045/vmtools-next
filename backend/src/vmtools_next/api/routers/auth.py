@@ -35,6 +35,11 @@ class RegisterRequest(BaseModel):
     display_name: str = ""
 
 
+class ChangePasswordRequest(BaseModel):
+    old_password: str
+    new_password: str
+
+
 @router.post("/login", response_model=LoginResponse)
 def login(data: LoginRequest, db: Session = Depends(get_db)):
     """Login with game_id and password."""
@@ -91,3 +96,26 @@ def get_me(user=Depends(get_current_user)):
         "status": user.status,
         "organization_id": user.organization_id,
     }
+
+
+@router.post("/change-password")
+def change_password(
+    data: ChangePasswordRequest,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    """Change the current user's password (requires old password)."""
+    if not data.old_password or not data.new_password:
+        raise HTTPException(400, "旧密码与新密码不能为空")
+
+    if not bcrypt.checkpw(data.old_password.encode("utf-8"), user.password_hash.encode("utf-8")):
+        raise HTTPException(401, "旧密码不正确")
+
+    if len(data.new_password) < 6:
+        raise HTTPException(400, "新密码长度不能少于 6 位")
+
+    user.password_hash = bcrypt.hashpw(
+        data.new_password.encode("utf-8"), bcrypt.gensalt()
+    ).decode("utf-8")
+    db.commit()
+    return {"status": "ok", "message": "密码修改成功"}

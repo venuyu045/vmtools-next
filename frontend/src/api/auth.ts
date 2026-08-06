@@ -10,4 +10,7 @@ export const authApi = {
   getMe() {
     return client.get('/auth/me')
   },
+  changePassword(old_password: string, new_password: string) {
+    return client.post('/auth/change-password', { old_password, new_password })
+  },
 }

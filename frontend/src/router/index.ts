@@ -1,15 +1,15 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 
-/** 权限常量：与后端 role 字段对应 */
+/** 权限常量：与后端 role 字段对应（权限组重构后：user / admin / site_admin / guest） */
 export const ROLES = {
-  member: ['org_member', 'user', 'guest'], // 组织成员层级
-  orgAdmin: ['org_admin', 'site_admin'],   // 组织管理员及以上
-  siteAdmin: ['site_admin'],               // 仅站点管理员
+  member: ['user', 'guest'],          // 用户层级（用户 + 访客）
+  admin: ['admin', 'site_admin'],     // 管理员及以上
+  siteAdmin: ['site_admin'],          // 仅站点管理员
 } as const
 
 /** 所有登录用户可见的默认角色集合 */
-const ALL_LOGGED_IN = [...ROLES.member, ...ROLES.orgAdmin, ...ROLES.siteAdmin]
+const ALL_LOGGED_IN = [...ROLES.member, ...ROLES.admin, ...ROLES.siteAdmin]
 
 const routes = [
   {
@@ -33,41 +33,41 @@ const routes = [
       // 已登录用户（任意权限组）在布局内正常显示其权限组侧边栏；
       // 访客模式由 AppLayout 隐藏侧边栏/头部（纯内容浏览）。
       { path: 'miaomiao', name: 'Miaomiao', component: () => import('@/views/MiaomiaoView.vue'), meta: { title: '妙妙工具', public: true } },
-      // --- 组织成员可见 ---
+      // --- 用户可见 ---
       { path: 'dashboard', name: 'Dashboard', component: () => import('@/views/DashboardView.vue'), meta: { title: '仪表盘', roles: ALL_LOGGED_IN } },
       { path: 'player-tracking', name: 'PlayerTracking', component: () => import('@/views/PlayerTrackingView.vue'), meta: { title: '玩家列表', roles: ALL_LOGGED_IN } },
       // 上下线提醒（管理栏，独立入口）——追踪配置 + 上下线事件
-      { path: 'player-alerts', name: 'PlayerAlerts', component: () => import('@/views/PlayerAlertsView.vue'), meta: { title: '上下线提醒', roles: [...ROLES.orgAdmin, ...ROLES.siteAdmin] } },
+      { path: 'player-alerts', name: 'PlayerAlerts', component: () => import('@/views/PlayerAlertsView.vue'), meta: { title: '上下线提醒', roles: [...ROLES.admin, ...ROLES.siteAdmin] } },
       { path: 'warehouse-status', name: 'WarehouseStatus', component: () => import('@/views/WarehouseStatusView.vue'), meta: { title: '仓库状态', roles: ALL_LOGGED_IN } },
       { path: 'warehouse-status/:id', name: 'WarehouseItems', component: () => import('@/views/WarehouseItemsView.vue'), meta: { title: '仓库物品', roles: ALL_LOGGED_IN } },
 
-      // --- 组织管理员及以上可见 ---
-      { path: 'mcc-instances', name: 'MccInstances', component: () => import('@/views/BotManageView.vue'), meta: { title: 'MCC 管理', engine: 'mcc', roles: [...ROLES.orgAdmin, ...ROLES.siteAdmin] } },
+      // --- 管理员及以上可见 ---
+      { path: 'mcc-instances', name: 'MccInstances', component: () => import('@/views/BotManageView.vue'), meta: { title: 'MCC 管理', engine: 'mcc', roles: [...ROLES.admin, ...ROLES.siteAdmin] } },
     { path: 'mcc-status', name: 'MccStatus', component: () => import('@/views/BotStatusView.vue'), props: { engine: 'mcc', title: 'MCC 状态' }, meta: { title: 'MCC 状态', roles: ALL_LOGGED_IN } },
     { path: 'mf-status', name: 'MfStatus', component: () => import('@/views/BotStatusView.vue'), props: { engine: 'mineflayer', title: 'MF 状态' }, meta: { title: 'MF 状态', roles: ALL_LOGGED_IN } },
-    { path: 'mf-instances', name: 'MfInstances', component: () => import('@/views/BotManageView.vue'), meta: { title: 'MF 管理', engine: 'mineflayer', roles: [...ROLES.orgAdmin, ...ROLES.siteAdmin] } },
+    { path: 'mf-instances', name: 'MfInstances', component: () => import('@/views/BotManageView.vue'), meta: { title: 'MF 管理', engine: 'mineflayer', roles: [...ROLES.admin, ...ROLES.siteAdmin] } },
     // MCC/MF 实例的终端/文件视图（共用视图组件，按实例 bot_engine 动态返回对应列表）
-    { path: 'mcc-instances/:id/terminal', name: 'MccTerminal', component: () => import('@/views/MccTerminalView.vue'), meta: { title: 'MCC 终端', roles: [...ROLES.orgAdmin, ...ROLES.siteAdmin] } },
-    { path: 'mcc-instances/:id/files', name: 'MccFiles', component: () => import('@/views/MccFileManagerView.vue'), meta: { title: 'MCC 文件', roles: [...ROLES.orgAdmin, ...ROLES.siteAdmin] } },
-    { path: 'mf-instances/:id/terminal', name: 'MfTerminal', component: () => import('@/views/MccTerminalView.vue'), meta: { title: 'MF 终端', roles: [...ROLES.orgAdmin, ...ROLES.siteAdmin] } },
-    { path: 'mf-instances/:id/files', name: 'MfFiles', component: () => import('@/views/MccFileManagerView.vue'), meta: { title: 'MF 文件', roles: [...ROLES.orgAdmin, ...ROLES.siteAdmin] } },
-      { path: 'warehouses', name: 'Warehouses', component: () => import('@/views/WarehouseListView.vue'), meta: { title: '仓库管理', roles: [...ROLES.orgAdmin, ...ROLES.siteAdmin] } },
-      { path: 'warehouses/:id', name: 'WarehouseDetail', component: () => import('@/views/WarehouseDetailView.vue'), meta: { title: '仓库详情', roles: [...ROLES.orgAdmin, ...ROLES.siteAdmin] } },
-      { path: 'map-art/:taskId', name: 'MapArtBuild', component: () => import('@/views/MapArtBuildView.vue'), meta: { title: '地图画建造', roles: [...ROLES.orgAdmin, ...ROLES.siteAdmin] } },
-      { path: 'map-art-tasks', name: 'MapArtTasks', component: () => import('@/views/MapArtTaskList.vue'), meta: { title: '地图画任务', roles: [...ROLES.orgAdmin, ...ROLES.siteAdmin] } },
+    { path: 'mcc-instances/:id/terminal', name: 'MccTerminal', component: () => import('@/views/MccTerminalView.vue'), meta: { title: 'MCC 终端', roles: [...ROLES.admin, ...ROLES.siteAdmin] } },
+    { path: 'mcc-instances/:id/files', name: 'MccFiles', component: () => import('@/views/MccFileManagerView.vue'), meta: { title: 'MCC 文件', roles: [...ROLES.admin, ...ROLES.siteAdmin] } },
+    { path: 'mf-instances/:id/terminal', name: 'MfTerminal', component: () => import('@/views/MccTerminalView.vue'), meta: { title: 'MF 终端', roles: [...ROLES.admin, ...ROLES.siteAdmin] } },
+    { path: 'mf-instances/:id/files', name: 'MfFiles', component: () => import('@/views/MccFileManagerView.vue'), meta: { title: 'MF 文件', roles: [...ROLES.admin, ...ROLES.siteAdmin] } },
+      { path: 'warehouses', name: 'Warehouses', component: () => import('@/views/WarehouseListView.vue'), meta: { title: '仓库管理', roles: [...ROLES.admin, ...ROLES.siteAdmin] } },
+      { path: 'warehouses/:id', name: 'WarehouseDetail', component: () => import('@/views/WarehouseDetailView.vue'), meta: { title: '仓库详情', roles: [...ROLES.admin, ...ROLES.siteAdmin] } },
+      { path: 'map-art/:taskId', name: 'MapArtBuild', component: () => import('@/views/MapArtBuildView.vue'), meta: { title: '地图画建造', roles: [...ROLES.admin, ...ROLES.siteAdmin] } },
+      { path: 'map-art-tasks', name: 'MapArtTasks', component: () => import('@/views/MapArtTaskList.vue'), meta: { title: '地图画任务', roles: [...ROLES.admin, ...ROLES.siteAdmin] } },
       // 旧建造任务入口 → 合并到地图画建造
       { path: 'build', redirect: '/map-art-tasks' },
       { path: 'build/:id', redirect: '/map-art-tasks' },
-      { path: 'logistics/waypoints', name: 'Waypoints', component: () => import('@/views/LogisticsWaypointView.vue'), meta: { title: '路径点', roles: [...ROLES.orgAdmin, ...ROLES.siteAdmin] } },
-      { path: 'logistics/drop-points', name: 'DropPoints', component: () => import('@/views/LogisticsDropPointView.vue'), meta: { title: '投放点', roles: [...ROLES.orgAdmin, ...ROLES.siteAdmin] } },
-      { path: 'logistics/templates', name: 'Templates', component: () => import('@/views/LogisticsTemplateView.vue'), meta: { title: '任务模板', roles: [...ROLES.orgAdmin, ...ROLES.siteAdmin] } },
-      { path: 'logistics/runs', name: 'Runs', component: () => import('@/views/LogisticsRunView.vue'), meta: { title: '任务运行', roles: [...ROLES.orgAdmin, ...ROLES.siteAdmin] } },
+      { path: 'logistics/waypoints', name: 'Waypoints', component: () => import('@/views/LogisticsWaypointView.vue'), meta: { title: '路径点', roles: [...ROLES.admin, ...ROLES.siteAdmin] } },
+      { path: 'logistics/drop-points', name: 'DropPoints', component: () => import('@/views/LogisticsDropPointView.vue'), meta: { title: '投放点', roles: [...ROLES.admin, ...ROLES.siteAdmin] } },
+      { path: 'logistics/templates', name: 'Templates', component: () => import('@/views/LogisticsTemplateView.vue'), meta: { title: '任务模板', roles: [...ROLES.admin, ...ROLES.siteAdmin] } },
+      { path: 'logistics/runs', name: 'Runs', component: () => import('@/views/LogisticsRunView.vue'), meta: { title: '任务运行', roles: [...ROLES.admin, ...ROLES.siteAdmin] } },
 
-      // --- 组织管理员及以上可见 ---
+      // --- 管理员及以上可见 ---
       // 旧 Bot 管理路由（拆分后重定向到 MCC 管理）
       { path: 'bots', redirect: '/mcc-instances' },
-      { path: 'bots/:id/terminal', name: 'BotTerminal', component: () => import('@/views/MccTerminalView.vue'), meta: { title: 'Bot 终端', roles: [...ROLES.orgAdmin, ...ROLES.siteAdmin] } },
-      { path: 'bots/:id/files', name: 'BotFiles', component: () => import('@/views/MccFileManagerView.vue'), meta: { title: 'Bot 文件', roles: [...ROLES.orgAdmin, ...ROLES.siteAdmin] } },
+      { path: 'bots/:id/terminal', name: 'BotTerminal', component: () => import('@/views/MccTerminalView.vue'), meta: { title: 'Bot 终端', roles: [...ROLES.admin, ...ROLES.siteAdmin] } },
+      { path: 'bots/:id/files', name: 'BotFiles', component: () => import('@/views/MccFileManagerView.vue'), meta: { title: 'Bot 文件', roles: [...ROLES.admin, ...ROLES.siteAdmin] } },
 
       // --- 站点管理员专属 ---
       { path: 'members', name: 'Members', component: () => import('@/views/MembersView.vue'), meta: { title: '成员管理', roles: [...ROLES.siteAdmin] } },

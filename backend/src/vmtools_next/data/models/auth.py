@@ -45,7 +45,7 @@ class WarehouseGroupModel(Base):
 class UserModel(Base):
     """A registered user account.
 
-    Roles: site_admin, org_admin, org_member, guest
+    Roles: site_admin, admin, user, guest
     Status: pending, approved, rejected, banned
     """
 

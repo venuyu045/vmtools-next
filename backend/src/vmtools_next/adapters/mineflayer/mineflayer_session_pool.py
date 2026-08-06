@@ -41,6 +41,21 @@ class MineflayerSessionPool:
         client = self._clients.get(bot_id)
         return client is not None and client.is_connected
 
+    def get_bot_status(self, bot_id: str) -> dict:
+        """Return live connection status for a bot (aligned with MccSessionPool).
+
+        mineflayer 没有 MCP HTTP 心跳，状态直接取自 WS 连接是否存活。
+        """
+        client = self._clients.get(bot_id)
+        if client is not None and client.is_connected:
+            return {
+                "status": "online",
+                "port": getattr(client, "port", None),
+                "connected_at": getattr(client, "connected_at", None),
+                "last_heartbeat": getattr(client, "last_heartbeat_at", None),
+            }
+        return {"status": "offline", "port": None}
+
     async def connect_bot(self, bot_id: str, host: str = "127.0.0.1",
                            port: int = 44444, auth_token: str | None = None) -> bool:
         """Connect to a mineflayer bot process.

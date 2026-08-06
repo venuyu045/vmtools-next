@@ -45,31 +45,6 @@
       </template>
     </el-dialog>
 
-    <!-- 上下线事件（常驻列表） -->
-    <div class="events-panel">
-      <div class="events-header">
-        <h4>上下线事件</h4>
-        <span class="events-count">共 {{ playerStore.events.length }} 条</span>
-      </div>
-      <div v-if="playerStore.events.length === 0" class="empty-hint">暂无上下线事件</div>
-      <div v-else class="event-list">
-        <div
-          v-for="(ev, i) in playerStore.events.slice(0, 200)"
-          :key="i"
-          class="event-item"
-          :class="ev.event"
-        >
-          <span class="event-time">{{ new Date(ev.time).toLocaleString() }}</span>
-          <span class="event-icon">{{ ev.event === 'join' ? '⬆' : '⬇' }}</span>
-          <span class="event-name">{{ ev.name }}</span>
-          <span class="event-action">{{ ev.event === 'join' ? '上线了' : '离线了' }}</span>
-          <span class="event-world" v-if="ev.world">
-            ({{ playerStore.getWorldLabel(ev.world) }})
-          </span>
-        </div>
-      </div>
-    </div>
-
     <div class="help-box">
       <h4>怎么获取 QQ OpenID？</h4>
       <p>让那个 QQ 用户在群里 <strong>@机器人 发一条消息</strong>，在服务器运行：</p>
@@ -83,7 +58,6 @@
 import { reactive, ref, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import client from '@/api/client'
-import { useOnlinePlayersStore } from '@/stores/onlinePlayers'
 
 interface OwnerEntry {
   name: string
@@ -96,8 +70,6 @@ interface TrackingConfig {
   sentinel_instance: string
   owners: OwnerEntry[]
 }
-
-const playerStore = useOnlinePlayersStore()
 
 const config = reactive<TrackingConfig>({
   enabled: true,
@@ -172,39 +144,6 @@ async function confirmPlayer() {
 .track-list :deep(.el-tag .el-tag__close) { color: var(--green-primary, #00c853); }
 .track-list :deep(.el-tag .el-tag__close:hover) { background: rgba(0, 200, 83, 0.3); }
 .na { color: var(--text-disabled); font-style: italic; font-size: 13px; }
-
-/* 上下线事件（常驻列表） */
-.events-panel {
-  background: rgba(255,255,255,0.03);
-  border: 1px solid var(--border-subtle);
-  border-radius: 8px;
-  padding: 12px 16px;
-  margin-top: 20px;
-}
-.events-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 8px;
-}
-.events-header h4 { margin: 0; font-size: 14px; color: var(--text-secondary); }
-.events-count { font-size: 12px; color: var(--text-disabled); }
-.event-list { max-height: 480px; overflow-y: auto; }
-.event-item {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 5px 0;
-  font-size: 13px;
-  border-bottom: 1px solid rgba(255,255,255,0.04);
-}
-.event-item.leave { opacity: 0.7; }
-.event-time { color: var(--text-disabled); font-size: 11px; min-width: 150px; }
-.event-icon { font-size: 14px; }
-.event-name { font-weight: 600; }
-.event-action { color: var(--text-secondary); }
-.event-world { color: var(--text-disabled); font-size: 11px; }
-.empty-hint { color: var(--text-disabled); font-style: italic; font-size: 13px; padding: 16px 0; text-align: center; }
 
 .help-box { background: rgba(255,255,255,0.05); border: 1px solid var(--border-subtle); border-radius: 8px; padding: 16px; margin-top: 24px; }
 .help-box p { margin: 8px 0; }

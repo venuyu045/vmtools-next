@@ -1,6 +1,6 @@
 <template>
   <div class="dashboard">
-    <!-- Stats Row -->
+    <!-- Stats Row（仅用户权限组可见内容） -->
     <div class="stats-row">
       <div class="stat-item">
         <div class="stat-indicator" style="border-color: rgba(0,255,0,0.3)">
@@ -8,7 +8,16 @@
         </div>
         <div>
           <div class="stat-label">在线 Bot</div>
-          <div class="stat-sub">运行中</div>
+          <div class="stat-sub">MCC + MF</div>
+        </div>
+      </div>
+      <div class="stat-item">
+        <div class="stat-indicator" style="border-color: rgba(24,144,255,0.3)">
+          <span class="stat-value" style="color: #1890ff">{{ playerStore.count }}</span>
+        </div>
+        <div>
+          <div class="stat-label">在线玩家</div>
+          <div class="stat-sub">实时</div>
         </div>
       </div>
       <div class="stat-item">
@@ -21,90 +30,99 @@
         </div>
       </div>
       <div class="stat-item">
-        <div class="stat-indicator" style="border-color: rgba(24,144,255,0.3)">
-          <span class="stat-value" style="color: #1890ff">{{ runningTasks }}</span>
+        <div class="stat-indicator" style="border-color: rgba(255,152,0,0.3)">
+          <span class="stat-value" style="color: #ff9800">{{ playerStore.events.length }}</span>
         </div>
         <div>
-          <div class="stat-label">建造任务</div>
-          <div class="stat-sub">{{ runningTasks }} 运行中</div>
+          <div class="stat-label">上下线事件</div>
+          <div class="stat-sub">最近记录</div>
         </div>
       </div>
       <div class="stat-item">
-        <div class="stat-indicator" style="border-color: rgba(255,0,0,0.3)">
-          <span class="stat-value" style="color: #ff0000">{{ logisticsStore.runs?.length || 0 }}</span>
+        <div class="stat-indicator" style="border-color: rgba(171,71,188,0.3)">
+          <span class="stat-value" style="color: #ab47bc">{{ playerStore.residences.length }}</span>
         </div>
         <div>
-          <div class="stat-label">物流任务</div>
-          <div class="stat-sub">待命</div>
+          <div class="stat-label">妙妙领地</div>
+          <div class="stat-sub">{{ playerStore.regions.length }} 区域 · {{ playerStore.markers.length }} 标记</div>
         </div>
       </div>
     </div>
 
     <!-- Content Row -->
     <div class="content-row">
-      <!-- Left: Quick actions + Build status -->
+      <!-- Left: 在线玩家 + 在线 Bot -->
       <div class="left-col">
-        <div class="pixel-card quick-actions">
-          <h3 class="pixel section-title">快速操作</h3>
-          <div class="action-btns">
-            <button class="pixel-btn" @click="$router.push('/map-art-tasks')">新建任务</button>
-            <button class="pixel-btn outline" @click="$router.push('/warehouses')">扫描仓库</button>
-            <button class="pixel-btn outline" @click="$router.push('/map-art-tasks')">上传投影</button>
-          </div>
-        </div>
-        <div class="pixel-card build-status">
+        <div class="pixel-card online-players">
           <div class="section-header">
-            <h3 class="pixel section-title">建造状态</h3>
-            <router-link to="/map-art-tasks" class="view-all mono">查看全部 ></router-link>
+            <h3 class="pixel section-title">当前在线玩家</h3>
+            <router-link to="/player-tracking" class="view-all mono">查看全部 ></router-link>
           </div>
-          <div v-if="mapArtStore.tasks.length === 0" class="empty-text mono">-- 暂无任务 --</div>
-          <div v-for="task in mapArtStore.tasks.slice(0, 2)" :key="task.task_id" class="task-row">
-            <div class="task-info">
-              <div class="task-name">{{ task.name || task.projection_name || task.task_id }}</div>
-              <div class="task-meta mono">进度: {{ task.placed_blocks || 0 }}/{{ task.total_blocks || 0 }} 块</div>
-              <div class="pixel-progress">
-                <div class="pixel-progress-fill green" :style="{ width: taskPct(task) + '%' }"></div>
+          <div v-if="playerStore.count === 0" class="empty-text mono">-- 暂无在线玩家 --</div>
+          <div v-else class="world-groups">
+            <div v-for="(list, world) in playerStore.byWorld" :key="world" class="world-group">
+              <div class="world-label">
+                {{ playerStore.getWorldLabel(world as string) }}
+                <span class="world-count">{{ list.length }}</span>
+              </div>
+              <div class="player-tags">
+                <el-tag v-for="p in list" :key="p.uuid" size="small" effect="plain">{{ p.name }}</el-tag>
               </div>
             </div>
-            <span class="pixel task-pct">{{ taskPct(task) }}%</span>
-            <span :class="['pixel-badge', task.status === 'running' ? 'green' : 'yellow']">
-              <span class="badge-dot"></span>
-              {{ task.status === 'running' ? '运行中' : (task.status === 'paused' ? '已暂停' : task.status) }}
-            </span>
+          </div>
+        </div>
+
+        <div class="pixel-card bots-panel">
+          <div class="section-header">
+            <h3 class="pixel section-title">在线 Bot</h3>
+            <router-link to="/mcc-status" class="view-all mono">MCC 状态 ></router-link>
+            <router-link to="/mf-status" class="view-all mono">MF 状态 ></router-link>
+          </div>
+          <div v-if="botStore.onlineBots.length === 0" class="empty-text mono">-- 暂无在线 Bot --</div>
+          <div v-else class="bot-list">
+            <div v-for="bot in botStore.onlineBots.slice(0, 6)" :key="bot.bot_id" class="bot-row">
+              <span class="bot-dot"></span>
+              <span class="bot-name">{{ bot.name || bot.bot_id }}</span>
+              <span class="bot-id mono">{{ bot.bot_id }}</span>
+            </div>
           </div>
         </div>
       </div>
 
-      <!-- Right: Alerts + Monitor -->
+      <!-- Right: 仓库状态 + 上下线事件 -->
       <div class="right-col">
-        <div class="pixel-card alerts-panel">
-          <h3 class="pixel section-title">最近告警</h3>
-          <div v-if="monitorStore.alerts.length === 0" class="empty-text mono">-- 暂无告警 --</div>
-          <div v-for="(alert, i) in monitorStore.alerts.slice(0, 4)" :key="i" class="alert-row">
-            <span :class="['status-dot', alert.severity || 'warning']"></span>
-            <div class="alert-info">
-              <div class="alert-text">{{ alert.name || alert.metric_name }}</div>
-              <div class="alert-time mono">刚刚</div>
+        <div class="pixel-card warehouse-panel">
+          <div class="section-header">
+            <h3 class="pixel section-title">仓库状态</h3>
+            <router-link to="/warehouse-status" class="view-all mono">查看全部 ></router-link>
+          </div>
+          <div v-if="warehouseStore.warehouses.length === 0" class="empty-text mono">-- 暂无仓库数据 --</div>
+          <div v-else class="wh-list">
+            <div v-for="w in warehouseStore.warehouses.slice(0, 5)" :key="w.warehouse_id" class="wh-row">
+              <span class="wh-name">{{ w.name || w.warehouse_id.slice(0, 8) }}</span>
+              <span class="wh-meta mono">{{ w.total_items || 0 }} 物品</span>
             </div>
           </div>
         </div>
-        <div v-if="latestMetrics" class="pixel-card monitor-panel">
-          <h3 class="pixel section-title">系统状态</h3>
-          <div class="mon-row">
-            <span class="mon-label">CPU</span>
-            <span class="mono mon-val">{{ latestMetrics.cpu_percent.toFixed(1) }}%</span>
+
+        <div class="pixel-card events-panel">
+          <div class="section-header">
+            <h3 class="pixel section-title">最近上下线</h3>
+            <router-link to="/player-tracking" class="view-all mono">更多 ></router-link>
           </div>
-          <div class="mon-row">
-            <span class="mon-label">内存</span>
-            <span class="mono mon-val" style="color: #ffff00">{{ latestMetrics.memory_percent.toFixed(1) }}% · {{ fmtGB(latestMetrics.memory_used) }} / {{ fmtGB(latestMetrics.memory_total) }} GB</span>
-          </div>
-          <div class="mon-row">
-            <span class="mon-label">磁盘</span>
-            <span class="mono mon-val">{{ latestMetrics.disk_percent.toFixed(1) }}% · {{ fmtGB(latestMetrics.disk_used) }} / {{ fmtGB(latestMetrics.disk_total) }} GB</span>
-          </div>
-          <div class="mon-row">
-            <span class="mon-label">运行时间</span>
-            <span class="mono mon-val">{{ uptime }}</span>
+          <div v-if="playerStore.events.length === 0" class="empty-text mono">-- 暂无上下线事件 --</div>
+          <div v-else class="event-list">
+            <div
+              v-for="(ev, i) in playerStore.events.slice(0, 10)"
+              :key="i"
+              class="event-item"
+              :class="ev.event"
+            >
+              <span class="event-icon">{{ ev.event === 'join' ? '⬆' : '⬇' }}</span>
+              <span class="event-name">{{ ev.name }}</span>
+              <span class="event-action">{{ ev.event === 'join' ? '上线' : '离线' }}</span>
+              <span class="event-time mono">{{ fmtTime(ev.time) }}</span>
+            </div>
           </div>
         </div>
       </div>
@@ -116,53 +134,36 @@
 import { computed, onBeforeUnmount, onMounted } from 'vue'
 import { useBotStore } from '@/stores/bot'
 import { useWarehouseStore } from '@/stores/warehouse'
-import { useMapArtStore } from '@/stores/mapArt'
-import { useMonitorStore } from '@/stores/monitor'
-import { useLogisticsStore } from '@/stores/logistics'
+import { useOnlinePlayersStore } from '@/stores/onlinePlayers'
 
 const botStore = useBotStore()
 const warehouseStore = useWarehouseStore()
-const mapArtStore = useMapArtStore()
-const monitorStore = useMonitorStore()
-const logisticsStore = useLogisticsStore()
+const playerStore = useOnlinePlayersStore()
 
-const runningTasks = computed(() => mapArtStore.tasks.filter(t => t.status === 'running').length)
 const totalItems = computed(() => warehouseStore.warehouses.reduce((sum, w) => sum + (w.total_items || 0), 0))
-const latestMetrics = computed(() => monitorStore.metrics?.[monitorStore.metrics.length - 1])
-const uptime = computed(() => {
-  if (!latestMetrics.value) return '--'
-  const s = (Date.now() / 1000 - latestMetrics.value.timestamp) || 0
-  if (s < 60) return `${Math.floor(s)}s`
-  if (s < 3600) return `${Math.floor(s / 60)}m`
-  const d = Math.floor(s / 86400)
-  const h = Math.floor((s % 86400) / 3600)
-  return `${d}d ${h}h`
-})
-function taskPct(task: any): number {
-  return task.total_blocks > 0 ? Math.round((task.placed_blocks || 0) / task.total_blocks * 100) : 0
-}
-function fmtGB(bytes: number): string {
-  if (!bytes) return '0'
-  return (bytes / 1024 / 1024 / 1024).toFixed(1)
+
+function fmtTime(ts: number): string {
+  const d = new Date(ts)
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
 }
 
-let metricsInterval: ReturnType<typeof setInterval> | undefined
+let interval: ReturnType<typeof setInterval> | undefined
 
 onMounted(async () => {
   await Promise.all([
     botStore.fetchBots(),
     warehouseStore.fetchWarehouses(),
-    mapArtStore.fetchTasks(),
-    monitorStore.fetchAlerts(),
-    monitorStore.fetchMetrics(),
   ])
-  metricsInterval = setInterval(() => {
-    monitorStore.fetchMetrics(50)
-  }, 5000)
+  // 玩家在线数/领地数由 Socket.IO 推送（online_players_update / residences_update），
+  // 此处仅定期刷新 Bot 状态（玩家数据不额外拉取，避免大体积请求）。
+  interval = setInterval(() => {
+    botStore.fetchBots()
+  }, 10000)
 })
 
 onBeforeUnmount(() => {
-  if (metricsInterval) clearInterval(metricsInterval)
+  if (interval) clearInterval(interval)
 })
 </script>
 
@@ -171,145 +172,109 @@ onBeforeUnmount(() => {
 
 .stats-row { display: flex; gap: 16px; flex-wrap: wrap; }
 
+.stat-item {
+  flex: 1 1 150px;
+  min-width: 170px;
+  background: #0d0d0d;
+  border: 1px solid var(--border-subtle);
+  padding: 18px 20px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.stat-indicator {
+  border: 1px solid;
+  padding: 10px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 48px;
+}
+
+.stat-value {
+  font-size: 22px;
+  font-family: var(--font-mono);
+  font-weight: 700;
+}
+
+.stat-label { font-size: 14px; color: var(--text-primary); font-weight: 600; }
+.stat-sub { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
+
 .content-row { display: flex; gap: 24px; }
 .left-col { flex: 1; display: flex; flex-direction: column; gap: 24px; min-width: 0; }
 .right-col { width: 360px; flex-shrink: 0; display: flex; flex-direction: column; gap: 24px; }
 
 .section-title { font-size: 14px; color: var(--green-primary); margin-bottom: 16px; }
-.section-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
+.section-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; gap: 10px; flex-wrap: wrap; }
 .section-header .section-title { margin-bottom: 0; }
 
-.view-all { font-size: 14px; color: var(--green-primary); opacity: 0.6; text-decoration: none; }
+.view-all { font-size: 13px; color: var(--green-primary); opacity: 0.6; text-decoration: none; }
 .view-all:hover { opacity: 1; }
 
-.action-btns { display: flex; gap: 12px; flex-wrap: wrap; }
+.empty-text { color: var(--text-muted); text-align: center; padding: 20px; font-size: 14px; }
 
-.empty-text { color: var(--text-muted); text-align: center; padding: 20px; font-size: 16px; }
+/* 在线玩家 */
+.world-groups { display: flex; flex-direction: column; gap: 10px; }
+.world-label { font-size: 13px; font-weight: 600; color: var(--text-secondary); margin-bottom: 6px; display: flex; align-items: center; gap: 6px; }
+.world-count { font-size: 11px; color: var(--text-disabled); }
+.player-tags { display: flex; flex-wrap: wrap; gap: 6px; }
+.player-tags :deep(.el-tag) {
+  background: rgba(64, 158, 255, 0.12);
+  border-color: rgba(64, 158, 255, 0.35);
+  color: #409eff;
+}
 
-/* Build task rows */
-.task-row { display: flex; align-items: center; gap: 16px; padding: 12px 0; border-bottom: 1px solid var(--border-subtle); }
-.task-row:last-child { border-bottom: none; }
-.task-info { flex: 1; min-width: 0; }
-.task-name { color: var(--text-primary); font-size: 14px; margin-bottom: 4px; font-weight: bold; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.task-meta { color: var(--text-secondary); font-size: 14px; margin-bottom: 8px; }
-.task-pct { font-size: 12px; color: var(--green-primary); white-space: nowrap; }
+/* 在线 Bot */
+.bot-list { display: flex; flex-direction: column; gap: 6px; }
+.bot-row { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--border-subtle); }
+.bot-row:last-child { border-bottom: none; }
+.bot-dot { width: 8px; height: 8px; background: var(--green-primary); flex-shrink: 0; }
+.bot-name { font-size: 14px; font-weight: 600; color: var(--text-primary); }
+.bot-id { font-size: 11px; color: var(--text-muted); margin-left: auto; }
 
-/* Alert rows */
-.alert-row { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--border-subtle); }
-.alert-row:last-child { border-bottom: none; }
-.alert-info { flex: 1; min-width: 0; }
-.alert-text { font-size: 13px; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.alert-time { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
+/* 仓库状态 */
+.wh-list { display: flex; flex-direction: column; gap: 6px; }
+.wh-row { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--border-subtle); }
+.wh-row:last-child { border-bottom: none; }
+.wh-name { font-size: 14px; color: var(--text-primary); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wh-meta { font-size: 12px; color: var(--text-secondary); margin-left: auto; }
 
-/* Monitor rows */
-.mon-row { display: flex; justify-content: space-between; align-items: center; padding: 10px 0; border-bottom: 1px solid var(--border-subtle); gap: 8px; }
-.mon-row:last-child { border-bottom: none; }
-.mon-label { font-size: 13px; color: var(--text-secondary); flex-shrink: 0; }
-.mon-val { font-size: 16px; color: var(--text-primary); text-align: right; word-break: break-all; }
+/* 上下线事件 */
+.event-list { display: flex; flex-direction: column; }
+.event-item { display: flex; align-items: center; gap: 8px; padding: 7px 0; font-size: 13px; border-bottom: 1px solid var(--border-subtle); }
+.event-item:last-child { border-bottom: none; }
+.event-item.leave { opacity: 0.7; }
+.event-icon { font-size: 13px; }
+.event-name { font-weight: 600; color: var(--text-primary); }
+.event-action { color: var(--text-secondary); }
+.event-time { color: var(--text-muted); font-size: 11px; margin-left: auto; }
 
 /* ============ RESPONSIVE ============ */
 @media (max-width: 1024px) {
-  .content-row {
-    flex-direction: column;
-  }
-  .right-col {
-    width: 100%;
-    flex-shrink: 1;
-  }
+  .content-row { flex-direction: column; }
+  .right-col { width: 100%; flex-shrink: 1; }
 }
 
 @media (max-width: 768px) {
-  .dashboard {
-    gap: 16px;
-  }
-
-  .stats-row {
-    gap: 10px;
-  }
-
-  .stats-row .stat-item {
-    flex: 1 1 calc(50% - 10px);
-    min-width: 140px;
-    padding: 16px;
-    gap: 10px;
-  }
-
-  .content-row {
-    gap: 16px;
-  }
-
-  .left-col,
-  .right-col {
-    gap: 16px;
-  }
-
-  .action-btns {
-    gap: 8px;
-  }
-
-  .task-row {
-    flex-wrap: wrap;
-    gap: 8px;
-  }
-
-  .task-pct {
-    font-size: 11px;
-  }
-
-  .mon-val {
-    font-size: 14px;
-  }
+  .dashboard { gap: 16px; }
+  .stats-row { gap: 10px; }
+  .stats-row .stat-item { flex: 1 1 calc(50% - 10px); min-width: 140px; padding: 16px; gap: 10px; }
+  .content-row { gap: 16px; }
+  .left-col, .right-col { gap: 16px; }
 }
 
 @media (max-width: 480px) {
-  .dashboard {
-    gap: 12px;
-  }
-
-  .stats-row {
-    gap: 8px;
-  }
-
-  .stats-row .stat-item {
-    padding: 12px;
-    gap: 8px;
-  }
-
-  .stat-value {
-    font-size: 16px;
-  }
-  .stat-label {
-    font-size: 11px;
-  }
-  .stat-sub {
-    font-size: 12px;
-  }
-
-  .pixel-card {
-    padding: 16px;
-  }
-
-  .section-title {
-    font-size: 12px;
-    margin-bottom: 12px;
-  }
-
-  .action-btns .pixel-btn {
-    flex: 1;
-    padding: 10px 12px;
-    font-size: 12px;
-    min-width: 0;
-  }
-
-  .task-name {
-    font-size: 13px;
-  }
-  .task-meta {
-    font-size: 12px;
-  }
-
-  .mon-val {
-    font-size: 13px;
-  }
+  .dashboard { gap: 12px; }
+  .stats-row { gap: 8px; }
+  .stats-row .stat-item { padding: 12px; gap: 8px; }
+  .stat-value { font-size: 16px; }
+  .stat-label { font-size: 11px; }
+  .stat-sub { font-size: 12px; }
+  .pixel-card { padding: 16px; }
+  .section-title { font-size: 12px; margin-bottom: 12px; }
+  .bot-name { font-size: 13px; }
+  .wh-name { font-size: 13px; }
+  .event-time { font-size: 10px; }
 }
 </style>

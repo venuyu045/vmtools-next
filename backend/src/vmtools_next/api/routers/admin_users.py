@@ -19,7 +19,8 @@ from vmtools_next.data.models.auth import UserModel
 router = APIRouter(prefix="/api/admin/users", tags=["admin"])
 
 VALID_STATUS = {"pending", "approved", "rejected", "banned"}
-VALID_ROLES = {"site_admin", "org_admin", "org_member", "guest", "user"}
+# 权限组重构后：站点管理员 / 管理员 / 用户 / 访客（org_member、org_admin 已废弃）
+VALID_ROLES = {"site_admin", "admin", "user", "guest"}
 
 
 class UserUpdateRequest(BaseModel):
