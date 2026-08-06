@@ -298,6 +298,8 @@ import { ElMessage } from 'element-plus'
 import { useOnlinePlayersStore } from '@/stores/onlinePlayers'
 import client from '@/api/client'
 
+defineOptions({ name: 'MiaomiaoView' })
+
 const playerStore = useOnlinePlayersStore()
 const route = useRoute()
 // Support ?tab=mspt|residences|markers for deep links (e.g. QQ leaderboard link)

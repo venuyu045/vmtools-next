@@ -71,8 +71,10 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onActivated, onBeforeUnmount, onDeactivated, onMounted, ref, watch } from 'vue'
 import api from '@/api/client'
+
+defineOptions({ name: 'BotStatusView' })
 
 const props = defineProps<{
   engine?: string
@@ -167,6 +169,25 @@ async function load() {
 onMounted(() => {
   load()
   timer = window.setInterval(load, 10000)
+})
+
+// keep-alive 下：切走暂停轮询（省请求），切回立即刷新并恢复轮询
+onActivated(() => {
+  load()
+  if (!timer) timer = window.setInterval(load, 10000)
+})
+
+onDeactivated(() => {
+  if (timer) {
+    window.clearInterval(timer)
+    timer = undefined
+  }
+})
+
+// MCC ↔ MF 状态切换：同一组件复用（keep-alive 下不重新挂载），
+// engine prop 变化时立即重新加载，避免等 10s 定时器或手动刷新。
+watch(() => props.engine, () => {
+  load()
 })
 
 onBeforeUnmount(() => {
