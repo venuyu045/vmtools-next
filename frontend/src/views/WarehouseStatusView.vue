@@ -120,7 +120,7 @@ function fmtNum(v: any): string {
 function fmtTime(iso: string): string {
   try { return new Date(iso).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) } catch { return iso }
 }
-function gotoWarehouse(id: string) { router.push(`/warehouses/${id}`) }
+function gotoWarehouse(id: string) { router.push(`/warehouse-status/${id}`) }
 
 /** 物品类别 → emoji 图标 */
 function itemEmoji(itemId: string): string {
