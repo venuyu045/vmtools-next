@@ -71,7 +71,7 @@
 
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref } from 'vue'
-import { api } from '@/api/client'
+import api from '@/api/client'
 
 interface NearestResidence {
   label: string
