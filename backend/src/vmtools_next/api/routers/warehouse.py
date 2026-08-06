@@ -265,10 +265,12 @@ def search_item_details(q: str = "", limit: int = 50,
         return ItemSearchPage(items=[], total=0)
 
     like = f"%{q}%"
-    zh_ids = search_zh_keywords(q)  # 中文关键词 → item_id 候选
+    zh_ids = search_zh_keywords(q)  # 中文关键词 → item_id 候选（不带命名空间）
     conditions = [MaterialItemModel.item_id.like(like), MaterialItemModel.display_name.like(like)]
     if zh_ids:
-        conditions.append(MaterialItemModel.item_id.in_(zh_ids))
+        # 兼容带/不带 minecraft: 前缀（仓库数据为 minecraft:xxx）
+        prefixed = [f"minecraft:{k}" for k in zh_ids]
+        conditions.append(MaterialItemModel.item_id.in_(set(zh_ids + prefixed)))
     rows = db.query(MaterialItemModel).filter(or_(*conditions)).all()
 
     # item_id → 仓库聚合 {warehouse_fk: count} + display_name
