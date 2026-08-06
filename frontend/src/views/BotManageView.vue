@@ -639,6 +639,7 @@ watch(
   padding: 6px 10px;
   background: #000;
   border: 1px solid var(--border-subtle);
+  min-width: 0; /* 允许子项收缩，长服务器地址 ellipsis 而不撑破卡片 */
 }
 .status-dot-mini {
   width: 8px; height: 8px;
@@ -648,8 +649,8 @@ watch(
 .status-dot-mini.warning { background: #ffff00; box-shadow: 0 0 6px #ffff00; }
 .status-dot-mini.error { background: #ff0000; box-shadow: 0 0 6px #ff0000; }
 .status-dot-mini.offline { background: #555; }
-.bot-status-label { font-family: var(--font-body); font-size: 13px; color: var(--text-secondary); }
-.bot-server { font-size: 13px; color: var(--text-muted); margin-left: auto; }
+.bot-status-label { font-family: var(--font-body); font-size: 13px; color: var(--text-secondary); flex-shrink: 0; }
+.bot-server { font-size: 13px; color: var(--text-muted); margin-left: auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* HP / Food 数字行 */
 .bot-bars { display: flex; flex-direction: column; gap: 6px; }
@@ -658,7 +659,7 @@ watch(
 .bar-label.hp { color: #ff0000; }
 .bar-label.fd { color: #ffff00; }
 .bar-val { font-size: 13px; color: var(--text-primary); min-width: 26px; }
-.bar-pos { font-size: 12px; color: var(--text-secondary); margin-left: auto; white-space: nowrap; }
+.bar-pos { font-size: 12px; color: var(--text-secondary); margin-left: auto; white-space: nowrap; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 
 .actions { display: flex; flex-wrap: wrap; gap: 10px; }
 .actions .pixel-btn { padding: 8px 14px; }
