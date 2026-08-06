@@ -328,6 +328,16 @@ class MccProcessManager:
         lock = self._locks.setdefault(instance_id, asyncio.Lock())
         async with lock:
             handle = self._processes.get(instance_id)
+            # 先取消退出监控任务，避免其检测到进程退出后按 desired_state+auto_reconnect
+            # 触发自动重连（shutdown/主动停止时会造成竞争：重连的 start_instance 失败
+            # 会把 desired_state 改回 stopped，导致"服务重启后实例不自动恢复"）。
+            if handle and handle.exit_task:
+                handle.exit_task.cancel()
+                try:
+                    await handle.exit_task
+                except asyncio.CancelledError:
+                    pass
+                handle.exit_task = None
             Session = get_session_factory()
             db = Session()
             try:
