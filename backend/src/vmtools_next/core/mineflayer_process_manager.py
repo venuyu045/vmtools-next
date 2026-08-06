@@ -323,6 +323,12 @@ class MineflayerProcessManager:
         ``preserve_desired_state=True`` 用于服务关闭（shutdown）：只停进程、
         保留 desired_state=running，重启后自动恢复；用户主动停止时传 False。
         """
+        # 先同步 desired_state=stopped（用户主动停止），
+        # 避免 _watch_exit_loop 在进程退出时仍读到 running 而竞态自动重启
+        # （历史bug：stop 后实例又自己启动，desired_state 停留在 running）。
+        if not preserve_desired_state:
+            await self._sync_desired_state(instance_id, "stopped")
+
         handle = self._processes.get(instance_id)
         if not handle or handle.process.returncode is not None:
             # 进程可能已自行退出；无论如何确保 desired_state = stopped
