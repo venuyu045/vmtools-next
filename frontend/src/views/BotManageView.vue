@@ -685,13 +685,19 @@ watch(
   .page-header { flex-direction: column; align-items: stretch; gap: 12px; }
   .page-title { font-size: 14px; }
   .page-subtitle { font-size: 14px; }
-  .header-actions { justify-content: flex-start; }
-  .header-actions .pixel-btn { flex: 1; min-width: 44%; text-align: center; }
+  /* 顶部工具按钮：紧凑排列（按内容宽度），不占满 */
+  .header-actions { justify-content: flex-start; gap: 8px; }
+  .header-actions .pixel-btn { flex: none; padding: 5px 10px; font-size: 12px; min-height: 30px; }
   .instance-name { font-size: 14px; }
   .instance-slug { font-size: 12px; }
-  .instance-dir { font-size: 12px; }
-  .actions { gap: 8px; }
-  .actions .pixel-btn { font-size: 12px; padding: 6px 12px; min-height: 40px; }
+  .instance-dir { font-size: 11px; }
+  /* 实例卡片紧凑化：缩小间距与按钮 */
+  .instance-card { gap: 8px; }
+  .instance-head { gap: 8px; }
+  .actions { gap: 6px; }
+  .actions .pixel-btn { font-size: 12px; padding: 5px 10px; min-height: 32px; }
+  .reconnect-toggle { padding: 2px 6px; }
+  .bot-status-row { padding: 4px 8px; }
   .account-toolbar { flex-direction: column; align-items: stretch; }
   .account-toolbar .el-select { width: 100%; }
   .account-form { max-width: 100%; }
@@ -700,7 +706,8 @@ watch(
   :deep(.el-drawer) { width: 100% !important; }
 }
 @media (max-width: 480px) {
-  .actions .pixel-btn { flex: 1 1 45%; font-size: 11px; }
-  .header-actions .pixel-btn { min-width: 100%; }
+  .actions .pixel-btn { flex: none; font-size: 11px; padding: 4px 8px; }
+  .header-actions .pixel-btn { font-size: 11px; padding: 4px 8px; }
+  .instance-dir { font-size: 10px; }
 }
 </style>
