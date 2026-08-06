@@ -289,12 +289,18 @@ class MineflayerProcessManager:
 
     async def stop_instance(self, instance_id: str,
                              force: bool = False,
-                             timeout_seconds: float = 10.0) -> dict:
-        """Stop a mineflayer bot process gracefully."""
+                             timeout_seconds: float = 10.0,
+                             preserve_desired_state: bool = False) -> dict:
+        """Stop a mineflayer bot process gracefully.
+
+        ``preserve_desired_state=True`` 用于服务关闭（shutdown）：只停进程、
+        保留 desired_state=running，重启后自动恢复；用户主动停止时传 False。
+        """
         handle = self._processes.get(instance_id)
         if not handle or handle.process.returncode is not None:
             # 进程可能已自行退出；无论如何确保 desired_state = stopped
-            await self._sync_desired_state(instance_id, "stopped")
+            if not preserve_desired_state:
+                await self._sync_desired_state(instance_id, "stopped")
             return {"status": "not_running"}
 
         try:
@@ -316,8 +322,9 @@ class MineflayerProcessManager:
         # 清理
         self._cleanup_handle(instance_id)
 
-        # 同步状态：DB + Socket.IO
-        await self._sync_desired_state(instance_id, "stopped")
+        # 同步状态：DB + Socket.IO（shutdown 时保留 desired_state=running 以便重启恢复）
+        if not preserve_desired_state:
+            await self._sync_desired_state(instance_id, "stopped")
         await self._update_instance_status(
             instance_id,
             status="stopped",
@@ -327,10 +334,17 @@ class MineflayerProcessManager:
 
         return {"status": "stopped"}
 
-    async def stop_all(self) -> None:
-        """Stop all mineflayer bot processes."""
+    async def stop_all(self, preserve_desired_state: bool = True) -> None:
+        """Stop all mineflayer bot processes.
+
+        默认保留 desired_state（服务 shutdown 语义）：重启后恢复运行；
+        强制终止（kill-all）时传 False 清除。
+        """
         for instance_id in list(self._processes.keys()):
-            await self.stop_instance(instance_id)
+            try:
+                await self.stop_instance(instance_id, preserve_desired_state=preserve_desired_state)
+            except Exception as exc:
+                logger.warning("Failed to stop %s during stop_all: %s", instance_id[:8], exc)
 
     def get_ws_port(self, instance_id: str) -> Optional[int]:
         """Get the WebSocket port for a running bot."""
