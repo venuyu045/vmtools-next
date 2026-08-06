@@ -72,7 +72,10 @@ class MccProcessManager:
     async def stop(self) -> None:
         for instance_id in list(self._processes.keys()):
             try:
-                await self.stop_instance(instance_id, force=True, timeout_seconds=2)
+                # shutdown 场景保留 desired_state（running 实例重启后自动恢复），
+                # 与 MineflayerProcessManager 的 preserve_desired_state 语义对齐。
+                await self.stop_instance(instance_id, force=True, timeout_seconds=2,
+                                         preserve_desired_state=True)
             except Exception as exc:
                 logger.warning("Failed to stop MCC instance {} during shutdown: {}", instance_id, exc)
         self._started = False
@@ -318,7 +321,10 @@ class MccProcessManager:
             finally:
                 db.close()
 
-    async def stop_instance(self, instance_id: str, force: bool = False, timeout_seconds: float = 10.0) -> dict:
+    async def stop_instance(self, instance_id: str, force: bool = False, timeout_seconds: float = 10.0,
+                            preserve_desired_state: bool = False) -> dict:
+        """Stop an instance. ``preserve_desired_state=True``（shutdown 场景）只停进程、
+        不改 desired_state，重启后 running 实例自动恢复。"""
         lock = self._locks.setdefault(instance_id, asyncio.Lock())
         async with lock:
             handle = self._processes.get(instance_id)
@@ -328,7 +334,8 @@ class MccProcessManager:
                 instance = db.query(MccInstanceModel).filter(MccInstanceModel.instance_id == instance_id).first()
                 if instance:
                     instance.status = "stopping"
-                    instance.desired_state = "stopped"
+                    if not preserve_desired_state:
+                        instance.desired_state = "stopped"
                     db.commit()
                     await self._emit_status(instance_id, "stopping", pid=instance.pid, mcp_port=instance.mcp_port)
 
