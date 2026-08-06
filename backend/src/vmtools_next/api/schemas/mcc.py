@@ -54,6 +54,13 @@ class NearestResidence(BaseModel):
     position: dict
 
 
+class BotCurrentTask(BaseModel):
+    type: str          # logistics | mapart | scan
+    name: str          # 任务描述，如「物流·铁矿搬运」「地图画·像素龙」
+    status: str        # running / paused
+    progress: Optional[float] = None
+
+
 class MccBotStatusItem(BaseModel):
     bot_id: str
     name: str
@@ -65,6 +72,7 @@ class MccBotStatusItem(BaseModel):
     mcp_port: Optional[int] = None
     last_heartbeat: Optional[str] = None
     nearest_residence: Optional[NearestResidence] = None
+    current_task: Optional[BotCurrentTask] = None  # 当前在做的工作（无则空闲）
 
 
 class MccBotStatusList(BaseModel):

@@ -130,6 +130,7 @@ const navGroups: NavGroup[] = [
       { path: '/player-tracking', label: '玩家列表', minRole: 1 },
       { path: '/miaomiao', label: '妙妙工具', minRole: 1 },
       { path: '/mcc-status', label: 'MCC 状态', minRole: 1 },
+      { path: '/mf-status', label: 'MF 状态', minRole: 1 },
       { path: '/warehouse-status', label: '仓库状态', minRole: 1 },
     ],
   },
