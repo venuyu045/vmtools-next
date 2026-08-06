@@ -63,6 +63,36 @@ def get_current_user(
     return user
 
 
+def get_optional_user(
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
+    db: Session = Depends(get_db),
+) -> Optional[UserModel]:
+    """Optional auth: returns the user when a valid token is provided, else None.
+
+    Used by public/guest-accessible endpoints (e.g. BlueMap tools) so visitors
+    can browse without logging in, while logged-in users still get user context.
+    """
+    import jwt
+    from vmtools_next.config import get_config
+
+    if not credentials:
+        return None
+    token = credentials.credentials
+    config = get_config()
+    try:
+        payload = jwt.decode(token, config.server.secret_key, algorithms=[config.server.jwt_algorithm])
+        user_id = payload.get("sub")
+        if not user_id:
+            return None
+    except jwt.PyJWTError:
+        return None
+
+    user = db.query(UserModel).filter(UserModel.id == user_id).first()
+    if not user or user.status != "approved":
+        return None
+    return user
+
+
 def require_site_admin(user: UserModel = Depends(get_current_user)) -> UserModel:
     """Dependency that requires the site_admin role.
 

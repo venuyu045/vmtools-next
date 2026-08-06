@@ -166,8 +166,16 @@ class MineflayerBridgeClient(AbstractBotAgent):
                     raw = await asyncio.wait_for(self._ws.recv(), timeout=30.0)
                 except asyncio.TimeoutError:
                     continue  # recv timeout, just loop to check if still connected
+                except (websockets.ConnectionClosed, ConnectionError, OSError) as recv_err:
+                    # 连接已关闭：终止循环，由外层 finally 清理。
+                    # 不能 continue —— 否则 recv 会反复抛错、每圈打 warning 日志，
+                    # 导致日志刷屏（413万行）拖垮服务（历史事故：服务反复卡死）。
+                    logger.info("Listen loop connection closed: %s", recv_err)
+                    break
                 except Exception as recv_err:
+                    # 其它异常：限频（0.5s 退避）后继续，避免日志爆炸
                     logger.warning("Listen loop recv error: %s", recv_err)
+                    await asyncio.sleep(0.5)
                     continue
 
                 try:
