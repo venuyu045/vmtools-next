@@ -31,6 +31,10 @@
         >
           > 登录
         </el-button>
+        <div class="login-register">
+          <span class="register-hint">还没有账号？</span>
+          <el-link type="primary" @click="goRegister">立即注册</el-link>
+        </div>
       </el-form>
       <div class="login-footer mono">
         v3.0 · MCC Server · Build Automation
@@ -67,6 +71,10 @@ async function handleLogin() {
   } finally {
     loading.value = false
   }
+}
+
+function goRegister() {
+  router.push('/register')
 }
 </script>
 
@@ -123,6 +131,17 @@ async function handleLogin() {
   margin-top: 24px;
   color: var(--text-muted);
   font-size: 14px;
+}
+
+.login-register {
+  margin-top: 16px;
+  text-align: center;
+  font-size: 14px;
+}
+
+.register-hint {
+  color: var(--text-secondary);
+  margin-right: 4px;
 }
 
 .login-icp {
