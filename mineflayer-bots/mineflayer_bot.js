@@ -207,6 +207,23 @@ async function createBotProcess(options) {
       }
     });
 
+    // ── 服务器聊天/系统消息 → stdout（MF 终端可见） ──
+    // mineflayer 在 1.19+ 签名聊天协议下 `chat` 事件并不可靠（签名玩家消息
+    // 只走 system_chat/player_chat 包），`message` 事件覆盖所有服务器聊天内容
+    // （玩家消息 + 系统消息 + 命令回显），toString() 提取纯文本。
+    bot.on('message', (jsonMsg) => {
+      try {
+        const text = (jsonMsg && typeof jsonMsg.toString === 'function')
+          ? jsonMsg.toString()
+          : String(jsonMsg);
+        if (text) {
+          console.log(`[chat] ${text}`);
+        }
+      } catch (err) {
+        // 忽略单条消息解析失败，不影响后续
+      }
+    });
+
     bot.on('playerJoined', (player) => {
       broadcast(createEvent('player_joined', { username: player.username }));
     });
