@@ -16,7 +16,9 @@ from datetime import datetime, timezone
 from sqlalchemy.orm import Session
 
 from vmtools_next.core.dataclasses import ContainerSnapshot
+from vmtools_next.core.item_names_zh import get_item_zh
 from vmtools_next.data.models.warehouse import (
+    ContainerItemDetailModel,
     ContainerItemModel,
     MaterialItemModel,
     ScanStatusModel,
@@ -125,7 +127,12 @@ def persist_scan_results(db: Session, warehouse_id: str,
     db.query(ContainerItemModel).filter(
         ContainerItemModel.warehouse_fk == warehouse_id).delete()
     db.flush()
+    # 2b. Rebuild container_item_details (one row per container per item，物品→箱子明细)
+    db.query(ContainerItemDetailModel).filter(
+        ContainerItemDetailModel.warehouse_fk == warehouse_id).delete()
+    db.flush()
     _container_rows = 0
+    _detail_rows = 0
     for snap in results.values():
         primary = snap.items[0] if snap.items else None
         db.add(ContainerItemModel(
@@ -134,12 +141,29 @@ def persist_scan_results(db: Session, warehouse_id: str,
             container_y=snap.y,
             container_z=snap.z,
             item_id=primary.item_id if primary else "",
-            item_name_zh=primary.display_name if primary else "",
+            item_name_zh=get_item_zh(primary.item_id, primary.display_name) if primary else "",
             count=snap.total_items,
         ))
         _container_rows += 1
         if _container_rows % _FLUSH_EVERY == 0:
             db.flush()
+        # 物品→箱子明细（每物品每箱一行；中文名用映射）
+        for item in snap.items:
+            if not item.item_id:
+                continue
+            db.add(ContainerItemDetailModel(
+                warehouse_fk=warehouse_id,
+                container_x=snap.x,
+                container_y=snap.y,
+                container_z=snap.z,
+                item_id=item.item_id,
+                item_name_zh=get_item_zh(item.item_id, item.display_name),
+                count=item.count,
+                slot=item.slot,
+            ))
+            _detail_rows += 1
+            if _detail_rows % _FLUSH_EVERY == 0:
+                db.flush()
     db.flush()
 
     # 3. Update warehouse stats

@@ -79,6 +79,34 @@ class ContainerItemModel(Base):
     warehouse = relationship("WarehouseModel", back_populates="containers")
 
 
+class ContainerItemDetailModel(Base):
+    """Per-item-per-container detail — one row per (container, item).
+
+    支持「物品 → 仓库 → 箱子」检索：知道某物品具体存在哪个仓库的哪个箱子、
+    每个箱子存了多少。扫描落库时对每个容器的每个物品各写一行。
+    """
+
+    __tablename__ = "container_item_details"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    warehouse_fk = Column(String, ForeignKey("warehouses.warehouse_id"), index=True)
+    container_x = Column(Integer, nullable=False)
+    container_y = Column(Integer, nullable=False)
+    container_z = Column(Integer, nullable=False)
+    item_id = Column(String, index=True)
+    item_name_zh = Column(String)
+    count = Column(BigInteger, default=0)
+    slot = Column(Integer, default=-1)
+
+    __table_args__ = (
+        Index("idx_detail_wh_item", "warehouse_fk", "item_id"),
+        Index("idx_detail_item", "item_id"),
+        Index("idx_detail_wh_pos", "warehouse_fk", "container_x", "container_y", "container_z"),
+    )
+
+    warehouse = relationship("WarehouseModel")
+
+
 class ScanStatusModel(Base):
     """Live scan progress for a warehouse."""
     __tablename__ = "scan_status"

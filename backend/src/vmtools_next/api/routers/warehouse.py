@@ -12,11 +12,14 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from vmtools_next.api.deps import get_db, get_current_user
+from vmtools_next.core.item_names_zh import get_item_zh, search_zh_keywords
 from vmtools_next.data.models.auth import UserModel
 from vmtools_next.data.models.warehouse import (
+    ContainerItemDetailModel,
     MaterialItemModel,
     ScanStatusModel,
     StorageZoneModel,
@@ -120,6 +123,36 @@ class ScanStatusResponse(BaseModel):
     finished_at: Optional[str] = None
 
 
+# ── 物品搜索（仓库状态页） ──
+
+class ItemSearchContainer(BaseModel):
+    x: int
+    y: int
+    z: int
+    count: int = 0
+    slot: int = -1
+
+
+class ItemSearchWarehouse(BaseModel):
+    warehouse_id: str
+    warehouse_name: str
+    count: int = 0
+    containers: list[ItemSearchContainer] = Field(default_factory=list)
+
+
+class ItemSearchResult(BaseModel):
+    item_id: str
+    display_name: str
+    item_name_zh: str
+    total_count: int = 0
+    warehouses: list[ItemSearchWarehouse] = Field(default_factory=list)
+
+
+class ItemSearchPage(BaseModel):
+    items: list[ItemSearchResult]
+    total: int
+
+
 # ── Helpers ─────────────────────────────────────────────────────────────
 
 def _scoped_warehouse_query(db: Session, user: UserModel):
@@ -214,6 +247,85 @@ def list_scan_queue(db: Session = Depends(get_db),
     if not qm:
         return {"items": []}
     return {"items": asyncio.run(qm.list_queue())}
+
+
+@router.get("/items/search", response_model=ItemSearchPage)
+def search_item_details(q: str = "", limit: int = 50,
+                        db: Session = Depends(get_db),
+                        user=Depends(get_current_user)):
+    """跨仓库搜索物品（中文名/英文名/item id 均可）。
+
+    返回按「总储量降序」排序的物品列表；每个物品下按「仓库储量降序」列出仓库，
+    并在有明细数据（重新扫描后）时列出每个仓库中存放该物品的箱子坐标与储量。
+    """
+    from collections import defaultdict
+    q = (q or "").strip()
+    limit = max(1, min(limit, 200))
+    if not q:
+        return ItemSearchPage(items=[], total=0)
+
+    like = f"%{q}%"
+    zh_ids = search_zh_keywords(q)  # 中文关键词 → item_id 候选
+    conditions = [MaterialItemModel.item_id.like(like), MaterialItemModel.display_name.like(like)]
+    if zh_ids:
+        conditions.append(MaterialItemModel.item_id.in_(zh_ids))
+    rows = db.query(MaterialItemModel).filter(or_(*conditions)).all()
+
+    # item_id → 仓库聚合 {warehouse_fk: count} + display_name
+    wh_by_item: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
+    names: dict[str, str] = {}
+    for r in rows:
+        if not r.item_id:
+            continue
+        wh_by_item[r.item_id][r.warehouse_fk] += r.count or 0
+        names.setdefault(r.item_id, r.display_name or r.item_id)
+
+    if not wh_by_item:
+        return ItemSearchPage(items=[], total=0)
+
+    # 仓库名缓存
+    whs = {w.warehouse_id: w for w in db.query(WarehouseModel).all()}
+
+    # 有明细数据的 item → 箱子定位（container_item_details）
+    detail_item_ids = list(wh_by_item.keys())
+    detail_rows = db.query(ContainerItemDetailModel).filter(
+        ContainerItemDetailModel.item_id.in_(detail_item_ids),
+    ).all() if detail_item_ids else []
+    detail_by_item: dict[str, list] = defaultdict(list)
+    for d in detail_rows:
+        detail_by_item[d.item_id].append(d)
+
+    # 组装结果，按总储量降序
+    results: list[ItemSearchResult] = []
+    for item_id, wh_counts in wh_by_item.items():
+        total = sum(wh_counts.values())
+        warehouse_list: list[ItemSearchWarehouse] = []
+        for wh_fk, count in sorted(wh_counts.items(), key=lambda kv: kv[1], reverse=True):
+            w = whs.get(wh_fk)
+            containers = []
+            for d in sorted(detail_by_item.get(item_id, []),
+                            key=lambda d: (d.warehouse_fk != wh_fk, - (d.count or 0))):
+                if d.warehouse_fk == wh_fk:
+                    containers.append(ItemSearchContainer(
+                        x=d.container_x, y=d.container_y, z=d.container_z,
+                        count=d.count or 0, slot=d.slot or -1,
+                    ))
+            warehouse_list.append(ItemSearchWarehouse(
+                warehouse_id=wh_fk,
+                warehouse_name=w.name if w else wh_fk[:8],
+                count=count,
+                containers=containers,
+            ))
+        results.append(ItemSearchResult(
+            item_id=item_id,
+            display_name=names[item_id],
+            item_name_zh=get_item_zh(item_id, names[item_id]),
+            total_count=total,
+            warehouses=warehouse_list,
+        ))
+
+    results.sort(key=lambda r: r.total_count, reverse=True)
+    return ItemSearchPage(items=results[:limit], total=len(results))
 
 
 @router.get("/{warehouse_id}", response_model=WarehouseResponse)
