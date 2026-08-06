@@ -134,34 +134,118 @@ function getCompoundValue(parsed) {
 }
 
 /**
+ * 判断物品是否为潜影盒（潜影盒内可装物品，需要递归展开内容）。
+ */
+function isShulkerBoxItem(itemId) {
+  const s = String(itemId || '').toLowerCase();
+  return s.endsWith('shulker_box') || s === 'minecraft:shulker';
+}
+
+/**
+ * 从物品 entry 中提取方块实体数据 compound（兼容旧格式 tag.BlockEntityTag 与
+ * 1.21.x 组件化 components["minecraft:block_entity_data"]）。
+ * @param {object} entry prismarine-nbt compound tag
+ * @returns {object|null} compound tag（含 .type/.value），找不到返回 null
+ */
+function findBlockEntityData(entry) {
+  if (!entry || typeof entry !== 'object') return null;
+  try {
+    // 旧格式：tag.BlockEntityTag（1.20 及以前）
+    if (entry.tag && entry.tag.value && entry.tag.value.BlockEntityTag) {
+      return entry.tag.value.BlockEntityTag;
+    }
+  } catch (e) { /* ignore */ }
+  try {
+    // 1.21.x 组件化：components["minecraft:block_entity_data"]
+    if (entry.components && entry.components.value &&
+        entry.components.value['minecraft:block_entity_data']) {
+      return entry.components.value['minecraft:block_entity_data'];
+    }
+  } catch (e) { /* ignore */ }
+  return null;
+}
+
+/**
+ * 从 list tag 中取出元素数组（兼容 prismarine-nbt 2.x 与 3.x 结构差异）：
+ *   2.x: { type: <元素类型>, value: [扁平元素] }
+ *   3.x: { type: 'list', value: { type: <元素类型>, value: [扁平元素] } }
+ * @returns {Array|null}
+ */
+function getListArray(listTag) {
+  if (!listTag) return null;
+  if (Array.isArray(listTag.value)) return listTag.value;
+  if (listTag.value && Array.isArray(listTag.value.value)) return listTag.value.value;
+  return null;
+}
+
+/**
+ * 递归收集物品列表（含潜影盒内容展开）。
+ * @param {object} listTag prismarine-nbt list tag（Items/Inventory/Container）
+ * @param {number} depth 当前递归深度（0=容器层）
+ * @param {number} maxDepth 潜影盒最大展开深度（超出不再展开）
+ * @param {Array} out 结果数组
+ */
+function collectListItems(listTag, depth, maxDepth, out) {
+  const arr = getListArray(listTag);
+  if (!arr) return;
+  for (const entry of arr) {
+    if (!entry || typeof entry !== 'object') continue;
+    const id = entry.id?.value || entry.Id?.value || '';
+    if (!id) continue;
+    const count = entry.count?.value ?? entry.Count?.value ?? 1;
+    const slot = entry.Slot?.value ?? entry.slot?.value ?? -1;
+    const itemId = String(id);
+    out.push({
+      item_id: itemId,
+      display_name: friendlyName(itemId),
+      count: Number(count) || 0,
+      slot: Number(slot),
+    });
+    // 潜影盒内容递归展开（深度限制，防嵌套潜影盒无限递归）
+    if (isShulkerBoxItem(itemId) && depth < maxDepth) {
+      const be = findBlockEntityData(entry);
+      if (be && be.value) {
+        collectShulkerContents(be.value, depth + 1, maxDepth, out);
+      }
+    }
+  }
+}
+
+/**
+ * 从方块实体 compound 的 value 中展开潜影盒内部 Items。
+ * @param {object} beValue 方块实体 compound 的 value（可能含 Items，或再包一层 BlockEntityTag）
+ * @param {number} depth 当前递归深度
+ * @param {number} maxDepth 潜影盒最大展开深度
+ * @param {Array} out 结果数组
+ */
+function collectShulkerContents(beValue, depth, maxDepth, out) {
+  let target = beValue;
+  if (target.BlockEntityTag && target.BlockEntityTag.type === 'compound') {
+    target = target.BlockEntityTag.value;
+  }
+  const listTag = target.Items || target.Inventory || target.Container;
+  if (getListArray(listTag)) {
+    collectListItems(listTag, depth, maxDepth, out);
+  }
+}
+
+/**
  * 从方块实体 NBT 中提取物品列表（兼容 1.21.x 组件化格式与旧格式）。
+ * 潜影盒物品会自动递归展开其内部内容（受 maxDepth 限制）。
  * @param {object} compoundValue prismarine-nbt compound value
+ * @param {number} depth 当前递归深度（默认 0）
+ * @param {number} maxDepth 潜影盒最大展开深度（默认 3，对应 config.shulker_recursion_depth）
  * @returns {Array<{item_id, display_name, count, slot}>}
  */
-function extractItems(compoundValue) {
+function extractItems(compoundValue, depth = 0, maxDepth = 3) {
   const items = [];
   if (!compoundValue || typeof compoundValue !== 'object') return items;
 
   // 1.21.x: Items / Inventory / Container 列表（组件化：id 为字符串 + components）
   // 旧版:   Items 列表（id 为字符串 + tag）
   const listTag = compoundValue.Items || compoundValue.Inventory || compoundValue.Container;
-  if (listTag && listTag.type === 'list') {
-    const arr = listTag.value && listTag.value.value;
-    if (Array.isArray(arr)) {
-      for (const entry of arr) {
-        if (!entry || typeof entry !== 'object') continue;
-        const id = entry.id?.value || entry.Id?.value || '';
-        if (!id) continue;
-        const count = entry.count?.value ?? entry.Count?.value ?? 1;
-        const slot = entry.Slot?.value ?? entry.slot?.value ?? -1;
-        items.push({
-          item_id: String(id),
-          display_name: friendlyName(String(id)),
-          count: Number(count) || 0,
-          slot: Number(slot),
-        });
-      }
-    }
+  if (getListArray(listTag)) {
+    collectListItems(listTag, depth, maxDepth, items);
   }
   return items;
 }
@@ -375,4 +459,4 @@ function createServuxHandlers(bot) {
   };
 }
 
-module.exports = { createServuxHandlers };
+module.exports = { createServuxHandlers, extractItems, isShulkerBoxItem, findBlockEntityData };
