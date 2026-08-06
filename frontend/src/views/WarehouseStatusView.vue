@@ -53,7 +53,7 @@
       <div v-if="results.length" class="result-list">
         <div v-for="item in results" :key="item.item_id" class="item-card pixel-card">
           <div class="item-main" @click="toggleExpand(item)">
-            <span class="item-icon" :style="{ background: iconBg(item.item_id) }">{{ itemEmoji(item.item_id) }}</span>
+            <span class="item-icon-wrap"><ItemIcon :item-id="item.item_id" :name="item.item_name_zh" :size="40" /></span>
             <div class="item-info">
               <div class="item-name">{{ item.item_name_zh || item.display_name }}</div>
               <div class="item-id mono">{{ item.item_id }}</div>
@@ -95,6 +95,7 @@
 import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
+import ItemIcon from '@/components/ItemIcon.vue'
 import { warehouseApi } from '@/api/warehouse'
 
 interface ItemContainer { x: number; y: number; z: number; count: number; slot: number }
@@ -247,6 +248,7 @@ onMounted(async () => {
 .item-card { padding: 0; overflow: hidden; }
 .item-main { display: flex; align-items: center; gap: 12px; padding: 12px 14px; cursor: pointer; min-width: 0; }
 .item-main:hover { background: var(--green-glow); }
+.item-icon-wrap { flex-shrink: 0; display: flex; }
 .item-icon {
   width: 40px; height: 40px; flex-shrink: 0; border-radius: 6px;
   display: flex; align-items: center; justify-content: center;
