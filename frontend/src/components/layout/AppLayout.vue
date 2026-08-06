@@ -1,7 +1,7 @@
 <template>
   <div class="app-layout" :class="{ 'mobile-open': mobileDrawerOpen }">
     <!-- Desktop Sidebar -->
-    <aside class="app-sidebar desktop-only" :class="{ collapsed: isCollapsed }">
+    <aside v-if="!isPublicGuest" class="app-sidebar desktop-only" :class="{ collapsed: isCollapsed }">
       <AppSidebar :collapsed="isCollapsed" @toggle="isCollapsed = !isCollapsed" />
     </aside>
 
@@ -12,13 +12,13 @@
 
     <!-- Mobile Drawer Sidebar -->
     <Transition name="drawer-slide">
-      <aside v-if="mobileDrawerOpen" class="app-sidebar mobile-drawer">
+      <aside v-if="mobileDrawerOpen && !isPublicGuest" class="app-sidebar mobile-drawer">
         <AppSidebar :collapsed="false" @toggle="mobileDrawerOpen = false" :is-mobile="true" />
       </aside>
     </Transition>
 
     <div class="app-body">
-      <header class="app-header">
+      <header v-if="!isPublicGuest" class="app-header">
         <AppHeader
           :is-mobile="true"
           @toggle-sidebar="isCollapsed = !isCollapsed"
@@ -40,9 +40,18 @@
 </template>
 
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { useRoute } from 'vue-router'
+import { useAuthStore } from '@/stores/auth'
 import AppSidebar from './AppSidebar.vue'
 import AppHeader from './AppHeader.vue'
+
+const route = useRoute()
+const authStore = useAuthStore()
+
+/** 访客模式：未登录且当前路由标记为 public（如妙妙工具）时，
+ *  隐藏侧边栏与头部，纯内容浏览；已登录用户（任意权限组）保留自己的侧边栏。 */
+const isPublicGuest = computed(() => !authStore.isLoggedIn && route.meta.public === true)
 
 const isCollapsed = ref(false)
 const mobileDrawerOpen = ref(false)

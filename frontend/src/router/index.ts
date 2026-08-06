@@ -24,18 +24,15 @@ const routes = [
     component: () => import('@/views/RegisterView.vue'),
     meta: { public: true },
   },
-  // 妙妙工具：访客无需登录即可访问（脱离 AppLayout，未登录无侧边栏）
-  {
-    path: '/miaomiao',
-    name: 'Miaomiao',
-    component: () => import('@/views/MiaomiaoView.vue'),
-    meta: { public: true },
-  },
   {
     path: '/',
     component: () => import('@/components/layout/AppLayout.vue'),
     children: [
       { path: '', redirect: '/dashboard' },
+      // 妙妙工具：访客无需登录即可访问（public），
+      // 已登录用户（任意权限组）在布局内正常显示其权限组侧边栏；
+      // 访客模式由 AppLayout 隐藏侧边栏/头部（纯内容浏览）。
+      { path: 'miaomiao', name: 'Miaomiao', component: () => import('@/views/MiaomiaoView.vue'), meta: { title: '妙妙工具', public: true } },
       // --- 组织成员可见 ---
       { path: 'dashboard', name: 'Dashboard', component: () => import('@/views/DashboardView.vue'), meta: { title: '仪表盘', roles: ALL_LOGGED_IN } },
       { path: 'player-tracking', name: 'PlayerTracking', component: () => import('@/views/PlayerTrackingView.vue'), meta: { title: '玩家列表', roles: ALL_LOGGED_IN } },
