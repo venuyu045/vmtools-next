@@ -204,7 +204,9 @@ function createBlockHandlers(bot) {
             const palette = section.palette || [];
             for (const p of palette) {
               const nm = typeof p === 'string' ? p : (p && (p.name || p.Name)) || '';
-              if (CONTAINER_NAMES.has(nm)) { hasContainer = true; break; }
+              // 兼容 "minecraft:chest" 前缀
+              const base = String(nm).includes(':') ? String(nm).split(':')[1] : nm;
+              if (CONTAINER_NAMES.has(base)) { hasContainer = true; break; }
             }
           } catch { hasContainer = true; }
 
@@ -218,8 +220,12 @@ function createBlockHandlers(bot) {
                 const wx = baseX + lx, wy = secY + ly, wz = baseZ + lz;
                 let blk = null;
                 try { blk = col.getBlock(new Vec3(lx, wy, lz)); } catch {}
-                if (blk && CONTAINER_NAMES.has(blk.name)) {
-                  blocks.push({ x: wx, y: wy, z: wz, name: blk.name, type: blk.type });
+                if (blk) {
+                  const bname = String(blk.name || '');
+                  const bbase = bname.includes(':') ? bname.split(':')[1] : bname;
+                  if (CONTAINER_NAMES.has(bbase)) {
+                    blocks.push({ x: wx, y: wy, z: wz, name: blk.name, type: blk.type });
+                  }
                 }
               }
             }
