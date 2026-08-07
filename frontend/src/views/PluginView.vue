@@ -19,9 +19,10 @@
           <el-tag :type="row.enabled ? 'success' : 'info'">{{ row.enabled ? '已启用' : '已禁用' }}</el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="操作" width="200">
+      <el-table-column label="操作" width="270">
         <template #default="{ row }">
           <el-button size="small" @click="handleToggle(row)">{{ row.enabled ? '禁用' : '启用' }}</el-button>
+          <el-button size="small" type="primary" plain @click="handleConfig(row)">配置</el-button>
           <el-button size="small" @click="handleReload(row)">重载</el-button>
         </template>
       </el-table-column>
@@ -31,14 +32,20 @@
 
 <script setup lang="ts">
 import { onMounted } from 'vue'
+import { useRouter } from 'vue-router'
 import { usePluginStore } from '@/stores/plugin'
 import { ElMessage } from 'element-plus'
 
 const pluginStore = usePluginStore()
+const router = useRouter()
 
 async function handleToggle(plugin: any) {
   await pluginStore.togglePlugin(plugin.name)
   ElMessage.success(`插件已${plugin.enabled ? '禁用' : '启用'}`)
+}
+
+function handleConfig(plugin: any) {
+  router.push(`/plugins/${plugin.name}/config`)
 }
 
 async function handleReload(plugin: any) {

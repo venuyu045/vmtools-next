@@ -13,4 +13,10 @@ export const pluginApi = {
   reloadPlugin(name: string) {
     return client.post(`/plugins/${name}/reload`)
   },
+  getPluginConfig(name: string) {
+    return client.get(`/plugins/${name}/config`)
+  },
+  savePluginConfig(name: string, config: Record<string, any>) {
+    return client.put(`/plugins/${name}/config`, { config })
+  },
 }
