@@ -150,7 +150,11 @@ function createBlockHandlers(bot) {
             if (!section) continue;
 
             // palette 快速过滤：该区块段不含目标方块则整段跳过
+            // 注意：palette 是 stateId 数字数组，需 registry.blocksByStateId 转名字；
+            // 若解析不出任何名字（registry 结构不匹配），保守处理为"含目标"逐格确认，
+            // 避免误跳过导致漏扫（正确性优先于性能）。
             let hasMatch = false;
+            let resolvedAny = false;
             try {
               const palette = section.palette || [];
               for (const p of palette) {
@@ -164,12 +168,14 @@ function createBlockHandlers(bot) {
                   nm = p.name || p.Name;
                 }
                 const base = String(nm).includes(':') ? String(nm).split(':')[1] : nm;
+                if (nm) resolvedAny = true;
                 if (matchSet) {
                   if (matchSet.has(base)) { hasMatch = true; break; }
                 } else if (base && base !== 'air' && base !== 'cave_air' && base !== 'void_air') {
                   hasMatch = true; break;
                 }
               }
+              if (!resolvedAny) hasMatch = true;  // 全解析失败 → 保守逐格确认
             } catch { hasMatch = true; }
 
             if (!hasMatch) continue;
