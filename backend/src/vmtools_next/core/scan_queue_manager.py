@@ -245,27 +245,52 @@ class ScanQueueManager:
 
     # ── 容器发现 ──
     async def _discover_containers(self, db, qid: str, wh_id: str, client, engine_type: str) -> list[tuple[int, int, int]]:
-        """mineflayer：scan_nearby_blocks 发现半径15格真实容器；失败回退 zone 枚举。"""
+        """mineflayer：扫描已加载区块内全部容器（不受 ±15 格限制），按 zone 范围过滤；
+        失败回退 scan_nearby_blocks / zone 枚举。"""
         from vmtools_next.data.models.warehouse import StorageZoneModel
 
         positions: list[tuple[int, int, int]] = []
         max_positions = 10000
 
+        zones = db.query(StorageZoneModel).filter(
+            StorageZoneModel.warehouse_fk == wh_id).all()
+
+        def in_zones(x: int, y: int, z: int) -> bool:
+            if not zones:
+                return True
+            for zz in zones:
+                if (zz.range_min_x <= x <= zz.range_max_x and
+                        zz.range_min_y <= y <= zz.range_max_y and
+                        zz.range_min_z <= z <= zz.range_max_z):
+                    return True
+            return False
+
         if engine_type == "mineflayer":
+            # 1) 主路径：已加载区块全部容器（bot 视野=服务器下发的区块范围，通常 96~192 格半径）
+            try:
+                scan_res = await client.scan_loaded_containers(max_count=max_positions)
+                blocks = (scan_res or {}).get("blocks") or []
+                kept = [(b["x"], b["y"], b["z"]) for b in blocks if in_zones(b["x"], b["y"], b["z"])]
+                if kept:
+                    logger.info("Scan queue %s discovered %d containers in loaded chunks (zone-filtered)",
+                                qid[:8], len(kept))
+                    return kept
+            except Exception as e:
+                logger.warning("scan_loaded_containers failed: %s", e)
+
+            # 2) 兜底：旧逻辑——bot 周围 15 格
             try:
                 scan_res = await client.scan_nearby_blocks(
                     radius=15, max_count=max_positions, matching=_CONTAINER_MATCHING)
                 blocks = (scan_res or {}).get("blocks") or []
                 if blocks:
                     positions = [(b["x"], b["y"], b["z"]) for b in blocks[:max_positions]]
-                    logger.info("Scan queue %s discovered %d containers nearby", qid[:8], len(positions))
+                    logger.info("Scan queue %s discovered %d containers nearby (fallback)", qid[:8], len(positions))
                     return positions
             except Exception as e:
                 logger.warning("scan_nearby_blocks failed, fallback to zones: %s", e)
 
         # zone 枚举兜底
-        zones = db.query(StorageZoneModel).filter(
-            StorageZoneModel.warehouse_fk == wh_id).all()
         for zone in zones:
             for x in range(zone.range_min_x, zone.range_max_x + 1):
                 for y in range(zone.range_min_y, zone.range_max_y + 1):
