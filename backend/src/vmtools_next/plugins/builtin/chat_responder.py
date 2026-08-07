@@ -36,8 +36,8 @@ CONFIG_SCHEMA: dict = {
         "commands": {
             "type": "object",
             "title": "聊天指令表",
-            "description": "配置 bot 接受的指令与回复内容。指令以 ! 开头；"
-                           "回复支持占位符 {username}（玩家名）、{position}（bot 坐标）。",
+            "description": "配置 bot 接受的指令与回复内容。指令名可自定义（建议以 ! 开头避免误触发，"
+                           "如 !ping；不带 ! 也可，如 ciallo）；回复支持占位符 {username}（玩家名）、{position}（bot 坐标）。",
             "keyTitle": "指令",
             "valueTitle": "回复内容",
             "valueType": "string",
@@ -94,9 +94,10 @@ class Plugin(IPlugin):
         bot_id = payload.get("bot_id") or ""
         username = str(payload.get("username") or "player")
         message = str(payload.get("message") or "").strip()
-        if not bot_id or not message or not message.startswith("!"):
+        if not bot_id or not message:
             return
 
+        # 指令匹配完全由配置表决定（可带 ! 前缀，也可不带，如 ciallo）
         cmd = message.split()[0].lower()
         template = self._commands.get(cmd)
         if not template:
