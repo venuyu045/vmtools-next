@@ -159,40 +159,49 @@ function createBlockHandlers(bot) {
       }
 
       const blocks = [];
-      const columns = bot.world.columns || bot.world.column || {};
-      const colIter = columns instanceof Map ? columns.values() : Object.values(columns);
+      // prismarine-world: columns 是 {"chunkX,chunkZ": chunk} 普通对象；
+      // getColumns() 返回 [{chunkX, chunkZ, column}]（推荐），否则从 key 解析。
+      let cols = [];
+      try { cols = bot.world.getColumns() || []; } catch {}
+      if (!cols.length && bot.world.columns) {
+        cols = Object.entries(bot.world.columns).map(([key, column]) => {
+          const parts = String(key).split(',');
+          return { chunkX: Number(parts[0]), chunkZ: Number(parts[1]), column };
+        });
+      }
 
-      for (const col of colIter) {
-        if (!col) continue;
+      for (const { chunkX, chunkZ, column: col } of cols) {
+        if (!col || chunkX === undefined || chunkZ === undefined) continue;
         if (blocks.length >= max_count) break;
 
-        const baseX = (typeof col.x === 'number' ? col.x : Math.floor(col.x / 16)) * 16;
-        const baseZ = (typeof col.z === 'number' ? col.z : Math.floor(col.z / 16)) * 16;
+        const baseX = chunkX * 16;
+        const baseZ = chunkZ * 16;
         const sections = col.sections || [];
         for (let si = 0; si < sections.length; si++) {
           const section = sections[si];
           if (!section) continue;
           if (blocks.length >= max_count) break;
 
-          // palette 快速过滤：该区块段不含容器方块则整段跳过（避免逐格 blockAt）
+          // palette 快速过滤：该区块段不含容器方块则整段跳过（避免逐格 getBlock）
           let hasContainer = false;
           try {
             const palette = section.palette || [];
             for (const p of palette) {
-              const nm = typeof p === 'string' ? p : (p && p.name) || '';
+              const nm = typeof p === 'string' ? p : (p && (p.name || p.Name)) || '';
               if (CONTAINER_NAMES.has(nm)) { hasContainer = true; break; }
             }
           } catch { hasContainer = true; }
 
           if (!hasContainer) continue;
 
-          const baseY = si * 16;
+          const secY = si * 16;
+          // chunk.getBlock(x, y, z)：x/z 为区块内局部坐标(0-15)，y 为绝对高度
           for (let ly = 0; ly < 16 && blocks.length < max_count; ly++) {
             for (let lx = 0; lx < 16 && blocks.length < max_count; lx++) {
               for (let lz = 0; lz < 16 && blocks.length < max_count; lz++) {
-                const wx = baseX + lx, wy = baseY + ly, wz = baseZ + lz;
+                const wx = baseX + lx, wy = secY + ly, wz = baseZ + lz;
                 let blk = null;
-                try { blk = bot.blockAt(new Vec3(wx, wy, wz)); } catch {}
+                try { blk = col.getBlock(new Vec3(lx, wy, lz)); } catch {}
                 if (blk && CONTAINER_NAMES.has(blk.name)) {
                   blocks.push({ x: wx, y: wy, z: wz, name: blk.name, type: blk.type });
                 }
