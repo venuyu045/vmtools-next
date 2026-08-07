@@ -4,13 +4,19 @@ export const authApi = {
   login(game_id: string, password: string) {
     return client.post('/auth/login', { game_id, password })
   },
-  register(game_id: string, password: string, display_name?: string) {
-    return client.post('/auth/register', { game_id, password, display_name })
+  register(game_id: string, password: string, display_name?: string, qq_ticket?: string) {
+    return client.post('/auth/register', { game_id, password, display_name, qq_ticket })
   },
   getMe() {
     return client.get('/auth/me')
   },
   changePassword(old_password: string, new_password: string) {
     return client.post('/auth/change-password', { old_password, new_password })
+  },
+  qqLoginUrl() {
+    return client.get('/auth/qq/login')
+  },
+  qqTicketLogin(qq_ticket: string) {
+    return client.post('/auth/qq/ticket-login', { qq_ticket })
   },
 }

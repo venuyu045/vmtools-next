@@ -56,8 +56,33 @@ export const useAuthStore = defineStore('auth', {
       localStorage.setItem('token', data.token)
       await this.getMe()
     },
-    async register(game_id: string, password: string, display_name?: string) {
-      await authApi.register(game_id, password, display_name)
+    async register(game_id: string, password: string, display_name?: string, qq_ticket?: string) {
+      const { data } = await authApi.register(game_id, password, display_name, qq_ticket)
+      // 注册成功直接返回登录 token（QQ 认证通过即 approved）
+      if (data?.token) {
+        this.token = data.token
+        localStorage.setItem('token', data.token)
+        await this.getMe()
+      }
+      return data
+    },
+    /** 发起 QQ 互联授权（整页跳转 QQ） */
+    async startQqAuth() {
+      const { data } = await authApi.qqLoginUrl()
+      if (data?.auth_url) {
+        window.location.href = data.auth_url
+      }
+    },
+    /** 凭 QQ ticket 登录：已注册→登录成功返回 true；未注册→false */
+    async qqTicketLogin(qq_ticket: string) {
+      const { data } = await authApi.qqTicketLogin(qq_ticket)
+      if (data && data.need_register === false && data.token) {
+        this.token = data.token
+        localStorage.setItem('token', data.token)
+        await this.getMe()
+        return { loggedIn: true, nickname: data.nickname || '' }
+      }
+      return { loggedIn: false, nickname: data?.nickname || '', avatar: data?.avatar || '' }
     },
     async getMe() {
       try {

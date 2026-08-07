@@ -61,5 +61,8 @@ class UserModel(Base):
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     approved_at = Column(DateTime, nullable=True)
     approved_by = Column(String, nullable=True)
+    # QQ 互联绑定：qq_openid 唯一（一个 QQ 只能注册一个账号）；qq_nickname 供展示
+    qq_openid = Column(String, nullable=True, unique=True, index=True)
+    qq_nickname = Column(String, nullable=True)
 
     organization = relationship("OrganizationModel", back_populates="members")

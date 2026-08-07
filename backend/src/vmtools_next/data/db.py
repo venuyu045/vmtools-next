@@ -177,6 +177,19 @@ def _run_lightweight_migrations(engine) -> None:
                     conn.execute(text("ALTER TABLE mcc_instances ADD COLUMN bot_engine VARCHAR DEFAULT 'mcc'"))
                 if "mcp_host" not in columns:
                     conn.execute(text("ALTER TABLE mcc_instances ADD COLUMN mcp_host VARCHAR DEFAULT '127.0.0.1'"))
+                # QQ 互联绑定列（users.qq_openid 唯一——一个 QQ 只能注册一个账号）
+                try:
+                    u_columns = {row[1] for row in conn.execute(text("PRAGMA table_info(users)")).fetchall()}
+                    if "qq_openid" not in u_columns:
+                        conn.execute(text("ALTER TABLE users ADD COLUMN qq_openid VARCHAR"))
+                    if "qq_nickname" not in u_columns:
+                        conn.execute(text("ALTER TABLE users ADD COLUMN qq_nickname VARCHAR"))
+                    conn.execute(text(
+                        "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_qq_openid "
+                        "ON users (qq_openid) WHERE qq_openid IS NOT NULL"
+                    ))
+                except Exception as _e:
+                    logger.warning("users qq migration check: %s", _e)
                 # scan_status 实时进度扩展列（扫描队列）
                 try:
                     s_columns = {row[1] for row in conn.execute(text("PRAGMA table_info(scan_status)")).fetchall()}
