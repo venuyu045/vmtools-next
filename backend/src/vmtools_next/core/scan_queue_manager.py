@@ -250,7 +250,7 @@ class ScanQueueManager:
         from vmtools_next.data.models.warehouse import StorageZoneModel
 
         positions: list[tuple[int, int, int]] = []
-        max_positions = 100000
+        max_positions = 500000
 
         zones = db.query(StorageZoneModel).filter(
             StorageZoneModel.warehouse_fk == wh_id).all()
@@ -266,28 +266,33 @@ class ScanQueueManager:
             return False
 
         if engine_type == "mineflayer":
-            # 1) 主路径：大半径扫描（radius 按 zone 大小动态计算，覆盖大圈地）+ zone 过滤
-            #    scan_nearby_blocks 用 bot.blockAt 遍历 ±radius 包围盒（已验证可靠）；
-            #    半径取 zone 水平最大跨度的一半 + 边界余量，保底 48、上限 96。
+            # 1) 主路径：按 zone 合并包围盒 box 直扫（精确覆盖仓库范围，避免绕
+            #    bot 中心遍历 ±96 格无关区块）+ palette 快速过滤 + zone 范围过滤。
+            #    支持超大仓库（>10 万容器）：max_positions=500000 不再截断。
             try:
+                box = None
                 radius = 48
                 if zones:
-                    for zz in zones:
-                        dx = abs(zz.range_max_x - zz.range_min_x)
-                        dz = abs(zz.range_max_z - zz.range_min_z)
-                        need = max(dx, dz) // 2 + 12
-                        if need > radius:
-                            radius = min(96, need)
+                    box = {
+                        "min_x": min(zz.range_min_x for zz in zones),
+                        "max_x": max(zz.range_max_x for zz in zones),
+                        "min_y": min(zz.range_min_y for zz in zones),
+                        "max_y": max(zz.range_max_y for zz in zones),
+                        "min_z": min(zz.range_min_z for zz in zones),
+                        "max_z": max(zz.range_max_z for zz in zones),
+                    }
+                else:
+                    radius = 48
                 scan_res = await client.scan_nearby_blocks(
-                    radius=radius, max_count=max_positions, matching=_CONTAINER_MATCHING)
+                    radius=radius, max_count=max_positions, matching=_CONTAINER_MATCHING, box=box)
                 blocks = (scan_res or {}).get("blocks") or []
                 kept = [(b["x"], b["y"], b["z"]) for b in blocks if in_zones(b["x"], b["y"], b["z"])]
                 if kept:
-                    logger.info("Scan queue %s discovered %d containers (radius=%d, zone-filtered)",
-                                qid[:8], len(kept), radius)
+                    logger.info("Scan queue %s discovered %d containers (box=%s, zone-filtered)",
+                                qid[:8], len(kept), "yes" if box else "no")
                     return kept
             except Exception as e:
-                logger.warning("scan_nearby_blocks(radius=%s) failed: %s", radius, e)
+                logger.warning("scan_nearby_blocks(box=%s) failed: %s", "yes" if box else "no", e)
 
             # 2) 兜底：scan_loaded_containers（遍历已加载区块）
             try:

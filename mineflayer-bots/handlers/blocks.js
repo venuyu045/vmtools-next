@@ -93,11 +93,14 @@ function createBlockHandlers(bot) {
   }
 
   // ── 扫描附近方块 ──
-  // 性能优化：不再逐格 blockAt 遍历整个包围盒（radius=96 时约 950 万格），
-  // 改为按 chunk 的 section palette 快速过滤——只对含目标方块的 section
-  // 逐格确认坐标，仓库类容器集中场景提速数十倍。max_count 默认 100000，
-  // 支持超大仓库（>1 万容器）不被截断。
-  function scan_nearby_blocks({ radius = 16, max_count = 100000, matching = null } = {}) {
+  // 性能优化：按 chunk 的 section palette 快速过滤——只对含目标方块的 section
+  // 逐格确认坐标，仓库类容器集中场景提速数十倍。
+  // 支持两种范围模式：
+  //   1) radius：以 bot 为中心 ±radius 包围盒（默认）
+  //   2) box：显式 box_min_x/box_max_x/... 按给定范围遍历（适合 zone 已知场景，
+  //      避免绕 bot 中心遍历大量无关区块）。max_count 默认 500000，支持超大仓库。
+  function scan_nearby_blocks({ radius = 16, max_count = 500000, matching = null,
+                                 box_min_x, box_max_x, box_min_y, box_max_y, box_min_z, box_max_z } = {}) {
     try {
       if (!bot.entity) {
         return { success: false, error: 'Bot not spawned' };
@@ -105,12 +108,19 @@ function createBlockHandlers(bot) {
       const pos = bot.entity.position;
 
       const blocks = [];
-      const minX = Math.floor(pos.x - radius);
-      const maxX = Math.ceil(pos.x + radius);
-      const minY = Math.max(0, Math.floor(pos.y - radius));
-      const maxY = Math.min(255, Math.ceil(pos.y + radius));
-      const minZ = Math.floor(pos.z - radius);
-      const maxZ = Math.ceil(pos.z + radius);
+      let minX, maxX, minY, maxY, minZ, maxZ;
+      if (box_min_x !== undefined) {
+        minX = Math.floor(box_min_x); maxX = Math.ceil(box_max_x);
+        minY = Math.max(0, Math.floor(box_min_y)); maxY = Math.min(255, Math.ceil(box_max_y));
+        minZ = Math.floor(box_min_z); maxZ = Math.ceil(box_max_z);
+      } else {
+        minX = Math.floor(pos.x - radius);
+        maxX = Math.ceil(pos.x + radius);
+        minY = Math.max(0, Math.floor(pos.y - radius));
+        maxY = Math.min(255, Math.ceil(pos.y + radius));
+        minZ = Math.floor(pos.z - radius);
+        maxZ = Math.ceil(pos.z + radius);
+      }
 
       // matching 名集合（去命名空间前缀，兼容 "minecraft:chest" / "chest"）
       let matchSet = null;
@@ -164,7 +174,7 @@ function createBlockHandlers(bot) {
 
             if (!hasMatch) continue;
 
-            // 逐格确认该 section 与包围盒的交集
+            // 逐格确认该 section 与扫描范围的交集
             const baseX = cx * 16, baseZ = cz * 16, secY = si * 16;
             const lx0 = Math.max(0, minX - baseX), lx1 = Math.min(15, maxX - baseX);
             const ly0 = Math.max(0, minY - secY), ly1 = Math.min(15, maxY - secY);
