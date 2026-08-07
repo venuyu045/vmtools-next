@@ -303,10 +303,11 @@ async def _mcp_reconcile_loop(interval: float = 30.0):
                     MccInstanceModel.status == "running",
                     MccInstanceModel.bot_id.isnot(None),
                 ).all()
+                from vmtools_next.core.mcc_security import reveal_secret
                 rows = [
                     (i.instance_id, i.bot_id, i.bot_engine or "mcc",
                      i.mcp_host or "127.0.0.1", i.mcp_port or 33333,
-                     i.mcp_auth_token_secret or None)
+                     reveal_secret(i.mcp_auth_token_secret) or None)
                     for i in instances
                 ]
             finally:
