@@ -172,6 +172,11 @@ function createBlockHandlers(bot) {
       let totalSections = 0;
       let samplePalette = '';
       let paletteKeys = '';
+      let hitSections = 0;
+      let blockNameSample = '';
+      const _registry = bot.registry || {};
+      const _bbsid = _registry.blocksByStateId || {};
+      const _stateId85 = _bbsid[85] ? (_bbsid[85].name || '?') : '(none)';
       for (const { column: col } of cols) {
         const secs = (col && col.sections) || [];
         for (const s of secs) {
@@ -184,7 +189,9 @@ function createBlockHandlers(bot) {
         }
       }
       console.log('[scan_loaded] cols=', cols.length, 'sections=', totalSections,
-                  'palette=', samplePalette, 'sectionKeys=', paletteKeys);
+                  'palette=', samplePalette, 'sectionKeys=', paletteKeys,
+                  'registryKeys=', Object.keys(_registry).slice(0, 12).join(','),
+                  'stateId85=', _stateId85);
 
       for (const { chunkX, chunkZ, column: col } of cols) {
         if (!col || chunkX === undefined || chunkZ === undefined) continue;
@@ -216,7 +223,7 @@ function createBlockHandlers(bot) {
                 nm = p.name || p.Name;
               }
               const base = String(nm).includes(':') ? String(nm).split(':')[1] : nm;
-              if (CONTAINER_NAMES.has(base)) { hasContainer = true; break; }
+              if (CONTAINER_NAMES.has(base)) { hasContainer = true; hitSections++; break; }
             }
           } catch { hasContainer = true; }
 
@@ -232,6 +239,7 @@ function createBlockHandlers(bot) {
                 try { blk = col.getBlock(new Vec3(lx, wy, lz)); } catch {}
                 if (blk) {
                   const bname = String(blk.name || '');
+                  if (!blockNameSample && bname) blockNameSample = bname;
                   const bbase = bname.includes(':') ? bname.split(':')[1] : bname;
                   if (CONTAINER_NAMES.has(bbase)) {
                     blocks.push({ x: wx, y: wy, z: wz, name: blk.name, type: blk.type });
@@ -244,7 +252,7 @@ function createBlockHandlers(bot) {
       }
 
       console.log('[scan_loaded] found=', blocks.length);
-      return { success: true, count: blocks.length, blocks, debug: { cols: cols.length, sections: totalSections, palette: samplePalette, sectionKeys: paletteKeys } };
+      return { success: true, count: blocks.length, blocks, debug: { cols: cols.length, sections: totalSections, hitSections, blockNameSample, palette: samplePalette, stateId85: _stateId85 } };
     } catch (err) {
       console.error('[scan_loaded] error:', err.message, err.stack);
       return { success: false, error: err.message };
