@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
-from vmtools_next.api.deps import get_db, get_current_user
+from vmtools_next.api.deps import get_db, get_current_user, require_admin
 from vmtools_next.core.item_names_zh import get_item_zh, search_zh_keywords
 from vmtools_next.data.models.auth import UserModel
 from vmtools_next.data.models.warehouse import (
@@ -238,7 +238,7 @@ def create_warehouse(data: WarehouseCreate, db: Session = Depends(get_db),
 
 @router.put("/{warehouse_id}", response_model=WarehouseResponse)
 def update_warehouse(warehouse_id: str, data: WarehouseUpdate,
-                     db: Session = Depends(get_db), user=Depends(get_current_user)):
+                     db: Session = Depends(get_db), user=Depends(require_admin)):
     """Update warehouse metadata (name / teleport_cmd / aisle_lines / logistics)."""
     wh = _get_scoped_warehouse(db, user, warehouse_id)
     if data.name is not None:
@@ -256,15 +256,14 @@ def update_warehouse(warehouse_id: str, data: WarehouseUpdate,
 
 
 @router.get("/scan-queue")
-def list_scan_queue(db: Session = Depends(get_db),
-                    user=Depends(get_current_user)):
+async def list_scan_queue(db: Session = Depends(get_db),
+                          user=Depends(get_current_user)):
     """返回扫描队列列表（由 ScanQueueManager 调度）。注意：须定义在 /{warehouse_id} 之前。"""
     from vmtools_next.main import get_scan_queue_manager
-    import asyncio
     qm = get_scan_queue_manager()
     if not qm:
         return {"items": []}
-    return {"items": asyncio.run(qm.list_queue())}
+    return {"items": await qm.list_queue()}
 
 
 @router.get("/items/search", response_model=ItemSearchPage)
@@ -289,7 +288,12 @@ def search_item_details(q: str = "", limit: int = 50,
         # 兼容带/不带 minecraft: 前缀（仓库数据为 minecraft:xxx）
         prefixed = [f"minecraft:{k}" for k in zh_ids]
         conditions.append(MaterialItemModel.item_id.in_(set(zh_ids + prefixed)))
-    rows = db.query(MaterialItemModel).filter(or_(*conditions)).all()
+    # 性能：命中行按储量降序限量取回，避免大仓库全表物化后再截断（L1）
+    rows = (
+        db.query(MaterialItemModel).filter(or_(*conditions))
+        .order_by(MaterialItemModel.count.desc())
+        .limit(limit * 10).all()
+    )
 
     # item_id → 仓库聚合 {warehouse_fk: count} + display_name
     wh_by_item: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
@@ -358,7 +362,7 @@ def get_warehouse(warehouse_id: str, db: Session = Depends(get_db),
 
 @router.delete("/{warehouse_id}")
 def delete_warehouse(warehouse_id: str, db: Session = Depends(get_db),
-                     user=Depends(get_current_user)):
+                     user=Depends(require_admin)):
     wh = _get_scoped_warehouse(db, user, warehouse_id)
     db.delete(wh)
     db.commit()
@@ -430,7 +434,7 @@ class AislesUpdate(BaseModel):
 
 @router.put("/{warehouse_id}/aisles")
 def update_aisles(warehouse_id: str, data: AislesUpdate,
-                  db: Session = Depends(get_db), user=Depends(get_current_user)):
+                  db: Session = Depends(get_db), user=Depends(require_admin)):
     wh = _get_scoped_warehouse(db, user, warehouse_id)
     wh.aisle_lines = json.dumps(data.aisle_lines or [], ensure_ascii=False)
     db.commit()
@@ -462,7 +466,7 @@ def list_zones(warehouse_id: str, db: Session = Depends(get_db),
 
 @router.post("/{warehouse_id}/zones", response_model=ZoneResponse)
 def create_zone(warehouse_id: str, data: ZoneCreate,
-                db: Session = Depends(get_db), user=Depends(get_current_user)):
+                db: Session = Depends(get_db), user=Depends(require_admin)):
     wh = _get_scoped_warehouse(db, user, warehouse_id)
     zone = StorageZoneModel(
         zone_id=str(uuid.uuid4()),
@@ -480,7 +484,7 @@ def create_zone(warehouse_id: str, data: ZoneCreate,
 
 @router.put("/{warehouse_id}/zones/{zone_id}", response_model=ZoneResponse)
 def update_zone(warehouse_id: str, zone_id: str, data: ZoneUpdate,
-                db: Session = Depends(get_db), user=Depends(get_current_user)):
+                db: Session = Depends(get_db), user=Depends(require_admin)):
     wh = _get_scoped_warehouse(db, user, warehouse_id)
     zone = db.query(StorageZoneModel).filter(
         StorageZoneModel.zone_id == zone_id,
@@ -501,7 +505,7 @@ def update_zone(warehouse_id: str, zone_id: str, data: ZoneUpdate,
 
 @router.delete("/{warehouse_id}/zones/{zone_id}")
 def delete_zone(warehouse_id: str, zone_id: str,
-                db: Session = Depends(get_db), user=Depends(get_current_user)):
+                db: Session = Depends(get_db), user=Depends(require_admin)):
     wh = _get_scoped_warehouse(db, user, warehouse_id)
     zone = db.query(StorageZoneModel).filter(
         StorageZoneModel.zone_id == zone_id,

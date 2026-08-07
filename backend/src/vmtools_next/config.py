@@ -74,7 +74,11 @@ class ServerConfig(BaseModel):
     database_url: str = "sqlite:///vmtools-next.db"
     secret_key: str = "change-in-production"
     jwt_algorithm: str = "HS256"
-    cors_origins: list[str] = Field(default_factory=lambda: ["*"])
+    # CORS：显式白名单（生产部署按实际域名调整），禁止 "*" + allow_credentials 组合（M5）
+    cors_origins: list[str] = Field(default_factory=lambda: [
+        "http://localhost:5173",
+        "http://localhost:8080",
+    ])
     api_token: str = "vmtools-next-token-2026"
 
 
@@ -305,7 +309,14 @@ def load_config() -> AppConfig:
     merged = _deep_merge(base, overlay)
     merged = _apply_env_overrides(merged)
 
-    return AppConfig(**merged)
+    cfg = AppConfig(**merged)
+    # 安全：JWT 签名密钥严禁使用默认/占位值，防止公开源码默认密钥伪造令牌
+    if cfg.server.secret_key in ("change-in-production", "change-me"):
+        raise RuntimeError(
+            "VMT_SERVER__SECRET_KEY 未设置或仍为默认值，禁止启动。"
+            "请设置随机密钥（如 openssl rand -hex 32）后重试。"
+        )
+    return cfg
 
 
 @lru_cache(maxsize=1)

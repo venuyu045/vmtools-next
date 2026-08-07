@@ -14,7 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from vmtools_next.api.deps import get_db, get_current_user
+from vmtools_next.api.deps import get_db, get_current_user, require_admin
 from vmtools_next.data.models.build_map_art import (
     MapArtTask, MapArtMaterial, MapArtBotAssignment, MapArtBlockState,
 )
@@ -75,9 +75,16 @@ class BotManageRequest(BaseModel):
 async def create_task(
     data: MapArtTaskCreate,
     db: Session = Depends(get_db),
-    user=Depends(get_current_user),
+    user=Depends(require_admin),
 ):
     """Create a new map art build task from a Litematica projection file."""
+    # 路径安全：只允许解析已上传目录内的投影文件（防任意路径文件读取）
+    from pathlib import Path as _Path
+    _upload_dir = (_Path(__file__).resolve().parent.parent.parent.parent.parent
+                   / "uploads" / "build_projections").resolve()
+    _proj_path = _Path(data.projection_file_path).resolve()
+    if not str(_proj_path).startswith(str(_upload_dir)) or not _proj_path.is_file():
+        raise HTTPException(status_code=400, detail="projection_file_path 必须位于上传目录内")
     # Parse projection to get metadata and materials
     try:
         parsed = await LitematicaParser.parse_file(data.projection_file_path)
@@ -195,7 +202,7 @@ def list_tasks(
 
 
 @router.get("/tasks/{task_id}")
-def get_task(task_id: str, db: Session = Depends(get_db)):
+def get_task(task_id: str, db: Session = Depends(get_db), user=Depends(require_admin)):
     """Get full task details including materials and bot assignments."""
     task = db.query(MapArtTask).filter(MapArtTask.task_id == task_id).first()
     if not task:
@@ -266,6 +273,7 @@ async def control_task(
     task_id: str,
     data: TaskControlRequest,
     db: Session = Depends(get_db),
+    user=Depends(require_admin),
 ):
     """Control a build task: start, pause, resume, stop."""
     task = db.query(MapArtTask).filter(MapArtTask.task_id == task_id).first()
@@ -336,7 +344,7 @@ async def control_task(
 
 
 @router.delete("/tasks/{task_id}")
-def delete_task(task_id: str, db: Session = Depends(get_db)):
+def delete_task(task_id: str, db: Session = Depends(get_db), user=Depends(require_admin)):
     """Delete a task (only draft/cancelled/completed)."""
     task = db.query(MapArtTask).filter(MapArtTask.task_id == task_id).first()
     if not task:
@@ -350,7 +358,7 @@ def delete_task(task_id: str, db: Session = Depends(get_db)):
 
 
 @router.get("/tasks/{task_id}/blocks")
-def get_task_blocks(task_id: str, db: Session = Depends(get_db)):
+def get_task_blocks(task_id: str, db: Session = Depends(get_db), user=Depends(require_admin)):
     """Return all block states for a task (for 3D frontend initialization).
 
     Returns full block list so the Three.js canvas can render immediately.
@@ -394,21 +402,29 @@ def get_task_blocks(task_id: str, db: Session = Depends(get_db)):
 # ──────────────────────────────────────────────
 
 @router.post("/projections/upload")
-async def upload_projection(file: UploadFile = File(...)):
+async def upload_projection(
+    file: UploadFile = File(...),
+    user=Depends(require_admin),
+):
     """Upload a .litematic file and return its metadata + material requirements.
 
     File is saved to a configured upload directory.
     """
-    import os
-    from pathlib import Path
+    from pathlib import Path, PurePosixPath
 
-    # Save to uploads directory (absolute path)
+    if not file.filename or not file.filename.endswith(".litematic"):
+        raise HTTPException(400, "Only .litematic files are accepted")
+    content = await file.read()
+    if len(content) > 50 * 1024 * 1024:
+        raise HTTPException(400, "File too large (max 50MB)")
+
+    # Save to uploads directory (absolute path)；文件名只取 basename，杜绝 ../ 穿越
     BASE = Path(__file__).resolve().parent.parent.parent.parent.parent  # backend/
     upload_dir = BASE / "uploads" / "build_projections"
     upload_dir.mkdir(parents=True, exist_ok=True)
-    file_path = upload_dir / file.filename
+    safe_name = PurePosixPath(file.filename.replace("\\", "/")).name
+    file_path = upload_dir / safe_name
     with open(file_path, "wb") as f:
-        content = await file.read()
         f.write(content)
 
     # Return absolute path

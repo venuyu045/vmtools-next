@@ -116,6 +116,13 @@ async def _user_from_session(sid: str):
         db.close()
 
 
+async def _require_admin_socket(sid: str) -> bool:
+    """Socket.IO 管理控制事件：要求 admin / site_admin 角色（权限组重构后）。"""
+    session = await sio.get_session(sid)
+    user_info = (session or {}).get("user") or {}
+    return user_info.get("role") in ("admin", "site_admin")
+
+
 @sio.event
 async def connect(sid, environ, auth):
     """Client connected — validate JWT and push initial sync data."""
@@ -342,6 +349,9 @@ async def scan_control(sid, data):
     if not isinstance(data, dict):
         await sio.emit("scan_alert", {"type": "error", "message": "Invalid data format"}, to=sid)
         return
+    if not await _require_admin_socket(sid):
+        await sio.emit("scan_alert", {"type": "error", "message": "无权限执行扫描控制"}, to=sid)
+        return
     action = data.get("action", "")
     warehouse_id = data.get("warehouse_id", "")
     bot_id = data.get("bot_id", "")
@@ -405,6 +415,9 @@ async def logistics_control(sid, data):
     if not isinstance(data, dict):
         await sio.emit("logistics_alert", {"type": "error", "message": "Invalid data format"}, to=sid)
         return
+    if not await _require_admin_socket(sid):
+        await sio.emit("logistics_alert", {"type": "error", "message": "无权限执行物流控制"}, to=sid)
+        return
     action = data.get("action", "")
     run_id = data.get("run_id")
     template_id = data.get("template_id")
@@ -446,6 +459,9 @@ async def build_control(sid, data):
     """Handle build task control commands."""
     if not isinstance(data, dict):
         await sio.emit("build_alert", {"type": "error", "message": "Invalid data format"}, to=sid)
+        return
+    if not await _require_admin_socket(sid):
+        await sio.emit("build_alert", {"type": "error", "message": "无权限执行建造控制"}, to=sid)
         return
     action = data.get("action", "")
     task_id = data.get("task_id")

@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy.orm import Session
 
-from vmtools_next.api.deps import get_current_user, get_db
+from vmtools_next.api.deps import get_current_user, get_db, require_admin
 from vmtools_next.api.schemas.mcc_instance import (
     MccAccountConfigResponse,
     MccAccountConfigSaveResponse,
@@ -226,7 +226,7 @@ async def start_instance(
     instance_id: str,
     data: MccInstanceStartRequest | None = None,
     db: Session = Depends(get_db),
-    user: UserModel = Depends(get_current_user),
+    user: UserModel = Depends(require_admin),
 ):
     instance = service.get_instance(db, user, instance_id)
     engine = _resolve_engine(db, instance_id)
@@ -251,7 +251,7 @@ async def stop_instance(
     instance_id: str,
     data: MccInstanceStopRequest | None = None,
     db: Session = Depends(get_db),
-    user: UserModel = Depends(get_current_user),
+    user: UserModel = Depends(require_admin),
 ):
     instance = service.get_instance(db, user, instance_id)
     request = data or MccInstanceStopRequest()
@@ -276,7 +276,7 @@ async def stop_instance(
 @router.post("/kill-all")
 async def kill_all_instances(
     db: Session = Depends(get_db),
-    user: UserModel = Depends(get_current_user),
+    user: UserModel = Depends(require_admin),
 ):
     """Force-kill all running processes immediately.
 
@@ -406,7 +406,7 @@ async def _sweep_orphan_mcc_processes() -> list[dict]:
 async def restart_instance(
     instance_id: str,
     db: Session = Depends(get_db),
-    user: UserModel = Depends(get_current_user),
+    user: UserModel = Depends(require_admin),
 ):
     instance = service.get_instance(db, user, instance_id)
     engine = _resolve_engine(db, instance_id)
@@ -464,7 +464,7 @@ async def terminal_input(
     instance_id: str,
     data: MccTerminalInputRequest,
     db: Session = Depends(get_db),
-    user: UserModel = Depends(get_current_user),
+    user: UserModel = Depends(require_admin),
 ):
     service.get_instance(db, user, instance_id)
     try:
@@ -689,7 +689,7 @@ def rename_file(
 def read_account_config(
     instance_id: str,
     db: Session = Depends(get_db),
-    user: UserModel = Depends(get_current_user),
+    user: UserModel = Depends(require_admin),
 ):
     instance = service.get_instance(db, user, instance_id)
     return MccAccountConfigResponse(**file_service.read_account_config(instance))
@@ -700,7 +700,7 @@ def apply_account_profile(
     instance_id: str,
     data: MccApplyAccountProfileRequest,
     db: Session = Depends(get_db),
-    user: UserModel = Depends(get_current_user),
+    user: UserModel = Depends(require_admin),
 ):
     instance = service.get_instance(db, user, instance_id)
     profile = profile_service.get_profile(db, user, data.profile_id)
@@ -725,7 +725,7 @@ def save_account_config(
     instance_id: str,
     data: MccAccountConfigUpdate,
     db: Session = Depends(get_db),
-    user: UserModel = Depends(get_current_user),
+    user: UserModel = Depends(require_admin),
 ):
     instance = service.get_instance(db, user, instance_id)
     try:
