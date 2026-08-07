@@ -306,20 +306,8 @@ class ScanQueueManager:
             except Exception as e:
                 logger.warning("scan_loaded_containers failed: %s", e)
 
-        # zone 枚举兜底
-        for zone in zones:
-            for x in range(zone.range_min_x, zone.range_max_x + 1):
-                for y in range(zone.range_min_y, zone.range_max_y + 1):
-                    for z in range(zone.range_min_z, zone.range_max_z + 1):
-                        positions.append((x, y, z))
-                        if len(positions) >= max_positions:
-                            break
-                    if len(positions) >= max_positions:
-                        break
-                if len(positions) >= max_positions:
-                    break
-            if len(positions) >= max_positions:
-                break
+        # 不再做 zone 全坐标枚举兜底：超大 zone（如全物品 142×73×108 ≈112 万格）
+        # 会生成大量非容器假坐标，导致扫描器空转。发现不到就如实报错。
         return positions
 
     # ── 启动单个扫描 ──
@@ -401,6 +389,19 @@ class ScanQueueManager:
                 from vmtools_next.adapters.mcc.mcc_minihud import MccMiniHudAdapter
                 minihud = MccMiniHudAdapter(client)
 
+            # 传送（仓库 teleport_cmd）——必须在容器发现之前执行：
+            # 容器发现按 zone box 直扫需要目标区块已加载；若先发现后传送，
+            # 远处仓库区块未加载会返回空，导致误判"未发现容器"。
+            wh = db.query(WarehouseModel).filter(
+                WarehouseModel.warehouse_id == wh_id).first()
+            teleport_cmd = (wh.logistics_teleport_cmd or "").strip() if wh else ""
+            if teleport_cmd and engine_type == "mineflayer":
+                try:
+                    await client.run_command(teleport_cmd)
+                    await asyncio.sleep(5)  # 等传送完成 + 目标区块加载
+                except Exception as e:
+                    logger.warning("Teleport to warehouse %s failed: %s", wh_id, e)
+
             # 容器坐标
             container_positions = await self._discover_containers(db, qid, wh_id, client, engine_type)
             if not container_positions:
@@ -409,17 +410,6 @@ class ScanQueueManager:
                 db.commit()
                 await self._broadcast_queue()
                 return
-
-            # 传送（仓库 teleport_cmd）
-            wh = db.query(WarehouseModel).filter(
-                WarehouseModel.warehouse_id == wh_id).first()
-            teleport_cmd = (wh.logistics_teleport_cmd or "").strip() if wh else ""
-            if teleport_cmd and engine_type == "mineflayer":
-                try:
-                    await client.run_command(teleport_cmd)
-                    await asyncio.sleep(3)
-                except Exception as e:
-                    logger.warning("Teleport to warehouse %s failed: %s", wh_id, e)
 
             from vmtools_next.core.warehouse_scanner import WarehouseScanner
             scanner = WarehouseScanner(client, minihud)
