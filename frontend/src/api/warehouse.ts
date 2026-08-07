@@ -16,9 +16,9 @@ export const warehouseApi = {
     update(id: string, data: any) {
     return client.put(`/warehouses/${id}`, data)
     },
-    getMaterials(id: string, page = 1, pageSize = 500) {
-    return client.get(`/warehouses/${id}/materials`, { params: { page, page_size: pageSize } })
-    },
+    getMaterials(id: string, page = 1, pageSize = 5000) {
+  return client.get(`/warehouses/${id}/materials`, { params: { page, page_size: pageSize } })
+},
     searchMaterials(q: string, page = 1) {
     return client.get('/materials/search', { params: { q, page } })
   },
