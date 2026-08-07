@@ -373,7 +373,7 @@ def list_materials(warehouse_id: str, page: int = 1, page_size: int = 500,
     """List aggregated materials for a warehouse (paginated)."""
     wh = _get_scoped_warehouse(db, user, warehouse_id)
     page = max(1, page)
-    page_size = max(1, min(page_size, 2000))
+    page_size = max(1, min(page_size, 5000))
 
     q = db.query(MaterialItemModel).filter(MaterialItemModel.warehouse_fk == wh.warehouse_id)
     total = q.count()
