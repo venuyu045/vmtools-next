@@ -230,13 +230,13 @@ function createBlockHandlers(bot) {
           if (!hasContainer) continue;
 
           const secY = si * 16;
-          // chunk.getBlock(x, y, z)：x/z 为区块内局部坐标(0-15)，y 为绝对高度
+          // bot.blockAt 读已加载区块方块（mineflayer 公开 API，数据可靠）
           for (let ly = 0; ly < 16 && blocks.length < max_count; ly++) {
             for (let lx = 0; lx < 16 && blocks.length < max_count; lx++) {
               for (let lz = 0; lz < 16 && blocks.length < max_count; lz++) {
                 const wx = baseX + lx, wy = secY + ly, wz = baseZ + lz;
                 let blk = null;
-                try { blk = col.getBlock(new Vec3(lx, wy, lz)); } catch {}
+                try { blk = bot.blockAt(new Vec3(wx, wy, wz)); } catch {}
                 if (blk) {
                   const bname = String(blk.name || '');
                   if (!blockNameSample && bname) blockNameSample = bname;
