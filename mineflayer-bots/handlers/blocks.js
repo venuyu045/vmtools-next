@@ -199,12 +199,22 @@ function createBlockHandlers(bot) {
           if (blocks.length >= max_count) break;
 
           // palette 快速过滤：该区块段不含容器方块则整段跳过（避免逐格 getBlock）
+          // prismarine-chunk palette 是 stateId 数字数组，需经 registry 转方块名
           let hasContainer = false;
           try {
+            const registry = bot.registry || {};
+            const blocksByStateId = registry.blocksByStateId || {};
             const palette = section.palette || [];
             for (const p of palette) {
-              const nm = typeof p === 'string' ? p : (p && (p.name || p.Name)) || '';
-              // 兼容 "minecraft:chest" 前缀
+              let nm = '';
+              if (typeof p === 'number' || typeof p === 'bigint') {
+                const b = blocksByStateId[Number(p)];
+                nm = (b && b.name) || '';
+              } else if (typeof p === 'string') {
+                nm = p;
+              } else if (p && (p.name || p.Name)) {
+                nm = p.name || p.Name;
+              }
               const base = String(nm).includes(':') ? String(nm).split(':')[1] : nm;
               if (CONTAINER_NAMES.has(base)) { hasContainer = true; break; }
             }
