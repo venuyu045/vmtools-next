@@ -104,6 +104,19 @@ async function createBotProcess(options) {
   // ── 2. 创建 WebSocket 服务器 ──
   const wss = new WebSocketServer({ port: wsPort });
 
+  // ⚠️ connection 监听必须在 wss 创建后【立即】注册，不能等 login！
+  // 原因：bot 登录（yggdrasil 认证）需要时间，而 Python 端进程管理器在 bot
+  // 进程一启动就会尝试连接 WS。若 connection 监听注册在 login 回调内，
+  // 登录前建立的连接将【没有 message 监听器】——只能收到广播
+  // （bot_ready/status/bot_chat），发出的请求无人处理，Python 端会
+  // 30s 超时（历史事故：chat_responder 插件 send_chat 超时）。
+  // 登录前 methodMap 为空，请求会快速返回 Unknown method；登录后正常。
+  wss.on('connection', (ws) => {
+    ws.on('message', (data) => handleWsMessage(ws, data));
+    ws.on('close', () => { /* 不处理，用 ping 检测存活 */ });
+    ws.on('error', () => { /* 忽略 */ });
+  });
+
   // 事件回调列表
   const eventListeners = new Set();
 
@@ -274,18 +287,12 @@ async function createBotProcess(options) {
         methodMap[name] = fn;
       }
 
-      // ── 5. 启动 WebSocket 服务器 ──
-      wss.on('connection', (ws) => {
-        ws.on('message', (data) => handleWsMessage(ws, data));
-        ws.on('close', () => { /* 不处理，用 ping 检测存活 */ });
-        ws.on('error', () => { /* 忽略 */ });
-
-        // 发送连接成功消息
-        ws.send(JSON.stringify(createEvent('bot_ready', {
-          username: bot.username,
-          ws_port: wsPort,
-        })));
-      });
+      // ── 5. WebSocket 服务器 connection 监听已在 wss 创建时注册 ──
+      //    登录成功后向所有已连接客户端广播 bot_ready（含登录前建立的连接）。
+      broadcast(createEvent('bot_ready', {
+        username: bot.username,
+        ws_port: wsPort,
+      }));
 
       // ── 6. 启动状态推送定时器 ──
       statusTimer = setInterval(() => {
