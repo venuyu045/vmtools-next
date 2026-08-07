@@ -307,11 +307,17 @@ class MineflayerBridgeClient(AbstractBotAgent):
             "x": x, "y": y, "z": z,
         }, timeout=DEFAULT_CMD_TIMEOUT)
 
-    async def scan_nearby_blocks(self, radius: int = 16, max_count: int = 100,
-                                  matching: str = None) -> dict:
+    async def scan_nearby_blocks(self, radius: int = 16, max_count: int = 500000,
+                                  matching: str = None, box: dict = None) -> dict:
         params = {"radius": radius, "max_count": max_count}
         if matching:
             params["matching"] = matching
+        if box:
+            params.update({
+                "box_min_x": box.get("min_x"), "box_max_x": box.get("max_x"),
+                "box_min_y": box.get("min_y"), "box_max_y": box.get("max_y"),
+                "box_min_z": box.get("min_z"), "box_max_z": box.get("max_z"),
+            })
         return await self._send_request(METHOD_SCAN_NEARBY_BLOCKS, params,
                                         timeout=DEFAULT_CMD_TIMEOUT)
 
