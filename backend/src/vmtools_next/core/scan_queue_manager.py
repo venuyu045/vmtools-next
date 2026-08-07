@@ -266,7 +266,30 @@ class ScanQueueManager:
             return False
 
         if engine_type == "mineflayer":
-            # 1) 主路径：已加载区块全部容器（bot 视野=服务器下发的区块范围，通常 96~192 格半径）
+            # 1) 主路径：大半径扫描（radius 按 zone 大小动态计算，覆盖大圈地）+ zone 过滤
+            #    scan_nearby_blocks 用 bot.blockAt 遍历 ±radius 包围盒（已验证可靠）；
+            #    半径取 zone 水平最大跨度的一半 + 边界余量，保底 48、上限 96。
+            try:
+                radius = 48
+                if zones:
+                    for zz in zones:
+                        dx = abs(zz.range_max_x - zz.range_min_x)
+                        dz = abs(zz.range_max_z - zz.range_min_z)
+                        need = max(dx, dz) // 2 + 12
+                        if need > radius:
+                            radius = min(96, need)
+                scan_res = await client.scan_nearby_blocks(
+                    radius=radius, max_count=max_positions, matching=_CONTAINER_MATCHING)
+                blocks = (scan_res or {}).get("blocks") or []
+                kept = [(b["x"], b["y"], b["z"]) for b in blocks if in_zones(b["x"], b["y"], b["z"])]
+                if kept:
+                    logger.info("Scan queue %s discovered %d containers (radius=%d, zone-filtered)",
+                                qid[:8], len(kept), radius)
+                    return kept
+            except Exception as e:
+                logger.warning("scan_nearby_blocks(radius=%s) failed: %s", radius, e)
+
+            # 2) 兜底：scan_loaded_containers（遍历已加载区块）
             try:
                 scan_res = await client.scan_loaded_containers(max_count=max_positions)
                 blocks = (scan_res or {}).get("blocks") or []
@@ -277,18 +300,6 @@ class ScanQueueManager:
                     return kept
             except Exception as e:
                 logger.warning("scan_loaded_containers failed: %s", e)
-
-            # 2) 兜底：旧逻辑——bot 周围 15 格
-            try:
-                scan_res = await client.scan_nearby_blocks(
-                    radius=15, max_count=max_positions, matching=_CONTAINER_MATCHING)
-                blocks = (scan_res or {}).get("blocks") or []
-                if blocks:
-                    positions = [(b["x"], b["y"], b["z"]) for b in blocks[:max_positions]]
-                    logger.info("Scan queue %s discovered %d containers nearby (fallback)", qid[:8], len(positions))
-                    return positions
-            except Exception as e:
-                logger.warning("scan_nearby_blocks failed, fallback to zones: %s", e)
 
         # zone 枚举兜底
         for zone in zones:
