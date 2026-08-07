@@ -18,7 +18,7 @@ import pathlib
 import shutil
 import signal
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -617,7 +617,7 @@ class MineflayerProcessManager:
                     instance_id=instance_id,
                     event_type="process",
                     message=message,
-                    created_at=datetime.now(),
+                    created_at=datetime.now(timezone.utc),
                 )
                 db.add(event)
                 db.commit()
@@ -647,9 +647,9 @@ class MineflayerProcessManager:
                     # SQLAlchemy DateTime 列必须用 datetime 对象（字符串会 TypeError）
                     from datetime import datetime as _dt
                     if status == "running":
-                        instance.last_started_at = _dt.now()
+                        instance.last_started_at = _dt.now(timezone.utc)
                     if status == "stopped":
-                        instance.last_stopped_at = _dt.now()
+                        instance.last_stopped_at = _dt.now(timezone.utc)
                     db.commit()
             finally:
                 db.close()
