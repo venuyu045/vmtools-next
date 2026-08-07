@@ -153,6 +153,20 @@ class QqBotConfig(BaseModel):
     notify_on_chat: bool = False
 
 
+class QqConnectConfig(BaseModel):
+    """QQ 互联（connect.qq.com）网站应用配置——用于「QQ 一键注册/登录」OAuth 认证。
+
+    申请地址：https://connect.qq.com  → 创建「网站应用」→ 配置回调域名为本站域名。
+    redirect_uri 必须与 QQ 互联后台配置的回调地址一致。
+    """
+    enabled: bool = False
+    app_id: str = ""       # QQ 互联应用 App ID
+    app_key: str = ""      # QQ 互联应用 App Key
+    redirect_uri: str = "" # 例如 https://www.venusyu045.cn/api/auth/qq/callback
+    state_ttl_seconds: int = 600
+    ticket_ttl_seconds: int = 600
+
+
 class TrackedPlayer(BaseModel):
     name: str
     qq_openid: str = ""
@@ -198,6 +212,7 @@ class AppConfig(BaseSettings):
     monitor: MonitorConfig = Field(default_factory=MonitorConfig)
     plugins: PluginsConfig = Field(default_factory=PluginsConfig)
     qqbot: QqBotConfig = Field(default_factory=QqBotConfig)
+    qq_connect: QqConnectConfig = Field(default_factory=QqConnectConfig)
     player_tracking: PlayerTrackingConfig = Field(default_factory=PlayerTrackingConfig)
     bluemap: BlueMapConfig = Field(default_factory=BlueMapConfig)
 

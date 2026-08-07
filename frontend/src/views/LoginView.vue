@@ -23,18 +23,27 @@
           />
         </el-form-item>
         <el-button
-          type="primary"
-          size="large"
-          :loading="loading"
-          @click="handleLogin"
-          style="width: 100%"
-        >
-          > 登录
-        </el-button>
-        <div class="login-register">
-          <span class="register-hint">还没有账号？</span>
-          <el-link type="primary" @click="goRegister">立即注册</el-link>
-        </div>
+        type="primary"
+        size="large"
+        :loading="loading"
+        @click="handleLogin"
+        style="width: 100%"
+      >
+        > 登录
+      </el-button>
+      <el-button
+        class="qq-btn"
+        size="large"
+        :loading="qqLoading"
+        @click="handleQqLogin"
+        style="width: 100%; margin-top: 12px"
+      >
+        <span class="qq-icon">Q</span> QQ 登录
+      </el-button>
+      <div class="login-register">
+        <span class="register-hint">还没有账号？</span>
+        <el-link type="primary" @click="goRegister">立即注册</el-link>
+      </div>
       </el-form>
       <div class="login-footer mono">
         v3.0 · MCC Server · Build Automation
@@ -47,14 +56,16 @@
 </template>
 
 <script setup lang="ts">
-import { reactive, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { onMounted, reactive, ref } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { ElMessage } from 'element-plus'
 
 const router = useRouter()
+const route = useRoute()
 const authStore = useAuthStore()
 const loading = ref(false)
+const qqLoading = ref(false)
 const form = reactive({ game_id: '', password: '' })
 
 async function handleLogin() {
@@ -73,9 +84,44 @@ async function handleLogin() {
   }
 }
 
+async function handleQqLogin() {
+  qqLoading.value = true
+  try {
+    await authStore.startQqAuth()
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.detail || 'QQ 登录暂不可用，请稍后再试')
+    qqLoading.value = false
+  }
+}
+
+/** QQ 回调落地：已注册→直接登录；未注册→跳注册页预填 */
+async function handleQqTicket(ticket: string) {
+  qqLoading.value = true
+  try {
+    const res = await authStore.qqTicketLogin(ticket)
+    if (res.loggedIn) {
+      ElMessage.success('QQ 登录成功')
+      router.replace('/dashboard')
+    } else {
+      router.replace(`/register?qq_ticket=${ticket}`)
+    }
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.detail || 'QQ 认证已过期，请重新发起')
+  } finally {
+    qqLoading.value = false
+  }
+}
+
 function goRegister() {
   router.push('/register')
 }
+
+onMounted(() => {
+  const ticket = route.query.qq_ticket as string | undefined
+  if (ticket) {
+    handleQqTicket(ticket)
+  }
+})
 </script>
 
 <style scoped>
@@ -142,6 +188,31 @@ function goRegister() {
 .register-hint {
   color: var(--text-secondary);
   margin-right: 4px;
+}
+
+.qq-btn {
+  background: #12b7f5;
+  border-color: #12b7f5;
+  color: #fff;
+}
+.qq-btn:hover {
+  background: #0aa3dc;
+  border-color: #0aa3dc;
+  color: #fff;
+}
+.qq-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  margin-right: 8px;
+  border-radius: 4px;
+  background: #fff;
+  color: #12b7f5;
+  font-weight: 700;
+  font-size: 13px;
+  line-height: 1;
 }
 
 .login-icp {
