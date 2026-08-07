@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 from vmtools_next.api.schemas.mcc_instance import MccInstanceCreate, MccInstanceUpdate
 from vmtools_next.config import get_config
 from vmtools_next.core.mcc_port_allocator import MccPortAllocator
-from vmtools_next.core.mcc_security import hash_secret
+from vmtools_next.core.mcc_security import hash_secret, protect_secret
 from vmtools_next.data.models.auth import UserModel
 from vmtools_next.data.models.mcc_remote import MccInstanceModel
 
@@ -98,7 +98,7 @@ class MccInstanceService:
             desired_state="stopped",
             mcp_port=mcp_port,
             mcp_auth_token_hash=hash_secret(token),
-            mcp_auth_token_secret=token,
+            mcp_auth_token_secret=protect_secret(token),  # 加密落库，防 DB 泄露（M3）
             mcp_auth_token_env=self.config.mcp_auth_token_env,
             mc_username=data.mc_username,
             mc_server_host=data.mc_server_host,

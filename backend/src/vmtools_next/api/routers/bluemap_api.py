@@ -5,7 +5,7 @@ import json
 
 from fastapi import APIRouter, Depends
 
-from vmtools_next.api.deps import get_optional_user
+from vmtools_next.api.deps import get_current_user, get_optional_user
 
 router = APIRouter(prefix="/api/bluemap", tags=["bluemap"])
 
@@ -122,7 +122,7 @@ def get_worlds(user=Depends(get_optional_user)):
 
 
 @router.post("/refresh")
-async def refresh_markers(user=Depends(get_optional_user)):
+async def refresh_markers(user=Depends(get_current_user)):
     """Manually trigger a markers poll and return updated data."""
     monitor = _get_monitor()
     if not monitor:

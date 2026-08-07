@@ -12,7 +12,7 @@ from pathlib import Path
 
 from vmtools_next.adapters.mcc.mcc_mcp_client import MccMcpClient
 from vmtools_next.config import get_config
-from vmtools_next.core.mcc_security import mask_text
+from vmtools_next.core.mcc_security import mask_text, reveal_secret
 from vmtools_next.core.terminal_log_buffer import TerminalLogBuffer, TerminalLine
 from vmtools_next.data.db import get_session_factory, sio
 from vmtools_next.data.models.mcc_remote import (
@@ -213,7 +213,7 @@ class MccProcessManager:
                         raise FileNotFoundError(f"MCC executable not found: {target_binary}")
 
                 env = os.environ.copy()
-                env[instance.mcp_auth_token_env] = instance.mcp_auth_token_secret or ""
+                env[instance.mcp_auth_token_env] = reveal_secret(instance.mcp_auth_token_secret) or ""
                 env["MCC_MCP_PORT"] = str(instance.mcp_port)
                 env["MCC_MCP_HOST"] = instance.mcp_host
                 env["VMT_INSTANCE_ID"] = instance.instance_id
@@ -294,7 +294,7 @@ class MccProcessManager:
                     _bot_id = instance.bot_id
                     _host = instance.mcp_host or "127.0.0.1"
                     _port = instance.mcp_port or 33333
-                    _token = instance.mcp_auth_token_secret or None
+                    _token = reveal_secret(instance.mcp_auth_token_secret) or None
                     _asyncio.ensure_future(self._auto_connect_mcp(_iid, _bot_id, _host, _port, _token))
 
                 # Register bot with BlueMap for server-detected online/offline tracking
@@ -549,7 +549,7 @@ class MccProcessManager:
             client = MccMcpClient(
                 host=instance.mcp_host,
                 port=instance.mcp_port,
-                auth_token=instance.mcp_auth_token_secret or None,
+                auth_token=reveal_secret(instance.mcp_auth_token_secret) or None,
             )
             connected = await client.connect()
             if not connected:
@@ -581,8 +581,9 @@ class MccProcessManager:
         import httpx
         url = f"http://{instance.mcp_host}:{instance.mcp_port}/mcp"
         headers = {"Content-Type": "application/json"}
-        if instance.mcp_auth_token_secret:
-            headers["Authorization"] = f"Bearer {instance.mcp_auth_token_secret}"
+        _plain_token = reveal_secret(instance.mcp_auth_token_secret)
+        if _plain_token:
+            headers["Authorization"] = f"Bearer {_plain_token}"
 
         for tool_name in ("mcc_run_internal_command", "RunInternalCommand"):
             payload = {

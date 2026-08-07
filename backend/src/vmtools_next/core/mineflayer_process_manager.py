@@ -198,6 +198,8 @@ class MineflayerProcessManager:
 
             # ── 认���方式处理 ──
             auth_type = account_profile.auth_type if account_profile else "offline"
+            # 密码经环境变量 MC_PASSWORD 传递，绝不写入 argv（避免 ps 可见，M2）
+            plain_password = ""
 
             if auth_type == "yggdrasil":
                 cmd += ["--auth", "yggdrasil"]
@@ -223,20 +225,18 @@ class MineflayerProcessManager:
 
                 if account_profile and account_profile.password_secret:
                     from vmtools_next.core.mcc_security import reveal_secret
-                    plain_password = reveal_secret(account_profile.password_secret)
-                    if plain_password:
-                        cmd += ["--password", plain_password]
+                    plain_password = reveal_secret(account_profile.password_secret) or ""
             else:
                 cmd += ["--auth", auth_type]
                 if account_profile and account_profile.password_secret:
                     from vmtools_next.core.mcc_security import reveal_secret
-                    plain_password = reveal_secret(account_profile.password_secret)
-                    if plain_password:
-                        cmd += ["--password", plain_password]
+                    plain_password = reveal_secret(account_profile.password_secret) or ""
 
             # 环境变量
             env = os.environ.copy()
             env["VMT_INSTANCE_ID"] = instance.instance_id
+            if plain_password:
+                env["MC_PASSWORD"] = plain_password  # 密码不进 argv（M2）
             if extra_env:
                 env.update({str(k): str(v) for k, v in extra_env.items()})
 

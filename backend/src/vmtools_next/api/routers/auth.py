@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 
 import bcrypt
 import jwt
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -14,6 +14,29 @@ from sqlalchemy.orm import Session
 from vmtools_next.api.deps import get_db, get_current_user
 from vmtools_next.config import get_config
 from vmtools_next.data.models.auth import UserModel
+from vmtools_next.infra.logging import get_logger
+
+logger = get_logger("auth")
+
+# ── 登录限流（防暴力破解，M1） ──
+_LOGIN_ATTEMPTS: dict[str, tuple[float, int]] = {}
+_LOGIN_LIMIT = 5          # 窗口内最大失败尝试次数
+_LOGIN_WINDOW = 60.0      # 窗口秒数
+
+
+def _check_login_rate_limit(key: str) -> None:
+    import time as _time
+    now = _time.monotonic()
+    ts, cnt = _LOGIN_ATTEMPTS.get(key, (0.0, 0))
+    if now - ts > _LOGIN_WINDOW:
+        ts, cnt = now, 0
+    if cnt >= _LOGIN_LIMIT:
+        raise HTTPException(429, "尝试过于频繁，请稍后再试")
+    _LOGIN_ATTEMPTS[key] = (ts, cnt + 1)
+
+
+def _reset_login_rate_limit(key: str) -> None:
+    _LOGIN_ATTEMPTS.pop(key, None)
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -56,8 +79,12 @@ def _make_token(user: UserModel) -> str:
 
 
 @router.post("/login", response_model=LoginResponse)
-def login(data: LoginRequest, db: Session = Depends(get_db)):
+def login(data: LoginRequest, request: Request, db: Session = Depends(get_db)):
     """Login with game_id and password."""
+    client_ip = request.client.host if request.client else "unknown"
+    rate_key = f"{data.game_id.lower()}|{client_ip}"
+    _check_login_rate_limit(rate_key)
+
     user = db.query(UserModel).filter(UserModel.game_id == data.game_id).first()
     if not user:
         raise HTTPException(401, "Invalid credentials")
@@ -68,6 +95,7 @@ def login(data: LoginRequest, db: Session = Depends(get_db)):
     if user.status != "approved":
         raise HTTPException(403, "User not approved")
 
+    _reset_login_rate_limit(rate_key)
     return LoginResponse(token=_make_token(user), user_id=user.id, game_id=user.game_id, role=user.role)
 
 
@@ -89,6 +117,12 @@ def register(data: RegisterRequest, db: Session = Depends(get_db)):
         raise HTTPException(400, "QQ 认证已过期，请重新发起 QQ 登录")
 
     openid = qq_info["openid"]
+    # 1.5) 入参校验（与 change-password 口径一致，M8）
+    if len(data.password) < 6:
+        raise HTTPException(400, "密码长度不能少于 6 位")
+    gid = (data.game_id or "").strip()
+    if not gid or len(gid) > 32 or any(c in gid for c in " \t\r\n"):
+        raise HTTPException(400, "Game ID 格式不合法")
     # 2) 唯一性校验
     if db.query(UserModel).filter(UserModel.game_id == data.game_id).first():
         raise HTTPException(400, "Game ID already registered")
@@ -145,8 +179,9 @@ async def qq_callback(code: str = "", state: str = ""):
         return RedirectResponse(url=f"/login?qq_ticket={ticket}", status_code=302)
     except QqOAuthError as exc:
         raise HTTPException(400, str(exc))
-    except Exception as exc:
-        raise HTTPException(500, f"QQ 认证失败: {exc}")
+    except Exception:
+        logger.exception("QQ 认证回调失败")
+        raise HTTPException(500, "QQ 认证失败，请稍后再试")
 
 
 @router.post("/qq/ticket-login")

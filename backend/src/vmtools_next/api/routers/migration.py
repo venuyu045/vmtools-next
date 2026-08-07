@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from typing import Optional
 
-from vmtools_next.api.deps import get_current_user
+from vmtools_next.api.deps import get_current_user, require_site_admin
 
 router = APIRouter(prefix="/api/migration", tags=["migration"])
 
@@ -24,7 +24,7 @@ def get_migration_status(user=Depends(get_current_user)):
 
 @router.post("/config")
 def migrate_config(json_path: str, yaml_path: str = "config/config.yaml",
-                    user=Depends(get_current_user)):
+                    user=Depends(require_site_admin)):
     """Migrate Java config to YAML."""
     from vmtools_next.data.migration import ConfigMigrator
     success = ConfigMigrator.migrate(json_path, yaml_path)
@@ -34,7 +34,7 @@ def migrate_config(json_path: str, yaml_path: str = "config/config.yaml",
 
 
 @router.post("/warehouses")
-def migrate_warehouses(json_path: str, user=Depends(get_current_user)):
+def migrate_warehouses(json_path: str, user=Depends(require_site_admin)):
     """Migrate Java warehouses to database."""
     from vmtools_next.data.migration import WarehouseMigrator
     from vmtools_next.data.db import get_session_factory
