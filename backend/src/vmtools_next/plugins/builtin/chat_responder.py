@@ -8,16 +8,11 @@
 
     {"bot_id": "xxx", "username": "player", "message": "!pos"}
 
-配置（config.yaml → plugins.builtin.chat_responder）::
+配置（经 plugin_states 表持久化，前端插件配置页 / API 可编辑）::
 
-    plugins:
-      builtin:
-        chat_responder:
-          enabled: true
-          commands:
-            "!ping": "pong! ({username})"
-            "!pos": "当前位置 {position}"
-            "!help": "可用指令: !ping / !pos / !help"
+    {"commands": {"!ping": "pong! ({username})", ...}}
+
+回复模板支持占位符：``{username}``（玩家名）、``{position}``（bot 坐标）。
 """
 from __future__ import annotations
 
@@ -34,14 +29,34 @@ DEFAULT_COMMANDS: dict[str, str] = {
     "!help": "可用指令: !ping / !pos / !help",
 }
 
+CONFIG_SCHEMA: dict = {
+    "type": "object",
+    "title": "bot 聊天指令配置",
+    "properties": {
+        "commands": {
+            "type": "object",
+            "title": "聊天指令表",
+            "description": "配置 bot 接受的指令与回复内容。指令以 ! 开头；"
+                           "回复支持占位符 {username}（玩家名）、{position}（bot 坐标）。",
+            "keyTitle": "指令",
+            "valueTitle": "回复内容",
+            "valueType": "string",
+            "additionalProperties": {"type": "string"},
+        },
+    },
+}
+
 
 class Plugin(IPlugin):
     """MF 聊天指令响应插件（engine=mineflayer）。"""
 
     name = "chat_responder"
-    version = "1.0.0"
+    version = "1.1.0"
     engine = "mineflayer"
     description = "MF bot 聊天指令自动响应（!ping / !pos / !help）"
+
+    config_schema = CONFIG_SCHEMA
+    default_config = {"commands": dict(DEFAULT_COMMANDS)}
 
     def __init__(self) -> None:
         self._context: PluginContext | None = None
@@ -50,16 +65,13 @@ class Plugin(IPlugin):
 
     async def load(self, context: PluginContext) -> None:
         self._context = context
-        # 从配置读取指令表（可选覆盖）
-        try:
-            from vmtools_next.config import get_config
-            cfg = get_config().plugins.builtin.chat_responder
-            self._enabled = cfg.get("enabled", True)
-            commands = cfg.get("commands")
-            if isinstance(commands, dict) and commands:
-                self._commands = {str(k): str(v) for k, v in commands.items()}
-        except Exception as exc:  # 配置缺失时用默认值，不影响启动
-            logger.debug("chat_responder config fallback: %s", exc)
+
+    def apply_config(self, config: dict) -> None:
+        """应用（默认+持久化合并后的）配置：指令表。"""
+        commands = (config or {}).get("commands")
+        if isinstance(commands, dict) and commands:
+            self._commands = {str(k): str(v) for k, v in commands.items()}
+        logger.info("Chat responder config applied (commands=%s)", list(self._commands))
 
     async def start(self) -> None:
         self._enabled = True

@@ -73,6 +73,7 @@ const routes = [
       { path: 'members', name: 'Members', component: () => import('@/views/MembersView.vue'), meta: { title: '成员管理', roles: [...ROLES.siteAdmin] } },
       { path: 'config', name: 'Config', component: () => import('@/views/ConfigView.vue'), meta: { title: '系统配置', roles: [...ROLES.siteAdmin] } },
       { path: 'plugins', name: 'Plugins', component: () => import('@/views/PluginView.vue'), meta: { title: '插件管理', roles: [...ROLES.siteAdmin] } },
+      { path: 'plugins/:name/config', name: 'PluginConfig', component: () => import('@/views/PluginConfigView.vue'), meta: { title: '插件配置', roles: [...ROLES.siteAdmin] } },
       { path: 'monitor', name: 'Monitor', component: () => import('@/views/MonitorView.vue'), meta: { title: '系统监控', roles: [...ROLES.siteAdmin] } },
 
       // --- 旧 MCC 路由（重定向到新拆分路由） ---

@@ -45,6 +45,12 @@ class IPlugin(ABC):
     engine: str = "mineflayer"
     description: str = ""
 
+    # 插件配置声明（供配置页渲染与 API 校验）
+    #   config_schema: 描述插件配置结构的 dict（type/properties/title/description…）
+    #   default_config: 默认配置；PluginManager 启动时与持久化配置深合并后注入
+    config_schema: dict = {}
+    default_config: dict = {}
+
     @abstractmethod
     async def load(self, context: PluginContext) -> None:
         """Initialize the plugin with context."""
@@ -64,6 +70,15 @@ class IPlugin(ABC):
     async def reload(self) -> None:
         """Reload the plugin configuration."""
         ...
+
+    def apply_config(self, config: dict) -> None:
+        """Apply a (merged) configuration dict to the plugin.
+
+        Called by PluginManager on startup (default+persisted merged) and
+        whenever the config is updated via the API. Plugins override this
+        to consume their config.
+        """
+        pass
 
     async def on_event(self, event_type: str, payload: dict) -> None:
         """Handle an event from the event bus. Override to subscribe."""
