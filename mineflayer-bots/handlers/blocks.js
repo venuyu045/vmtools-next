@@ -162,13 +162,29 @@ function createBlockHandlers(bot) {
       // prismarine-world: columns 是 {"chunkX,chunkZ": chunk} 普通对象；
       // getColumns() 返回 [{chunkX, chunkZ, column}]（推荐），否则从 key 解析。
       let cols = [];
-      try { cols = bot.world.getColumns() || []; } catch {}
+      try { cols = bot.world.getColumns() || []; } catch (e) { console.log('[scan_loaded] getColumns err:', e.message); }
       if (!cols.length && bot.world.columns) {
         cols = Object.entries(bot.world.columns).map(([key, column]) => {
           const parts = String(key).split(',');
           return { chunkX: Number(parts[0]), chunkZ: Number(parts[1]), column };
         });
       }
+      let totalSections = 0;
+      let samplePalette = '';
+      let paletteKeys = '';
+      for (const { column: col } of cols) {
+        const secs = (col && col.sections) || [];
+        for (const s of secs) {
+          if (!s) continue;
+          totalSections++;
+          if (!samplePalette && s.palette) {
+            samplePalette = JSON.stringify(Array.isArray(s.palette) ? s.palette.slice(0, 3) : s.palette).slice(0, 200);
+            paletteKeys = Object.keys(s).join(',');
+          }
+        }
+      }
+      console.log('[scan_loaded] cols=', cols.length, 'sections=', totalSections,
+                  'palette=', samplePalette, 'sectionKeys=', paletteKeys);
 
       for (const { chunkX, chunkZ, column: col } of cols) {
         if (!col || chunkX === undefined || chunkZ === undefined) continue;
@@ -211,8 +227,10 @@ function createBlockHandlers(bot) {
         }
       }
 
+      console.log('[scan_loaded] found=', blocks.length);
       return { success: true, count: blocks.length, blocks };
     } catch (err) {
+      console.error('[scan_loaded] error:', err.message, err.stack);
       return { success: false, error: err.message };
     }
   }
