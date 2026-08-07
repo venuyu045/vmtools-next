@@ -122,9 +122,15 @@ class MineflayerBridgeClient(AbstractBotAgent):
         """Connect to the mineflayer bot's WebSocket server."""
         try:
             self._ws = await asyncio.wait_for(
-                websockets.connect(self._ws_url, ping_interval=10, ping_timeout=5),
-                timeout=timeout,
-            )
+            websockets.connect(
+                self._ws_url,
+                ping_interval=10,
+                ping_timeout=5,
+                max_size=64 * 1024 * 1024,   # 64MB：超大仓库容器发现（1.4万+坐标）单响应可能超默认1MB
+                max_queue=256,
+            ),
+            timeout=timeout,
+        )
             self._connected = True
             self._listen_task = asyncio.create_task(self._listen_loop())
             from datetime import datetime, timezone
