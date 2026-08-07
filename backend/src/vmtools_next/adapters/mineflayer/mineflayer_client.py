@@ -26,6 +26,7 @@ from .protocol import (
     METHOD_DIG_BLOCK,
     METHOD_GET_WORLD_BLOCK_AT,
     METHOD_SCAN_NEARBY_BLOCKS,
+    METHOD_SCAN_LOADED_CONTAINERS,
     METHOD_SELECT_HOTBAR_ITEM,
     METHOD_SET_QUICK_BAR_SLOT,
     METHOD_GET_INVENTORY_SNAPSHOT,
@@ -313,6 +314,15 @@ class MineflayerBridgeClient(AbstractBotAgent):
             params["matching"] = matching
         return await self._send_request(METHOD_SCAN_NEARBY_BLOCKS, params,
                                         timeout=DEFAULT_CMD_TIMEOUT)
+
+    async def scan_loaded_containers(self, max_count: int = 10000) -> dict:
+        """扫描 bot 已加载区块内的全部容器方块（不受 ±15 格限制）。
+
+        返回 {"success": bool, "count": int, "blocks": [{x, y, z, name, type}, ...]}
+        """
+        return await self._send_request(METHOD_SCAN_LOADED_CONTAINERS, {
+            "max_count": max_count,
+        }, timeout=30.0)
 
     # ── 移动 ──
 

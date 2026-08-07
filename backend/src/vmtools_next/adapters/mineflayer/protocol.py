@@ -21,6 +21,7 @@ METHOD_PLACE_BLOCK = "place_block"
 METHOD_DIG_BLOCK = "dig_block"
 METHOD_GET_WORLD_BLOCK_AT = "get_world_block_at"
 METHOD_SCAN_NEARBY_BLOCKS = "scan_nearby_blocks"
+METHOD_SCAN_LOADED_CONTAINERS = "scan_loaded_containers"
 
 # Inventory / containers
 METHOD_SELECT_HOTBAR_ITEM = "select_hotbar_item"

@@ -136,7 +136,79 @@ function createBlockHandlers(bot) {
     }
   }
 
-  return { place_block, dig_block, get_world_block_at, scan_nearby_blocks };
+  // ── 容器方块名集合（仓库扫描用） ──
+  const CONTAINER_NAMES = new Set([
+    'chest', 'trapped_chest', 'barrel', 'hopper', 'dispenser', 'dropper',
+    'furnace', 'blast_furnace', 'smoker', 'brewing_stand', 'ender_chest',
+    'shulker_box', 'white_shulker_box', 'orange_shulker_box', 'magenta_shulker_box',
+    'light_blue_shulker_box', 'yellow_shulker_box', 'lime_shulker_box',
+    'pink_shulker_box', 'gray_shulker_box', 'light_gray_shulker_box',
+    'cyan_shulker_box', 'purple_shulker_box', 'blue_shulker_box',
+    'brown_shulker_box', 'green_shulker_box', 'red_shulker_box', 'black_shulker_box',
+  ]);
+
+  // ── 扫描已加载区块内的全部容器（不受 ±15 格限制） ──
+  // 遍历 bot 已加载的所有区块（范围由服务器下发区块的视野决定，通常
+  // view-distance 6~12 区块 = 96~192 格半径），用 section palette 快速过滤
+  // 含容器的区块段，再逐格确认容器方块坐标。
+  // 读取阶段仍走 Servux（服务端读 NBT，不受距离限制），这里只负责"发现坐标"。
+  function scan_loaded_containers({ max_count = 10000 } = {}) {
+    try {
+      if (!bot.entity) {
+        return { success: false, error: 'Bot not spawned' };
+      }
+
+      const blocks = [];
+      const columns = bot.world.columns || bot.world.column || {};
+      const colIter = columns instanceof Map ? columns.values() : Object.values(columns);
+
+      for (const col of colIter) {
+        if (!col) continue;
+        if (blocks.length >= max_count) break;
+
+        const baseX = (typeof col.x === 'number' ? col.x : Math.floor(col.x / 16)) * 16;
+        const baseZ = (typeof col.z === 'number' ? col.z : Math.floor(col.z / 16)) * 16;
+        const sections = col.sections || [];
+        for (let si = 0; si < sections.length; si++) {
+          const section = sections[si];
+          if (!section) continue;
+          if (blocks.length >= max_count) break;
+
+          // palette 快速过滤：该区块段不含容器方块则整段跳过（避免逐格 blockAt）
+          let hasContainer = false;
+          try {
+            const palette = section.palette || [];
+            for (const p of palette) {
+              const nm = typeof p === 'string' ? p : (p && p.name) || '';
+              if (CONTAINER_NAMES.has(nm)) { hasContainer = true; break; }
+            }
+          } catch { hasContainer = true; }
+
+          if (!hasContainer) continue;
+
+          const baseY = si * 16;
+          for (let ly = 0; ly < 16 && blocks.length < max_count; ly++) {
+            for (let lx = 0; lx < 16 && blocks.length < max_count; lx++) {
+              for (let lz = 0; lz < 16 && blocks.length < max_count; lz++) {
+                const wx = baseX + lx, wy = baseY + ly, wz = baseZ + lz;
+                let blk = null;
+                try { blk = bot.blockAt(new Vec3(wx, wy, wz)); } catch {}
+                if (blk && CONTAINER_NAMES.has(blk.name)) {
+                  blocks.push({ x: wx, y: wy, z: wz, name: blk.name, type: blk.type });
+                }
+              }
+            }
+          }
+        }
+      }
+
+      return { success: true, count: blocks.length, blocks };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  }
+
+  return { place_block, dig_block, get_world_block_at, scan_nearby_blocks, scan_loaded_containers };
 }
 
 module.exports = { createBlockHandlers };
