@@ -182,12 +182,14 @@ async def lifespan(app: FastAPI):
     _mineflayer_task_engine = TaskEngine(_mineflayer_pool)
     logger.info("Task Engines initialized (primary + mcc + mineflayer)")
 
-    # 5. Plugin Manager
-    context = PluginContext(_task_engine, _pool)
+    # 5. Plugin Manager — 插件体系仅服务 mineflayer 引擎（MCC 为固定 C# 客户端，
+    #    不需要额外插件）。上下文绑定 mineflayer 的 TaskEngine 与 SessionPool，
+    #    插件可经 pool.get_client(bot_id) 拿到 MineflayerBridgeClient 调用 WS 桥接方法。
+    context = PluginContext(_mineflayer_task_engine, _mineflayer_pool)
     _plugin_manager = PluginManager(context)
     await _plugin_manager.load_builtin()
     await _plugin_manager.start_all()
-    logger.info("Plugin Manager started")
+    logger.info("Plugin Manager started (engine=mineflayer)")
 
     # 5.5 Config Hot-Reload Watcher
     from vmtools_next.infra.config_watcher import ConfigWatcher
