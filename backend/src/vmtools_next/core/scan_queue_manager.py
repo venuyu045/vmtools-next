@@ -250,7 +250,7 @@ class ScanQueueManager:
         from vmtools_next.data.models.warehouse import StorageZoneModel
 
         positions: list[tuple[int, int, int]] = []
-        max_positions = 10000
+        max_positions = 100000
 
         zones = db.query(StorageZoneModel).filter(
             StorageZoneModel.warehouse_fk == wh_id).all()
@@ -433,7 +433,12 @@ class ScanQueueManager:
             db.close()
 
         # 进度回调：Socket.IO + scan_status 落库 + 队列项计数（只用本地 qid/wh_id/bot_id）
+        # 落库节流：每 10 个容器或每 2 秒写一次 DB，避免每容器 2 次 commit 拖慢扫描
+        _last_db_scanned = -1
+        _last_db_ts = 0.0
+
         async def on_progress(scanned, total, pos, items):
+            nonlocal _last_db_scanned, _last_db_ts
             elapsed = max(0.001, time.time() - self._started_at[qid])
             speed = round(scanned / elapsed, 2) if elapsed > 0 else 0.0
             eta = round((total - scanned) / speed, 1) if speed > 0 else None
@@ -448,6 +453,11 @@ class ScanQueueManager:
                 "speed": speed,
                 "eta_seconds": eta,
             })
+            now = time.time()
+            if scanned - _last_db_scanned < 10 and now - _last_db_ts < 2.0:
+                return
+            _last_db_scanned = scanned
+            _last_db_ts = now
             # 落库（新开 session）
             S2 = get_session_factory()
             db2 = S2()

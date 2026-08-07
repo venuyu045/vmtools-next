@@ -73,6 +73,9 @@ def get_engine():
                 cursor.execute("PRAGMA journal_mode=WAL")
                 cursor.execute("PRAGMA busy_timeout=5000")
                 cursor.execute("PRAGMA synchronous=NORMAL")
+                # 写缓存提至 64MB：大批量扫描落库时减少磁盘同步次数
+                cursor.execute("PRAGMA cache_size=-65536")
+                cursor.execute("PRAGMA temp_store=MEMORY")
             except Exception:
                 pass
             finally:

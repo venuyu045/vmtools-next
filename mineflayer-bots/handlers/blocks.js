@@ -93,7 +93,11 @@ function createBlockHandlers(bot) {
   }
 
   // ── 扫描附近方块 ──
-  function scan_nearby_blocks({ radius = 16, max_count = 100, matching = null } = {}) {
+  // 性能优化：不再逐格 blockAt 遍历整个包围盒（radius=96 时约 950 万格），
+  // 改为按 chunk 的 section palette 快速过滤——只对含目标方块的 section
+  // 逐格确认坐标，仓库类容器集中场景提速数十倍。max_count 默认 100000，
+  // 支持超大仓库（>1 万容器）不被截断。
+  function scan_nearby_blocks({ radius = 16, max_count = 100000, matching = null } = {}) {
     try {
       if (!bot.entity) {
         return { success: false, error: 'Bot not spawned' };
@@ -101,7 +105,6 @@ function createBlockHandlers(bot) {
       const pos = bot.entity.position;
 
       const blocks = [];
-      // 遍历包围盒
       const minX = Math.floor(pos.x - radius);
       const maxX = Math.ceil(pos.x + radius);
       const minY = Math.max(0, Math.floor(pos.y - radius));
@@ -109,23 +112,77 @@ function createBlockHandlers(bot) {
       const minZ = Math.floor(pos.z - radius);
       const maxZ = Math.ceil(pos.z + radius);
 
-      for (let bx = minX; bx <= maxX && blocks.length < max_count; bx++) {
-        for (let by = minY; by <= maxY && blocks.length < max_count; by++) {
-          for (let bz = minZ; bz <= maxZ && blocks.length < max_count; bz++) {
-            const block = bot.blockAt(new Vec3(bx, by, bz));
-            if (!block || block.type === 0) continue;
+      // matching 名集合（去命名空间前缀，兼容 "minecraft:chest" / "chest"）
+      let matchSet = null;
+      if (matching) {
+        const names = String(matching).split(',').map(s => s.trim()).filter(Boolean);
+        if (names.length > 0) {
+          matchSet = new Set(names.map(n => String(n).includes(':') ? String(n).split(':')[1] : n));
+        }
+      }
 
-            // 如果指定了 matching 过滤（支持逗号分隔的多个方块名，如 "chest,barrel"）
-            if (matching) {
-              const names = String(matching).split(',').map(s => s.trim()).filter(Boolean);
-              if (names.length > 0 && !names.includes(block.name)) continue;
+      const registry = bot.registry || {};
+      const blocksByStateId = registry.blocksByStateId || {};
+
+      const chunkMinX = Math.floor(minX / 16), chunkMaxX = Math.floor(maxX / 16);
+      const chunkMinZ = Math.floor(minZ / 16), chunkMaxZ = Math.floor(maxZ / 16);
+
+      for (let cx = chunkMinX; cx <= chunkMaxX && blocks.length < max_count; cx++) {
+        for (let cz = chunkMinZ; cz <= chunkMaxZ && blocks.length < max_count; cz++) {
+          let col = null;
+          try { col = bot.world.getColumn(cx, cz); } catch (e) { col = null; }
+          if (!col && bot.world.columns) col = bot.world.columns[`${cx},${cz}`];
+          if (!col) continue;
+
+          const sections = col.sections || [];
+          for (let si = 0; si < sections.length && blocks.length < max_count; si++) {
+            const section = sections[si];
+            if (!section) continue;
+
+            // palette 快速过滤：该区块段不含目标方块则整段跳过
+            let hasMatch = false;
+            try {
+              const palette = section.palette || [];
+              for (const p of palette) {
+                let nm = '';
+                if (typeof p === 'number' || typeof p === 'bigint') {
+                  const b = blocksByStateId[Number(p)];
+                  nm = (b && b.name) || '';
+                } else if (typeof p === 'string') {
+                  nm = p;
+                } else if (p && (p.name || p.Name)) {
+                  nm = p.name || p.Name;
+                }
+                const base = String(nm).includes(':') ? String(nm).split(':')[1] : nm;
+                if (matchSet) {
+                  if (matchSet.has(base)) { hasMatch = true; break; }
+                } else if (base && base !== 'air' && base !== 'cave_air' && base !== 'void_air') {
+                  hasMatch = true; break;
+                }
+              }
+            } catch { hasMatch = true; }
+
+            if (!hasMatch) continue;
+
+            // 逐格确认该 section 与包围盒的交集
+            const baseX = cx * 16, baseZ = cz * 16, secY = si * 16;
+            const lx0 = Math.max(0, minX - baseX), lx1 = Math.min(15, maxX - baseX);
+            const ly0 = Math.max(0, minY - secY), ly1 = Math.min(15, maxY - secY);
+            const lz0 = Math.max(0, minZ - baseZ), lz1 = Math.min(15, maxZ - baseZ);
+            for (let ly = ly0; ly <= ly1 && blocks.length < max_count; ly++) {
+              for (let lx = lx0; lx <= lx1 && blocks.length < max_count; lx++) {
+                for (let lz = lz0; lz <= lz1 && blocks.length < max_count; lz++) {
+                  const wx = baseX + lx, wy = secY + ly, wz = baseZ + lz;
+                  let blk = null;
+                  try { blk = bot.blockAt(new Vec3(wx, wy, wz)); } catch {}
+                  if (!blk || blk.type === 0) continue;
+                  const bname = String(blk.name || '');
+                  const bbase = bname.includes(':') ? bname.split(':')[1] : bname;
+                  if (matchSet && !matchSet.has(bbase)) continue;
+                  blocks.push({ x: wx, y: wy, z: wz, name: blk.name, type: blk.type });
+                }
+              }
             }
-
-            blocks.push({
-              x: bx, y: by, z: bz,
-              name: block.name,
-              type: block.type,
-            });
           }
         }
       }
@@ -152,7 +209,7 @@ function createBlockHandlers(bot) {
   // view-distance 6~12 区块 = 96~192 格半径），用 section palette 快速过滤
   // 含容器的区块段，再逐格确认容器方块坐标。
   // 读取阶段仍走 Servux（服务端读 NBT，不受距离限制），这里只负责"发现坐标"。
-  function scan_loaded_containers({ max_count = 10000 } = {}) {
+  function scan_loaded_containers({ max_count = 100000 } = {}) {
     try {
       if (!bot.entity) {
         return { success: false, error: 'Bot not spawned' };
