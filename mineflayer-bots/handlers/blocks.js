@@ -234,7 +234,7 @@ function createBlockHandlers(bot) {
       }
 
       console.log('[scan_loaded] found=', blocks.length);
-      return { success: true, count: blocks.length, blocks };
+      return { success: true, count: blocks.length, blocks, debug: { cols: cols.length, sections: totalSections, palette: samplePalette, sectionKeys: paletteKeys } };
     } catch (err) {
       console.error('[scan_loaded] error:', err.message, err.stack);
       return { success: false, error: err.message };
