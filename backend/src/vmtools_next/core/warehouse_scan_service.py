@@ -81,6 +81,16 @@ def update_scan_progress(db: Session, warehouse_id: str,
     db.commit()
 
 
+def _bulk_insert(db: Session, model, rows: list[dict], batch: int = 10000) -> None:
+    """批量插入（executemany），每 batch 行 commit 一次，避免超大事务卡死 SQLite。"""
+    if not rows:
+        return
+    for i in range(0, len(rows), batch):
+        chunk = rows[i:i + batch]
+        db.bulk_insert_mappings(model, chunk)
+        db.commit()
+
+
 def persist_scan_results(db: Session, warehouse_id: str,
                          results: dict[str, ContainerSnapshot],
                          total_containers: int = 0,
@@ -96,11 +106,17 @@ def persist_scan_results(db: Session, warehouse_id: str,
     if not wh:
         raise ValueError(f"Warehouse not found: {warehouse_id}")
 
-    # 1. Rebuild aggregated material_items (delete → insert, 分批 flush)
+    # 0. 清空旧数据（独立事务提交，避免与后续大批量插入混在同一超大事务）
     db.query(MaterialItemModel).filter(
-        MaterialItemModel.warehouse_fk == warehouse_id).delete()
-    db.flush()
-    agg: dict[str, tuple[str, int]] = {}  # item_id → (display_name, count)
+        MaterialItemModel.warehouse_fk == warehouse_id).delete(synchronize_session=False)
+    db.query(ContainerItemModel).filter(
+        ContainerItemModel.warehouse_fk == warehouse_id).delete(synchronize_session=False)
+    db.query(ContainerItemDetailModel).filter(
+        ContainerItemDetailModel.warehouse_fk == warehouse_id).delete(synchronize_session=False)
+    db.commit()
+
+    # 1. 聚合 material_items：{item_id → (display_name, count)}
+    agg: dict[str, tuple[str, int]] = {}
     for snap in results.values():
         for item in snap.items:
             if not item.item_id:
@@ -109,62 +125,50 @@ def persist_scan_results(db: Session, warehouse_id: str,
                 agg[item.item_id] = (agg[item.item_id][0], agg[item.item_id][1] + item.count)
             else:
                 agg[item.item_id] = (item.display_name or item.item_id, item.count)
-    _FLUSH_EVERY = 500
-    _material_rows = 0
-    for item_id, (name, count) in agg.items():
-        db.add(MaterialItemModel(
-            warehouse_fk=warehouse_id,
-            item_id=item_id,
-            display_name=name,
-            count=count,
-        ))
-        _material_rows += 1
-        if _material_rows % _FLUSH_EVERY == 0:
-            db.flush()
-    db.flush()
+    _bulk_insert(db, MaterialItemModel, [
+        {
+            "warehouse_fk": warehouse_id,
+            "item_id": item_id,
+            "display_name": name,
+            "count": count,
+        }
+        for item_id, (name, count) in agg.items()
+    ])
 
-    # 2. Rebuild container_items (one row per container: primary item + total, 分批 flush)
-    db.query(ContainerItemModel).filter(
-        ContainerItemModel.warehouse_fk == warehouse_id).delete()
-    db.flush()
-    # 2b. Rebuild container_item_details (one row per container per item，物品→箱子明细)
-    db.query(ContainerItemDetailModel).filter(
-        ContainerItemDetailModel.warehouse_fk == warehouse_id).delete()
-    db.flush()
-    _container_rows = 0
-    _detail_rows = 0
+    # 2. container_items（每容器一行）+ container_item_details（每容器每物品一行）
+    #    边遍历边攒，攒够一批就批量插入并 commit，避免几十万行挤在内存/一个事务。
+    _DETAIL_BATCH = 5000
+    cont_rows: list[dict] = []
+    detail_rows: list[dict] = []
     for snap in results.values():
         primary = snap.items[0] if snap.items else None
-        db.add(ContainerItemModel(
-            warehouse_fk=warehouse_id,
-            container_x=snap.x,
-            container_y=snap.y,
-            container_z=snap.z,
-            item_id=primary.item_id if primary else "",
-            item_name_zh=get_item_zh(primary.item_id, primary.display_name) if primary else "",
-            count=snap.total_items,
-        ))
-        _container_rows += 1
-        if _container_rows % _FLUSH_EVERY == 0:
-            db.flush()
-        # 物品→箱子明细（每物品每箱一行；中文名用映射）
+        cont_rows.append({
+            "warehouse_fk": warehouse_id,
+            "container_x": snap.x,
+            "container_y": snap.y,
+            "container_z": snap.z,
+            "item_id": primary.item_id if primary else "",
+            "item_name_zh": get_item_zh(primary.item_id, primary.display_name) if primary else "",
+            "count": snap.total_items,
+        })
         for item in snap.items:
             if not item.item_id:
                 continue
-            db.add(ContainerItemDetailModel(
-                warehouse_fk=warehouse_id,
-                container_x=snap.x,
-                container_y=snap.y,
-                container_z=snap.z,
-                item_id=item.item_id,
-                item_name_zh=get_item_zh(item.item_id, item.display_name),
-                count=item.count,
-                slot=item.slot,
-            ))
-            _detail_rows += 1
-            if _detail_rows % _FLUSH_EVERY == 0:
-                db.flush()
-    db.flush()
+            detail_rows.append({
+                "warehouse_fk": warehouse_id,
+                "container_x": snap.x,
+                "container_y": snap.y,
+                "container_z": snap.z,
+                "item_id": item.item_id,
+                "item_name_zh": get_item_zh(item.item_id, item.display_name),
+                "count": item.count,
+                "slot": item.slot,
+            })
+            if len(detail_rows) >= _DETAIL_BATCH:
+                _bulk_insert(db, ContainerItemDetailModel, detail_rows, batch=_DETAIL_BATCH)
+                detail_rows.clear()
+    _bulk_insert(db, ContainerItemModel, cont_rows, batch=10000)
+    _bulk_insert(db, ContainerItemDetailModel, detail_rows, batch=_DETAIL_BATCH)
 
     # 3. Update warehouse stats
     wh.container_count = len(results)
