@@ -4,7 +4,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from vmtools_next.api.deps import get_db, get_current_user
+from vmtools_next.api.deps import get_db, get_current_user, require_admin
 from vmtools_next.data.models.auth import UserModel
 from vmtools_next.api.schemas.mcc import (
     MccBotCreate, MccBotResponse, MccBotConnectRequest,
@@ -364,7 +364,7 @@ def get_bot(bot_id: str, db: Session = Depends(get_db), user=Depends(get_current
 
 
 @router.delete("/{bot_id}")
-def delete_bot(bot_id: str, db: Session = Depends(get_db), user=Depends(get_current_user)):
+def delete_bot(bot_id: str, db: Session = Depends(get_db), user=Depends(require_admin)):
     """Delete a bot (scoped by organization)."""
     bot = _get_scoped_bot(db, user, bot_id)
     db.delete(bot)
@@ -374,7 +374,7 @@ def delete_bot(bot_id: str, db: Session = Depends(get_db), user=Depends(get_curr
 
 @router.post("/{bot_id}/connect")
 async def connect_bot(bot_id: str, data: MccBotConnectRequest,
-                      db: Session = Depends(get_db), user=Depends(get_current_user)):
+                      db: Session = Depends(get_db), user=Depends(require_admin)):
     """Connect a bot to MCC MCP server (scoped by organization)."""
     bot = _get_scoped_bot(db, user, bot_id)
 
@@ -396,7 +396,7 @@ async def connect_bot(bot_id: str, data: MccBotConnectRequest,
 
 @router.post("/{bot_id}/disconnect")
 async def disconnect_bot(bot_id: str, db: Session = Depends(get_db),
-                         user=Depends(get_current_user)):
+                         user=Depends(require_admin)):
     """Disconnect a bot (scoped by organization)."""
     _get_scoped_bot(db, user, bot_id)
     from vmtools_next.main import get_pool_for_engine
@@ -512,7 +512,7 @@ async def get_inventory(bot_id: str, mcp_port: int = 0,
 
 @router.post("/{bot_id}/inventory/action")
 async def inventory_action(bot_id: str, data: InventoryActionRequest,
-                           db: Session = Depends(get_db), user=Depends(get_current_user)):
+                           db: Session = Depends(get_db), user=Depends(require_admin)):
     """Perform a slot action (scoped by organization)."""
     _get_scoped_bot(db, user, bot_id)
     client, owned = await _get_mcp_client(bot_id)
@@ -531,7 +531,7 @@ async def inventory_action(bot_id: str, data: InventoryActionRequest,
 
 @router.post("/{bot_id}/inventory/drop")
 async def inventory_drop(bot_id: str, data: InventoryDropRequest,
-                         db: Session = Depends(get_db), user=Depends(get_current_user)):
+                         db: Session = Depends(get_db), user=Depends(require_admin)):
     """Drop items from inventory by type (scoped by organization)."""
     _get_scoped_bot(db, user, bot_id)
     client, owned = await _get_mcp_client(bot_id)
@@ -550,7 +550,7 @@ async def inventory_drop(bot_id: str, data: InventoryDropRequest,
 
 @router.post("/{bot_id}/inventory/select-hotbar")
 async def inventory_select_hotbar(bot_id: str, data: InventorySelectHotbarRequest,
-                                  db: Session = Depends(get_db), user=Depends(get_current_user)):
+                                  db: Session = Depends(get_db), user=Depends(require_admin)):
     """Select a hotbar slot (0-8) (scoped by organization)."""
     _get_scoped_bot(db, user, bot_id)
     client, owned = await _get_mcp_client(bot_id)

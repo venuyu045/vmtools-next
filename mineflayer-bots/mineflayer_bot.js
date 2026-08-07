@@ -102,7 +102,9 @@ async function createBotProcess(options) {
   }
 
   // ── 2. 创建 WebSocket 服务器 ──
-  const wss = new WebSocketServer({ port: wsPort });
+  // 仅绑定 127.0.0.1：WS 桥无鉴权，若监听 0.0.0.0 则任何能连通 44444-44500
+  // 端口的网络实体都能完全控制 bot（移动/存取物品/发聊天/执行游戏命令）。
+  const wss = new WebSocketServer({ port: wsPort, host: '127.0.0.1' });
 
   // ⚠️ connection 监听必须在 wss 创建后【立即】注册，不能等 login！
   // 原因：bot 登录（yggdrasil 认证）需要时间，而 Python 端进程管理器在 bot

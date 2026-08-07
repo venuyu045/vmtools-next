@@ -106,6 +106,20 @@ def require_site_admin(user: UserModel = Depends(get_current_user)) -> UserModel
     return user
 
 
+def require_admin(user: UserModel = Depends(get_current_user)) -> UserModel:
+    """Dependency that requires admin or site_admin role.
+
+    权限组重构后：admin（管理员）/ site_admin（站点管理员）均视为管理员；
+    user（用户）/ guest（访客）无权访问管理/控制类接口。
+    """
+    if user.role not in ("admin", "site_admin"):
+        raise HTTPException(
+            status_code=403,
+            detail="Only admin can access this resource",
+        )
+    return user
+
+
 def get_app_state(request) -> dict:
     """Access the FastAPI app.state (holds mcc_pool, task_engine, etc.)."""
     return request.app.state

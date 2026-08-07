@@ -241,7 +241,9 @@ def _ensure_site_admin(Session) -> None:
     from vmtools_next.data.models.auth import UserModel
 
     admin_game_id = os.getenv("SITE_ADMIN_GAME_ID", "VenusYu")
-    admin_password = os.getenv("SITE_ADMIN_PASSWORD", "jxy080405")
+    # 安全：不再提供默认密码（未设置时走下方随机生成分支）；已存在的
+    # site_admin 密码绝不随重启被重置，避免「改密失效 + 默认密码后门」。
+    admin_password = os.getenv("SITE_ADMIN_PASSWORD", "")
 
     db = Session()
     try:
@@ -251,11 +253,6 @@ def _ensure_site_admin(Session) -> None:
             if existing.game_id != admin_game_id:
                 existing.game_id = admin_game_id
                 existing.display_name = admin_game_id
-                changed = True
-            if not bcrypt.checkpw(admin_password.encode("utf-8"), existing.password_hash.encode("utf-8")):
-                existing.password_hash = bcrypt.hashpw(
-                    admin_password.encode("utf-8"), bcrypt.gensalt()
-                ).decode("utf-8")
                 changed = True
             if changed:
                 db.commit()

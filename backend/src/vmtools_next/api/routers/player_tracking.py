@@ -15,7 +15,7 @@ from vmtools_next.config import get_config, reload_config
 from vmtools_next.data.db import get_db, get_session_factory
 from vmtools_next.data.models.player_tracking import PlayerTrackingOwnerModel
 from vmtools_next.data.models.auth import UserModel
-from vmtools_next.api.deps import get_current_user
+from vmtools_next.api.deps import get_current_user, require_admin
 from vmtools_next.infra.logging import get_logger
 
 logger = get_logger("player_tracking")
@@ -127,7 +127,7 @@ def get_player_tracking(
 @router.put("", response_model=PlayerTrackingOut)
 def update_player_tracking(
     data: PlayerTrackingOut,
-    user: UserModel = Depends(get_current_user),
+    user: UserModel = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
     # Update config.yaml for enabled/sentinel_instance (these are server settings)

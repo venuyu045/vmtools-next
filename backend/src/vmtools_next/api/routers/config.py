@@ -31,14 +31,14 @@ class MccConfigUpdate(BaseModel):
 
 
 @router.get("")
-def get_current_config(user=Depends(get_current_user)):
+def get_current_config(user=Depends(_require_site_admin)):
     """Get the current configuration."""
     config = get_config()
     return config.model_dump()
 
 
 @router.get("/mcc")
-def get_mcc_config(user=Depends(get_current_user)):
+def get_mcc_config(user=Depends(_require_site_admin)):
     """Get MCC section of the configuration."""
     config = get_config()
     return config.mcc.model_dump()

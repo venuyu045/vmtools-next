@@ -13,7 +13,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import desc
 
-from vmtools_next.api.deps import get_db, get_current_user
+from vmtools_next.api.deps import get_db, get_current_user, require_admin
 from vmtools_next.api.schemas.logistics import (
     WaypointCreate, WaypointUpdate, WaypointResponse,
     DropPointCreate, DropPointUpdate, DropPointResponse,
@@ -53,7 +53,7 @@ def get_waypoint(waypoint_id: str, db: Session = Depends(get_db), user=Depends(g
 
 
 @router.post("/waypoints", response_model=WaypointResponse)
-def create_waypoint(data: WaypointCreate, db: Session = Depends(get_db), user=Depends(get_current_user)):
+def create_waypoint(data: WaypointCreate, db: Session = Depends(get_db), user=Depends(require_admin)):
     w = LogisticsWaypointModel(waypoint_id=str(uuid.uuid4()), **data.model_dump())
     db.add(w)
     db.commit()
@@ -63,7 +63,7 @@ def create_waypoint(data: WaypointCreate, db: Session = Depends(get_db), user=De
 
 
 @router.put("/waypoints/{waypoint_id}", response_model=WaypointResponse)
-def update_waypoint(waypoint_id: str, data: WaypointUpdate, db: Session = Depends(get_db), user=Depends(get_current_user)):
+def update_waypoint(waypoint_id: str, data: WaypointUpdate, db: Session = Depends(get_db), user=Depends(require_admin)):
     w = db.query(LogisticsWaypointModel).filter(LogisticsWaypointModel.waypoint_id == waypoint_id).first()
     if not w:
         raise HTTPException(404, "Waypoint not found")
@@ -75,7 +75,7 @@ def update_waypoint(waypoint_id: str, data: WaypointUpdate, db: Session = Depend
 
 
 @router.delete("/waypoints/{waypoint_id}")
-def delete_waypoint(waypoint_id: str, db: Session = Depends(get_db), user=Depends(get_current_user)):
+def delete_waypoint(waypoint_id: str, db: Session = Depends(get_db), user=Depends(require_admin)):
     w = db.query(LogisticsWaypointModel).filter(LogisticsWaypointModel.waypoint_id == waypoint_id).first()
     if not w:
         raise HTTPException(404, "Waypoint not found")
@@ -107,7 +107,7 @@ def get_drop_point(drop_point_id: str, db: Session = Depends(get_db), user=Depen
 
 
 @router.post("/drop-points", response_model=DropPointResponse)
-def create_drop_point(data: DropPointCreate, db: Session = Depends(get_db), user=Depends(get_current_user)):
+def create_drop_point(data: DropPointCreate, db: Session = Depends(get_db), user=Depends(require_admin)):
     d = LogisticsDropPointModel(drop_point_id=str(uuid.uuid4()), **data.model_dump())
     db.add(d)
     db.commit()
@@ -117,7 +117,7 @@ def create_drop_point(data: DropPointCreate, db: Session = Depends(get_db), user
 
 
 @router.put("/drop-points/{drop_point_id}", response_model=DropPointResponse)
-def update_drop_point(drop_point_id: str, data: DropPointUpdate, db: Session = Depends(get_db), user=Depends(get_current_user)):
+def update_drop_point(drop_point_id: str, data: DropPointUpdate, db: Session = Depends(get_db), user=Depends(require_admin)):
     d = db.query(LogisticsDropPointModel).filter(LogisticsDropPointModel.drop_point_id == drop_point_id).first()
     if not d:
         raise HTTPException(404, "Drop point not found")
@@ -129,7 +129,7 @@ def update_drop_point(drop_point_id: str, data: DropPointUpdate, db: Session = D
 
 
 @router.delete("/drop-points/{drop_point_id}")
-def delete_drop_point(drop_point_id: str, db: Session = Depends(get_db), user=Depends(get_current_user)):
+def delete_drop_point(drop_point_id: str, db: Session = Depends(get_db), user=Depends(require_admin)):
     d = db.query(LogisticsDropPointModel).filter(LogisticsDropPointModel.drop_point_id == drop_point_id).first()
     if not d:
         raise HTTPException(404, "Drop point not found")
@@ -161,7 +161,7 @@ def get_template(template_id: str, db: Session = Depends(get_db), user=Depends(g
 
 
 @router.post("/task-templates", response_model=TaskTemplateResponse)
-def create_template(data: TaskTemplateCreate, db: Session = Depends(get_db), user=Depends(get_current_user)):
+def create_template(data: TaskTemplateCreate, db: Session = Depends(get_db), user=Depends(require_admin)):
     # Validate waypoint and drop point exist
     wp = db.query(LogisticsWaypointModel).filter(LogisticsWaypointModel.waypoint_id == data.source_waypoint_id).first()
     if not wp:
@@ -179,7 +179,7 @@ def create_template(data: TaskTemplateCreate, db: Session = Depends(get_db), use
 
 
 @router.put("/task-templates/{template_id}", response_model=TaskTemplateResponse)
-def update_template(template_id: str, data: TaskTemplateUpdate, db: Session = Depends(get_db), user=Depends(get_current_user)):
+def update_template(template_id: str, data: TaskTemplateUpdate, db: Session = Depends(get_db), user=Depends(require_admin)):
     t = db.query(LogisticsTaskTemplateModel).filter(LogisticsTaskTemplateModel.template_id == template_id).first()
     if not t:
         raise HTTPException(404, "Template not found")
@@ -192,7 +192,7 @@ def update_template(template_id: str, data: TaskTemplateUpdate, db: Session = De
 
 
 @router.delete("/task-templates/{template_id}")
-def delete_template(template_id: str, db: Session = Depends(get_db), user=Depends(get_current_user)):
+def delete_template(template_id: str, db: Session = Depends(get_db), user=Depends(require_admin)):
     t = db.query(LogisticsTaskTemplateModel).filter(LogisticsTaskTemplateModel.template_id == template_id).first()
     if not t:
         raise HTTPException(404, "Template not found")
@@ -202,7 +202,7 @@ def delete_template(template_id: str, db: Session = Depends(get_db), user=Depend
 
 
 @router.patch("/task-templates/{template_id}/toggle", response_model=TaskTemplateResponse)
-def toggle_template(template_id: str, db: Session = Depends(get_db), user=Depends(get_current_user)):
+def toggle_template(template_id: str, db: Session = Depends(get_db), user=Depends(require_admin)):
     t = db.query(LogisticsTaskTemplateModel).filter(LogisticsTaskTemplateModel.template_id == template_id).first()
     if not t:
         raise HTTPException(404, "Template not found")
@@ -256,7 +256,7 @@ def get_run_logs(
 
 
 @router.post("/tasks/start", response_model=TaskRunResponse)
-def start_task(data: TaskStartRequest, db: Session = Depends(get_db), user=Depends(get_current_user)):
+def start_task(data: TaskStartRequest, db: Session = Depends(get_db), user=Depends(require_admin)):
     # Verify template exists and is enabled
     t = db.query(LogisticsTaskTemplateModel).filter(LogisticsTaskTemplateModel.template_id == data.template_id).first()
     if not t:
@@ -280,7 +280,7 @@ def start_task(data: TaskStartRequest, db: Session = Depends(get_db), user=Depen
 
 
 @router.post("/tasks/{run_id}/stop")
-def stop_task(run_id: str, db: Session = Depends(get_db), user=Depends(get_current_user)):
+def stop_task(run_id: str, db: Session = Depends(get_db), user=Depends(require_admin)):
     r = db.query(LogisticsTaskRunModel).filter(LogisticsTaskRunModel.run_id == run_id).first()
     if not r:
         raise HTTPException(404, "Task run not found")
@@ -291,7 +291,7 @@ def stop_task(run_id: str, db: Session = Depends(get_db), user=Depends(get_curre
 
 
 @router.post("/tasks/{run_id}/pause")
-def pause_task(run_id: str, db: Session = Depends(get_db), user=Depends(get_current_user)):
+def pause_task(run_id: str, db: Session = Depends(get_db), user=Depends(require_admin)):
     r = db.query(LogisticsTaskRunModel).filter(LogisticsTaskRunModel.run_id == run_id).first()
     if not r:
         raise HTTPException(404, "Task run not found")
@@ -301,7 +301,7 @@ def pause_task(run_id: str, db: Session = Depends(get_db), user=Depends(get_curr
 
 
 @router.post("/tasks/{run_id}/resume")
-def resume_task(run_id: str, db: Session = Depends(get_db), user=Depends(get_current_user)):
+def resume_task(run_id: str, db: Session = Depends(get_db), user=Depends(require_admin)):
     r = db.query(LogisticsTaskRunModel).filter(LogisticsTaskRunModel.run_id == run_id).first()
     if not r:
         raise HTTPException(404, "Task run not found")

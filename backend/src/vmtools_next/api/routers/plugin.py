@@ -4,7 +4,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from vmtools_next.api.deps import get_current_user
+from vmtools_next.api.deps import get_current_user, require_admin
 
 router = APIRouter(prefix="/api/plugins", tags=["plugins"])
 
@@ -44,7 +44,7 @@ def list_plugins(user=Depends(get_current_user)):
 
 
 @router.post("/{name}/enable")
-async def enable_plugin(name: str, user=Depends(get_current_user)):
+async def enable_plugin(name: str, user=Depends(require_admin)):
     """Enable a plugin."""
     try:
         from vmtools_next.main import get_plugin_manager
@@ -58,7 +58,7 @@ async def enable_plugin(name: str, user=Depends(get_current_user)):
 
 
 @router.post("/{name}/disable")
-async def disable_plugin(name: str, user=Depends(get_current_user)):
+async def disable_plugin(name: str, user=Depends(require_admin)):
     """Disable a plugin."""
     try:
         from vmtools_next.main import get_plugin_manager
@@ -72,7 +72,7 @@ async def disable_plugin(name: str, user=Depends(get_current_user)):
 
 
 @router.post("/{name}/reload")
-async def reload_plugin(name: str, user=Depends(get_current_user)):
+async def reload_plugin(name: str, user=Depends(require_admin)):
     """Reload a plugin."""
     try:
         from vmtools_next.main import get_plugin_manager
@@ -86,7 +86,7 @@ async def reload_plugin(name: str, user=Depends(get_current_user)):
 
 
 @router.get("/{name}/config")
-def get_plugin_config(name: str, user=Depends(get_current_user)):
+def get_plugin_config(name: str, user=Depends(require_admin)):
     """Get a plugin's current config + schema (for the config page / AI editing).
 
     Returns 404 if the plugin is not loaded.
@@ -108,7 +108,7 @@ def get_plugin_config(name: str, user=Depends(get_current_user)):
 
 
 @router.put("/{name}/config")
-async def update_plugin_config(name: str, body: ConfigUpdateRequest, user=Depends(get_current_user)):
+async def update_plugin_config(name: str, body: ConfigUpdateRequest, user=Depends(require_admin)):
     """Save a plugin config (persisted + hot-applied immediately).
 
     Example (chat_responder)::
