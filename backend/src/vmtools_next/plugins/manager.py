@@ -1,17 +1,22 @@
 """Plugin Manager — manages plugin lifecycle and registry.
 
-Loads plugins from builtin/ directory and entry-points.
-Provides enable/disable/reload functionality.
+Loads plugins from the ``builtin/`` directory. Plugins serve the
+mineflayer bot engine only (MCC is a fixed C# client and needs no
+plugins). Provides enable/disable/reload functionality.
 """
 from __future__ import annotations
 
 import importlib
 import logging
+import pathlib
 from typing import Optional
 
 from vmtools_next.plugins.base import IPlugin, PluginContext
 
 logger = logging.getLogger("vmtools.plugins")
+
+# 插件体系仅服务 mineflayer 引擎；非该引擎的插件一律跳过。
+SUPPORTED_ENGINE = "mineflayer"
 
 
 class PluginManager:
@@ -27,23 +32,34 @@ class PluginManager:
         return dict(self._plugins)
 
     async def load_builtin(self) -> None:
-        """Load all builtin plugins."""
-        builtin_modules = [
-            "vmtools_next.plugins.builtin.auto_restock",
-            "vmtools_next.plugins.builtin.discord_notify",
-        ]
-        for module_path in builtin_modules:
+        """Load all builtin plugins (mineflayer engine only).
+
+        Dynamically discovers every ``*.py`` module in the ``builtin/``
+        directory, so adding a new MF plugin is just adding a file.
+        """
+        builtin_dir = pathlib.Path(__file__).resolve().parent / "builtin"
+        for module_path in sorted(builtin_dir.glob("*.py")):
+            if module_path.name.startswith("_"):
+                continue
+            module_name = f"vmtools_next.plugins.builtin.{module_path.stem}"
             try:
-                module = importlib.import_module(module_path)
-                if hasattr(module, "Plugin"):
-                    plugin_cls = module.Plugin
-                    plugin = plugin_cls()
-                    await plugin.load(self._context)
-                    self._plugins[plugin.name] = plugin
-                    self._enabled[plugin.name] = True
-                    logger.info("Loaded builtin plugin: %s v%s", plugin.name, plugin.version)
+                module = importlib.import_module(module_name)
+                if not hasattr(module, "Plugin"):
+                    continue
+                plugin_cls = module.Plugin
+                plugin = plugin_cls()
+                if getattr(plugin, "engine", "mineflayer") != SUPPORTED_ENGINE:
+                    logger.info("Skip plugin %s: engine=%s (only %s supported)",
+                                getattr(plugin, "name", module_path.stem),
+                                getattr(plugin, "engine", "?"), SUPPORTED_ENGINE)
+                    continue
+                await plugin.load(self._context)
+                self._plugins[plugin.name] = plugin
+                self._enabled[plugin.name] = True
+                logger.info("Loaded builtin plugin: %s v%s (engine=%s)",
+                            plugin.name, plugin.version, plugin.engine)
             except Exception as e:
-                logger.warning("Failed to load builtin plugin %s: %s", module_path, e)
+                logger.warning("Failed to load builtin plugin %s: %s", module_path.name, e)
 
     async def start_all(self) -> None:
         """Start all enabled plugins."""

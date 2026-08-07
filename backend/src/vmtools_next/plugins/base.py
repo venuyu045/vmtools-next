@@ -34,10 +34,16 @@ class PluginContext:
 
 
 class IPlugin(ABC):
-    """Abstract base class for all plugins."""
+    """Abstract base class for all plugins.
+
+    ``engine`` 标识插件服务的 bot 引擎：当前插件体系仅服务
+    ``mineflayer``（MCC 为固定 C# 客户端，不需要额外插件）。
+    """
 
     name: str = "unnamed"
     version: str = "0.0.1"
+    engine: str = "mineflayer"
+    description: str = ""
 
     @abstractmethod
     async def load(self, context: PluginContext) -> None:

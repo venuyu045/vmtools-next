@@ -124,8 +124,15 @@ class MonitorConfig(BaseModel):
 
 
 class PluginBuiltinConfig(BaseModel):
-    auto_restock: dict[str, Any] = Field(default_factory=lambda: {"enabled": True})
-    discord_notify: dict[str, Any] = Field(default_factory=lambda: {"enabled": False, "webhook": ""})
+    """内置插件配置——插件体系仅服务 mineflayer 引擎（MCC 不需要额外插件）。"""
+    chat_responder: dict[str, Any] = Field(default_factory=lambda: {
+        "enabled": True,
+        "commands": {
+            "!ping": "pong! ({username})",
+            "!pos": "当前位置 {position}",
+            "!help": "可用指令: !ping / !pos / !help",
+        },
+    })
 
 
 class PluginsConfig(BaseModel):

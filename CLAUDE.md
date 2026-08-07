@@ -152,8 +152,8 @@ vmtools-next/
 │   │   │   ├── mineflayer/         # Mineflayer 适配器 (WebSocket Bridge)
 │   │   │   ├── litematica/         # .litematic NBT 解析
 │   │   │   └── qqbot/              # QQ bot 通知
-│   │   ├── plugins/                # 插件系统
-│   │   │   ├── builtin/            # 内置插件 (自动补货/Discord 通知)
+│   │   ├── plugins/                # 插件系统（仅服务 mineflayer 引擎）
+│   │   │   ├── builtin/            # 内置插件 (mineflayer：聊天指令响应等)
 │   │   │   └── manager.py          # 插件管理器
 │   │   ├── data/                   # 数据层
 │   │   │   ├── db.py               # SQLAlchemy + Socket.IO 实例

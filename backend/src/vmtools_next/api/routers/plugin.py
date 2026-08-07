@@ -13,11 +13,13 @@ class PluginResponse(BaseModel):
     name: str
     version: str
     enabled: bool
+    engine: str = "mineflayer"
+    description: str = ""
 
 
 @router.get("", response_model=list[PluginResponse])
 def list_plugins(user=Depends(get_current_user)):
-    """List all plugins."""
+    """List all plugins (mineflayer engine only)."""
     try:
         from vmtools_next.main import get_plugin_manager
         pm = get_plugin_manager()
@@ -27,6 +29,8 @@ def list_plugins(user=Depends(get_current_user)):
                     name=p.name,
                     version=p.version,
                     enabled=pm.is_enabled(p.name),
+                    engine=getattr(p, "engine", "mineflayer"),
+                    description=getattr(p, "description", ""),
                 )
                 for p in pm.plugins.values()
             ]

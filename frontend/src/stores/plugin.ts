@@ -5,6 +5,8 @@ export interface Plugin {
   name: string
   version: string
   enabled: boolean
+  engine: string
+  description: string
 }
 
 export const usePluginStore = defineStore('plugin', {

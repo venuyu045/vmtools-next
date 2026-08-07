@@ -255,4 +255,15 @@ class MineflayerSessionPool:
                 logger.info("Bot %s event %s: %s", bot_id, event, data)
                 await self._sync_bot_status(bot_id, "error" if event == "bot_error" else "offline")
 
+            # 事件桥接：MF bot 的全部事件（bot_chat / status / bot_ready 等）注入
+            # bot_id 后转发给插件管理器，供仅服务 mineflayer 引擎的插件订阅
+            # （如 chat_responder）。插件系统在 main.py 中已绑定本 SessionPool。
+            try:
+                from vmtools_next.main import get_plugin_manager
+                pm = get_plugin_manager()
+                if pm is not None:
+                    await pm.dispatch_event(event, {"bot_id": bot_id, **data})
+            except Exception as exc:
+                logger.debug("Plugin dispatch failed for %s event %s: %s", bot_id, event, exc)
+
         return handler
