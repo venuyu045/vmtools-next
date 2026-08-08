@@ -13,7 +13,8 @@
  */
 const path = require('path');
 const compression = require('compression');
-const { WorldView } = require('prismarine-viewer');
+// WorldView 在 prismarine-viewer 的 viewer 子模块导出（顶层没有，官方写法 require('../viewer')）
+const { WorldView } = require('prismarine-viewer').viewer;
 
 module.exports = function startViewer(bot, options = {}) {
   const {
@@ -71,36 +72,42 @@ module.exports = function startViewer(bot, options = {}) {
   };
 
   io.on('connection', (socket) => {
-    socket.emit('version', bot.version);
-    sockets.push(socket);
+    // 单连接初始化异常不得拖垮整个 bot 进程（历史教训：未捕获异常 → 进程崩溃 → 循环重启）
+    try {
+      socket.emit('version', bot.version);
+      sockets.push(socket);
 
-    const worldView = new WorldView(bot.world, viewDistance, bot.entity.position, socket);
-    worldView.init(bot.entity.position);
+      const worldView = new WorldView(bot.world, viewDistance, bot.entity.position, socket);
+      worldView.init(bot.entity.position);
 
-    worldView.on('blockClicked', (block, face, button) => {
-      bot.viewer.emit('blockClicked', block, face, button);
-    });
+      worldView.on('blockClicked', (block, face, button) => {
+        bot.viewer.emit('blockClicked', block, face, button);
+      });
 
-    for (const id in primitives) {
-      socket.emit('primitive', primitives[id]);
-    }
-
-    function botPosition() {
-      const packet = { pos: bot.entity.position, yaw: bot.entity.yaw, addMesh: true };
-      if (firstPerson) {
-        packet.pitch = bot.entity.pitch;
+      for (const id in primitives) {
+        socket.emit('primitive', primitives[id]);
       }
-      socket.emit('position', packet);
-      worldView.updatePosition(bot.entity.position);
-    }
 
-    bot.on('move', botPosition);
-    worldView.listenToBot(bot);
-    socket.on('disconnect', () => {
-      bot.removeListener('move', botPosition);
-      worldView.removeListenersFromBot(bot);
-      sockets.splice(sockets.indexOf(socket), 1);
-    });
+      function botPosition() {
+        const packet = { pos: bot.entity.position, yaw: bot.entity.yaw, addMesh: true };
+        if (firstPerson) {
+          packet.pitch = bot.entity.pitch;
+        }
+        socket.emit('position', packet);
+        worldView.updatePosition(bot.entity.position);
+      }
+
+      bot.on('move', botPosition);
+      worldView.listenToBot(bot);
+      socket.on('disconnect', () => {
+        bot.removeListener('move', botPosition);
+        worldView.removeListenersFromBot(bot);
+        sockets.splice(sockets.indexOf(socket), 1);
+      });
+    } catch (err) {
+      console.error('[viewer] connection handler error:', err);
+      try { socket.disconnect(true); } catch (e) { /* ignore */ }
+    }
   });
 
   http.listen(port, host, () => {
