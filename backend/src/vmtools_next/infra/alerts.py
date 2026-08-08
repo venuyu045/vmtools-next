@@ -57,6 +57,8 @@ class AlertEngine:
         self._task: Optional[asyncio.Task] = None
         self._callback: Optional[AlertCallback] = None
         self._metrics_provider: Optional[Callable[[], dict]] = None
+        # 告警事件历史（最近触发记录；前端「告警时间线」数据源）
+        self._events: deque = deque(maxlen=200)
 
     def set_callback(self, callback: AlertCallback) -> None:
         self._callback = callback
@@ -89,6 +91,12 @@ class AlertEngine:
         self.add_rule(AlertRule("High Memory", "memory_percent", ">", 90, "warning"))
         self.add_rule(AlertRule("Critical Memory", "memory_percent", ">", 98, "critical"))
         self.add_rule(AlertRule("Low Disk", "disk_percent", ">", 90, "warning"))
+
+    def get_events(self, count: int = 100) -> list[dict]:
+        """最近触发的告警事件历史（新→旧）。"""
+        events = list(self._events)
+        events.reverse()
+        return events[-count:]
 
     async def start(self) -> None:
         if self._running:
@@ -132,3 +140,14 @@ class AlertEngine:
                 # Only start cooldown if callback succeeded (or no callback)
                 if callback_ok:
                     rule.last_triggered = time.time()
+                # 记录告警事件历史（前端时间线 + API 查询）
+                self._events.append({
+                    "timestamp": time.time(),
+                    "name": rule.name,
+                    "severity": rule.severity,
+                    "metric_name": rule.metric_name,
+                    "value": round(float(value), 2),
+                    "operator": rule.operator,
+                    "threshold": rule.threshold,
+                    "message": message,
+                })

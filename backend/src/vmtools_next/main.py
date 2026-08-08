@@ -62,6 +62,28 @@ _bluemap_monitor: "BlueMapMonitor" = None
 _scan_queue_manager: "ScanQueueManager" = None
 
 
+async def _alert_notify_callback(name: str, severity: str, message: str, value: float) -> None:
+    """告警触发回调：Socket.IO 推送前端时间线/通知 + QQ 群广播（若 QQ Bot 启用）。
+
+    由 AlertEngine 在规则命中时调用（main.py lifespan 注册）。
+    """
+    try:
+        import time as _time
+        from vmtools_next.data.db import sio
+        from vmtools_next.core.qqbot_notify import broadcast
+        payload = {
+            "timestamp": _time.time(),
+            "name": name,
+            "severity": severity,
+            "message": message,
+            "value": value,
+        }
+        await sio.emit("alert", payload)
+        await broadcast(f"⚠️ [监控告警·{severity}] {message}")
+    except Exception:
+        pass
+
+
 def get_pool() -> MccSessionPool | MineflayerSessionPool:
     return _pool
 
@@ -217,6 +239,8 @@ async def lifespan(app: FastAPI):
     _alert_engine = AlertEngine()
     _alert_engine.add_default_rules()
     _alert_engine.set_metrics_provider(_monitor.get_latest)
+    # 告警触发 → QQ 群广播 + Socket.IO 推送（前端告警时间线/通知）
+    _alert_engine.set_callback(_alert_notify_callback)
     await _alert_engine.start()
     logger.info("Monitor & Alert Engine started")
 
