@@ -22,6 +22,26 @@
  * 由 MineflayerProcessManager 从 Python 端启动。
  */
 
+// ── 版本白名单扩展（必须在加载 mineflayer 之前执行） ──
+// mineflayer 官方 testedVersions 最高 1.21.11，但数据层 minecraft-data 已支持 26.1。
+// loader.js 从 lib/version.js 解构 latestSupportedVersion 做白名单检查，
+// 此处利用 Node 模块缓存：先 require 并扩展该模块导出，再 require mineflayer，
+// 使 bot 能以 26.1 协议连接服务器（服务器 26.2 由 ViaForge/Via 翻译兜底）。
+// 未来 26.2 数据就绪后把 '26.2' 加入 extraVersions 即可。
+try {
+  const mfVersion = require('mineflayer/lib/version');
+  const extraVersions = ['26.1'];
+  for (const v of extraVersions) {
+    if (!mfVersion.testedVersions.includes(v)) {
+      mfVersion.testedVersions.push(v);
+    }
+  }
+  mfVersion.latestSupportedVersion = mfVersion.testedVersions[mfVersion.testedVersions.length - 1];
+  console.log(`[bot_main] mineflayer version whitelist extended, latestSupportedVersion=${mfVersion.latestSupportedVersion}`);
+} catch (err) {
+  console.error(`[bot_main] version whitelist patch failed: ${err.message}`);
+}
+
 const { createBotProcess } = require('./mineflayer_bot');
 
 // ── ANSI 颜色（终端显示用，与 mineflayer_bot.js 一致） ──
