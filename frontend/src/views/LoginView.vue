@@ -1,55 +1,64 @@
 <template>
   <div class="login-page">
-    <div class="login-card pixel-card">
-      <div class="login-header">
-        <h1 class="pixel">VMTools</h1>
-        <p>MCC 自动化管理平台</p>
+    <!-- 左：深色 Hero（品牌区） -->
+    <div class="login-hero">
+      <div class="hero-inner">
+        <div class="hero-brand">VMTools</div>
+        <h1 class="hero-title">Minecraft 假人控制面板</h1>
+        <p class="hero-desc">把服务器运维，像一本精装书一样排版——数据清晰、克制、可信。</p>
+        <div class="hero-accent-line"></div>
+        <p class="hero-foot">MCC · Mineflayer · Warehouse · Monitor</p>
       </div>
-      <el-form @submit.prevent="handleLogin" class="login-form">
-        <el-form-item>
-          <el-input
-            v-model="form.game_id"
-            placeholder="Game ID"
+    </div>
+
+    <!-- 右：米色表单区 -->
+    <div class="login-form-area">
+      <div class="form-inner">
+        <h2 class="form-title">欢迎回来</h2>
+        <p class="form-sub">登录以继续管理你的 Minecraft 服务器</p>
+        <el-form @submit.prevent="handleLogin" class="login-form">
+          <el-form-item>
+            <el-input
+              v-model="form.game_id"
+              placeholder="Game ID"
+              size="large"
+            />
+          </el-form-item>
+          <el-form-item>
+            <el-input
+              v-model="form.password"
+              type="password"
+              placeholder="Password"
+              size="large"
+              show-password
+            />
+          </el-form-item>
+          <el-button
+            type="primary"
             size="large"
-          />
-        </el-form-item>
-        <el-form-item>
-          <el-input
-            v-model="form.password"
-            type="password"
-            placeholder="Password"
+            :loading="loading"
+            @click="handleLogin"
+            style="width: 100%"
+          >
+            登录
+          </el-button>
+          <el-button
+            class="qq-btn"
             size="large"
-            show-password
-          />
-        </el-form-item>
-        <el-button
-        type="primary"
-        size="large"
-        :loading="loading"
-        @click="handleLogin"
-        style="width: 100%"
-      >
-        > 登录
-      </el-button>
-      <el-button
-        class="qq-btn"
-        size="large"
-        :loading="qqLoading"
-        @click="handleQqLogin"
-        style="width: 100%; margin-top: 12px"
-      >
-        <span class="qq-icon">Q</span> QQ 登录
-      </el-button>
-      <div class="login-register">
-        <span class="register-hint">还没有账号？</span>
-        <el-link type="primary" @click="goRegister">立即注册</el-link>
-      </div>
-      </el-form>
-      <div class="login-footer mono">
-        v3.0 · MCC Server · Build Automation
-      </div>
-      <div class="login-icp">
-        <a href="https://beian.miit.gov.cn" target="_blank" rel="noopener noreferrer">渝ICP备2026011793号-1</a>
+            :loading="qqLoading"
+            @click="handleQqLogin"
+            style="width: 100%; margin-top: 12px"
+          >
+            <span class="qq-icon">Q</span> QQ 登录
+          </el-button>
+          <div class="login-register">
+            <span class="register-hint">还没有账号？</span>
+            <el-link type="primary" @click="goRegister">立即注册</el-link>
+          </div>
+        </el-form>
+        <div class="login-icp">
+          <a href="https://beian.miit.gov.cn" target="_blank" rel="noopener noreferrer">渝ICP备2026011793号-1</a>
+        </div>
       </div>
     </div>
   </div>
@@ -127,63 +136,105 @@ onMounted(() => {
 <style scoped>
 .login-page {
   height: 100vh;
+  height: 100dvh;
   display: flex;
-  align-items: center;
-  justify-content: center;
   background: var(--bg-page);
   position: relative;
 }
 
-.login-page::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background: repeating-linear-gradient(
-    0deg,
-    rgba(20, 20, 19, 0.02) 0px,
-    rgba(20, 20, 19, 0.02) 1px,
-    transparent 1px,
-    transparent 3px
-  );
-  pointer-events: none;
+/* ---- 左：深色 Hero（始终深色，不随主题反转） ---- */
+.login-hero {
+  flex: 1 1 55%;
+  background: var(--terminal-bg);
+  background-image: radial-gradient(1200px 600px at 85% -10%, rgba(217, 119, 87, 0.10), transparent 60%);
+  color: var(--terminal-text);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 64px 48px;
+  position: relative;
+  overflow: hidden;
 }
 
-.login-card {
-  width: 400px;
-  max-width: calc(100vw - 32px);
-  padding: 48px 40px;
+.hero-inner {
+  max-width: 480px;
 }
 
-.login-header {
-  text-align: center;
+.hero-brand {
+  font-family: var(--font-display);
+  font-size: 20px;
+  font-weight: 400;
+  letter-spacing: -0.5px;
+  color: var(--accent);
+  margin-bottom: 24px;
+}
+
+.hero-title {
+  font-family: var(--font-display);
+  font-size: 40px;
+  font-weight: 400;
+  letter-spacing: -1.5px;
+  line-height: 1.25;
+  color: var(--terminal-text);
+  margin-bottom: 16px;
+}
+
+.hero-desc {
+  font-family: var(--font-body);
+  font-size: 16px;
+  line-height: 1.75;
+  color: rgba(245, 243, 236, 0.72);
+  max-width: 36ch;
   margin-bottom: 32px;
 }
 
-.login-header h1 {
-  color: var(--text-primary);
+.hero-accent-line {
+  width: 48px;
+  height: 2px;
+  background: var(--accent);
+  border-radius: 1px;
+  margin-bottom: 32px;
+}
+
+.hero-foot {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  letter-spacing: 0.5px;
+  color: rgba(245, 243, 236, 0.45);
+}
+
+/* ---- 右：米色表单区 ---- */
+.login-form-area {
+  flex: 1 1 45%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 48px 32px;
+  background: var(--bg-page);
+}
+
+.form-inner {
+  width: 360px;
+  max-width: 100%;
+}
+
+.form-title {
   font-family: var(--font-display);
-  font-size: 28px;
+  font-size: 32px;
   font-weight: 400;
-  letter-spacing: -0.8px;
+  letter-spacing: -1px;
+  color: var(--text-primary);
   margin-bottom: 8px;
-  text-shadow: 0 0 20px rgba(217, 119, 87, 0.15);
 }
 
-.login-header p {
+.form-sub {
+  font-size: 14px;
   color: var(--text-secondary);
-  font-size: 14px;
-  font-family: var(--font-body);
-}
-
-.login-footer {
-  text-align: center;
-  margin-top: 24px;
-  color: var(--text-muted);
-  font-size: 14px;
+  margin-bottom: 32px;
 }
 
 .login-register {
-  margin-top: 16px;
+  margin-top: 20px;
   text-align: center;
   font-size: 14px;
 }
@@ -220,19 +271,18 @@ onMounted(() => {
 
 .login-icp {
   text-align: center;
-  margin-top: 12px;
-  padding-bottom: 4px;
+  margin-top: 16px;
 }
 
 .login-icp a {
-  color: #666;
+  color: var(--text-muted);
   font-size: 12px;
   text-decoration: none;
   transition: color 0.2s;
 }
 
 .login-icp a:hover {
-  color: #999;
+  color: var(--text-secondary);
 }
 
 /* Override browser autofill white background */
@@ -240,37 +290,20 @@ onMounted(() => {
 :deep(.el-input__inner:-webkit-autofill:hover),
 :deep(.el-input__inner:-webkit-autofill:focus),
 :deep(.el-input__inner:-webkit-autofill:active) {
-  -webkit-box-shadow: 0 0 0 30px #0a0a0a inset !important;
+  -webkit-box-shadow: 0 0 0 30px var(--bg-input) inset !important;
   -webkit-text-fill-color: var(--text-primary) !important;
   transition: background-color 5000s ease-in-out 0s;
   caret-color: var(--text-primary);
 }
 
 /* ============ RESPONSIVE ============ */
+@media (max-width: 900px) {
+  .login-hero { display: none; }
+  .login-form-area { flex: 1 1 100%; }
+}
+
 @media (max-width: 480px) {
-  .login-card {
-    width: 100%;
-    max-width: 100%;
-    padding: 36px 20px;
-    border-left: none;
-    border-right: none;
-  }
-
-  .login-header h1 {
-    font-size: 20px;
-  }
-
-  .login-header p {
-    font-size: 12px;
-  }
-
-  .login-header {
-    margin-bottom: 24px;
-  }
-
-  .login-footer {
-    font-size: 12px;
-    margin-top: 20px;
-  }
+  .login-form-area { padding: 40px 20px; }
+  .form-title { font-size: 26px; }
 }
 </style>

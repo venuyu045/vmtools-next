@@ -17,6 +17,15 @@
       </div>
     </div>
     <div class="header-right">
+      <!-- 主题切换（快速亮/暗） -->
+      <button
+        class="theme-btn"
+        @click="toggleTheme()"
+        :title="`主题：${themeResolved === 'dark' ? '暗色' : '亮色'}（点击切换）`"
+        :aria-label="`切换为${themeResolved === 'dark' ? '亮色' : '暗色'}主题`"
+      >
+        {{ themeResolved === 'dark' ? '◐ 暗' : '◐ 亮' }}
+      </button>
       <!-- 未登录（访客）：显示「登录」按钮，点击进入登录页 -->
       <router-link v-if="!authStore.isLoggedIn" to="/login" class="profile-btn login-link">登录</router-link>
       <template v-else>
@@ -39,8 +48,16 @@
             <span class="profile-label">当前权限组</span>
             <span class="profile-role-tag">{{ roleLabel(authStore.user?.role) }}</span>
           </div>
-          <button class="profile-item" @click="openChangePwd">🔑 更改密码</button>
-          <button class="profile-item danger" @click="authStore.logout()">⏻ 退出登录</button>
+          <div class="profile-role theme-select">
+            <span class="profile-label">主题</span>
+            <el-radio-group v-model="themeMode" size="small" @change="onThemeChange">
+              <el-radio-button :value="'light'">亮色</el-radio-button>
+              <el-radio-button :value="'dark'">暗色</el-radio-button>
+              <el-radio-button :value="'system'">跟随</el-radio-button>
+            </el-radio-group>
+          </div>
+          <button class="profile-item" @click="openChangePwd">更改密码</button>
+          <button class="profile-item danger" @click="authStore.logout()">退出登录</button>
         </div>
       </el-popover>
 
@@ -73,6 +90,7 @@ import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { useAuthStore, roleLabel } from '@/stores/auth'
 import { authApi } from '@/api/auth'
+import { useTheme } from '@/composables/useTheme'
 
 const emit = defineEmits<{
   toggleSidebar: []
@@ -80,6 +98,7 @@ const emit = defineEmits<{
 }>()
 const route = useRoute()
 const authStore = useAuthStore()
+const { mode: themeMode, resolved: themeResolved, setThemeMode, toggleTheme } = useTheme()
 
 const shortName = computed(() => {
   const name = authStore.user?.display_name || authStore.user?.game_id || ''
@@ -90,6 +109,12 @@ const shortName = computed(() => {
 const showPwdDialog = ref(false)
 const pwdSaving = ref(false)
 const pwdForm = reactive({ old: '', new1: '', new2: '' })
+
+function onThemeChange(v: string | number | boolean | undefined) {
+  if (v === 'light' || v === 'dark' || v === 'system') {
+    setThemeMode(v)
+  }
+}
 
 function openChangePwd() {
   pwdForm.old = ''
@@ -196,6 +221,30 @@ async function submitChangePwd() {
   overflow: hidden;
   text-overflow: ellipsis;
   max-width: 120px;
+}
+
+.theme-btn {
+  background: none;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  color: var(--text-secondary);
+  padding: 5px 12px;
+  font-size: 12px;
+  cursor: pointer;
+  font-family: var(--font-sans);
+  flex-shrink: 0;
+  transition: background-color 150ms var(--ease-out), border-color 150ms var(--ease-out), color 150ms var(--ease-out);
+}
+
+.theme-btn:hover {
+  border-color: var(--accent);
+  color: var(--text-primary);
+  background: var(--bg-hover);
+}
+
+.theme-select {
+  border-bottom: 1px solid var(--border-subtle);
+  margin-bottom: 4px;
 }
 
 .profile-btn {
