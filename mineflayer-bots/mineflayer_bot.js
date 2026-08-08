@@ -238,12 +238,16 @@ async function createBotProcess(options) {
     // ── 服务器聊天/系统消息 → stdout（MF 终端可见，绿色） ──
     // mineflayer 在 1.19+ 签名聊天协议下 `chat` 事件并不可靠（签名玩家消息
     // 只走 system_chat/player_chat 包），`message` 事件覆盖所有服务器聊天内容
-    // （玩家消息 + 系统消息 + 命令回显），toString() 提取纯文本。
+    // （玩家消息 + 系统消息 + 命令回显）。
+    // 注意用 toMotd() 而非 toString()：prismarine-chat 的 toString() 会剥掉
+    // 全部 § 颜色码（return message.replace(/§[0-9a-flnmokr]/g, '')），导致
+    // 服务器彩色文字在终端里丢失配色；toMotd() 保留 § 码，由前端
+    // MccWebTerminal 的 mcFormatToAnsi 转 ANSI 后按服务器配色渲染。
     bot.on('message', (jsonMsg) => {
       try {
-        const text = (jsonMsg && typeof jsonMsg.toString === 'function')
-          ? jsonMsg.toString()
-          : String(jsonMsg);
+        const text = (jsonMsg && typeof jsonMsg.toMotd === 'function')
+          ? jsonMsg.toMotd()
+          : (typeof jsonMsg.toString === 'function' ? jsonMsg.toString() : String(jsonMsg));
         if (text) {
           console.log(`${ANSI.green}[chat]${ANSI.reset} ${text}`);
         }
