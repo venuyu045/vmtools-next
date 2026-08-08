@@ -109,12 +109,18 @@ export function useSocketIO() {
       monitorStore.pushMetric(payload)
     })
 
-    // Alerts
+    // Monitor processes snapshot
+    socket.on('monitor_processes', (payload) => {
+      const monitorStore = useMonitorStore()
+      monitorStore.pushProcesses(payload)
+    })
+
+    // Alerts（告警事件时间线 + 浏览器通知）
     socket.on('alert', (payload) => {
       const monitorStore = useMonitorStore()
-      monitorStore.pushAlert(payload)
+      monitorStore.pushAlertEvent(payload)
       ElNotification({
-        title: '系统告警',
+        title: `系统告警·${payload.severity}`,
         message: payload.message,
         type: payload.severity === 'critical' ? 'error' : 'warning',
       })

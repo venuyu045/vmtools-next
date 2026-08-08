@@ -1,11 +1,10 @@
 """Monitoring API routes."""
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
-from typing import Optional
 
-from vmtools_next.api.deps import get_current_user
+from vmtools_next.api.deps import require_admin
 
 router = APIRouter(prefix="/api/monitor", tags=["monitor"])
 
@@ -21,11 +20,13 @@ class MetricResponse(BaseModel):
     disk_total: int = 0
     net_bytes_sent: int = 0
     net_bytes_recv: int = 0
+    net_sent_rate: float = 0.0  # bytes/s
+    net_recv_rate: float = 0.0  # bytes/s
 
 
 @router.get("/metrics", response_model=list[MetricResponse])
-def get_metrics(count: int = 100, user=Depends(get_current_user)):
-    """Get recent system metrics."""
+def get_metrics(count: int = Query(default=100, ge=1, le=500), user=Depends(require_admin)):
+    """Get recent system metrics (admin only, count capped at 500)."""
     try:
         from vmtools_next.main import get_monitor
         monitor = get_monitor()
@@ -43,6 +44,8 @@ def get_metrics(count: int = 100, user=Depends(get_current_user)):
                     disk_total=m.get("disk_total", 0),
                     net_bytes_sent=m.get("net_bytes_sent", 0),
                     net_bytes_recv=m.get("net_bytes_recv", 0),
+                    net_sent_rate=m.get("net_sent_rate", 0.0),
+                    net_recv_rate=m.get("net_recv_rate", 0.0),
                 )
                 for m in raw
             ]
@@ -52,13 +55,12 @@ def get_metrics(count: int = 100, user=Depends(get_current_user)):
 
 
 @router.get("/alerts")
-def get_alerts(user=Depends(get_current_user)):
-    """Get recent alerts."""
+def get_alerts(user=Depends(require_admin)):
+    """Get alert rules (admin only)."""
     try:
         from vmtools_next.main import get_alert_engine
         engine = get_alert_engine()
         if engine:
-            # Return rules as alert summary
             return [
                 {
                     "name": r.name,
@@ -75,6 +77,32 @@ def get_alerts(user=Depends(get_current_user)):
     return []
 
 
+@router.get("/alerts/events")
+def get_alert_events(count: int = Query(default=100, ge=1, le=200), user=Depends(require_admin)):
+    """Get recent alert events (触发历史时间线，admin only)."""
+    try:
+        from vmtools_next.main import get_alert_engine
+        engine = get_alert_engine()
+        if engine:
+            return engine.get_events(count)
+    except Exception:
+        pass
+    return []
+
+
+@router.get("/processes")
+def get_processes(user=Depends(require_admin)):
+    """Get latest bot/server process resource snapshot (admin only)."""
+    try:
+        from vmtools_next.main import get_monitor
+        monitor = get_monitor()
+        if monitor:
+            return monitor.get_processes()
+    except Exception:
+        pass
+    return []
+
+
 @router.get("/health")
 def monitor_health():
     """Public health check (no auth required)."""
@@ -82,8 +110,8 @@ def monitor_health():
 
 
 @router.get("/bots/summary")
-def bots_summary(user=Depends(get_current_user)):
-    """Bot summary for dashboard."""
+def bots_summary(user=Depends(require_admin)):
+    """Bot summary (admin only)."""
     try:
         from vmtools_next.data.db import get_session_factory
         from vmtools_next.data.models.logistics import MccBotModel
