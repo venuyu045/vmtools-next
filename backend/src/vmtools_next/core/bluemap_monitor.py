@@ -68,6 +68,7 @@ class BlueMapMonitor:
     """Background service that polls BlueMap API for players, regions, residences."""
 
     AFK_THRESHOLD_SECONDS = 600  # 10 minutes without movement → AFK
+    BOT_OWNER_CACHE_TTL = 30     # refresh bot owner map from DB at most every 30s
 
     # Leave debounce: a player must be missing for N consecutive polls before
     # we believe they actually left (BlueMap occasionally returns bogus data).
@@ -83,6 +84,10 @@ class BlueMapMonitor:
 
         # AFK detection: {name: {x, y, z, last_moved_at, afk}}
         self._player_afk_status: dict[str, dict] = {}
+
+        # Bot owner map cache ({name: owner}, same source as QQ /list)
+        self._bot_owner_map: dict[str, str] = {}
+        self._bot_owner_map_ts: float = 0.0
 
         # Cached marker data (refreshed every 60s)
         self._residences: list[dict] = []
@@ -239,7 +244,13 @@ class BlueMapMonitor:
             if name not in confirmed_left:
                 effective[name] = previous[name]
 
-        # Full list
+        # Full list — tag bot owner (same bot list source as QQ /list, 30s cache)
+        now = time.time()
+        if now - self._bot_owner_map_ts > self.BOT_OWNER_CACHE_TTL:
+            self._bot_owner_map = self._load_bot_owner_map()
+            self._bot_owner_map_ts = now
+        bot_owner_map = self._bot_owner_map
+
         player_list = [
             {
                 "name": p["name"], "uuid": p["uuid"], "world": p["world"],
@@ -248,6 +259,7 @@ class BlueMapMonitor:
                 "residence": p.get("residence"),
                 "region": p.get("region"),
                 "afk": self.is_player_afk(p["name"]),
+                "bot_owner": bot_owner_map.get(p["name"]),
             }
             for p in effective.values()
         ]
@@ -337,6 +349,27 @@ class BlueMapMonitor:
     def get_afk_players(self) -> dict[str, bool]:
         """Return {name: afk} for all currently tracked players."""
         return {name: s["afk"] for name, s in self._player_afk_status.items()}
+
+    def _load_bot_owner_map(self) -> dict[str, str]:
+        """Load bot list {name: owner} from DB cache (same source as QQ /list)."""
+        try:
+            import json as _json
+            from vmtools_next.data.db import get_session_factory
+            from sqlalchemy import text
+            Session = get_session_factory()
+            db = Session()
+            try:
+                row = db.execute(
+                    text("SELECT cache_data FROM bluemap_cache WHERE cache_key = 'bot_list_json'")
+                ).fetchone()
+                if row and row[0]:
+                    data = _json.loads(row[0])
+                    return data if isinstance(data, dict) else {}
+            finally:
+                db.close()
+        except Exception:
+            pass
+        return {}
 
     # ── markers poll (slow, 60s) ────────────────────────────────────
 

@@ -27,6 +27,8 @@ export interface OnlinePlayer {
   rotation: { pitch: number; yaw: number; roll: number } | null
   residence: ResidenceInfo | null
   region: RegionInfo | null
+  afk?: boolean
+  bot_owner?: string | null
 }
 
 export interface PlayerEvent {
@@ -109,6 +111,15 @@ const WORLD_LABELS: Record<string, string> = {
   world_the_end: '末地',
 }
 
+// Bot owner groups (mirrors QQ /list): ordered display, owner → label
+const BOT_OWNER_ORDER = ['venus', 'gxko', '快乐船', '其他']
+const BOT_OWNER_LABELS: Record<string, string> = {
+  venus: 'venus 的 bot',
+  gxko: 'gxko 的 bot',
+  '快乐船': '快乐船的 bot',
+  '其他': '其他 bot',
+}
+
 export const useOnlinePlayersStore = defineStore('onlinePlayers', () => {
   const players = ref<OnlinePlayer[]>([])
   const events = ref<(PlayerEvent & { time: number })[]>([])
@@ -134,6 +145,25 @@ export const useOnlinePlayersStore = defineStore('onlinePlayers', () => {
     }
     return map
   })
+
+  // ── Bot classification (mirrors QQ /list) ──
+  // Human players split by movement (AFK tracked server-side from position deltas)
+  const humanPlayers = computed(() => players.value.filter(p => !p.bot_owner))
+  const humanActive = computed(() => humanPlayers.value.filter(p => !p.afk))
+  const humanAfk = computed(() => humanPlayers.value.filter(p => p.afk))
+  // Bots grouped by owner (venus / gxko / 快乐船 / 其他)
+  const botPlayers = computed(() => players.value.filter(p => p.bot_owner))
+  const botGroups = computed(() => {
+    const groups: { owner: string; label: string; players: OnlinePlayer[] }[] = []
+    for (const owner of BOT_OWNER_ORDER) {
+      const list = botPlayers.value.filter(p => p.bot_owner === owner)
+      if (list.length) {
+        groups.push({ owner, label: BOT_OWNER_LABELS[owner] || `${owner} 的 bot`, players: list })
+      }
+    }
+    return groups
+  })
+  const botTotal = computed(() => botPlayers.value.length)
 
   const worldLabels = computed(() => WORLD_LABELS)
 
@@ -288,6 +318,7 @@ export const useOnlinePlayersStore = defineStore('onlinePlayers', () => {
 
   return {
     players, events, lastUpdate, count, byWorld, worldLabels,
+    humanPlayers, humanActive, humanAfk, botGroups, botTotal,
     residences, regions, markers, landmarks, metroLines, metroStations,
     residenceRankings, ownerRankings, regionRankings,
     landmarkTypes, landmarksByType,
