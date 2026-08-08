@@ -31,7 +31,7 @@ async def start() -> bool:
     )
     ok = await _qq_client.start()
     if ok:
-        logger.info("QQ Bot notification service started, groups=%s", config.notify_groups)
+        logger.info("QQ Bot notification service started, groups={}", config.notify_groups)
         # Send startup notification
         await broadcast("VMTools Next 后端 上线了喵")
         # Start WebSocket listener for @bot commands (e.g., /list)
@@ -71,7 +71,7 @@ async def broadcast(message: str, mention_openids: list[str] | None = None) -> N
         try:
             await _qq_client.send_group_message(group_id, message, mention_openids=targets)
         except Exception as exc:
-            logger.warning("QQ broadcast failed for group %s: %s", group_id, exc)
+            logger.warning("QQ broadcast failed for group {}: {}", group_id, exc)
 
 
 async def notify_mcc_event(

@@ -71,11 +71,11 @@ class Plugin(IPlugin):
         commands = (config or {}).get("commands")
         if isinstance(commands, dict) and commands:
             self._commands = {str(k): str(v) for k, v in commands.items()}
-        logger.info("Chat responder config applied (commands=%s)", list(self._commands))
+        logger.info("Chat responder config applied (commands={})", list(self._commands))
 
     async def start(self) -> None:
         self._enabled = True
-        logger.info("Chat responder started (commands=%s)", list(self._commands))
+        logger.info("Chat responder started (commands={})", list(self._commands))
 
     async def stop(self) -> None:
         self._enabled = False
@@ -128,7 +128,7 @@ class Plugin(IPlugin):
                 return f"({x}, {y}, {z})"
             return "?"
         except Exception as exc:
-            logger.debug("Get position failed for %s: %s", bot_id, exc)
+            logger.debug("Get position failed for {}: {}", bot_id, exc)
             return "?"
 
     async def _reply(self, bot_id: str, text: str) -> None:
@@ -137,9 +137,9 @@ class Plugin(IPlugin):
                 return
             client = self._context.pool.get_client(bot_id)
             if client is None or not client.is_connected:
-                logger.debug("Bot %s not connected, skip reply", bot_id)
+                logger.debug("Bot {} not connected, skip reply", bot_id)
                 return
             await client.send_chat(text)
-            logger.info("Bot %s replied: %s", bot_id, text)
+            logger.info("Bot {} replied: {}", bot_id, text)
         except Exception as exc:
-            logger.warning("Reply failed for %s: %s", bot_id, exc)
+            logger.warning("Reply failed for {}: {}", bot_id, exc)

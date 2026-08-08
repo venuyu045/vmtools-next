@@ -33,11 +33,11 @@ class ConfigChangeHandler(FileSystemEventHandler if HAS_WATCHDOG else object):
 
     def on_modified(self, event):
         if not event.is_directory and event.src_path.endswith(('.yaml', '.yml')):
-            logger.info("Config file changed: %s", event.src_path)
+            logger.info("Config file changed: {}", event.src_path)
             if self._loop and self._callback:
                 future = asyncio.run_coroutine_threadsafe(self._callback(), self._loop)
                 future.add_done_callback(
-                    lambda f: logger.warning("Config change callback failed for: %s", event.src_path)
+                    lambda f: logger.warning("Config change callback failed for: {}", event.src_path)
                     if f.exception() else None
                 )
 
@@ -56,7 +56,7 @@ class ConfigWatcher:
             return
 
         if not self._config_dir.is_dir():
-            logger.warning("Config directory not found: %s", self._config_dir)
+            logger.warning("Config directory not found: {}", self._config_dir)
             return
 
         handler = ConfigChangeHandler(self._on_change)
@@ -66,7 +66,7 @@ class ConfigWatcher:
         self._observer.schedule(handler, str(self._config_dir), recursive=False)
         self._observer.daemon = True
         self._observer.start()
-        logger.info("Config watcher started: %s", self._config_dir)
+        logger.info("Config watcher started: {}", self._config_dir)
 
     async def stop(self) -> None:
         if self._observer:
@@ -75,4 +75,4 @@ class ConfigWatcher:
                 self._observer.join(timeout=5)
                 logger.info("Config watcher stopped")
             except Exception as e:
-                logger.warning("Error stopping config watcher: %s", e)
+                logger.warning("Error stopping config watcher: {}", e)

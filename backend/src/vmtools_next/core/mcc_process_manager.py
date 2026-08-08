@@ -789,13 +789,13 @@ class MccProcessManager:
                 bot.status = "offline"
                 db.commit()
         except Exception as exc:
-            logger.warning("Sync bot offline failed for %s: %s", bot_id, exc)
+            logger.warning("Sync bot offline failed for {}: {}", bot_id, exc)
         finally:
             db.close()
         try:
             await sio.emit("bot_status_update", {"bot_id": bot_id, "status": "offline"})
         except Exception as exc:
-            logger.warning("Emit bot offline failed for %s: %s", bot_id, exc)
+            logger.warning("Emit bot offline failed for {}: {}", bot_id, exc)
 
     def _ensure_detection_loop(self, instance_id: str) -> None:
         """Start (once) the per-instance serialized stdout detection consumer."""

@@ -58,7 +58,7 @@ def create_waypoint(data: WaypointCreate, db: Session = Depends(get_db), user=De
     db.add(w)
     db.commit()
     db.refresh(w)
-    logger.info("Created waypoint: %s", w.waypoint_id)
+    logger.info("Created waypoint: {}", w.waypoint_id)
     return _waypoint_to_response(w)
 
 
@@ -112,7 +112,7 @@ def create_drop_point(data: DropPointCreate, db: Session = Depends(get_db), user
     db.add(d)
     db.commit()
     db.refresh(d)
-    logger.info("Created drop point: %s", d.drop_point_id)
+    logger.info("Created drop point: {}", d.drop_point_id)
     return _drop_point_to_response(d)
 
 
@@ -174,7 +174,7 @@ def create_template(data: TaskTemplateCreate, db: Session = Depends(get_db), use
     db.add(t)
     db.commit()
     db.refresh(t)
-    logger.info("Created template: %s", t.template_id)
+    logger.info("Created template: {}", t.template_id)
     return _template_to_response(t)
 
 
@@ -275,7 +275,7 @@ def start_task(data: TaskStartRequest, db: Session = Depends(get_db), user=Depen
     db.add(run)
     db.commit()
     db.refresh(run)
-    logger.info("Started task run: %s (template=%s, bot=%s)", run.run_id, data.template_id, data.bot_id)
+    logger.info("Started task run: {} (template={}, bot={})", run.run_id, data.template_id, data.bot_id)
     return _run_to_response(run)
 
 
