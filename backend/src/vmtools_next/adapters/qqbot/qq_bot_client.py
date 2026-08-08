@@ -164,11 +164,13 @@ class QqBotClient:
     async def _handle_at_message(self, d: dict) -> None:
         """Handle @bot commands: /list, /mspt, /help."""
         content = (d.get("content", "") or "").strip()
-        if not any(content.startswith(cmd) for cmd in ("/list", "/mspt", "/help")):
-            return
-        # Remove bot mention prefix (handles both <@!openid> and <@openid>)
+        # 先剥离 bot mention 前缀（<@!openid> / <@openid>）再匹配指令：
+        # 群内 @机器人 时 content 以 "<" 开头，原逻辑先 startswith 匹配会
+        # 永远 return，导致 /list、/mspt 等指令全部不响应（历史 bug）。
         import re
         content = re.sub(r"<@!?\w+>", "", content).strip()
+        if not any(content.startswith(cmd) for cmd in ("/list", "/mspt", "/help")):
+            return
         group_id = d.get("group_id") or d.get("group_openid") or ""
         if not group_id:
             return
