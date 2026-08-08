@@ -216,6 +216,7 @@ async def lifespan(app: FastAPI):
     # 5.5 Config Hot-Reload Watcher
     from vmtools_next.infra.config_watcher import ConfigWatcher
     from vmtools_next.config import reload_config as _reload_config
+    from vmtools_next.config import get_config_dir
 
     async def _on_config_change():
         _reload_config()
@@ -223,7 +224,7 @@ async def lifespan(app: FastAPI):
         if _plugin_manager:
             await _plugin_manager.reload_all()
 
-    config_dir = pathlib.Path("config")
+    config_dir = get_config_dir()  # 与 _find_config_dir 保持一致（模块路径，而非 cwd）
     if config_dir.is_dir():
         _config_watcher = ConfigWatcher(
             config_dir=str(config_dir),

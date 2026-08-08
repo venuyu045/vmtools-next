@@ -4,6 +4,8 @@ server:
   debug: true
 
 mcc:
+  # ⚠️ 仅本地开发机使用（Windows 路径）；部署到服务器切勿设置 VMT_ENV=dev，
+  #    否则会覆盖 mcc.working_dir 为 Windows 路径。生产请用 VMT_ENV=prod。
   working_dir: "F:\\Traedocument\\Qlaw\\VMTools-v2\\Minecraft-Console-Client-master\\MinecraftClient"
 
 generic:

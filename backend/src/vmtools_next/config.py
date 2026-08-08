@@ -69,6 +69,7 @@ class TravelConfig(BaseModel):
 class ServerConfig(BaseModel):
     host: str = "0.0.0.0"
     port: int = 8080
+    # 注意：socket.io ASGIApp 不支持多 worker（需 redis adapter），请保持 1；字段为兼容预留
     workers: int = 1
     debug: bool = False
     database_url: str = "sqlite:///vmtools-next.db"
@@ -79,7 +80,6 @@ class ServerConfig(BaseModel):
         "http://localhost:5173",
         "http://localhost:8080",
     ])
-    api_token: str = "vmtools-next-token-2026"
 
 
 class MccConfig(BaseModel):
@@ -123,6 +123,7 @@ class MonitorConfig(BaseModel):
     enabled: bool = True
     collect_interval_seconds: int = 10
     alert_check_interval_seconds: int = 30
+    # 预留：webhook / SMTP 通知暂未接入（当前告警走 QQ 群广播 + Socket.IO）
     webhook_url: str = ""
     email_smtp_host: str = ""
 
@@ -191,7 +192,8 @@ class PlayerTrackingConfig(BaseModel):
 class BlueMapConfig(BaseModel):
     """BlueMap website API configuration for player monitoring."""
     enabled: bool = True
-    api_base_url: str = "http://map.mangocraft.cn:2087"
+    # 生产环境请在 config.yaml 显式配置 api_base_url（避免默认值泄露/耦合具体站点）
+    api_base_url: str = ""
     poll_interval_seconds: int = 5
     worlds: list[str] = Field(default_factory=lambda: ["world", "world_nether", "world_the_end"])
 
@@ -243,6 +245,11 @@ def _find_config_dir() -> pathlib.Path:
     if candidate.is_dir():
         return candidate
     return pathlib.Path("config")
+
+
+def get_config_dir() -> pathlib.Path:
+    """Public accessor for the resolved config directory (used by hot-reload watcher)."""
+    return _find_config_dir()
 
 
 def _deep_merge(base: dict, overlay: dict) -> dict:
@@ -325,18 +332,46 @@ def get_config() -> AppConfig:
     return load_config()
 
 
+def _replace_toplevel_section(text: str, section: str, new_block: str) -> str:
+    """Replace a top-level YAML section block in ``text`` with ``new_block``.
+
+    Other sections (including their comments and formatting) are preserved
+    verbatim — only the target section's block is swapped.
+    """
+    import re
+
+    lines = text.splitlines(keepends=True)
+    start = None
+    for i, line in enumerate(lines):
+        if re.match(rf"^{re.escape(section)}:", line):
+            start = i
+            break
+    if start is None:
+        # Section not present — append at the end.
+        base = text if text.endswith("\n") else text + "\n"
+        return base + new_block.rstrip("\n") + "\n"
+    end = len(lines)
+    for j in range(start + 1, len(lines)):
+        if lines[j].strip() and not lines[j][0].isspace():
+            end = j
+            break
+    return "".join(lines[:start]) + new_block.rstrip("\n") + "\n" + "".join(lines[end:])
+
+
 def save_mcc_config(instance_root: str | None = None, binary_path: str | None = None,
                     launch_command: list[str] | None = None, instance_start_port: int | None = None,
                     instance_end_port: int | None = None, max_instances: int | None = None,
                     log_retention_days: int | None = None) -> AppConfig:
-    """Update MCC section in config.yaml and reload."""
-    import yaml
+    """Update MCC section in config.yaml and reload.
 
+    Only the top-level ``mcc`` section is rewritten — comments and other
+    sections (qqbot / qq_connect / ...) are preserved verbatim.
+    """
     config_dir = _find_config_dir()
     config_path = config_dir / "config.yaml"
-    with open(config_path, "r", encoding="utf-8") as fh:
-        data = yaml.safe_load(fh) or {}
+    text = config_path.read_text(encoding="utf-8")
 
+    data = yaml.safe_load(text) or {}
     mcc = data.setdefault("mcc", {})
     updates = {
         "instance_root": instance_root,
@@ -351,8 +386,10 @@ def save_mcc_config(instance_root: str | None = None, binary_path: str | None = 
         if value is not None:
             mcc[key] = value
 
-    with open(config_path, "w", encoding="utf-8") as fh:
-        yaml.safe_dump(data, fh, allow_unicode=True, default_flow_style=False, sort_keys=False)
+    new_block = yaml.safe_dump(
+        {"mcc": mcc}, allow_unicode=True, default_flow_style=False, sort_keys=False,
+    )
+    config_path.write_text(_replace_toplevel_section(text, "mcc", new_block), encoding="utf-8")
 
     get_config.cache_clear()
     return get_config()
