@@ -884,6 +884,13 @@ html {
   }
 }
 
+/* ===== 无障碍：统一焦点环（键盘走查可见，橙色） ===== */
+:focus-visible {
+  outline: 2px solid var(--accent-ring);
+  outline-offset: 3px;
+  border-radius: var(--radius-md);
+}
+
 /* ===== REDUCED MOTION ===== */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {

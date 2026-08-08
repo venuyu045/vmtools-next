@@ -718,7 +718,7 @@ function tpsClass(v: number | null): string {
 }
 .lm-type-tag {
   cursor: pointer;
-  transition: all 0.2s;
+  transition: transform 150ms var(--ease-out), color 150ms var(--ease-out);
 }
 .lm-type-tag:hover {
   transform: translateY(-1px);

@@ -12,7 +12,7 @@
 
     <!-- Mobile Drawer Sidebar -->
     <Transition name="drawer-slide">
-      <aside v-if="mobileDrawerOpen" class="app-sidebar mobile-drawer">
+      <aside v-if="mobileDrawerOpen" ref="mobileDrawerRef" tabindex="-1" class="app-sidebar mobile-drawer">
         <AppSidebar :collapsed="false" @toggle="mobileDrawerOpen = false" :is-mobile="true" />
       </aside>
     </Transition>
@@ -111,13 +111,47 @@ function toggleSidebar() {
 const isTabletAutoCollapsed = ref(false)
 const sidebarCollapsed = computed(() => isCollapsed.value || isTabletAutoCollapsed.value)
 
-/** 移动抽屉打开时锁定 body 滚动（防背景滚动穿透）；ESC 关闭抽屉 */
+/** 移动抽屉：打开时锁定 body 滚动（防背景滚动穿透）+ 焦点管理（聚焦抽屉/关闭还原） */
+const mobileDrawerRef = ref<HTMLElement | null>(null)
+let lastFocused: HTMLElement | null = null
+
 watch(mobileDrawerOpen, (open) => {
   document.body.style.overflow = open ? 'hidden' : ''
+  if (open) {
+    lastFocused = document.activeElement as HTMLElement | null
+    // 等 Transition 挂载完成后再聚焦抽屉容器
+    requestAnimationFrame(() => {
+      mobileDrawerRef.value?.focus()
+    })
+  } else if (lastFocused) {
+    // 关闭后焦点还原到触发元素（汉堡按钮）
+    lastFocused.focus()
+    lastFocused = null
+  }
 })
+
+/** 抽屉键盘：ESC 关闭 + Tab 循环（focus trap，焦点不逃逸到背景内容） */
 function onDrawerKeydown(e: KeyboardEvent) {
   if (e.key === 'Escape' && mobileDrawerOpen.value) {
     mobileDrawerOpen.value = false
+    return
+  }
+  if (e.key === 'Tab' && mobileDrawerOpen.value) {
+    const drawer = mobileDrawerRef.value
+    if (!drawer) return
+    const focusables = drawer.querySelectorAll<HTMLElement>(
+      'a[href], button:not([disabled]), input:not([disabled]), select, textarea, [tabindex]:not([tabindex="-1"])'
+    )
+    if (focusables.length === 0) return
+    const first = focusables[0]
+    const last = focusables[focusables.length - 1]
+    if (e.shiftKey && document.activeElement === first) {
+      e.preventDefault()
+      last.focus()
+    } else if (!e.shiftKey && document.activeElement === last) {
+      e.preventDefault()
+      first.focus()
+    }
   }
 }
 
@@ -158,7 +192,8 @@ onBeforeUnmount(() => {
   flex-shrink: 0;
   overflow-y: auto;
   overflow-x: hidden;
-  transition: width 0.25s ease;
+  /* 折叠动画必须动 width（布局流依赖），缓动用统一曲线 */
+  transition: width 250ms var(--ease-out);
   z-index: 10;
 }
 
@@ -177,6 +212,11 @@ onBeforeUnmount(() => {
   max-width: 80vw;
   z-index: 200;
   box-shadow: var(--shadow-lg);
+}
+
+/* 抽屉容器聚焦由内部元素承担，容器本身不显示焦点环 */
+.mobile-drawer:focus-visible {
+  outline: none;
 }
 
 /* ---- Mobile Overlay ---- */
