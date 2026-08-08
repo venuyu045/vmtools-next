@@ -15,6 +15,29 @@ logger = logging.getLogger("vmtools.alerts")
 # Alert callback: (rule_name, severity, message, metric_value)
 AlertCallback = Callable[[str, str, str, float], Awaitable[None]]
 
+# 监控指标汉化（用于告警消息与前端展示）
+METRIC_LABELS: dict[str, str] = {
+    "cpu_percent": "CPU 使用率",
+    "memory_percent": "内存占用",
+    "disk_percent": "磁盘占用",
+}
+
+SEVERITY_LABELS: dict[str, str] = {
+    "warning": "警告",
+    "critical": "严重",
+    "error": "错误",
+}
+
+
+def zh_metric(metric_name: str) -> str:
+    """监控指标英文名 → 中文名（未知原样返回）。"""
+    return METRIC_LABELS.get(metric_name, metric_name)
+
+
+def zh_severity(severity: str) -> str:
+    """严重级别英文 → 中文（未知原样返回）。"""
+    return SEVERITY_LABELS.get(severity, severity)
+
 
 class AlertRule:
     """A threshold-based alert rule."""
@@ -87,11 +110,11 @@ class AlertEngine:
 
     def add_default_rules(self) -> None:
         """Add default system alert rules."""
-        self.add_rule(AlertRule("High CPU", "cpu_percent", ">", 80, "warning"))
-        self.add_rule(AlertRule("Critical CPU", "cpu_percent", ">", 95, "critical"))
-        self.add_rule(AlertRule("High Memory", "memory_percent", ">", 90, "warning"))
-        self.add_rule(AlertRule("Critical Memory", "memory_percent", ">", 98, "critical"))
-        self.add_rule(AlertRule("Low Disk", "disk_percent", ">", 90, "warning"))
+        self.add_rule(AlertRule("CPU 使用率过高", "cpu_percent", ">", 80, "warning"))
+        self.add_rule(AlertRule("CPU 使用率严重过高", "cpu_percent", ">", 95, "critical"))
+        self.add_rule(AlertRule("内存占用过高", "memory_percent", ">", 90, "warning"))
+        self.add_rule(AlertRule("内存占用严重过高", "memory_percent", ">", 98, "critical"))
+        self.add_rule(AlertRule("磁盘占用过高", "disk_percent", ">", 90, "warning"))
 
     def get_events(self, count: int = 100) -> list[dict]:
         """最近触发的告警事件历史（新→旧）。"""
@@ -129,7 +152,7 @@ class AlertEngine:
             if value is None:
                 continue
             if rule.evaluate(value) and not rule.is_on_cooldown():
-                message = f"{rule.name}: {rule.metric_name}={value:.1f} {rule.operator} {rule.threshold}"
+                message = f"{rule.name}：当前 {value:.1f}%（阈值 {rule.operator} {rule.threshold}%）"
                 logger.warning("ALERT [%s]: %s", rule.severity, message)
                 callback_ok = True
                 if self._callback:

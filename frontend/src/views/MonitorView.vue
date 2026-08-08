@@ -73,7 +73,7 @@
           <div v-for="(r, i) in monitorStore.alerts" :key="i" class="rule-row">
             <span class="sev-tag" :class="r.severity">{{ sevLabel(r.severity) }}</span>
             <span class="rule-name">{{ r.name }}</span>
-            <span class="rule-expr mono">{{ r.metric_name }} {{ r.operator }} {{ r.threshold }}</span>
+            <span class="rule-expr mono">{{ metricLabel(r.metric_name) }} {{ r.operator }} {{ r.threshold }}</span>
           </div>
         </div>
       </div>
@@ -109,6 +109,11 @@ const netText = computed(() => ({
 function sevLabel(s: string): string {
   const map: Record<string, string> = { warning: '警告', critical: '严重', error: '错误' }
   return map[s] || s
+}
+
+function metricLabel(m: string): string {
+  const map: Record<string, string> = { cpu_percent: 'CPU', memory_percent: '内存', disk_percent: '磁盘' }
+  return map[m] || m
 }
 
 function roleLabel(r: string): string {
