@@ -23,6 +23,8 @@ export interface ProcessSample {
   mem_mb: number
   cmdline: string
   role: string
+  instance_id?: string | null
+  instance_name?: string | null
 }
 
 export interface AlertEvent {
