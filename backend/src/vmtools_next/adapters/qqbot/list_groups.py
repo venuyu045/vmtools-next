@@ -1,13 +1,20 @@
-"""CLI tool: list QQ groups the bot has joined (prints group_openid)."""
+"""CLI tool: list QQ groups the bot has joined (prints group_openid).
+
+凭据从 config.yaml 的 ``qqbot`` 段读取（app_id / app_secret），不在代码中硬编码。
+"""
 import asyncio
-import json
 from vmtools_next.adapters.qqbot.qq_bot_client import QqBotClient
+from vmtools_next.config import get_config
 
 
 async def main():
+    cfg = get_config().qqbot
+    if not cfg.enabled or not cfg.app_id or not cfg.app_secret:
+        print("❌ qqbot 未启用或缺少 app_id / app_secret，请先在 config.yaml 的 qqbot 段配置后重试。")
+        return
     client = QqBotClient(
-        app_id="1905191614",
-        app_secret="REDACTED_QQ_APP_SECRET",
+        app_id=cfg.app_id,
+        app_secret=cfg.app_secret,
     )
     await client.start()
     groups = await client.list_groups()
