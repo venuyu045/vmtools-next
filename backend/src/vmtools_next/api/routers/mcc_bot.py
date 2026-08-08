@@ -1,6 +1,8 @@
 """MCC Bot management API routes."""
 from __future__ import annotations
 
+import re
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
@@ -13,7 +15,7 @@ from vmtools_next.api.schemas.mcc import (
     MccBotStatusList, MccBotStatusItem,
 )
 from vmtools_next.data.models.logistics import MccBotModel
-from vmtools_next.adapters.mcc.mcc_mcp_client import MccMcpError
+from vmtools_next.adapters.mcc.mcc_mcp_client import MccMcpClient, MccMcpError
 
 router = APIRouter(prefix="/api/mcc-bots", tags=["mcc-bots"])
 
@@ -469,6 +471,47 @@ async def _get_mcp_client(bot_id: str, mcp_port: int = 0):
     return client, True
 
 
+# ── 玩家窗口槽位 / 物品ID 归一化（MCC 与 mineflayer 共用同一套窗口槽位） ──
+# 引擎原始槽位：5-8=盔甲、9-35=主背包、36-44=快捷栏、45=副手、0-4=合成
+# 前端标准布局：0-8=快捷栏、9-35=主背包、36-39=盔甲、40=副手、41-45=合成
+def _normalize_inv_slot(slot) -> int:
+    """引擎槽位 → 前端标准槽位（显示用）。"""
+    if not isinstance(slot, int):
+        return slot
+    if 5 <= slot <= 8:
+        return slot + 31          # 盔甲 5-8 → 36-39
+    if 36 <= slot <= 44:
+        return slot - 36          # 快捷栏 36-44 → 0-8
+    if slot == 45:
+        return 40                 # 副手 → 40
+    if 0 <= slot <= 4:
+        return slot + 41          # 合成 0-4 → 41-45
+    return slot
+
+
+def _denormalize_inv_slot(slot) -> int:
+    """前端标准槽位 → 引擎原始槽位（MCC InventoryWindowAction 用）。"""
+    if not isinstance(slot, int):
+        return slot
+    if 0 <= slot <= 8:
+        return slot + 36
+    if 36 <= slot <= 39:
+        return slot - 31
+    if slot == 40:
+        return 45
+    if 41 <= slot <= 45:
+        return slot - 41
+    return slot
+
+
+def _camel_to_snake(name: str) -> str:
+    """MCC item_id 驼峰命名（NetheriteHelmet）→ item-icons 文件名（netherite_helmet）。
+    对已小写下划线的 MF item_id 无影响。"""
+    if not name:
+        return name
+    return re.sub(r"(?<!^)(?=[A-Z])", "_", name).lower()
+
+
 @router.get("/{bot_id}/inventory")
 async def get_inventory(bot_id: str, mcp_port: int = 0,
                         db: Session = Depends(get_db), user=Depends(get_current_user)):
@@ -489,10 +532,11 @@ async def get_inventory(bot_id: str, mcp_port: int = 0,
     slot_count = data.get("slotCount", 46)
     parsed = []
     for s in all_items:
-        item_id = (s.get("type") or s.get("itemId") or "").strip()
+        # item_id：MCC 驼峰（NetheriteHelmet）→ item-icons 小写下划线（netherite_helmet）
+        item_id = _camel_to_snake((s.get("type") or s.get("itemId") or "").strip())
         if item_id:
             parsed.append(InventorySlot(
-                slot=s.get("slot", 0),
+                slot=_normalize_inv_slot(s.get("slot", 0)),
                 item_id=item_id,
                 display_name=s.get("displayName", "") or item_id,
                 count=s.get("count", s.get("amount", 0)) or 0,
@@ -517,9 +561,13 @@ async def inventory_action(bot_id: str, data: InventoryActionRequest,
     _get_scoped_bot(db, user, bot_id)
     client, owned = await _get_mcp_client(bot_id)
     try:
+        # MCC 窗口操作使用引擎原始槽位（5-8 盔甲/36-44 快捷栏等），前端发来的是标准槽位
+        slot_id = data.slot_id
+        if isinstance(client, MccMcpClient):
+            slot_id = _denormalize_inv_slot(slot_id)
         result = await client.inventory_window_action(
             inventory_id=data.inventory_id,
-            slot_id=data.slot_id,
+            slot_id=slot_id,
             action_type=data.action,
         )
         # MF 引擎不支持窗口槽位点击（返回 success:false）→ 转 400 友好提示
