@@ -323,20 +323,20 @@ onBeforeUnmount(() => {
 }
 
 .bot-card.status-online {
-  border-left: 3px solid #4caf50;
+  border-left: 3px solid var(--success);
 }
 
 .bot-card.status-error,
 .bot-card.status-crashed {
-  border-left: 3px solid #f44336;
+  border-left: 3px solid var(--danger);
 }
 
 .bot-card.status-offline {
-  border-left: 3px solid #555;
+  border-left: 3px solid var(--text-muted);
 }
 
 .bot-card.status-starting {
-  border-left: 3px solid #ff9800;
+  border-left: 3px solid var(--warning);
 }
 
 .card-head {
@@ -348,9 +348,9 @@ onBeforeUnmount(() => {
 /* 「视奸→」：白色小字，贴在卡片右上角（状态徽章左侧） */
 .viewer-link {
   margin-left: auto;
-  color: #fff;
+  color: var(--accent);
   font-size: 11px;
-  opacity: 0.8;
+  opacity: 0.85;
   text-decoration: none;
   cursor: pointer;
   white-space: nowrap;
@@ -384,23 +384,23 @@ onBeforeUnmount(() => {
 }
 
 .status-badge.online {
-  color: #4caf50;
-  border-color: #4caf50;
+  color: var(--success);
+  border-color: var(--success);
 }
 
 .status-badge.offline {
-  color: #888;
+  color: var(--text-muted);
 }
 
 .status-badge.error,
 .status-badge.crashed {
-  color: #f44336;
-  border-color: #f44336;
+  color: var(--danger);
+  border-color: var(--danger);
 }
 
 .status-badge.starting {
-  color: #ff9800;
-  border-color: #ff9800;
+  color: var(--warning);
+  border-color: var(--warning);
 }
 
 .vitals {
@@ -425,22 +425,23 @@ onBeforeUnmount(() => {
 .bar {
   flex: 1;
   height: 8px;
-  background: #1a1a1a;
-  border: 1px solid var(--border-card);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
   overflow: hidden;
 }
 
 .bar-fill {
   height: 100%;
-  transition: width 0.4s ease;
+  transition: width 0.4s var(--ease-out);
 }
 
 .bar-fill.health {
-  background: #f44336;
+  background: var(--danger);
 }
 
 .bar-fill.food {
-  background: #ff9800;
+  background: var(--warning);
 }
 
 .vital-val {
@@ -478,7 +479,7 @@ onBeforeUnmount(() => {
 }
 
 .idle {
-  color: #4caf50;
+  color: var(--success);
 }
 
 .task-type {

@@ -123,7 +123,7 @@ async function submitChangePwd() {
   align-items: center;
   justify-content: space-between;
   padding: 0 28px;
-  background: #0a0a0a;
+  background: var(--bg-card);
   border-bottom: 1px solid var(--border-subtle);
 }
 
@@ -242,10 +242,10 @@ async function submitChangePwd() {
 
 .profile-role-tag {
   font-size: 12px;
-  color: var(--green-primary);
-  border: 1px solid rgba(0, 200, 83, 0.4);
+  color: var(--accent);
+  border: 1px solid var(--accent-soft);
   padding: 2px 10px;
-  border-radius: 10px;
+  border-radius: var(--radius-md);
   font-family: var(--font-body);
 }
 
@@ -269,12 +269,12 @@ async function submitChangePwd() {
 }
 
 .profile-item.danger {
-  color: #f44336;
+  color: var(--danger);
 }
 
 .profile-item.danger:hover {
-  background: rgba(244, 67, 54, 0.12);
-  color: #f44336;
+  background: var(--danger-bg);
+  color: var(--danger);
 }
 
 /* ============ RESPONSIVE ============ */

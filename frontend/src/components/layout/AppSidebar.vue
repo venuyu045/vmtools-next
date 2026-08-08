@@ -227,8 +227,8 @@ function isActive(item: { path: string }): boolean {
   height: 100%;
   display: flex;
   flex-direction: column;
-  background: #0a0a0a;
-  border-right: 2px solid var(--border-subtle);
+  background: var(--bg-card);
+  border-right: 1px solid var(--border-subtle);
 }
 
 .sidebar-logo {

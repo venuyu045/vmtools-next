@@ -130,9 +130,9 @@ onMounted(() => {
 
 <style scoped>
 .config-page { display: flex; flex-direction: column; gap: 16px; max-width: 860px; }
-.page-title { color: var(--green-primary); font-size: 16px; margin-bottom: 4px; }
-.cfg-header { color: var(--green-primary); font-size: 14px; }
-.cfg-json { color: var(--text-secondary); white-space: pre-wrap; font-size: 13px; max-height: 600px; overflow: auto; background: #000; padding: 12px; border: 1px solid var(--border-card); }
+.page-title { color: var(--text-primary); font-family: var(--font-display); font-size: 24px; font-weight: 400; letter-spacing: -0.6px; margin-bottom: 4px; }
+.cfg-header { color: var(--text-primary); font-size: 14px; }
+.cfg-json { color: var(--terminal-text); white-space: pre-wrap; font-size: 13px; line-height: 1.7; font-family: var(--font-mono); max-height: 600px; overflow: auto; background: var(--terminal-bg); padding: 12px; border: 1px solid var(--border-default); border-radius: var(--radius-md); }
 .field-hint { color: var(--text-muted); font-size: 12px; margin-top: 3px; }
 .range-sep { margin: 0 8px; color: var(--text-muted); }
 

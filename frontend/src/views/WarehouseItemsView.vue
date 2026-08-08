@@ -176,7 +176,7 @@ onMounted(async () => {
 .mat-table-wrap { overflow-x: auto; border: 1px solid var(--border-subtle); }
 .mat-table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .mat-table thead th {
-  background: #0a0a0a; color: var(--text-muted); font-weight: normal;
+  background: var(--bg-elevated); color: var(--text-muted); font-weight: normal;
   text-align: left; padding: 8px 12px; font-size: 12px;
   border-bottom: 1px solid var(--border-subtle); white-space: nowrap;
 }
@@ -190,13 +190,13 @@ onMounted(async () => {
 .col-count { min-width: 150px; white-space: nowrap; }
 .count-val { color: var(--green-primary); font-size: 15px; margin-right: 8px; }
 .count-exact { font-size: 11px; }
-.col-box { color: #ffff00; white-space: nowrap; }
+.col-box { color: var(--warning); white-space: nowrap; }
 .col-action { text-align: right; white-space: nowrap; }
 
 .pager { display: flex; justify-content: flex-end; margin-top: 14px; }
 .empty { color: var(--text-muted); text-align: center; padding: 60px 0; }
 
-.container-list { border: 1px solid var(--border-subtle); background: #000; max-height: 400px; overflow-y: auto; }
+.container-list { border: 1px solid var(--border-subtle); background: var(--bg-card); max-height: 400px; overflow-y: auto; }
 .container-row { display: grid; grid-template-columns: 1fr 80px 90px; gap: 8px; padding: 7px 12px; font-size: 12px; color: var(--text-secondary); border-bottom: 1px solid var(--border-subtle); }
 .container-row:last-child { border-bottom: none; }
 .container-row.head { color: var(--text-muted); font-size: 11px; }

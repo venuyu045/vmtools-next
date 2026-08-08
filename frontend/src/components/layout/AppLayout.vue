@@ -149,7 +149,7 @@ onBeforeUnmount(() => {
   height: 100vh;
   height: 100dvh; /* dynamic viewport height for mobile browsers */
   display: flex;
-  background: #000;
+  background: var(--bg-page);
 }
 
 /* ---- Desktop Sidebar ---- */
@@ -225,7 +225,7 @@ onBeforeUnmount(() => {
   overflow-y: auto;
   overflow-x: hidden;
   padding: 24px 28px;
-  background: #000;
+  background: var(--bg-page);
   -webkit-overflow-scrolling: touch;
 }
 
@@ -233,7 +233,7 @@ onBeforeUnmount(() => {
   flex-shrink: 0;
   text-align: center;
   padding: 10px 16px 12px;
-  background: #000;
+  background: var(--bg-page);
 }
 
 .app-footer a {

@@ -15,15 +15,15 @@
         <span class="stat-lbl mono">CPU</span>
       </div>
       <div class="pixel-card stat-item">
-        <span class="stat-val" :style="{ color: '#52c41a' }">{{ latest?.memory_percent != null ? latest.memory_percent.toFixed(1) : '--' }}%</span>
+        <span class="stat-val" :style="{ color: '#8A9A5B' }">{{ latest?.memory_percent != null ? latest.memory_percent.toFixed(1) : '--' }}%</span>
         <span class="stat-lbl mono">内存（{{ memText }}）</span>
       </div>
       <div class="pixel-card stat-item">
-        <span class="stat-val" :style="{ color: '#1890ff' }">{{ latest?.disk_percent != null ? latest.disk_percent.toFixed(1) : '--' }}%</span>
+        <span class="stat-val" :style="{ color: '#7C8B7E' }">{{ latest?.disk_percent != null ? latest.disk_percent.toFixed(1) : '--' }}%</span>
         <span class="stat-lbl mono">磁盘（{{ diskText }}）</span>
       </div>
       <div class="pixel-card stat-item">
-        <span class="stat-val" :style="{ color: '#ff7875' }">↑{{ netText.sent }} <span style="color:#69a7ff">↓{{ netText.recv }}</span></span>
+        <span class="stat-val" :style="{ color: '#D97757' }">↑{{ netText.sent }} <span style="color:#B08D57">↓{{ netText.recv }}</span></span>
         <span class="stat-lbl mono">网络速率</span>
       </div>
     </div>
@@ -47,7 +47,7 @@
               <template v-else>{{ p.role === 'server' ? 'uvicorn 服务' : p.name }}</template>
             </span>
             <span class="proc-pid mono">#{{ p.pid }}</span>
-            <span class="proc-cpu mono" :style="{ color: p.cpu_percent > 60 ? '#f56c6c' : 'var(--green-primary)' }">{{ p.cpu_percent }}%</span>
+            <span class="proc-cpu mono" :style="{ color: p.cpu_percent > 60 ? 'var(--danger)' : 'var(--green-primary)' }">{{ p.cpu_percent }}%</span>
             <span class="proc-mem mono">{{ p.mem_mb }}MB</span>
           </div>
         </div>
@@ -156,7 +156,7 @@ onBeforeUnmount(() => {
 <style scoped>
 .monitor-page { display: flex; flex-direction: column; gap: 18px; }
 .page-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
-.page-title { color: var(--green-primary); font-size: 16px; margin: 0 0 4px; }
+.page-title { color: var(--text-primary); font-family: var(--font-display); font-size: 24px; font-weight: 400; letter-spacing: -0.6px; margin: 0 0 4px; }
 .page-subtitle { color: var(--text-muted); font-size: 13px; margin: 0; }
 
 .stat-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
@@ -166,9 +166,11 @@ onBeforeUnmount(() => {
 
 .content-grid { display: grid; grid-template-columns: 2fr 1fr; gap: 12px; align-items: start; }
 .card-title {
-  font-family: var(--font-pixel);
-  font-size: 13px;
-  color: var(--green-primary);
+  font-family: var(--font-display);
+  font-size: 20px;
+  font-weight: 400;
+  letter-spacing: -0.6px;
+  color: var(--text-primary);
   margin-bottom: 12px;
   display: flex;
   align-items: center;
@@ -194,9 +196,9 @@ onBeforeUnmount(() => {
   border: 1px solid var(--border-card);
   font-family: var(--font-mono);
 }
-.proc-role.mineflayer { color: #52c41a; border-color: rgba(82, 196, 26, 0.4); }
-.proc-role.mcc { color: #1890ff; border-color: rgba(24, 144, 255, 0.4); }
-.proc-role.server { color: #d4a843; border-color: rgba(212, 168, 67, 0.4); }
+.proc-role.mineflayer { color: var(--success); border-color: var(--success-bg); }
+.proc-role.mcc { color: var(--info); border-color: var(--info-bg); }
+.proc-role.server { color: var(--warning); border-color: var(--warning-bg); }
 .proc-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-secondary); }
 .proc-pid { color: var(--text-muted); flex-shrink: 0; }
 .proc-cpu { flex-shrink: 0; width: 48px; text-align: right; }

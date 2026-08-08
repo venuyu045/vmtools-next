@@ -3,8 +3,8 @@
     <!-- Stats Row（仅用户权限组可见内容） -->
     <div class="stats-row">
       <div class="stat-item">
-        <div class="stat-indicator" style="border-color: rgba(0,255,0,0.3)">
-          <span class="stat-value" style="color: var(--green-primary)">{{ statValue(botStore.loading, botStore.bots.length > 0, botStore.onlineCount) }}</span>
+        <div class="stat-indicator" style="border-color: var(--border-default)">
+          <span class="stat-value" style="color: var(--chart-1)">{{ statValue(botStore.loading, botStore.bots.length > 0, botStore.onlineCount) }}</span>
         </div>
         <div>
           <div class="stat-label">在线 Bot</div>
@@ -12,8 +12,8 @@
         </div>
       </div>
       <div class="stat-item">
-        <div class="stat-indicator" style="border-color: rgba(24,144,255,0.3)">
-          <span class="stat-value" style="color: #1890ff">{{ localPlayerCount }}</span>
+        <div class="stat-indicator" style="border-color: var(--border-default)">
+          <span class="stat-value" style="color: var(--chart-2)">{{ localPlayerCount }}</span>
         </div>
         <div>
           <div class="stat-label">在线玩家</div>
@@ -21,8 +21,8 @@
         </div>
       </div>
       <div class="stat-item">
-        <div class="stat-indicator" style="border-color: rgba(255,255,0,0.3)">
-          <span class="stat-value" style="color: #ffff00">{{ statValue(warehouseStore.loading, warehouseStore.warehouses.length > 0, warehouseStore.warehouses.length) }}</span>
+        <div class="stat-indicator" style="border-color: var(--border-default)">
+          <span class="stat-value" style="color: var(--chart-3)">{{ statValue(warehouseStore.loading, warehouseStore.warehouses.length > 0, warehouseStore.warehouses.length) }}</span>
         </div>
         <div>
           <div class="stat-label">仓库数量</div>
@@ -30,8 +30,8 @@
         </div>
       </div>
       <div class="stat-item">
-        <div class="stat-indicator" style="border-color: rgba(255,152,0,0.3)">
-          <span class="stat-value" style="color: #ff9800">{{ playerStore.events.length }}</span>
+        <div class="stat-indicator" style="border-color: var(--border-default)">
+          <span class="stat-value" style="color: var(--chart-5)">{{ playerStore.events.length }}</span>
         </div>
         <div>
           <div class="stat-label">上下线事件</div>
@@ -39,8 +39,8 @@
         </div>
       </div>
       <div class="stat-item">
-        <div class="stat-indicator" style="border-color: rgba(171,71,188,0.3)">
-          <span class="stat-value" style="color: #ab47bc">{{ playerStore.residences.length }}</span>
+        <div class="stat-indicator" style="border-color: var(--border-default)">
+          <span class="stat-value" style="color: var(--chart-6)">{{ playerStore.residences.length }}</span>
         </div>
         <div>
           <div class="stat-label">妙妙领地</div>
@@ -243,9 +243,9 @@ onBeforeUnmount(() => {
 .world-count { font-size: 11px; color: var(--text-disabled); }
 .player-tags { display: flex; flex-wrap: wrap; gap: 6px; }
 .player-tags :deep(.el-tag) {
-  background: rgba(64, 158, 255, 0.12);
-  border-color: rgba(64, 158, 255, 0.35);
-  color: #409eff;
+  background: var(--info-bg);
+  border-color: var(--info-bg);
+  color: var(--info);
 }
 
 /* 在线 Bot */

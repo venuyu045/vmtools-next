@@ -90,8 +90,8 @@ const statusLabel = computed(() => {
 .bot-bars { display: flex; flex-direction: column; gap: 8px; margin-bottom: 16px; }
 .bar-row { display: flex; align-items: center; gap: 8px; }
 .bar-label { font-family: var(--font-mono); font-size: 13px; width: 24px; flex-shrink: 0; }
-.bar-label:first-child { color: #ff0000; }
-.bar-row:last-child .bar-label { color: #ffff00; }
+.bar-label:first-child { color: var(--danger); }
+.bar-row:last-child .bar-label { color: var(--warning); }
 .bot-actions { display: flex; gap: 8px; }
 .pixel-btn { padding: 7px 0; flex: 1; font-size: 13px; }
 </style>

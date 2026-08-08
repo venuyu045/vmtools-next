@@ -190,7 +190,7 @@
         <div class="metro-lines-list">
           <div v-for="line in playerStore.metroLines" :key="line.id" class="metro-line-card">
             <div class="metro-line-header">
-              <span class="metro-line-dot" :style="{ background: line.line_color || '#409eff' }"></span>
+              <span class="metro-line-dot" :style="{ background: line.line_color || '#B08D57' }"></span>
               <span class="metro-line-name">{{ line.label }}</span>
               <span class="world-tag world-tag-sm">{{ playerStore.getWorldLabel(line.world || 'world') }}</span>
             </div>
@@ -580,7 +580,7 @@ function tpsClass(v: number | null): string {
 
 /* Fix Element Plus stripe row background in dark theme */
 :deep(.el-table--striped .el-table__body tr.el-table__row--striped td) {
-  background: rgba(255, 255, 255, 0.03) !important;
+  background: var(--bg-hover) !important;
 }
 :deep(.el-table tr) {
   background: transparent !important;
@@ -605,9 +605,9 @@ function tpsClass(v: number | null): string {
 /* Owner rankings */
 .summary-box {
   margin-top: 20px;
-  background: rgba(255,255,255,0.03);
+  background: var(--bg-card);
   border: 1px solid var(--border-subtle);
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
   padding: 16px;
 }
 .summary-box h4 { margin: 0 0 12px 0; font-size: 14px; }
@@ -618,8 +618,8 @@ function tpsClass(v: number | null): string {
   align-items: center;
   gap: 8px;
   padding: 6px 10px;
-  background: rgba(255,255,255,0.04);
-  border-radius: 6px;
+  background: var(--bg-hover);
+  border-radius: var(--radius-md);
   font-size: 13px;
 }
 .owner-rank {
@@ -637,9 +637,9 @@ function tpsClass(v: number | null): string {
   gap: 10px;
 }
 .marker-card {
-  background: rgba(255,255,255,0.03);
+  background: var(--bg-card);
   border: 1px solid var(--border-subtle);
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
   padding: 10px 12px;
 }
 .mk-name { font-weight: 600; font-size: 14px; }
@@ -649,8 +649,8 @@ function tpsClass(v: number | null): string {
   border-radius: 10px;
   font-size: 11px;
   font-weight: 500;
-  background: rgba(64, 158, 255, 0.15);
-  color: #409eff;
+  background: var(--info-bg);
+  color: var(--info);
   margin-right: 6px;
   white-space: nowrap;
 }
@@ -668,9 +668,9 @@ function tpsClass(v: number | null): string {
   font-weight: 600;
   font-size: 12px;
 }
-.mspt-good, .tps-good { background: rgba(76, 175, 80, 0.18); color: #4caf50; }
-.mspt-warn, .tps-warn { background: rgba(255, 152, 0, 0.18); color: #ff9800; }
-.mspt-bad, .tps-bad   { background: rgba(244, 67, 54, 0.18); color: #f44336; }
+.mspt-good, .tps-good { background: var(--success-bg); color: var(--success); }
+.mspt-warn, .tps-warn { background: var(--warning-bg); color: var(--warning); }
+.mspt-bad, .tps-bad   { background: var(--danger-bg); color: var(--danger); }
 
 /* Legend */
 .legend-box {
@@ -680,9 +680,9 @@ function tpsClass(v: number | null): string {
   flex-wrap: wrap;
   gap: 12px;
   padding: 10px 14px;
-  background: rgba(255,255,255,0.03);
+  background: var(--bg-hover);
   border: 1px solid var(--border-subtle);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   font-size: 12px;
   color: var(--text-secondary);
 }
@@ -694,9 +694,9 @@ function tpsClass(v: number | null): string {
   width: 10px; height: 10px;
   border-radius: 50%;
 }
-.dot-green  { background: #4caf50; }
-.dot-orange { background: #ff9800; }
-.dot-red    { background: #f44336; }
+.dot-green  { background: var(--success); }
+.dot-orange { background: var(--warning); }
+.dot-red    { background: var(--danger); }
 
 .region-link {
   color: var(--text-primary);
@@ -725,9 +725,9 @@ function tpsClass(v: number | null): string {
 }
 .lm-type-badge {
   display: inline-block;
-  background: rgba(255, 152, 0, 0.15);
-  color: #ff9800;
-  border-radius: 4px;
+  background: var(--warning-bg);
+  color: var(--warning);
+  border-radius: var(--radius-md);
   padding: 1px 8px;
   font-size: 11px;
   font-weight: 600;
@@ -741,9 +741,9 @@ function tpsClass(v: number | null): string {
   margin-bottom: 20px;
 }
 .metro-line-card {
-  background: rgba(255,255,255,0.03);
+  background: var(--bg-card);
   border: 1px solid var(--border-subtle);
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
   padding: 12px 16px;
 }
 .metro-line-header {

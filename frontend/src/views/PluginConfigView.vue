@@ -177,18 +177,18 @@ onMounted(async () => {
 }
 .cfg-version {
   margin-left: 8px;
-  color: var(--text-muted, #008800);
+  color: var(--text-muted, #8A877D);
   font-size: 13px;
 }
 .cfg-desc {
-  color: var(--text-muted, #008800);
+  color: var(--text-muted, #8A877D);
   font-size: 13px;
   margin: 8px 0 0;
 }
 .cfg-card {
-  background: var(--bg-card, #101010);
-  border: 1px solid var(--border-subtle, #1d1d1d);
-  border-radius: 0;
+  background: var(--bg-card, #F5F3EC);
+  border: 1px solid var(--border-subtle, #D8D5CC);
+  border-radius: var(--radius-lg);
   padding: 16px;
   margin-top: 16px;
 }
@@ -197,7 +197,7 @@ onMounted(async () => {
   font-size: 15px;
 }
 .cfg-card-desc {
-  color: var(--text-muted, #008800);
+  color: var(--text-muted, #8A877D);
   font-size: 12px;
   margin: 0 0 12px;
   line-height: 1.6;

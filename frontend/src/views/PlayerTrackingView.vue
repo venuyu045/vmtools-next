@@ -114,11 +114,11 @@ const playerStore = useOnlinePlayersStore()
 }
 .panel-header h3 { margin: 0; font-size: 16px; display: flex; align-items: center; gap: 8px; }
 .count-badge {
-  background: #00c853;
+  background: var(--success);
   color: #fff;
   font-size: 13px;
   padding: 2px 10px;
-  border-radius: 12px;
+  border-radius: var(--radius-md);
 }
 .update-time { font-size: 12px; color: var(--text-disabled); }
 .empty-hint { color: var(--text-disabled); font-style: italic; font-size: 13px; }
@@ -141,9 +141,9 @@ const playerStore = useOnlinePlayersStore()
   height: 8px;
   border-radius: 50%;
 }
-.dot-active { background: #00c853; }
-.dot-afk { background: #ff9800; }
-.dot-bot { background: #409eff; }
+.dot-active { background: var(--success); }
+.dot-afk { background: var(--warning); }
+.dot-bot { background: var(--info); }
 .dot-leave { background: var(--text-muted); }
 
 .bot-subgroup {
@@ -166,9 +166,9 @@ const playerStore = useOnlinePlayersStore()
 /* 上下线事件（常驻） */
 .events-panel {
   margin-top: 20px;
-  background: rgba(255,255,255,0.03);
+  background: var(--bg-card);
   border: 1px solid var(--border-subtle);
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
   padding: 12px 16px;
 }
 .events-header {
@@ -186,7 +186,7 @@ const playerStore = useOnlinePlayersStore()
   gap: 6px;
   padding: 5px 0;
   font-size: 13px;
-  border-bottom: 1px solid rgba(255,255,255,0.04);
+  border-bottom: 1px solid var(--border-subtle);
 }
 .event-item.leave { opacity: 0.7; }
 .event-time { color: var(--text-disabled); font-size: 11px; min-width: 150px; }

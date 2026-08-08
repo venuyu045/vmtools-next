@@ -239,10 +239,10 @@ onMounted(loadUsers)
 
 <style scoped>
 .members-page { max-width: 1080px; }
-.page-title { color: var(--green-primary); font-size: 16px; margin-bottom: 4px; }
+.page-title { color: var(--text-primary); font-family: var(--font-display); font-size: 24px; font-weight: 400; letter-spacing: -0.6px; margin-bottom: 4px; }
 .page-subtitle { color: var(--text-muted); font-size: 13px; margin-bottom: 16px; }
 
-.member-card { background: #0a0a0a; }
+.member-card { background: var(--bg-card); }
 .member-toolbar {
   display: flex;
   align-items: center;
@@ -263,10 +263,10 @@ onMounted(loadUsers)
   font-family: var(--font-mono);
   border: 1px solid var(--border-card);
 }
-.status-tag.pending { color: var(--color-warning, #e6a23c); border-color: rgba(230, 162, 60, 0.4); }
-.status-tag.approved { color: var(--green-primary); border-color: rgba(0, 255, 0, 0.3); }
-.status-tag.rejected { color: var(--color-error, #f56c6c); border-color: rgba(245, 108, 108, 0.4); }
-.status-tag.banned { color: var(--color-error, #f56c6c); border-color: rgba(245, 108, 108, 0.4); }
+.status-tag.pending { color: var(--color-warning); border-color: var(--warning-bg); }
+.status-tag.approved { color: var(--success); border-color: var(--success-bg); }
+.status-tag.rejected { color: var(--color-error); border-color: var(--danger-bg); }
+.status-tag.banned { color: var(--color-error); border-color: var(--danger-bg); }
 
 .time-text { color: var(--text-secondary); font-size: 12px; }
 
@@ -278,8 +278,9 @@ onMounted(loadUsers)
   gap: 10px;
   padding: 8px 12px;
   margin-bottom: 14px;
-  background: #000;
+  background: var(--bg-card);
   border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
 }
 .edit-game { color: var(--green-primary); font-weight: bold; font-size: 15px; }
 .edit-name { color: var(--text-muted); font-size: 13px; }

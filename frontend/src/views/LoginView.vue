@@ -130,7 +130,7 @@ onMounted(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: #000;
+  background: var(--bg-page);
   position: relative;
 }
 
@@ -140,8 +140,8 @@ onMounted(() => {
   inset: 0;
   background: repeating-linear-gradient(
     0deg,
-    rgba(0, 255, 0, 0.03) 0px,
-    rgba(0, 255, 0, 0.03) 1px,
+    rgba(20, 20, 19, 0.02) 0px,
+    rgba(20, 20, 19, 0.02) 1px,
     transparent 1px,
     transparent 3px
   );
@@ -160,10 +160,13 @@ onMounted(() => {
 }
 
 .login-header h1 {
-  color: var(--green-primary);
-  font-size: 24px;
+  color: var(--text-primary);
+  font-family: var(--font-display);
+  font-size: 28px;
+  font-weight: 400;
+  letter-spacing: -0.8px;
   margin-bottom: 8px;
-  text-shadow: 0 0 20px rgba(0,255,0,0.3);
+  text-shadow: 0 0 20px rgba(217, 119, 87, 0.15);
 }
 
 .login-header p {

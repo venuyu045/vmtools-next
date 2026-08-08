@@ -70,9 +70,9 @@ function msptClass(mspt: number | null): string {
 
 <style scoped>
 .player-tag {
-  background: rgba(64, 158, 255, 0.12);
-  border-color: rgba(64, 158, 255, 0.35);
-  color: #409eff;
+  background: var(--info-bg);
+  border-color: var(--info-bg);
+  color: var(--info);
 }
 .player-name { font-weight: 600; }
 .world-badge {
@@ -80,11 +80,11 @@ function msptClass(mspt: number | null): string {
   line-height: 1;
   padding: 2px 5px;
   margin-left: 6px;
-  border-radius: 0;
+  border-radius: var(--radius-md);
 }
-.world-world { background: rgba(0, 200, 83, 0.15); color: #00c853; border: 1px solid rgba(0, 200, 83, 0.35); }
-.world-world_nether { background: rgba(255, 152, 0, 0.15); color: #ff9800; border: 1px solid rgba(255, 152, 0, 0.35); }
-.world-world_the_end { background: rgba(156, 39, 176, 0.18); color: #ce93d8; border: 1px solid rgba(156, 39, 176, 0.4); }
+.world-world { background: var(--success-bg); color: var(--success); border: 1px solid var(--success-bg); }
+.world-world_nether { background: var(--warning-bg); color: var(--warning); border: 1px solid var(--warning-bg); }
+.world-world_the_end { background: var(--info-bg); color: var(--info); border: 1px solid var(--info-bg); }
 
 .player-popover { font-size: 13px; }
 .pop-section { margin-bottom: 8px; }
@@ -96,7 +96,7 @@ function msptClass(mspt: number | null): string {
 .pop-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 8px; }
 .pop-stat { display: flex; justify-content: space-between; font-size: 12px; color: var(--text-secondary); }
 .pop-stat span:last-child { font-weight: 600; color: inherit; }
-.perf-good { color: #00c853 !important; }
-.perf-warn { color: #ff9800 !important; }
-.perf-bad { color: #f44336 !important; }
+.perf-good { color: var(--success) !important; }
+.perf-warn { color: var(--warning) !important; }
+.perf-bad { color: var(--danger) !important; }
 </style>

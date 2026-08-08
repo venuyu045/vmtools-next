@@ -127,25 +127,25 @@ async function confirmPlayer() {
 
 <style scoped>
 .player-alerts-page { max-width: 1080px; margin: 0 auto; padding: 24px; }
-.page-title { color: var(--green-primary); font-size: 16px; margin-bottom: 4px; }
+.page-title { color: var(--text-primary); font-family: var(--font-display); font-size: 24px; font-weight: 400; letter-spacing: -0.6px; margin-bottom: 4px; }
 .page-subtitle { color: var(--text-muted); font-size: 13px; margin-bottom: 16px; }
 
-.settings-bar { background: rgba(255,255,255,0.03); padding: 12px 16px; border-radius: 8px; margin-bottom: 16px; }
-.owner-card { background: rgba(255,255,255,0.04); border: 1px solid var(--border-subtle); border-radius: 8px; padding: 16px; margin-bottom: 12px; }
+.settings-bar { background: var(--bg-hover); padding: 12px 16px; border-radius: var(--radius-md); margin-bottom: 16px; }
+.owner-card { background: var(--bg-card); border: 1px solid var(--border-subtle); border-radius: var(--radius-lg); padding: 16px; margin-bottom: 12px; }
 .owner-header { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
 .owner-name { font-size: 16px; font-weight: 600; }
-.owner-id { font-size: 11px; color: var(--text-disabled); background: rgba(0,0,0,0.3); padding: 2px 6px; border-radius: 4px; }
+.owner-id { font-size: 11px; color: var(--text-disabled); background: var(--bg-hover); padding: 2px 6px; border-radius: 4px; }
 .track-list { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .track-list :deep(.el-tag) {
-  background: rgba(0, 200, 83, 0.15);
-  border: 1px solid var(--green-primary, #00c853);
-  color: var(--green-primary, #00c853);
+  background: var(--success-bg);
+  border: 1px solid var(--success);
+  color: var(--success);
 }
-.track-list :deep(.el-tag .el-tag__close) { color: var(--green-primary, #00c853); }
-.track-list :deep(.el-tag .el-tag__close:hover) { background: rgba(0, 200, 83, 0.3); }
+.track-list :deep(.el-tag .el-tag__close) { color: var(--success); }
+.track-list :deep(.el-tag .el-tag__close:hover) { background: var(--success-bg); }
 .na { color: var(--text-disabled); font-style: italic; font-size: 13px; }
 
-.help-box { background: rgba(255,255,255,0.05); border: 1px solid var(--border-subtle); border-radius: 8px; padding: 16px; margin-top: 24px; }
+.help-box { background: var(--bg-card); border: 1px solid var(--border-subtle); border-radius: var(--radius-lg); padding: 16px; margin-top: 24px; }
 .help-box p { margin: 8px 0; }
-.help-box code { background: #000; padding: 2px 6px; border-radius: 4px; font-size: 12px; display: block; margin: 8px 0; overflow-x: auto; }
+.help-box code { background: var(--terminal-bg); color: var(--terminal-text); padding: 2px 6px; border-radius: 4px; font-size: 12px; display: block; margin: 8px 0; overflow-x: auto; }
 </style>

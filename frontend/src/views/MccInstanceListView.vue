@@ -387,7 +387,7 @@ onMounted(() => refreshAll())
 .instance-name { color: var(--text-primary); font-weight: bold; font-size: 16px; }
 .instance-slug { color: var(--text-muted); font-size: 14px; margin-top: 4px; }
 .meta-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
-.meta-grid div { padding: 10px; background: #000; border: 1px solid var(--border-subtle); display: flex; justify-content: space-between; gap: 8px; }
+.meta-grid div { padding: 10px; background: var(--bg-card); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); display: flex; justify-content: space-between; gap: 8px; }
 .meta-grid span { color: var(--text-muted); }
 .meta-grid strong { color: var(--text-primary); font-weight: normal; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .instance-dir { color: var(--text-muted); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -396,7 +396,7 @@ onMounted(() => refreshAll())
 .terminal-link { text-decoration: none; display: inline-flex; align-items: center; }
 .pixel-btn.outline.active { border-color: var(--green-primary); color: var(--green-primary); background: var(--green-glow); }
 .pixel-btn:disabled { opacity: .45; cursor: not-allowed; }
-.reconnect-toggle { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; padding: 4px 8px; border: 1px solid var(--border-subtle); background: #000; }
+.reconnect-toggle { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; padding: 4px 8px; border: 1px solid var(--border-subtle); border-radius: var(--radius-md); background: var(--bg-card); }
 .reconnect-toggle input { accent-color: var(--green-primary); }
 .toggle-label { font-size: 12px; color: var(--text-secondary); }
 .empty-text { grid-column: 1 / -1; color: var(--text-muted); text-align: center; padding: 60px 0; font-size: 18px; }

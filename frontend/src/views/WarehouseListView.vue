@@ -26,11 +26,11 @@
             <span class="wh-stat-lbl mono">物品数</span>
           </div>
           <div class="wh-stat">
-            <span class="wh-stat-val pixel" style="color: #ffff00">{{ fmtBigNum(wh.container_count || 0) }}</span>
+            <span class="wh-stat-val pixel" style="color: var(--chart-3)">{{ fmtBigNum(wh.container_count || 0) }}</span>
             <span class="wh-stat-lbl mono">容器数</span>
           </div>
           <div class="wh-stat">
-            <span class="wh-stat-val pixel" style="color: #1890ff">{{ wh.material_count || 0 }}</span>
+            <span class="wh-stat-val pixel" style="color: var(--chart-2)">{{ wh.material_count || 0 }}</span>
             <span class="wh-stat-lbl mono">物品种类</span>
           </div>
           <div class="wh-stat">

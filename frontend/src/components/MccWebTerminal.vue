@@ -127,22 +127,22 @@ function initTerminal() {
     cursorBlink: true,
     // 输入统一走下方输入框，xterm 仅作显示（避免输出行截断输入）
     disableStdin: true,
-    fontFamily: 'Consolas, "Courier New", monospace',
+    fontFamily: 'JetBrains Mono, Consolas, "Courier New", monospace',
     fontSize: 14,
     lineHeight: 1.25,
     scrollback: 5000,
     theme: {
-      background: '#000000',
-      foreground: '#e8e8e8', // 默认文本白色（原绿色）
-      cursor: '#e8e8e8',     // 光标白色
-      selectionBackground: '#ffffff44',
-      black: '#000000',
-      red: '#ff4d4f',
-      green: '#00ff41',      // ANSI 色板保留：chat/成功等仍可显示绿色
-      yellow: '#ffcc00',
-      blue: '#2f80ff',
-      magenta: '#ff00ff',
-      cyan: '#00ffff',
+      background: '#141413',
+      foreground: '#F5F3EC',
+      cursor: '#F5F3EC',
+      selectionBackground: '#D9775744',
+      black: '#141413',
+      red: '#E0665A',
+      green: '#7FB08A',
+      yellow: '#C9A05C',
+      blue: '#7C8B7E',
+      magenta: '#B5564A',
+      cyan: '#B89B3E',
       white: '#e8e8e8',
       brightBlack: '#555555',
       brightRed: '#ff7875',
@@ -607,12 +607,12 @@ onBeforeUnmount(() => {
 .terminal-toolbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 .search-input { width: 220px; }
 .terminal-toolbar .pixel-btn { padding: 8px 14px; }
-.xterm-shell { width: 100%; min-height: 260px; padding: 8px; background: #000; border: 1px solid var(--border-card); overflow: hidden; touch-action: pan-y; overscroll-behavior: contain; }
+.xterm-shell { width: 100%; min-height: 260px; padding: 8px; background: var(--terminal-bg); border: 1px solid var(--border-default); border-radius: var(--radius-md); overflow: hidden; touch-action: pan-y; overscroll-behavior: contain; }
 .terminal-input-row { display: flex; gap: 10px; align-items: center; }
 .terminal-input { flex: 1; }
-.terminal-input :deep(.el-input__wrapper) { background: #000; border: 1px solid var(--border-card); box-shadow: none; }
+.terminal-input :deep(.el-input__wrapper) { background: var(--terminal-bg); border: 1px solid var(--border-default); border-radius: var(--radius-md); box-shadow: none; }
 .terminal-input :deep(.el-input__wrapper.is-focus) { border-color: var(--green-primary); }
-.terminal-input :deep(.el-input__inner) { font-family: var(--font-mono); color: #00ff41; }
+.terminal-input :deep(.el-input__inner) { font-family: var(--font-mono); color: var(--terminal-text); }
 .input-prefix { color: var(--green-primary); font-weight: bold; }
 .terminal-status { display: flex; justify-content: space-between; gap: 12px; color: var(--text-muted); font-size: 12px; }
 .conn-state { display: inline-flex; align-items: center; gap: 6px; }

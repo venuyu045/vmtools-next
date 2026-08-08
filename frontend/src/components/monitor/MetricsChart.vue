@@ -38,29 +38,29 @@ const chartOption = computed(() => {
 
   return {
     backgroundColor: 'transparent',
-    textStyle: { color: '#888' },
+    textStyle: { color: '#9D9A91' },
     tooltip: {
       trigger: 'axis',
-      backgroundColor: '#0a0a0a',
-      borderColor: 'rgba(0, 255, 0, 0.3)',
-      textStyle: { color: '#e8e8e8', fontSize: 12 },
+      backgroundColor: '#2C2B26',
+      borderColor: '#3A3830',
+      textStyle: { color: '#EAE7DC', fontSize: 12 },
       formatter: (params: any[]) => {
         const i = params?.[0]?.dataIndex ?? 0
         const m = props.metrics[i]
         if (!m) return ''
         const lines = params.map(p => `${p.marker} ${p.seriesName}: ${p.value}`).join('<br/>')
         const abs = m.memory_total
-          ? `<br/><span style="color:#666">内存: ${fmtBytes(m.memory_used)} / ${fmtBytes(m.memory_total)}</span>`
+          ? `<br/><span style="color:#9D9A91">内存: ${fmtBytes(m.memory_used)} / ${fmtBytes(m.memory_total)}</span>`
           : ''
         const absD = m.disk_total
-          ? `<br/><span style="color:#666">磁盘: ${fmtBytes(m.disk_used)} / ${fmtBytes(m.disk_total)}</span>`
+          ? `<br/><span style="color:#9D9A91">磁盘: ${fmtBytes(m.disk_used)} / ${fmtBytes(m.disk_total)}</span>`
           : ''
         return `<b>${new Date(m.timestamp * 1000).toLocaleTimeString()}</b><br/>${lines}${abs}${absD}`
       },
     },
     legend: {
       data: ['CPU', '内存', '磁盘', '上行', '下行'],
-      textStyle: { color: '#888' },
+      textStyle: { color: '#9D9A91' },
       top: 0,
     },
     grid: {
@@ -72,8 +72,8 @@ const chartOption = computed(() => {
     xAxis: {
       type: 'category',
       data: timestamps,
-      axisLine: { lineStyle: { color: '#333' } },
-      axisLabel: { color: '#666', fontSize: 10 },
+      axisLine: { lineStyle: { color: '#3A3830' } },
+      axisLabel: { color: '#9D9A91', fontSize: 10 },
     },
     yAxis: [
       {
@@ -81,16 +81,16 @@ const chartOption = computed(() => {
         name: '%',
         min: 0,
         max: 100,
-        axisLine: { lineStyle: { color: '#333' } },
-        axisLabel: { color: '#666', formatter: '{value}%' },
-        splitLine: { lineStyle: { color: '#222' } },
+        axisLine: { lineStyle: { color: '#3A3830' } },
+        axisLabel: { color: '#9D9A91', formatter: '{value}%' },
+        splitLine: { lineStyle: { color: '#2E2D27' } },
       },
       {
         type: 'value',
         name: 'KB/s',
         min: 0,
         axisLine: { show: false },
-        axisLabel: { color: '#666', formatter: '{value}' },
+        axisLabel: { color: '#9D9A91', formatter: '{value}' },
         splitLine: { show: false },
       },
     ],
@@ -100,27 +100,27 @@ const chartOption = computed(() => {
         type: 'line',
         data: cpuData,
         smooth: true,
-        lineStyle: { color: '#d4a843', width: 2 },
-        itemStyle: { color: '#d4a843' },
-        areaStyle: { color: 'rgba(212, 168, 67, 0.1)' },
+        lineStyle: { color: '#D97757', width: 2 },
+        itemStyle: { color: '#D97757' },
+        areaStyle: { color: 'rgba(217, 119, 87, 0.10)' },
       },
       {
         name: '内存',
         type: 'line',
         data: memData,
         smooth: true,
-        lineStyle: { color: '#52c41a', width: 2 },
-        itemStyle: { color: '#52c41a' },
-        areaStyle: { color: 'rgba(82, 196, 26, 0.1)' },
+        lineStyle: { color: '#8A9A5B', width: 2 },
+        itemStyle: { color: '#8A9A5B' },
+        areaStyle: { color: 'rgba(138, 154, 91, 0.10)' },
       },
       {
         name: '磁盘',
         type: 'line',
         data: diskData,
         smooth: true,
-        lineStyle: { color: '#1890ff', width: 2 },
-        itemStyle: { color: '#1890ff' },
-        areaStyle: { color: 'rgba(24, 144, 255, 0.1)' },
+        lineStyle: { color: '#7C8B7E', width: 2 },
+        itemStyle: { color: '#7C8B7E' },
+        areaStyle: { color: 'rgba(124, 139, 126, 0.10)' },
       },
       {
         name: '上行',
@@ -128,8 +128,8 @@ const chartOption = computed(() => {
         yAxisIndex: 1,
         data: netSent,
         smooth: true,
-        lineStyle: { color: '#ff7875', width: 1.5, type: 'dashed' },
-        itemStyle: { color: '#ff7875' },
+        lineStyle: { color: '#B08D57', width: 1.5, type: 'dashed' },
+        itemStyle: { color: '#B08D57' },
         symbolSize: 3,
       },
       {
@@ -138,8 +138,8 @@ const chartOption = computed(() => {
         yAxisIndex: 1,
         data: netRecv,
         smooth: true,
-        lineStyle: { color: '#69a7ff', width: 1.5, type: 'dashed' },
-        itemStyle: { color: '#69a7ff' },
+        lineStyle: { color: '#B89B3E', width: 1.5, type: 'dashed' },
+        itemStyle: { color: '#B89B3E' },
         symbolSize: 3,
       },
     ],
