@@ -11,7 +11,9 @@
  *     --username VMBot \
  *     --auth offline \
  *     --version 1.21.11 \
- *     --status-interval 5000
+ *     --status-interval 5000 \
+ *     --viewer-port 3007 \
+ *     --viewer-host 0.0.0.0
  *
  * auth 模式：offline | microsoft | yggdrasil
  * yggdrasil 模��需设置 --auth-server-url 或 AUTH_SERVER_URL 环境变量
@@ -61,11 +63,18 @@ async function main() {
     version: args.version || process.env.MC_VERSION || '1.21.11',
     statusInterval: args.status_interval || parseInt(process.env.STATUS_INTERVAL || '5000', 10),
     authServerUrl: args.auth_server_url || process.env.AUTH_SERVER_URL || '',
+    viewerPort: args.viewer_port || parseInt(process.env.VIEWER_PORT || '0', 10),
+    viewerHost: args.viewer_host || process.env.VIEWER_HOST || '0.0.0.0',
+    viewerFirstPerson: args.viewer_first_person === true || args.viewer_first_person === 1 || String(args.viewer_first_person) === 'true',
+    viewerDistance: args.viewer_distance || parseInt(process.env.VIEWER_DISTANCE || '6', 10),
   };
 
   console.log(`${ANSI.dim}[bot_main]${ANSI.reset} starting mineflayer bot...`);
   console.log(`${ANSI.dim}[bot_main]${ANSI.reset} ws_port=${options.wsPort} mc_host=${options.mcHost}:${options.mcPort}`);
   console.log(`${ANSI.dim}[bot_main]${ANSI.reset} username=${options.username} auth=${options.auth} version=${options.version}`);
+  if (options.viewerPort > 0) {
+    console.log(`${ANSI.dim}[bot_main]${ANSI.reset} viewer_port=${options.viewerPort} host=${options.viewerHost} first_person=${options.viewerFirstPerson}`);
+  }
   if (options.authServerUrl) {
     console.log(`${ANSI.dim}[bot_main]${ANSI.reset} auth_server_url=${options.authServerUrl}`);
   }

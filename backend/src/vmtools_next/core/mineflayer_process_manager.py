@@ -42,6 +42,7 @@ class ProcessHandle:
     process: asyncio.subprocess.Process
     ws_port: int
     started_at: float
+    viewer_port: int = 0
     logged_in: bool = False
     output_task: Optional[asyncio.Task] = None
     exit_task: Optional[asyncio.Task] = None
@@ -60,6 +61,13 @@ class MineflayerProcessManager:
             start_port=getattr(config, 'mineflayer_ws_start_port', 44444),
             end_port=getattr(config, 'mineflayer_ws_end_port', 44500),
         )
+        # 3D 查看器端口分配器（prismarine-viewer，每实例一个 HTTP 端口）
+        self._viewer_port_allocator = MccPortAllocator(
+            start_port=getattr(config, 'mineflayer_viewer_start_port', 3007),
+            end_port=getattr(config, 'mineflayer_viewer_end_port', 3060),
+        )
+        self._preferred_viewer_port = getattr(config, 'mineflayer_viewer_preferred_port', 3007)
+        self._viewer_host = getattr(config, 'mineflayer_viewer_host', '0.0.0.0')
         self._node_path = self._find_node()
         self._script_path = self._find_script()
         # 终端日志缓冲：与 MccProcessManager 共用 TerminalLogBuffer，
@@ -173,6 +181,20 @@ class MineflayerProcessManager:
             finally:
                 db_session.close()
 
+            # 分配 3D 查看器端口（prismarine-viewer，每实例一个；preferred 便于原型验证，
+            # 被占用则顺延；分配失败仅禁查看器，不影响 bot 启动）
+            viewer_port = 0
+            try:
+                db_session2 = Session()
+                try:
+                    viewer_port = self._viewer_port_allocator.allocate(
+                        db_session2, preferred=self._preferred_viewer_port)
+                finally:
+                    db_session2.close()
+            except Exception as exc:
+                logger.warning("Viewer port allocation failed for %s: %s", instance_id, exc)
+                viewer_port = 0
+
             # 加载关联的账号配置（如果有）
             account_profile = None
             if instance.account_profile_id:
@@ -195,6 +217,10 @@ class MineflayerProcessManager:
                 "--username", instance.mc_username or instance.instance_id,
                 "--version", instance.mc_version or "1.21.11",
             ]
+
+            # 3D 查看器参数（viewer_port>0 才启用）
+            if viewer_port > 0:
+                cmd += ["--viewer-port", str(viewer_port), "--viewer-host", self._viewer_host]
 
             # ── 认���方式处理 ──
             auth_type = account_profile.auth_type if account_profile else "offline"
@@ -263,6 +289,7 @@ class MineflayerProcessManager:
                 process=process,
                 ws_port=ws_port,
                 started_at=time.time(),
+                viewer_port=viewer_port,
             )
             self._processes[instance_id] = handle
 
@@ -389,6 +416,13 @@ class MineflayerProcessManager:
         handle = self._processes.get(instance_id)
         if handle and handle.process.returncode is None:
             return handle.ws_port
+        return None
+
+    def get_viewer_port(self, instance_id: str) -> Optional[int]:
+        """Get the 3D viewer HTTP port for a running bot (0/None = viewer 未启用)."""
+        handle = self._processes.get(instance_id)
+        if handle and handle.process.returncode is None:
+            return handle.viewer_port or None
         return None
 
     # ── 内部方法 ──
@@ -659,6 +693,7 @@ class MineflayerProcessManager:
                 "status": status,
                 "pid": pid,
                 "ws_port": self.get_ws_port(instance_id) if pid else None,
+                "viewer_port": self.get_viewer_port(instance_id) if pid else None,
                 "message": message,
             }
             # 房间内 + 全局广播（前端按 instance_id 去重）

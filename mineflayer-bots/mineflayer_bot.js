@@ -54,6 +54,10 @@ const METHOD_MAP = Symbol('methodMap');
  * @param {string} [options.authServerUrl] — Yggdrasil 认证服务器 URL（auth='yggdrasil' 时必填）
  * @param {string} [options.version='1.21.11'] — Minecraft 版本
  * @param {number} [options.statusInterval=5000] — 状态推送间隔 (ms)
+ * @param {number} [options.viewerPort=0] — 实时 3D 查看器端口（>0 才启动，0=关闭）
+ * @param {string} [options.viewerHost='0.0.0.0'] — 查看器监听地址（生产建议 127.0.0.1 + 反代）
+ * @param {boolean} [options.viewerFirstPerson=false] — 第一人称视角（false=跟随/鸟瞰）
+ * @param {number} [options.viewerDistance=6] — 查看器视距（chunk 数）
  * @returns {Promise<object>} { bot, wss, stop, onEvent }
  */
 async function createBotProcess(options) {
@@ -66,6 +70,10 @@ async function createBotProcess(options) {
     auth = 'offline',
     version = '1.21.11',
     statusInterval = 5000,
+    viewerPort = 0,
+    viewerHost = '0.0.0.0',
+    viewerFirstPerson = false,
+    viewerDistance = 6,
   } = options;
 
   // ── 1. 创建 mineflayer bot ──
@@ -202,6 +210,24 @@ async function createBotProcess(options) {
           z: bot.entity.position.z,
         },
       }));
+
+      // ── 可选：启动实时 3D 查看器（--viewer-port > 0 时） ──
+      // 每个 MF 实例独立进程，viewer 按实例独立启动互不干扰；
+      // 默认关闭（viewerPort=0），由 Python 端启动命令按需传入。
+      if (viewerPort > 0 && !bot.viewer) {
+        try {
+          const startViewer = require('./viewer');
+          startViewer(bot, {
+            port: viewerPort,
+            host: viewerHost,
+            firstPerson: viewerFirstPerson,
+            viewDistance: viewerDistance,
+          });
+          console.log(`${ANSI.cyan}[viewer]${ANSI.reset} 3D viewer listening on ${viewerHost}:${viewerPort}`);
+        } catch (err) {
+          console.error(`${ANSI.red}[viewer]${ANSI.reset} failed to start:`, err.message);
+        }
+      }
     });
 
     bot.on('death', () => {
@@ -346,6 +372,13 @@ async function createBotProcess(options) {
 // ── 停止 bot 进程 ──
 async function stopBotProcess(bot, wss, statusTimer) {
   if (statusTimer) clearInterval(statusTimer);
+
+  // 关闭 3D 查看器（若已启动）
+  try {
+    if (bot?.viewer?.close) {
+      bot.viewer.close();
+    }
+  } catch { /* ignore */ }
 
   // 关闭所有容器
   try {
