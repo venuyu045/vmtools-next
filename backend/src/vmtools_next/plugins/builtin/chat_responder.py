@@ -16,12 +16,12 @@
 """
 from __future__ import annotations
 
-import logging
 from typing import Any
 
+from vmtools_next.infra.logging import get_logger
 from vmtools_next.plugins.base import IPlugin, PluginContext
 
-logger = logging.getLogger("vmtools.plugins.chat_responder")
+logger = get_logger("plugins.chat_responder")
 
 DEFAULT_COMMANDS: dict[str, str] = {
     "!ping": "pong! ({username})",

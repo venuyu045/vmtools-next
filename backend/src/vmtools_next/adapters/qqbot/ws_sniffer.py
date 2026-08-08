@@ -1,21 +1,22 @@
 """WebSocket sniffer — connect to QQ Bot gateway and print group_openid.
 
 Run this, then @bot in the group. group_openid will appear in logs.
+
+凭据从 config.yaml 的 ``qqbot`` 段读取（app_id / app_secret），不在代码中硬编码。
 """
 import asyncio
 import json
+import sys
 import httpx
 
-
-APP_ID = "1905191614"
-APP_SECRET = "REDACTED_QQ_APP_SECRET"
+from vmtools_next.config import get_config
 
 
-async def get_token() -> str:
+async def get_token(app_id: str, app_secret: str) -> str:
     async with httpx.AsyncClient(timeout=10) as client:
         resp = await client.post(
             "https://bots.qq.com/app/getAppAccessToken",
-            json={"appId": APP_ID, "clientSecret": APP_SECRET},
+            json={"appId": app_id, "clientSecret": app_secret},
         )
         data = resp.json()
         return data["access_token"]
@@ -31,8 +32,12 @@ async def get_gateway_url(token: str) -> str:
 
 
 async def main():
-    print("获取 token...")
-    token = await get_token()
+    cfg = get_config().qqbot
+    if not cfg.enabled or not cfg.app_id or not cfg.app_secret:
+        print("❌ qqbot 未启用或缺少 app_id / app_secret，请先在 config.yaml 的 qqbot 段配置后重试。")
+        sys.exit(1)
+    print(f"获取 token (app_id={cfg.app_id})...")
+    token = await get_token(cfg.app_id, cfg.app_secret)
     print("获取网关地址...")
     ws_url = await get_gateway_url(token)
     print(f"连接 WebSocket: {ws_url}")

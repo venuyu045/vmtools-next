@@ -5,11 +5,12 @@ Triggers pydantic-settings reload when config files change.
 from __future__ import annotations
 
 import asyncio
-import logging
 import pathlib
 from typing import Callable, Optional, Awaitable
 
-logger = logging.getLogger("vmtools.config_watcher")
+from vmtools_next.infra.logging import get_logger
+
+logger = get_logger("config_watcher")
 
 try:
     from watchdog.observers import Observer

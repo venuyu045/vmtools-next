@@ -9,14 +9,14 @@ from __future__ import annotations
 
 import importlib
 import json
-import logging
 import pathlib
 from datetime import datetime, timezone
 from typing import Optional
 
+from vmtools_next.infra.logging import get_logger
 from vmtools_next.plugins.base import IPlugin, PluginContext
 
-logger = logging.getLogger("vmtools.plugins")
+logger = get_logger("plugins")
 
 # 插件体系仅服务 mineflayer 引擎；非该引擎的插件一律跳过。
 SUPPORTED_ENGINE = "mineflayer"

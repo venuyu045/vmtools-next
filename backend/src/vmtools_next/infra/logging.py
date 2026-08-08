@@ -7,9 +7,32 @@ Configured via config/logging.yaml. In production, logs go to:
 """
 from __future__ import annotations
 
+import logging
 import sys
 import pathlib
 from loguru import logger
+
+
+class InterceptHandler(logging.Handler):
+    """Bridge stdlib ``logging`` records into loguru.
+
+    Modules that still use ``import logging`` (plugins, config_watcher,
+    mineflayer/mcc adapters, ...) otherwise only surface WARNING+ via the
+    stdlib lastResort handler — their INFO lines (e.g. "Bot replied",
+    "Config watcher started") stay invisible under loguru. This handler
+    routes everything (level 0) through loguru so INFO is visible too.
+    """
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            level = logger.level(record.levelname).name
+        except ValueError:
+            level = record.levelno
+        frame, depth = logging.currentframe(), 2
+        while frame and frame.f_code.co_filename == logging.__file__:
+            frame = frame.f_back
+            depth += 1
+        logger.opt(depth=depth, exception=record.exc_info).log(level, record.getMessage())
 
 
 def setup_logging(log_dir: str = "logs", debug: bool = False) -> None:
@@ -19,6 +42,9 @@ def setup_logging(log_dir: str = "logs", debug: bool = False) -> None:
         log_dir: Directory for log files.
         debug: If True, set console level to DEBUG.
     """
+    # Bridge stdlib logging → loguru so INFO from remaining stdlib loggers is visible.
+    logging.basicConfig(handlers=[InterceptHandler()], level=0, force=True)
+
     # Remove default handler
     logger.remove()
 
