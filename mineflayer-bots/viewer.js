@@ -29,11 +29,11 @@ module.exports = function startViewer(bot, options = {}) {
   const http = require('http').createServer(app);
   const io = require('socket.io')(http, { path: prefix + '/socket.io' });
 
-  // 静态资源：prismarine-viewer 包内 viewer/public（webpack 构建的浏览器端）
+  // 静态资源：prismarine-viewer 包内 public（webpack 构建的浏览器端）
   function setupRoutes(expressApp, routePrefix = '') {
     const pkgRoot = path.dirname(require.resolve('prismarine-viewer'));
     expressApp.use(compression());
-    expressApp.use(routePrefix + '/', express.static(path.join(pkgRoot, 'viewer', 'public')));
+    expressApp.use(routePrefix + '/', express.static(path.join(pkgRoot, 'public')));
   }
   setupRoutes(app, prefix);
 
