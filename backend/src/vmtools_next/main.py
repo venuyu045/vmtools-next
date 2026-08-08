@@ -71,6 +71,7 @@ async def _alert_notify_callback(name: str, severity: str, message: str, value: 
         import time as _time
         from vmtools_next.data.db import sio
         from vmtools_next.core.qqbot_notify import broadcast
+        from vmtools_next.infra.alerts import zh_severity
         payload = {
             "timestamp": _time.time(),
             "name": name,
@@ -79,7 +80,7 @@ async def _alert_notify_callback(name: str, severity: str, message: str, value: 
             "value": value,
         }
         await sio.emit("alert", payload)
-        await broadcast(f"⚠️ [监控告警·{severity}] {message}")
+        await broadcast(f"⚠️ [监控告警·{zh_severity(severity)}] {message}")
     except Exception:
         pass
 
