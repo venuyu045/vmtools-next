@@ -106,6 +106,13 @@ class MccConfig(BaseModel):
     mineflayer_ws_start_port: int = 44444
     mineflayer_ws_end_port: int = 44500
 
+    # MF 3D viewer：端口分配范围 / 监听地址 / 反代前缀（OpenResty /viewer/ → 127.0.0.1:<port>）
+    mineflayer_viewer_start_port: int = 3007
+    mineflayer_viewer_end_port: int = 3060
+    mineflayer_viewer_preferred_port: int = 3007
+    mineflayer_viewer_host: str = "0.0.0.0"
+    mineflayer_viewer_prefix: str = ""
+
 
 class MineflayerConfig(BaseModel):
     """Mineflayer bot engine configuration."""
