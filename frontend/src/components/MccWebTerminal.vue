@@ -160,9 +160,11 @@ function initTerminal() {
   terminal.writeln('\x1b[90m请在下方输入框输入：/xxx 为服务器命令，其他内容自动作为游戏聊天发送。\x1b[0m')
   terminal.writeln('')
 
-  // 移动端触摸滚动：交给 xterm 自带的 .xterm-viewport 原生滚动（平滑 + 惯性），
-  // 配合 CSS `overscroll-behavior: contain` 阻断滚动穿透到页面（网页不再跟着滑）。
-  // viewport 的 scroll 事件联动"自动滚动"开关：滚到非底部 → 停止自动跟随；滚回底部 → 恢复。
+  // 移动端触摸滚动：不依赖浏览器原生滚动（xterm 自身触摸处理器会拦截原生滚动导致"滑不动"），
+  // 改为 JS 手动接管——在整个终端区域(.xterm-shell)监听，手点到哪里都能滑历史：
+  //  - 有历史且方向允许 → preventDefault + viewport.scrollTop -= dy（手动滚动）
+  //  - 已到顶/底或无历史 → 不拦截，手势交给页面滚动
+  //  viewport 的 scroll 事件仍联动"自动滚动"开关。
   const viewport = terminalContainer.value.querySelector('.xterm-viewport') as HTMLElement | null
   if (viewport) {
     viewport.addEventListener('scroll', () => {
@@ -175,28 +177,40 @@ function initTerminal() {
       }
     }, { passive: true })
 
-    // 移动端边界拦截（双保险）：终端内可滚动时，滚到顶/底继续同向滑 → preventDefault，
-    // 防止手势穿透让页面跟着滚（老浏览器不认 overscroll-behavior）。终端无可滚动内容时不干预。
     let touchStartY = 0
-    let touchActive = false
-    viewport.addEventListener('touchstart', (e) => {
-      touchActive = true
+    let touchLastY = 0
+    let touchMode: 'none' | 'scroll' = 'none'
+    const shell = terminalContainer.value
+    shell.addEventListener('touchstart', (e) => {
       touchStartY = e.touches[0].clientY
+      touchLastY = e.touches[0].clientY
+      touchMode = 'none'
     }, { passive: true })
-    viewport.addEventListener('touchmove', (e) => {
-      if (!terminal || !touchActive) return
-      const maxScroll = viewport.scrollHeight - viewport.clientHeight
-      if (maxScroll <= 0) return // 无历史可滚 → 交还页面滚动
-      const dy = e.touches[0].clientY - touchStartY
-      const atTop = viewport.scrollTop <= 0
-      const atBottom = viewport.scrollTop >= maxScroll - 1
-      // 手指下滑（dy>0，看更早历史）已到顶 / 手指上滑（dy<0，看新内容）已到底 → 拦截穿透
-      if ((atTop && dy > 0) || (atBottom && dy < 0)) {
-        e.preventDefault()
+    shell.addEventListener('touchmove', (e) => {
+      if (!terminal) return
+      const y = e.touches[0].clientY
+      const dy = y - touchLastY
+      touchLastY = y
+      // 纵向位移超过阈值才判定为滚动手势（避免误伤点击/轻扫）
+      if (touchMode === 'none') {
+        if (Math.abs(y - touchStartY) < 10) return
+        touchMode = 'scroll'
       }
+      if (touchMode !== 'scroll') return
+      const maxScroll = viewport.scrollHeight - viewport.clientHeight
+      if (maxScroll <= 0) return // 终端无历史可滚 → 交还页面滚动
+      const goingUp = dy < 0   // 手指上滑 → 看新内容（scrollTop 增大）
+      const goingDown = dy > 0 // 手指下滑 → 看更早历史（scrollTop 减小）
+      const canScrollUp = viewport.scrollTop > 0
+      const canScrollDown = viewport.scrollTop < maxScroll - 1
+      if ((goingUp && canScrollDown) || (goingDown && canScrollUp)) {
+        e.preventDefault()
+        viewport.scrollTop -= dy
+      }
+      // 到边界：不 preventDefault → 手势交给页面滚动
     }, { passive: false })
-    viewport.addEventListener('touchend', () => { touchActive = false }, { passive: true })
-    viewport.addEventListener('touchcancel', () => { touchActive = false }, { passive: true })
+    shell.addEventListener('touchend', () => { touchMode = 'none' }, { passive: true })
+    shell.addEventListener('touchcancel', () => { touchMode = 'none' }, { passive: true })
   }
 
   resizeObserver = new ResizeObserver(() => fitTerminal())
