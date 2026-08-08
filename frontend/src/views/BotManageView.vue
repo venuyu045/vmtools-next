@@ -183,6 +183,7 @@
                 :bot-id="selectedInstance.bot_id || ''"
                 :inventory="inventoryData"
                 :loading="inventoryLoading"
+                :clickable="selectedInstance.bot_engine !== 'mineflayer'"
                 @refresh="fetchInventory"
                 @action="handleInventoryAction"
                 @drop="handleInventoryDrop"

@@ -35,6 +35,7 @@ from .protocol import (
     METHOD_GET_CONTAINER_SNAPSHOT,
     METHOD_WITHDRAW_CONTAINER_ITEM,
     METHOD_DEPOSIT_CONTAINER_ITEM,
+    METHOD_DROP_ITEM,
     METHOD_SERVUX_HANDSHAKE,
     METHOD_PREVIEW_CONTAINER_AT,
     METHOD_SEND_CHAT,
@@ -392,7 +393,10 @@ class MineflayerBridgeClient(AbstractBotAgent):
             for s in result["items"]:
                 if not isinstance(s, dict):
                     continue
-                item_id = (s.get("type") or s.get("name") or s.get("itemId") or "").strip()
+                # type 在 mineflayer 里是数字 ID（int），name 才是字符串 ID——
+                # 优先取 name/itemId，type 兜底并 str() 化，避免 int.strip() 崩（MF 背包接口 500）
+                raw_id = s.get("name") or s.get("itemId") or s.get("type") or ""
+                item_id = str(raw_id).strip()
                 if not item_id:
                     continue
                 items.append({
@@ -439,6 +443,26 @@ class MineflayerBridgeClient(AbstractBotAgent):
             "count": count,
             "container_id": container_id,
         }, timeout=DEFAULT_CMD_TIMEOUT)
+
+    # ── 背包管理（与 MCC /mcc-bots/{id}/inventory 系列接口对齐） ──
+
+    async def drop_inventory_item(self, item_type: str, count: int = 64,
+                                  inventory_id: int = 0) -> dict:
+        """丢弃背包中的指定物品（MF: bot.toss；inventory_id 仅为兼容 MCC 接口签名，MF 忽略）。"""
+        return await self._send_request(METHOD_DROP_ITEM, {
+            "item_type": item_type,
+            "count": count,
+        }, timeout=DEFAULT_CMD_TIMEOUT)
+
+    async def change_hotbar_slot(self, slot_index: int) -> dict:
+        """切换快捷栏槽位（与 MCC select-hotbar 接口对齐）。"""
+        return await self.set_quick_bar_slot(slot_index)
+
+    async def inventory_window_action(self, inventory_id: int, slot_id: int,
+                                      action_type: str) -> dict:
+        """mineflayer 不支持通用窗口槽位点击（MCC 的 LeftClick/RightClick）——
+        返回明确错误，避免前端 500。"""
+        return {"success": False, "error": "mineflayer 不支持窗口槽位点击操作（仅支持查看背包 / 丢弃物品 / 切换快捷栏）"}
 
     # ── Servux 容器预览（不打开容器） ──
 

@@ -221,6 +221,24 @@ function createInventoryHandlers(bot) {
     }
   }
 
+  // ── 丢弃背包物品（bot.toss；供 MF 背包管理「丢弃」操作使用） ──
+  async function drop_item({ item_type, count = 64 } = {}) {
+    try {
+      const items = bot.inventory.items();
+      const match = items.find(item =>
+        item.name === item_type || item.type?.toString() === item_type
+      );
+      if (!match) {
+        return { success: false, error: `Item ${item_type} not found in inventory` };
+      }
+      const dropCount = Math.min(count, match.count);
+      await bot.toss(match.type, null, dropCount);
+      return { success: true, item: match.name, count: dropCount };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  }
+
   return {
     select_hotbar_item,
     set_quick_bar_slot,
@@ -230,6 +248,7 @@ function createInventoryHandlers(bot) {
     get_container_snapshot,
     withdraw_container_item,
     deposit_container_item,
+    drop_item,
   };
 }
 

@@ -1,7 +1,7 @@
 <template>
   <div class="inv-container">
     <div v-if="cursorMsg" class="cursor-bar">{{ cursorMsg }}</div>
-    <div class="help">左键=拿/放/交换 · 右键=丢弃 · 🔄刷新看结果</div>
+    <div class="help">{{ p.clickable ? '左键=拿/放/交换 · 右键=丢弃 · 🔄刷新看结果' : 'MF 模式：仅查看背包 · 右键丢弃 · 🔄刷新（mineflayer 不支持窗口点击）' }}</div>
 
     <div class="layout">
       <!-- Main inventory: slots 9-35 (3 rows), with armor/offhand on right -->
@@ -84,7 +84,7 @@ import { ref, computed } from 'vue'
 interface Slot { slot: number; item_id: string; display_name: string; count: number }
 interface Data { bot_id: string; inventory_id: number; slots: Slot[]; hotbar: number[]; selected_hotbar: number; empty_slots: number; total_items: number }
 
-const p = defineProps<{ botId: string; inventory: Data | null; loading: boolean }>()
+const p = defineProps<{ botId: string; inventory: Data | null; loading: boolean; clickable?: boolean }>()
 const emit = defineEmits<{ refresh: []; action: [p: { action: string; slot_id: number }]; drop: [p: { item_type: string; count: number }] }>()
 
 const cursorSlot = ref(-1)
@@ -128,6 +128,8 @@ function slotCls(i: number) {
 
 async function click(slotIdx: number) {
   menu.value.show = false
+  // MF（mineflayer）不支持窗口槽位点击：仅允许查看/右键丢弃
+  if (p.clickable === false) return
   if (cursorSlot.value >= 0 && cursorSlot.value === slotIdx) {
     // Click same slot → cancel pickup
     cursorSlot.value = -1
