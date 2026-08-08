@@ -17,9 +17,9 @@
   --radius-md: 8px; --radius-lg: 12px; --radius-xl: 16px; --radius-2xl: 24px;
 
   /* ---------- 字体 ---------- */
-  --font-display: 'DM Serif Display', 'Lora', 'Source Han Serif SC', 'Noto Serif SC', serif;
-  --font-sans: 'DM Sans', 'Poppins', 'Source Han Sans SC', 'Noto Sans SC', sans-serif;
-  --font-body: 'Lora', 'Source Han Serif SC', 'Noto Serif SC', serif;
+  --font-display: 'DM Serif Display', 'Lora', 'Noto Serif SC', 'Source Han Serif SC', serif;
+  --font-sans: 'DM Sans', 'Poppins', 'Noto Sans SC', 'Source Han Sans SC', sans-serif;
+  --font-body: 'Lora', 'Noto Serif SC', 'Source Han Serif SC', serif;
   --font-mono: 'JetBrains Mono', 'SFMono-Regular', Consolas, monospace;
 
   /* ---------- 动效 ---------- */
