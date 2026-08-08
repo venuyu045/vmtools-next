@@ -533,6 +533,8 @@ async function fetchInventory() {
   const botId = selectedInstance.value.bot_id
   if (!botId) { ElMessage.warning('此实例未绑定 Bot'); return }
   inventoryLoading.value = true
+  // 切换实例/引擎时立即清空旧背包，避免新请求返回前仍显示上一个 bot 的物品
+  inventoryData.value = null
   try {
     const { data } = await botApi.getInventory(botId)
     inventoryData.value = data

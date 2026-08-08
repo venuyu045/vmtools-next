@@ -399,12 +399,19 @@ class MineflayerBridgeClient(AbstractBotAgent):
                 item_id = str(raw_id).strip()
                 if not item_id:
                     continue
-                # mineflayer 玩家窗口槽位：36-44=快捷栏、9-35=主背包；
-                # 前端背包布局按标准 protocol（0-8 快捷栏、9-35 主背包、36-39 盔甲、40 副手），
-                # 因此把快捷栏 36-44 映射到 0-8，避免「盔甲位显示快捷栏物品」的错位。
+                # mineflayer 玩家窗口槽位：5-8=盔甲、9-35=主背包、36-44=快捷栏、45=副手、0-4=合成；
+                # 统一归一化为前端标准布局（0-8 快捷栏、9-35 主背包、36-39 盔甲、40 副手、41-45 合成）。
+                # 注意：归一化只在本客户端做一次，下游（mcc_bot）不得再转换，避免二次映射错位。
                 _slot = s.get("slot", -1)
-                if isinstance(_slot, int) and 36 <= _slot <= 44:
-                    _slot = _slot - 36
+                if isinstance(_slot, int):
+                    if 5 <= _slot <= 8:
+                        _slot += 31            # 盔甲 5-8 → 36-39
+                    elif 36 <= _slot <= 44:
+                        _slot -= 36            # 快捷栏 36-44 → 0-8
+                    elif _slot == 45:
+                        _slot = 40             # 副手 → 40
+                    elif 0 <= _slot <= 4:
+                        _slot += 41            # 合成 0-4 → 41-45
                 items.append({
                     "slot": _slot,
                     "type": item_id,

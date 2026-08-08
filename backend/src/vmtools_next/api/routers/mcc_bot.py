@@ -532,11 +532,17 @@ async def get_inventory(bot_id: str, mcp_port: int = 0,
     slot_count = data.get("slotCount", 46)
     parsed = []
     for s in all_items:
-        # item_id：MCC 驼峰（NetheriteHelmet）→ item-icons 小写下划线（netherite_helmet）
-        item_id = _camel_to_snake((s.get("type") or s.get("itemId") or "").strip())
+        # 引擎隔离：MCC 原始数据（驼峰 item_id + 引擎窗口槽位）在此归一化；
+        # MF 数据已在 MineflayerBridgeClient 归一化为标准槽位+小写 ID，直接透传，禁止二次转换。
+        if isinstance(client, MccMcpClient):
+            item_id = _camel_to_snake((s.get("type") or s.get("itemId") or "").strip())
+            _slot = _normalize_inv_slot(s.get("slot", 0))
+        else:
+            item_id = (s.get("type") or s.get("itemId") or "").strip()
+            _slot = s.get("slot", 0)
         if item_id:
             parsed.append(InventorySlot(
-                slot=_normalize_inv_slot(s.get("slot", 0)),
+                slot=_slot,
                 item_id=item_id,
                 display_name=s.get("displayName", "") or item_id,
                 count=s.get("count", s.get("amount", 0)) or 0,
