@@ -96,6 +96,9 @@ def login(data: LoginRequest, request: Request, db: Session = Depends(get_db)):
         raise HTTPException(403, "User not approved")
 
     _reset_login_rate_limit(rate_key)
+    # 记录上次上线时间（成员管理「上次上线」列）
+    user.last_seen_at = datetime.now(timezone.utc)
+    db.commit()
     return LoginResponse(token=_make_token(user), user_id=user.id, game_id=user.game_id, role=user.role)
 
 
@@ -196,6 +199,8 @@ def qq_ticket_login(data: QqTicketLoginRequest, db: Session = Depends(get_db)):
     if user:
         if user.status != "approved":
             raise HTTPException(403, "User not approved")
+        user.last_seen_at = datetime.now(timezone.utc)
+        db.commit()
         return {
             "need_register": False,
             "token": _make_token(user),
@@ -212,8 +217,10 @@ def qq_ticket_login(data: QqTicketLoginRequest, db: Session = Depends(get_db)):
 
 
 @router.get("/me")
-def get_me(user=Depends(get_current_user)):
-    """Get current user info."""
+def get_me(user=Depends(get_current_user), db: Session = Depends(get_db)):
+    """Get current user info；同时记录本次访问（上次上线时间 = 最近一次访问网页时间）。"""
+    user.last_seen_at = datetime.now(timezone.utc)
+    db.commit()
     return {
         "id": user.id,
         "game_id": user.game_id,
@@ -221,6 +228,7 @@ def get_me(user=Depends(get_current_user)):
         "role": user.role,
         "status": user.status,
         "organization_id": user.organization_id,
+        "last_seen_at": user.last_seen_at,
     }
 
 

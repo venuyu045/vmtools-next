@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
-from vmtools_next.api.deps import get_db, get_current_user, require_admin
+from vmtools_next.api.deps import get_db, get_current_user, get_optional_user, require_admin
 from vmtools_next.core.item_names_zh import get_item_zh, search_zh_keywords
 from vmtools_next.data.models.auth import UserModel
 from vmtools_next.data.models.warehouse import (
@@ -213,7 +213,7 @@ def _to_response(wh: WarehouseModel, material_count: int | None = None) -> Wareh
 # ── CRUD ────────────────────────────────────────────────────────────────
 
 @router.get("", response_model=list[WarehouseResponse])
-def list_warehouses(db: Session = Depends(get_db), user=Depends(get_current_user)):
+def list_warehouses(db: Session = Depends(get_db), user=Depends(get_optional_user)):
     whs = _scoped_warehouse_query(db, user).all()
     counts = _material_counts(db, [w.warehouse_id for w in whs])
     return [_to_response(w, counts.get(w.warehouse_id, 0)) for w in whs]
@@ -269,7 +269,7 @@ async def list_scan_queue(db: Session = Depends(get_db),
 @router.get("/items/search", response_model=ItemSearchPage)
 def search_item_details(q: str = "", limit: int = 50,
                         db: Session = Depends(get_db),
-                        user=Depends(get_current_user)):
+                        user=Depends(get_optional_user)):
     """跨仓库搜索物品（中文名/英文名/item id 均可）。
 
     返回按「总储量降序」排序的物品列表；每个物品下按「仓库储量降序」列出仓库，
@@ -354,7 +354,7 @@ def search_item_details(q: str = "", limit: int = 50,
 
 @router.get("/{warehouse_id}", response_model=WarehouseResponse)
 def get_warehouse(warehouse_id: str, db: Session = Depends(get_db),
-                  user=Depends(get_current_user)):
+                  user=Depends(get_optional_user)):
     wh = _get_scoped_warehouse(db, user, warehouse_id)
     counts = _material_counts(db, [wh.warehouse_id])
     return _to_response(wh, counts.get(wh.warehouse_id, 0))
@@ -373,7 +373,7 @@ def delete_warehouse(warehouse_id: str, db: Session = Depends(get_db),
 
 @router.get("/{warehouse_id}/materials", response_model=MaterialsPage)
 def list_materials(warehouse_id: str, page: int = 1, page_size: int = 500,
-                   db: Session = Depends(get_db), user=Depends(get_current_user)):
+                   db: Session = Depends(get_db), user=Depends(get_optional_user)):
     """List aggregated materials for a warehouse (paginated)."""
     wh = _get_scoped_warehouse(db, user, warehouse_id)
     page = max(1, page)

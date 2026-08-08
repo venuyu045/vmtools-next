@@ -33,18 +33,19 @@ const routes = [
       // 已登录用户（任意权限组）在布局内正常显示其权限组侧边栏；
       // 访客模式由 AppLayout 隐藏侧边栏/头部（纯内容浏览）。
       { path: 'miaomiao', name: 'Miaomiao', component: () => import('@/views/MiaomiaoView.vue'), meta: { title: '妙妙工具', public: true } },
-      // --- 用户可见 ---
-      { path: 'dashboard', name: 'Dashboard', component: () => import('@/views/DashboardView.vue'), meta: { title: '仪表盘', roles: ALL_LOGGED_IN } },
-      { path: 'player-tracking', name: 'PlayerTracking', component: () => import('@/views/PlayerTrackingView.vue'), meta: { title: '玩家列表', roles: ALL_LOGGED_IN } },
+      // --- 用户可见（总览+工具：访客只读可访问，交互即跳登录） ---
+      // guestReadable：未登录访客可浏览（只读），登录用户按 roles 正常显示
+      { path: 'dashboard', name: 'Dashboard', component: () => import('@/views/DashboardView.vue'), meta: { title: '仪表盘', roles: ALL_LOGGED_IN, guestReadable: true } },
+      { path: 'player-tracking', name: 'PlayerTracking', component: () => import('@/views/PlayerTrackingView.vue'), meta: { title: '玩家列表', roles: ALL_LOGGED_IN, guestReadable: true } },
       // 上下线提醒（管理栏，独立入口）——追踪配置 + 上下线事件
       { path: 'player-alerts', name: 'PlayerAlerts', component: () => import('@/views/PlayerAlertsView.vue'), meta: { title: '上下线提醒', roles: [...ROLES.admin, ...ROLES.siteAdmin] } },
-      { path: 'warehouse-status', name: 'WarehouseStatus', component: () => import('@/views/WarehouseStatusView.vue'), meta: { title: '仓库状态', roles: ALL_LOGGED_IN } },
-      { path: 'warehouse-status/:id', name: 'WarehouseItems', component: () => import('@/views/WarehouseItemsView.vue'), meta: { title: '仓库物品', roles: ALL_LOGGED_IN } },
+      { path: 'warehouse-status', name: 'WarehouseStatus', component: () => import('@/views/WarehouseStatusView.vue'), meta: { title: '仓库状态', roles: ALL_LOGGED_IN, guestReadable: true } },
+      { path: 'warehouse-status/:id', name: 'WarehouseItems', component: () => import('@/views/WarehouseItemsView.vue'), meta: { title: '仓库物品', roles: ALL_LOGGED_IN, guestReadable: true } },
 
       // --- 管理员及以上可见 ---
       { path: 'mcc-instances', name: 'MccInstances', component: () => import('@/views/BotManageView.vue'), meta: { title: 'MCC 管理', engine: 'mcc', roles: [...ROLES.admin, ...ROLES.siteAdmin] } },
-    { path: 'mcc-status', name: 'MccStatus', component: () => import('@/views/BotStatusView.vue'), props: { engine: 'mcc', title: 'MCC 状态' }, meta: { title: 'MCC 状态', roles: ALL_LOGGED_IN } },
-    { path: 'mf-status', name: 'MfStatus', component: () => import('@/views/BotStatusView.vue'), props: { engine: 'mineflayer', title: 'MF 状态' }, meta: { title: 'MF 状态', roles: ALL_LOGGED_IN } },
+    { path: 'mcc-status', name: 'MccStatus', component: () => import('@/views/BotStatusView.vue'), props: { engine: 'mcc', title: 'MCC 状态' }, meta: { title: 'MCC 状态', roles: ALL_LOGGED_IN, guestReadable: true } },
+    { path: 'mf-status', name: 'MfStatus', component: () => import('@/views/BotStatusView.vue'), props: { engine: 'mineflayer', title: 'MF 状态' }, meta: { title: 'MF 状态', roles: ALL_LOGGED_IN, guestReadable: true } },
     { path: 'mf-instances', name: 'MfInstances', component: () => import('@/views/BotManageView.vue'), meta: { title: 'MF 管理', engine: 'mineflayer', roles: [...ROLES.admin, ...ROLES.siteAdmin] } },
     // MCC/MF 实例的终端/文件视图（共用视图组件，按实例 bot_engine 动态返回对应列表）
     { path: 'mcc-instances/:id/terminal', name: 'MccTerminal', component: () => import('@/views/MccTerminalView.vue'), meta: { title: 'MCC 终端', roles: [...ROLES.admin, ...ROLES.siteAdmin] } },
@@ -91,7 +92,8 @@ const router = createRouter({
 
 router.beforeEach((to) => {
   const authStore = useAuthStore()
-  if (!to.meta.public && !authStore.isLoggedIn) {
+  // 未登录（访客）：public 与 guestReadable（总览/工具只读页）放行，其余跳登录页
+  if (!to.meta.public && !to.meta.guestReadable && !authStore.isLoggedIn) {
     return '/login'
   }
 

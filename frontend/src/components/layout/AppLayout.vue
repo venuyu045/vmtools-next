@@ -1,7 +1,7 @@
 <template>
   <div class="app-layout" :class="{ 'mobile-open': mobileDrawerOpen }">
-    <!-- Desktop Sidebar -->
-    <aside v-if="!isPublicGuest" class="app-sidebar desktop-only" :class="{ collapsed: isCollapsed }">
+    <!-- Desktop Sidebar（访客也显示：未登录 roleRank=guest，侧边栏自动只显示总览+工具） -->
+    <aside class="app-sidebar desktop-only" :class="{ collapsed: isCollapsed }">
       <AppSidebar :collapsed="isCollapsed" @toggle="isCollapsed = !isCollapsed" />
     </aside>
 
@@ -12,20 +12,20 @@
 
     <!-- Mobile Drawer Sidebar -->
     <Transition name="drawer-slide">
-      <aside v-if="mobileDrawerOpen && !isPublicGuest" class="app-sidebar mobile-drawer">
+      <aside v-if="mobileDrawerOpen" class="app-sidebar mobile-drawer">
         <AppSidebar :collapsed="false" @toggle="mobileDrawerOpen = false" :is-mobile="true" />
       </aside>
     </Transition>
 
     <div class="app-body">
-      <header v-if="!isPublicGuest" class="app-header">
+      <header class="app-header">
         <AppHeader
           :is-mobile="true"
           @toggle-sidebar="isCollapsed = !isCollapsed"
           @open-mobile-menu="mobileDrawerOpen = true"
         />
       </header>
-      <main class="app-main">
+      <main ref="mainRef" class="app-main">
         <!-- keep-alive 缓存状态页与妙妙工具：切换路由不重新挂载/不重复拉大体积数据，
              解决"从其他页面进入卡顿"；BotStatusView 内部 watch engine 立即刷新 -->
         <router-view v-slot="{ Component }">
@@ -47,17 +47,50 @@
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import AppSidebar from './AppSidebar.vue'
 import AppHeader from './AppHeader.vue'
 
 const route = useRoute()
+const router = useRouter()
 const authStore = useAuthStore()
 
-/** 访客模式：未登录且当前路由标记为 public（如妙妙工具）时，
- *  隐藏侧边栏与头部，纯内容浏览；已登录用户（任意权限组）保留自己的侧边栏。 */
-const isPublicGuest = computed(() => !authStore.isLoggedIn && route.meta.public === true)
+/** 访客模式：未登录（且不在登录/注册页）。访客同样显示侧边栏（总览+工具只读）与头部，
+ *  但内容区任何交互都会跳转登录页（只读浏览）。 */
+const isGuestMode = computed(() => !authStore.isLoggedIn && route.path !== '/login' && route.path !== '/register')
+
+/** 内容区容器（用于访客交互拦截；侧边栏/头部不在此容器内，导航与登录不受影响） */
+const mainRef = ref<HTMLElement | null>(null)
+
+/** 访客模式拦截：内容区任何交互（点击/输入/回车/提交）→ 跳登录页 */
+function onGuestInteract(e: Event) {
+  if (authStore.isLoggedIn) return
+  if (route.path === '/login' || route.path === '/register') return
+  e.preventDefault()
+  e.stopPropagation()
+  router.push('/login')
+}
+
+const GUEST_INTERACT_EVENTS = ['click', 'change', 'input', 'keydown', 'submit'] as const
+
+onMounted(() => {
+  const el = mainRef.value
+  if (el) {
+    for (const evt of GUEST_INTERACT_EVENTS) {
+      el.addEventListener(evt, onGuestInteract, true)
+    }
+  }
+})
+
+onBeforeUnmount(() => {
+  const el = mainRef.value
+  if (el) {
+    for (const evt of GUEST_INTERACT_EVENTS) {
+      el.removeEventListener(evt, onGuestInteract, true)
+    }
+  }
+})
 
 const isCollapsed = ref(false)
 const mobileDrawerOpen = ref(false)

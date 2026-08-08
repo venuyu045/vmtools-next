@@ -44,12 +44,12 @@
             <span class="status-tag" :class="row.status">{{ statusLabel(row.status) }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="注册时间" min-width="150">
+        <el-table-column label="上次上线" min-width="150">
           <template #default="{ row }">
-            <span class="mono time-text">{{ formatTime(row.created_at) }}</span>
+            <span class="mono time-text">{{ formatTime(row.last_seen_at) }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="240" fixed="right">
+        <el-table-column label="操作" width="300" fixed="right">
           <template #default="{ row }">
             <template v-if="row.status === 'pending'">
               <el-button size="small" type="success" plain @click="setStatus(row, 'approved')">通过</el-button>
@@ -59,21 +59,67 @@
               <el-button size="small" @click="setStatus(row, 'approved')" :disabled="row.status === 'approved'">启用</el-button>
               <el-button size="small" type="warning" plain @click="setStatus(row, 'banned')" :disabled="row.status === 'banned'">封禁</el-button>
             </template>
+            <el-button size="small" type="primary" plain @click="openEdit(row)">编辑</el-button>
           </template>
         </el-table-column>
       </el-table>
     </el-card>
+
+    <!-- 编辑成员弹窗（修改角色/状态 + 删除成员） -->
+    <el-dialog v-model="editOpen" title="编辑成员" width="420px">
+      <div v-if="editRow" class="edit-form">
+        <div class="edit-meta">
+          <span class="edit-game">{{ editRow.game_id }}</span>
+          <span class="edit-name">{{ editRow.display_name || '—' }}</span>
+        </div>
+        <el-form label-width="90px">
+          <el-form-item label="角色">
+            <el-select v-model="editForm.role" style="width: 100%">
+              <el-option label="站点管理员" value="site_admin" />
+              <el-option label="管理员" value="admin" />
+              <el-option label="用户" value="user" />
+              <el-option label="访客" value="guest" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="状态">
+            <el-select v-model="editForm.status" style="width: 100%">
+              <el-option label="待审批" value="pending" />
+              <el-option label="已批准" value="approved" />
+              <el-option label="已拒绝" value="rejected" />
+              <el-option label="已封禁" value="banned" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="注册时间">
+            <span class="mono time-text">{{ formatTime(editRow.created_at) }}</span>
+          </el-form-item>
+          <el-form-item label="上次上线">
+            <span class="mono time-text">{{ formatTime(editRow.last_seen_at) }}</span>
+          </el-form-item>
+        </el-form>
+      </div>
+      <template #footer>
+        <el-button type="danger" plain @click="removeUser">删除成员</el-button>
+        <el-button @click="editOpen = false">取消</el-button>
+        <el-button type="primary" :loading="editSaving" @click="saveEdit">保存</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { membersApi, type MemberUser } from '@/api/members'
 
 const loading = ref(false)
 const users = ref<MemberUser[]>([])
 const statusFilter = ref('')
+
+// ── 编辑成员弹窗 ──
+const editOpen = ref(false)
+const editSaving = ref(false)
+const editRow = ref<MemberUser | null>(null)
+const editForm = reactive({ role: 'user', status: 'approved' })
 
 const STATUS_LABELS: Record<string, string> = {
   pending: '待审批',
@@ -136,6 +182,58 @@ async function changeRole(row: MemberUser, role: string) {
   }
 }
 
+// ── 编辑成员：打开弹窗（预填当前角色/状态） ──
+function openEdit(row: MemberUser) {
+  editRow.value = row
+  editForm.role = row.role
+  editForm.status = row.status
+  editOpen.value = true
+}
+
+// ── 保存编辑（角色/状态） ──
+async function saveEdit() {
+  if (!editRow.value) return
+  const row = editRow.value
+  editSaving.value = true
+  try {
+    const patch: { role?: string; status?: string } = {}
+    if (editForm.role !== row.role) patch.role = editForm.role
+    if (editForm.status !== row.status) patch.status = editForm.status
+    if (!Object.keys(patch).length) { editOpen.value = false; return }
+    const { data } = await membersApi.update(row.id, patch)
+    Object.assign(row, data)
+    ElMessage.success(`已保存 ${row.game_id} 的修改`)
+    editOpen.value = false
+  } catch (e: any) {
+    ElMessage.error(e.response?.data?.detail || '保存失败')
+  } finally {
+    editSaving.value = false
+  }
+}
+
+// ── 删除成员 ──
+async function removeUser() {
+  if (!editRow.value) return
+  const row = editRow.value
+  try {
+    await ElMessageBox.confirm(
+      `确认删除成员「${row.game_id}」？删除后不可恢复。`,
+      '删除成员',
+      { confirmButtonText: '删除', cancelButtonText: '取消', type: 'warning' },
+    )
+  } catch {
+    return
+  }
+  try {
+    await membersApi.remove(row.id)
+    users.value = users.value.filter(u => u.id !== row.id)
+    ElMessage.success(`已删除成员 ${row.game_id}`)
+    editOpen.value = false
+  } catch (e: any) {
+    ElMessage.error(e.response?.data?.detail || '删除失败')
+  }
+}
+
 onMounted(loadUsers)
 </script>
 
@@ -171,6 +269,20 @@ onMounted(loadUsers)
 .status-tag.banned { color: var(--color-error, #f56c6c); border-color: rgba(245, 108, 108, 0.4); }
 
 .time-text { color: var(--text-secondary); font-size: 12px; }
+
+/* 编辑弹窗 */
+.edit-form { padding: 4px 0 8px; }
+.edit-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  margin-bottom: 14px;
+  background: #000;
+  border: 1px solid var(--border-subtle);
+}
+.edit-game { color: var(--green-primary); font-weight: bold; font-size: 15px; }
+.edit-name { color: var(--text-muted); font-size: 13px; }
 
 /* ============ RESPONSIVE ============ */
 @media (max-width: 768px) {

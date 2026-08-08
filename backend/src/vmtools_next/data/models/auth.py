@@ -64,5 +64,7 @@ class UserModel(Base):
     # QQ 互联绑定：qq_openid 唯一（一个 QQ 只能注册一个账号）；qq_nickname 供展示
     qq_openid = Column(String, nullable=True, unique=True, index=True)
     qq_nickname = Column(String, nullable=True)
+    # 上次上线时间 = 最近一次访问网页/登录的时间（成员管理「上次上线」列）
+    last_seen_at = Column(DateTime, nullable=True)
 
     organization = relationship("OrganizationModel", back_populates="members")
