@@ -1,0 +1,164 @@
+# ============================================================
+# vmtools-next 配置模板（脱敏版）
+# 使用方式：复制为 config.yaml 后按需修改；本文件不包含任何真实凭据。
+#   cp config.yaml.example config.yaml
+# 环境覆盖：config.dev.yaml / config.prod.yaml（由 VMT_ENV 选择，默认 dev）
+# 环境变量覆盖：VMT_ 前缀，例如 VMT_SERVER__SECRET_KEY=xxx（优先级最高）
+# ============================================================
+
+# ── 基础 ──────────────────────────────────────────────────────
+generic:
+  enabled: true
+  debug_logging: false      # true 时输出更详细日志（生产建议 false）
+  hud_refresh_interval: 20
+
+# ── 安全（任务执行保护）──────────────────────────────────────
+safety:
+  max_ops_per_tick: 1
+  place_interval_ticks: 3
+  container_interact_interval: 10
+  teleport_cooldown_seconds: 5
+  max_pathing_distance: 500
+  max_failures_before_stop: 3
+  pause_on_nearby_player: true
+  nearby_player_radius: 10
+  auto_pause_on_disconnect: true
+
+# ── 仓库扫描 ─────────────────────────────────────────────────
+warehouse:
+  default_scan_range_x: 16
+  default_scan_range_y: 8
+  default_scan_range_z: 16
+  cache_validity_minutes: 5
+  max_scan_containers: 0            # 0 = 不限制
+  scan_shulker_contents: true
+  shulker_recursion_depth: 3
+  servux_direct_scan: true
+  navigate_on_read_fail: false
+  servux_read_timeout_ms: 800
+  servux_prefetch_window: 8
+  scan_progress_interval: 25
+
+# ── 建造 ─────────────────────────────────────────────────────
+build:
+  default_layer_height: 6
+  printer_range: 6
+  printer_blocks_per_tick: 1
+  layer_verify_retry_count: 3
+  auto_continue_next_layer: true
+
+# ── 寻路/传送 ────────────────────────────────────────────────
+travel:
+  teleport_threshold: 200
+  arrival_verify_radius: 3
+  arrival_timeout_seconds: 10
+  max_teleports_per_minute: 6
+  fallback_to_baritone: true
+
+# ── 服务 ─────────────────────────────────────────────────────
+server:
+  host: "0.0.0.0"
+  port: 8080
+  # workers 保持 1：socket.io ASGIApp 不支持多 worker（需 redis adapter）
+  workers: 1
+  debug: false
+  database_url: "sqlite:///vmtools-next.db"   # 相对 cwd；生产建议绝对路径
+  # ⚠️ 必须替换为随机密钥：openssl rand -hex 32
+  secret_key: "change-in-production"
+  jwt_algorithm: "HS256"
+  # CORS 白名单（禁止 "*" + allow_credentials 组合）
+  cors_origins:
+    - "http://localhost:5173"
+    - "http://localhost:8080"
+
+# ── MCC 引擎 ─────────────────────────────────────────────────
+mcc:
+  protocol: "mcp"                # mcp | ws
+  mcp_endpoint: "http://127.0.0.1:33333/mcp"
+  mcp_auth_token_env: "MCC_MCP_AUTH_TOKEN"
+  ws_timeout: 10.0
+  reconnect_base_delay: 1.0
+  reconnect_max_delay: 60.0
+  command_timeout: 30.0
+  working_dir: "/opt/mcc"
+  # 实例管理
+  instance_root: "/opt/vmtools/mcc-instances"
+  binary_path: "/opt/vmtools/mcc-runtime/MinecraftClient.exe"
+  launch_command: []
+  instance_start_port: 33333
+  instance_end_port: 33352
+  max_instances: 20
+  terminal_buffer_lines: 2000
+  log_retention_days: 14
+  # MF 引擎 WS 端口段
+  mineflayer_ws_start_port: 44444
+  mineflayer_ws_end_port: 44500
+
+# ── Mineflayer 引擎 ──────────────────────────────────────────
+mineflayer:
+  enabled: false                 # 作为 primary pool（MCC 未配置时兜底）
+  default_engine: "mcc"
+  script_dir: "../mineflayer-bots"
+  node_path: "node"
+  ws_port_start: 44444
+  ws_port_end: 44500
+  status_interval_ms: 5000
+  yggdrasil_auth_server_url: ""  # 例如 https://skin.prinzeugen.net/api/yggdrasil
+
+# ── 系统监控 ─────────────────────────────────────────────────
+monitor:
+  enabled: true
+  collect_interval_seconds: 10
+  alert_check_interval_seconds: 30
+  # 预留：webhook / SMTP 通知暂未接入（当前告警走 QQ 群广播 + Socket.IO）
+  webhook_url: ""
+  email_smtp_host: ""
+
+# ── 插件（仅服务 mineflayer 引擎）───────────────────────────
+plugins:
+  enabled: true
+  builtin:
+    chat_responder:
+      enabled: true
+      commands:
+        "!ping": "pong! ({username})"
+        "!pos": "当前位置 {position}"
+        "!help": "可用指令: !ping / !pos / !help"
+
+# ── QQ 机器人（官方 API，群指令 /list /mspt 等）──────────────
+qqbot:
+  enabled: false
+  app_id: ""                     # 机器人 AppID
+  app_secret: ""                 # 机器人 AppSecret
+  sandbox: false
+  notify_groups: []              # 通知群 openid 列表
+  mention_openids: []
+  notify_on_start: true
+  notify_on_stop: true
+  notify_on_crash: true
+  notify_on_chat: false
+
+# ── QQ 互联（connect.qq.com 网站应用，QQ 一键注册/登录）─────
+qq_connect:
+  enabled: false
+  app_id: ""
+  app_key: ""
+  redirect_uri: ""               # 如 https://example.com/api/auth/qq/callback
+  state_ttl_seconds: 600
+  ticket_ttl_seconds: 600
+
+# ── 玩家上下线跟踪 ───────────────────────────────────────────
+player_tracking:
+  enabled: false
+  sentinel_instance: ""
+  owners: []
+
+# ── BlueMap（玩家列表/地标/MSPT 数据源）──────────────────────
+bluemap:
+  enabled: true
+  api_base_url: ""               # 如 http://map.example.com:2087（生产必填）
+  poll_interval_seconds: 5
+  worlds:
+    - "world"
+    - "world_nether"
+    - "world_the_end"
