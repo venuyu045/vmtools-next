@@ -283,8 +283,9 @@ onBeforeUnmount(() => {
 
 .refresh-btn {
   background: none;
-  border: 1px solid var(--border-card);
-  color: var(--green-primary);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  color: var(--text-secondary);
   padding: 6px 14px;
   font-size: 12px;
   cursor: pointer;

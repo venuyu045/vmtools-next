@@ -75,7 +75,7 @@ onMounted(() => store.fetchInstances())
 <style scoped>
 .file-page { display: flex; flex-direction: column; gap: 18px; min-height: 100%; }
 .page-header { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; }
-.page-title { color: var(--green-primary); font-size: 16px; margin-bottom: 8px; }
+.page-title { color: var(--text-primary); font-family: var(--font-display); font-size: 24px; font-weight: 400; letter-spacing: -0.6px; margin-bottom: 8px; }
 .page-subtitle { color: var(--text-secondary); font-size: 14px; max-width: 860px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .header-actions { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
 .page-link { text-decoration: none; display: inline-flex; align-items: center; }

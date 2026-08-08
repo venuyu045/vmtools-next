@@ -97,7 +97,7 @@ const playerStore = useOnlinePlayersStore()
 
 <style scoped>
 .player-list-page { max-width: 1080px; margin: 0 auto; padding: 24px; }
-.page-title { color: var(--green-primary); font-size: 16px; margin-bottom: 4px; }
+.page-title { color: var(--text-primary); font-family: var(--font-display); font-size: 24px; font-weight: 400; letter-spacing: -0.6px; margin-bottom: 4px; }
 .page-subtitle { color: var(--text-muted); font-size: 13px; margin-bottom: 16px; }
 
 .online-panel {

@@ -622,7 +622,7 @@ watch(
 <style scoped>
 .bots-page { display: flex; flex-direction: column; gap: 24px; }
 .page-header { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
-.page-title { color: var(--green-primary); font-size: 16px; margin-bottom: 8px; }
+.page-title { color: var(--text-primary); font-family: var(--font-display); font-size: 24px; font-weight: 400; letter-spacing: -0.6px; margin-bottom: 8px; }
 .page-subtitle { color: var(--text-secondary); font-size: 16px; }
 .engine-hint { color: var(--text-muted); font-size: 13px; margin-left: 8px; }
 .header-actions { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }

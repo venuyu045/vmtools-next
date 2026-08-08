@@ -226,7 +226,7 @@ onMounted(async () => {
 <style scoped>
 .wh-status-page { display: flex; flex-direction: column; gap: 18px; min-height: 100%; }
 .page-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; flex-wrap: wrap; }
-.page-title { color: var(--green-primary); font-size: 16px; margin-bottom: 6px; }
+.page-title { color: var(--text-primary); font-family: var(--font-display); font-size: 24px; font-weight: 400; letter-spacing: -0.6px; margin-bottom: 6px; }
 .page-subtitle { color: var(--text-secondary); font-size: 13px; }
 .search-box { flex: 1; max-width: 560px; min-width: 260px; }
 

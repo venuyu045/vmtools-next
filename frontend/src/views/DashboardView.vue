@@ -198,6 +198,8 @@ onBeforeUnmount(() => {
   min-width: 170px;
   background: var(--bg-card);
   border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
   padding: 18px 20px;
   display: flex;
   align-items: center;
@@ -205,7 +207,8 @@ onBeforeUnmount(() => {
 }
 
 .stat-indicator {
-  border: 1px solid;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
   padding: 10px 12px;
   display: flex;
   align-items: center;
@@ -214,9 +217,12 @@ onBeforeUnmount(() => {
 }
 
 .stat-value {
-  font-size: 22px;
-  font-family: var(--font-mono);
-  font-weight: 700;
+  font-size: 24px;
+  font-family: var(--font-display);
+  font-weight: 400;
+  letter-spacing: -0.8px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
 }
 
 .stat-label { font-size: 14px; color: var(--text-primary); font-weight: 600; }
@@ -226,11 +232,11 @@ onBeforeUnmount(() => {
 .left-col { flex: 1; display: flex; flex-direction: column; gap: 24px; min-width: 0; }
 .right-col { width: 360px; flex-shrink: 0; display: flex; flex-direction: column; gap: 24px; }
 
-.section-title { font-size: 14px; color: var(--green-primary); margin-bottom: 16px; }
+.section-title { font-family: var(--font-display); font-size: 18px; font-weight: 400; letter-spacing: -0.4px; color: var(--text-primary); margin-bottom: 16px; }
 .section-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; gap: 10px; flex-wrap: wrap; }
 .section-header .section-title { margin-bottom: 0; }
 
-.view-all { font-size: 13px; color: var(--green-primary); opacity: 0.6; text-decoration: none; }
+.view-all { font-size: 13px; color: var(--accent); opacity: 0.7; text-decoration: none; transition: opacity 150ms var(--ease-out); }
 .view-all:hover { opacity: 1; }
 
 .empty-text { color: var(--text-muted); text-align: center; padding: 20px; font-size: 14px; }
@@ -252,7 +258,7 @@ onBeforeUnmount(() => {
 .bot-list { display: flex; flex-direction: column; gap: 6px; }
 .bot-row { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--border-subtle); }
 .bot-row:last-child { border-bottom: none; }
-.bot-dot { width: 8px; height: 8px; background: var(--green-primary); flex-shrink: 0; }
+.bot-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--success); flex-shrink: 0; }
 .bot-name { font-size: 14px; font-weight: 600; color: var(--text-primary); }
 .bot-id { font-size: 11px; color: var(--text-muted); margin-left: auto; }
 

@@ -47,7 +47,7 @@
               <template v-else>{{ p.role === 'server' ? 'uvicorn 服务' : p.name }}</template>
             </span>
             <span class="proc-pid mono">#{{ p.pid }}</span>
-            <span class="proc-cpu mono" :style="{ color: p.cpu_percent > 60 ? 'var(--danger)' : 'var(--green-primary)' }">{{ p.cpu_percent }}%</span>
+            <span class="proc-cpu mono" :style="{ color: p.cpu_percent > 60 ? 'var(--danger)' : 'var(--success)' }">{{ p.cpu_percent }}%</span>
             <span class="proc-mem mono">{{ p.mem_mb }}MB</span>
           </div>
         </div>
