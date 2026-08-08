@@ -114,8 +114,8 @@ function onNavClick() {
 /**
  * 侧边栏导航（抽屉式，分组可折叠）
  * - 用户(1)：仪表盘、玩家列表、妙妙工具、MCC/MF 状态、仓库状态
- * - 管理员(2)：+ MCC 管理、MF 管理、上下线提醒、仓库管理、地图画建造、物流管理
- * - 站点管理员(3)：全部 + 成员管理、系统配置、插件管理、系统监控
+ * - 管理员(2)：+ MCC 管理、MF 管理、上下线提醒、仓库管理、地图画建造、物流管理、系统监控
+ * - 站点管理员(3)：全部 + 成员管理、系统配置、插件管理
  */
 const navGroups: NavGroup[] = [
   {
@@ -143,6 +143,7 @@ const navGroups: NavGroup[] = [
       { path: '/warehouses', label: '仓库管理', minRole: 2 },
       { path: '/map-art-tasks', label: '地图画建造', minRole: 2 },
       { path: '/logistics/waypoints', label: '物流管理', minRole: 2 },
+      { path: '/monitor', label: '系统监控', minRole: 2 },
     ],
   },
   {
@@ -151,7 +152,6 @@ const navGroups: NavGroup[] = [
       { path: '/members', label: '成员管理', minRole: 3 },
       { path: '/config', label: '系统配置', minRole: 3 },
       { path: '/plugins', label: '插件管理', minRole: 3 },
-      { path: '/monitor', label: '系统监控', minRole: 3 },
     ],
   },
 ]
