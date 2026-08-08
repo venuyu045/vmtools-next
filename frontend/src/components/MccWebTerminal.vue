@@ -99,11 +99,17 @@ let terminal: Terminal | null = null
 let fitAddon: FitAddon | null = null
 let searchAddon: SearchAddon | null = null
 let resizeObserver: ResizeObserver | null = null
+let viewportEl: HTMLElement | null = null
 let lastSeq = 0
 let historyCursor = -1
 let commandHistory: string[] = []
 let pendingDraft = '' // input preserved while browsing history
 let joinConfirmTimer: ReturnType<typeof setTimeout> | null = null
+
+// ── 移动端触摸滚动状态（window 捕获阶段监听，见 setupTerminalTouch） ──
+let touchStartY: number | null = null
+let touchLastY: number | null = null
+let touchMode: 'none' | 'scroll' = 'none'
 
 const commandDictionary = [
   'help', 'status', 'exit', 'connect', 'disconnect', 'respawn', 'inventory', 'move',
@@ -160,12 +166,12 @@ function initTerminal() {
   terminal.writeln('\x1b[90m请在下方输入框输入：/xxx 为服务器命令，其他内容自动作为游戏聊天发送。\x1b[0m')
   terminal.writeln('')
 
-  // 移动端触摸滚动：不依赖浏览器原生滚动（xterm 自身触摸处理器会拦截原生滚动导致"滑不动"），
-  // 改为 JS 手动接管——在整个终端区域(.xterm-shell)监听，手点到哪里都能滑历史：
-  //  - 有历史且方向允许 → preventDefault + viewport.scrollTop -= dy（手动滚动）
-  //  - 已到顶/底或无历史 → 不拦截，手势交给页面滚动
-  //  viewport 的 scroll 事件仍联动"自动滚动"开关。
+  // 移动端触摸滚动（window 捕获阶段，见 setupTerminalTouch）：
+  //  - 不依赖浏览器原生滚动（xterm 自身触摸处理器会拦截原生滚动导致"滑不动"）
+  //  - window capture 必然收到事件（即使 xterm 在 screen 上 stopPropagation 也拦不住）
+  //  - 手点到终端任何位置都能滑历史；已到顶/底或无历史 → 放行给页面滚动
   const viewport = terminalContainer.value.querySelector('.xterm-viewport') as HTMLElement | null
+  viewportEl = viewport
   if (viewport) {
     viewport.addEventListener('scroll', () => {
       if (!terminal) return
@@ -176,41 +182,6 @@ function initTerminal() {
         autoScroll.value = true
       }
     }, { passive: true })
-
-    let touchStartY = 0
-    let touchLastY = 0
-    let touchMode: 'none' | 'scroll' = 'none'
-    const shell = terminalContainer.value
-    shell.addEventListener('touchstart', (e) => {
-      touchStartY = e.touches[0].clientY
-      touchLastY = e.touches[0].clientY
-      touchMode = 'none'
-    }, { passive: true })
-    shell.addEventListener('touchmove', (e) => {
-      if (!terminal) return
-      const y = e.touches[0].clientY
-      const dy = y - touchLastY
-      touchLastY = y
-      // 纵向位移超过阈值才判定为滚动手势（避免误伤点击/轻扫）
-      if (touchMode === 'none') {
-        if (Math.abs(y - touchStartY) < 10) return
-        touchMode = 'scroll'
-      }
-      if (touchMode !== 'scroll') return
-      const maxScroll = viewport.scrollHeight - viewport.clientHeight
-      if (maxScroll <= 0) return // 终端无历史可滚 → 交还页面滚动
-      const goingUp = dy < 0   // 手指上滑 → 看新内容（scrollTop 增大）
-      const goingDown = dy > 0 // 手指下滑 → 看更早历史（scrollTop 减小）
-      const canScrollUp = viewport.scrollTop > 0
-      const canScrollDown = viewport.scrollTop < maxScroll - 1
-      if ((goingUp && canScrollDown) || (goingDown && canScrollUp)) {
-        e.preventDefault()
-        viewport.scrollTop -= dy
-      }
-      // 到边界：不 preventDefault → 手势交给页面滚动
-    }, { passive: false })
-    shell.addEventListener('touchend', () => { touchMode = 'none' }, { passive: true })
-    shell.addEventListener('touchcancel', () => { touchMode = 'none' }, { passive: true })
   }
 
   resizeObserver = new ResizeObserver(() => fitTerminal())
@@ -431,6 +402,79 @@ function fitTerminal() {
   }
 }
 
+/**
+ * 移动端终端触摸滚动（window 捕获阶段监听）。
+ *  - 不依赖浏览器原生滚动：xterm 自身触摸处理器会 preventDefault/stopPropagation，
+ *    导致原生滚动与普通元素监听全部失效 → 手动操作 viewport.scrollTop。
+ *  - capture:true 在 window 上监听，事件必然到达（早于 xterm 的 bubble 处理器）。
+ *  - 仅处理触摸起点在终端容器内的手势；可滚时手动滚动并 preventDefault，
+ *    已到顶/底或无历史时放行（不 preventDefault），由页面接手。
+ */
+function setupTerminalTouch(): () => void {
+  const shell = () => terminalContainer.value
+
+  function insideShell(target: EventTarget | null): boolean {
+    const el = shell()
+    return !!el && !!target && el.contains(target as Node)
+  }
+
+  function onTouchStart(e: TouchEvent) {
+    if (!insideShell(e.target)) return
+    touchStartY = e.touches[0]?.clientY ?? null
+    touchLastY = e.touches[0]?.clientY ?? null
+    touchMode = 'none'
+  }
+
+  function onTouchMove(e: TouchEvent) {
+    if (!insideShell(e.target)) return
+    if (!terminal || !viewportEl) return
+    const y = e.touches[0]?.clientY
+    if (y == null) return
+    // 兜底：touchstart 被吞时以当前点初始化，避免 dy=NaN
+    if (touchLastY == null) touchLastY = y
+    if (touchStartY == null) touchStartY = y
+    const dy = y - touchLastY
+    touchLastY = y
+    // 纵向位移超过阈值才判定为滚动手势（避免误伤点击/轻扫）
+    if (touchMode === 'none') {
+      if (Math.abs(y - touchStartY) < 10) return
+      touchMode = 'scroll'
+    }
+    if (touchMode !== 'scroll') return
+    const maxScroll = viewportEl.scrollHeight - viewportEl.clientHeight
+    if (maxScroll <= 0) return // 终端无历史可滚 → 交还页面滚动
+    const goingUp = dy < 0   // 手指上滑 → 看新内容（scrollTop 增大）
+    const goingDown = dy > 0 // 手指下滑 → 看更早历史（scrollTop 减小）
+    const canScrollUp = viewportEl.scrollTop > 0
+    const canScrollDown = viewportEl.scrollTop < maxScroll - 1
+    if ((goingUp && canScrollDown) || (goingDown && canScrollUp)) {
+      e.preventDefault()
+      viewportEl.scrollTop -= dy
+    }
+    // 到边界：不 preventDefault → 手势交给页面滚动
+  }
+
+  function onTouchEnd() {
+    touchMode = 'none'
+    touchStartY = null
+    touchLastY = null
+  }
+
+  window.addEventListener('touchstart', onTouchStart, { passive: true, capture: true })
+  window.addEventListener('touchmove', onTouchMove, { passive: false, capture: true })
+  window.addEventListener('touchend', onTouchEnd, { passive: true, capture: true })
+  window.addEventListener('touchcancel', onTouchEnd, { passive: true, capture: true })
+
+  return () => {
+    window.removeEventListener('touchstart', onTouchStart, { capture: true } as any)
+    window.removeEventListener('touchmove', onTouchMove, { capture: true } as any)
+    window.removeEventListener('touchend', onTouchEnd, { capture: true } as any)
+    window.removeEventListener('touchcancel', onTouchEnd, { capture: true } as any)
+  }
+}
+
+let teardownTouch: (() => void) | null = null
+
 function findNext() {
   if (!searchKeyword.value.trim()) return
   searchAddon?.findNext(searchKeyword.value)
@@ -492,6 +536,7 @@ watch(() => props.instanceId, async () => {
 
 onMounted(async () => {
   initTerminal()
+  teardownTouch = setupTerminalTouch()
   loadCommandHistory()
   socket.connect() // 确保 socket 实例存在，再注册事件
   socket.on('mcc_terminal_snapshot', onTerminalSnapshot)
@@ -508,11 +553,14 @@ onBeforeUnmount(() => {
   socket.off('mcc_terminal_error', onTerminalError)
   socket.off('disconnect', onSocketDisconnect)
   socket.off('connect', onSocketConnect)
+  teardownTouch?.()
+  teardownTouch = null
   resizeObserver?.disconnect()
   terminal?.dispose()
   terminal = null
   fitAddon = null
   searchAddon = null
+  viewportEl = null
 })
 </script>
 
@@ -521,7 +569,7 @@ onBeforeUnmount(() => {
 .terminal-toolbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 .search-input { width: 220px; }
 .terminal-toolbar .pixel-btn { padding: 8px 14px; }
-.xterm-shell { width: 100%; min-height: 260px; padding: 8px; background: #000; border: 1px solid var(--border-card); overflow: hidden; touch-action: pan-y; overscroll-behavior: contain; }
+.xterm-shell { width: 100%; min-height: 260px; padding: 8px; background: #000; border: 1px solid var(--border-card); overflow: hidden; touch-action: none; overscroll-behavior: contain; }
 .terminal-input-row { display: flex; gap: 10px; align-items: center; }
 .terminal-input { flex: 1; }
 .terminal-input :deep(.el-input__wrapper) { background: #000; border: 1px solid var(--border-card); box-shadow: none; }
@@ -546,12 +594,12 @@ onBeforeUnmount(() => {
   overscroll-behavior: contain;
   /* 老 iOS 惯性滚动 */
   -webkit-overflow-scrolling: touch;
-  /* 纵向滚动手势直接交给 viewport（避免浏览器等待双击缩放判定造成延迟/卡顿） */
-  touch-action: pan-y;
+  /* 触摸完全交由 JS 手动滚动控制（见 setupTerminalTouch），禁用浏览器原生滚动/缩放 */
+  touch-action: none;
 }
 :deep(.xterm-screen) {
-  /* 触摸实际落在 screen 上：声明允许纵向平移，滚动才跟手（xterm 默认 auto 会与页面手势抢） */
-  touch-action: pan-y;
+  /* 触摸实际落在 screen 上：禁用浏览器原生手势，全部由 JS 接管滚动 */
+  touch-action: none;
 }
 :deep(.xterm-screen) { /* 去掉绿色辉光，默认白色文本更干净 */ }
 
