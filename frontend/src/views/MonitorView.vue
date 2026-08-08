@@ -42,7 +42,10 @@
         <div v-else class="proc-list">
           <div v-for="(p, i) in monitorStore.processes" :key="i" class="proc-row">
             <span class="proc-role" :class="p.role">{{ roleLabel(p.role) }}</span>
-            <span class="proc-name mono" :title="p.cmdline">{{ p.name }}</span>
+            <span class="proc-name mono" :title="p.cmdline">
+              <template v-if="p.instance_name">{{ p.instance_name }}</template>
+              <template v-else>{{ p.role === 'server' ? 'uvicorn 服务' : p.name }}</template>
+            </span>
             <span class="proc-pid mono">#{{ p.pid }}</span>
             <span class="proc-cpu mono" :style="{ color: p.cpu_percent > 60 ? '#f56c6c' : 'var(--green-primary)' }">{{ p.cpu_percent }}%</span>
             <span class="proc-mem mono">{{ p.mem_mb }}MB</span>

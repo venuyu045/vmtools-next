@@ -128,11 +128,45 @@ class MonitorCollector:
         }
 
     def _collect_process_stats(self) -> list[dict]:
-        """采集项目相关进程的资源占用（mineflayer node / MCC mono / uvicorn）。
+        """采集项目相关进程的资源占用（mineflayer node / MCC / uvicorn）。
 
         匹配规则：命令行含 bot_main.js（MF）、MinecraftClient（MCC）、
         或本服务 python/uvicorn 进程。
+        每个 bot 进程关联到具体实例（优先读 VMT_INSTANCE_ID 环境变量，
+        兜底用 mcc_instances.pid 映射），输出 instance_id / instance_name。
         """
+        # 每轮轻量查询一次实例 pid → 实例信息（10s 一次，实例数少，可接受）
+        instance_by_pid: dict[int, dict] = {}
+        try:
+            from vmtools_next.data.db import get_session_factory
+            from vmtools_next.data.models.mcc_remote import MccInstanceModel
+            Session = get_session_factory()
+            db = Session()
+            try:
+                rows = db.query(
+                    MccInstanceModel.instance_id,
+                    MccInstanceModel.display_name,
+                    MccInstanceModel.slug,
+                    MccInstanceModel.bot_engine,
+                    MccInstanceModel.mc_username,
+                    MccInstanceModel.pid,
+                ).filter(
+                    MccInstanceModel.deleted_at.is_(None),
+                    MccInstanceModel.pid.isnot(None),
+                ).all()
+                for r in rows:
+                    if r[5]:
+                        instance_by_pid[r[5]] = {
+                            "instance_id": r[0],
+                            "instance_name": (r[1] or r[2] or r[0])[:40],
+                            "engine": r[3] or "mcc",
+                            "mc_username": r[4] or "",
+                        }
+            finally:
+                db.close()
+        except Exception:
+            pass
+
         results: list[dict] = []
         try:
             for proc in psutil.process_iter(["pid", "name", "cmdline"]):
@@ -152,13 +186,40 @@ class MonitorCollector:
                         mem = proc.memory_info().rss / (1024 * 1024)
                     except Exception:
                         continue
+
+                    role = "mineflayer" if is_bot else ("mcc" if is_mcc else "server")
+                    pid = proc.pid
+
+                    # 关联实例：优先 VMT_INSTANCE_ID 环境变量（MCC/MF 启动时注入）
+                    instance_id: str | None = None
+                    instance_name: str | None = None
+                    try:
+                        env_inst = proc.environ().get("VMT_INSTANCE_ID")
+                        if env_inst:
+                            instance_id = env_inst
+                    except Exception:
+                        env_inst = None
+                    if not instance_id:
+                        info = instance_by_pid.get(pid)
+                        if info:
+                            instance_id = info["instance_id"]
+                            instance_name = info["instance_name"]
+                    if instance_id and not instance_name:
+                        # 环境变量方式命中实例 id 时，从映射反查名字
+                        for info in instance_by_pid.values():
+                            if info["instance_id"] == instance_id:
+                                instance_name = info["instance_name"]
+                                break
+
                     results.append({
                         "name": name,
-                        "pid": proc.pid,
+                        "pid": pid,
                         "cpu_percent": round(cpu, 1),
                         "mem_mb": round(mem, 1),
                         "cmdline": cmdline[:160],
-                        "role": "mineflayer" if is_bot else ("mcc" if is_mcc else "server"),
+                        "role": role,
+                        "instance_id": instance_id,
+                        "instance_name": instance_name,
                     })
                 except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
                     continue
