@@ -85,6 +85,7 @@ async function main() {
     authServerUrl: args.auth_server_url || process.env.AUTH_SERVER_URL || '',
     viewerPort: args.viewer_port || parseInt(process.env.VIEWER_PORT || '0', 10),
     viewerHost: args.viewer_host || process.env.VIEWER_HOST || '0.0.0.0',
+    viewerPrefix: args.viewer_prefix || process.env.VIEWER_PREFIX || '',
     viewerFirstPerson: args.viewer_first_person === true || args.viewer_first_person === 1 || String(args.viewer_first_person) === 'true',
     viewerDistance: args.viewer_distance || parseInt(process.env.VIEWER_DISTANCE || '6', 10),
   };

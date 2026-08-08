@@ -68,6 +68,7 @@ class MineflayerProcessManager:
         )
         self._preferred_viewer_port = getattr(config, 'mineflayer_viewer_preferred_port', 3007)
         self._viewer_host = getattr(config, 'mineflayer_viewer_host', '0.0.0.0')
+        self._viewer_prefix = getattr(config, 'mineflayer_viewer_prefix', '')
         self._node_path = self._find_node()
         self._script_path = self._find_script()
         # 终端日志缓冲：与 MccProcessManager 共用 TerminalLogBuffer，
@@ -221,6 +222,8 @@ class MineflayerProcessManager:
             # 3D 查看器参数（viewer_port>0 才启用）
             if viewer_port > 0:
                 cmd += ["--viewer-port", str(viewer_port), "--viewer-host", self._viewer_host]
+                if self._viewer_prefix:
+                    cmd += ["--viewer-prefix", self._viewer_prefix]
 
             # ── 认���方式处理 ──
             auth_type = account_profile.auth_type if account_profile else "offline"

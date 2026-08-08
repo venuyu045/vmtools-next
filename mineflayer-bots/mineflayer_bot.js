@@ -71,9 +71,10 @@ async function createBotProcess(options) {
     version = '1.21.11',
     statusInterval = 5000,
     viewerPort = 0,
-    viewerHost = '0.0.0.0',
-    viewerFirstPerson = false,
-    viewerDistance = 6,
+  viewerHost = '0.0.0.0',
+  viewerPrefix = '',
+  viewerFirstPerson = false,
+  viewerDistance = 6,
   } = options;
 
   // ── 1. 创建 mineflayer bot ──
@@ -218,11 +219,12 @@ async function createBotProcess(options) {
         try {
           const startViewer = require('./viewer');
           startViewer(bot, {
-            port: viewerPort,
-            host: viewerHost,
-            firstPerson: viewerFirstPerson,
-            viewDistance: viewerDistance,
-          });
+      port: viewerPort,
+      host: viewerHost,
+      prefix: viewerPrefix,
+      firstPerson: viewerFirstPerson,
+      viewDistance: viewerDistance,
+    });
           console.log(`${ANSI.cyan}[viewer]${ANSI.reset} 3D viewer listening on ${viewerHost}:${viewerPort}`);
         } catch (err) {
           console.error(`${ANSI.red}[viewer]${ANSI.reset} failed to start:`, err.message);

@@ -181,10 +181,10 @@ function coordText(bot: BotStatus): string {
 }
 
 function viewerUrl(bot: BotStatus): string {
-  // viewer 服务监听 0.0.0.0，直接用当前访问 vmtools 的 hostname + 实例 viewer 端口
-  const port = bot.viewer_port
-  if (!port) return '#'
-  return `${window.location.protocol}//${window.location.hostname}:${port}/`
+  // viewer 经 OpenResty 反代挂在同域 /viewer/ 下（80/443 端口，用户侧非常规端口 3007 常被网络拦截）
+  // 前端用当前访问 vmtools 的 hostname + 反代路径即可，无需知道实例的原始 viewer 端口
+  if (!bot.viewer_port) return '#'
+  return `${window.location.protocol}//${window.location.hostname}/viewer/`
 }
 
 async function load() {
