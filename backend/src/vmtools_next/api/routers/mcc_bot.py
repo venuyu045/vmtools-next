@@ -311,6 +311,18 @@ def bot_status_overview(engine: str = "mcc",
 
         nearest = _nearest_residence(loc, residences) if loc else None
 
+        # 3D 查看器端口：mineflayer 进程由 MineflayerProcessManager 管理，
+        # 从进程句柄实时取 viewer_port（viewer 未启用/进程不在时 None）
+        viewer_port = None
+        if engine_of_bot == "mineflayer" and inst:
+            try:
+                from vmtools_next.main import get_mineflayer_process_manager
+                mgr = get_mineflayer_process_manager()
+                if mgr:
+                    viewer_port = mgr.get_viewer_port(inst.instance_id)
+            except Exception:
+                viewer_port = None
+
         items.append(MccBotStatusItem(
             bot_id=b.bot_id,
             name=b.name or b.bot_id,
@@ -320,6 +332,7 @@ def bot_status_overview(engine: str = "mcc",
             current_food=b.current_food,
             current_location=loc,
             mcp_port=mcp_port,
+            viewer_port=viewer_port,
             last_heartbeat=last_hb,
             nearest_residence=nearest,
             current_task=task_by_bot.get(b.bot_id),

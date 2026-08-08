@@ -70,6 +70,7 @@ class MccBotStatusItem(BaseModel):
     current_food: Optional[int] = None
     current_location: Optional[dict] = None
     mcp_port: Optional[int] = None
+    viewer_port: Optional[int] = None  # 3D 查看器端口（mineflayer，viewer 未启用时为 None）
     last_heartbeat: Optional[str] = None
     nearest_residence: Optional[NearestResidence] = None
     current_task: Optional[BotCurrentTask] = None  # 当前在做的工作（无则空闲）

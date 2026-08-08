@@ -21,6 +21,14 @@
         <div class="card-head">
           <span class="bot-name">{{ bot.name }}</span>
           <span class="bot-id">{{ bot.bot_id }}</span>
+          <a
+            v-if="bot.viewer_port && bot.status === 'online'"
+            class="viewer-link"
+            :href="viewerUrl(bot)"
+            target="_blank"
+            rel="noopener"
+            title="打开该 MF 实例的实时 3D 预览"
+          >视奸→</a>
           <span class="status-badge" :class="bot.status">{{ statusLabel(bot.status) }}</span>
         </div>
 
@@ -111,6 +119,7 @@ interface BotStatus {
   current_location: { x?: number; y?: number; z?: number } | null
   nearest_residence: NearestResidence | null
   current_task: BotCurrentTask | null
+  viewer_port: number | null
 }
 
 const items = ref<BotStatus[]>([])
@@ -169,6 +178,13 @@ function coordText(bot: BotStatus): string {
   const loc = bot.current_location
   if (!loc || loc.x == null || loc.z == null) return '—'
   return `x ${Math.round(loc.x)}  y ${loc.y != null ? Math.round(loc.y) : '?'}  z ${Math.round(loc.z)}`
+}
+
+function viewerUrl(bot: BotStatus): string {
+  // viewer 服务监听 0.0.0.0，直接用当前访问 vmtools 的 hostname + 实例 viewer 端口
+  const port = bot.viewer_port
+  if (!port) return '#'
+  return `${window.location.protocol}//${window.location.hostname}:${port}/`
 }
 
 async function load() {
@@ -327,6 +343,23 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   gap: 10px;
+}
+
+/* 「视奸→」：白色小字，贴在卡片右上角（状态徽章左侧） */
+.viewer-link {
+  margin-left: auto;
+  color: #fff;
+  font-size: 11px;
+  opacity: 0.8;
+  text-decoration: none;
+  cursor: pointer;
+  white-space: nowrap;
+  font-family: var(--font-body);
+}
+
+.viewer-link:hover {
+  opacity: 1;
+  text-decoration: underline;
 }
 
 .bot-name {
