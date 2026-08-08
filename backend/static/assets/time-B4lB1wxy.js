@@ -1,0 +1,1 @@
+function e(e){if(e==null||e===``)return null;if(typeof e==`number`){let t=new Date(e);return Number.isNaN(t.getTime())?null:t}let t=/(?:Z|[+-]\d{2}:?\d{2})$/.test(e)?e:e+`Z`,n=new Date(t);return Number.isNaN(n.getTime())?null:n}function t(t,n={}){let r=e(t);return r?r.toLocaleString(`zh-CN`,{hour12:!1,...n}):`—`}export{e as n,t};

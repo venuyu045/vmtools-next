@@ -75,7 +75,7 @@
           class="event-item"
           :class="ev.event"
         >
-          <span class="event-time">{{ new Date(ev.time).toLocaleString() }}</span>
+          <span class="event-time">{{ fmtApiTime(ev.time) }}</span>
           <span class="event-dot" :class="ev.event === 'join' ? 'dot-active' : 'dot-leave'"></span>
           <span class="event-name">{{ ev.name }}</span>
           <span class="event-action">{{ ev.event === 'join' ? '上线了' : '离线了' }}</span>
@@ -91,6 +91,7 @@
 <script setup lang="ts">
 import { useOnlinePlayersStore } from '@/stores/onlinePlayers'
 import PlayerTag from '@/components/PlayerTag.vue'
+import { fmtApiTime } from '@/utils/time'
 
 const playerStore = useOnlinePlayersStore()
 </script>

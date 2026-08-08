@@ -110,6 +110,7 @@
 import { onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { membersApi, type MemberUser } from '@/api/members'
+import { parseApiDate } from '@/utils/time'
 
 const loading = ref(false)
 const users = ref<MemberUser[]>([])
@@ -145,9 +146,9 @@ function statusLabel(status: string): string {
 }
 
 function formatTime(t: string | null): string {
-  if (!t) return '—'
-  const d = new Date(t)
-  if (Number.isNaN(d.getTime())) return t
+  // 后端统一存 UTC；naive（无时区）字符串按 UTC 解析再转本地显示，避免差 8 小时
+  const d = parseApiDate(t)
+  if (!d) return t ? t : '—'
   const pad = (n: number) => String(n).padStart(2, '0')
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
 }

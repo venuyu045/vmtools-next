@@ -145,6 +145,7 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElNotification, ElMessage } from 'element-plus'
 import { useWarehouseStore, type WarehouseZone } from '@/stores/warehouse'
+import { fmtApiTime } from '@/utils/time'
 import { useBotStore } from '@/stores/bot'
 import { useMccInstanceStore } from '@/stores/mccInstance'
 import { useSocketIO } from '@/composables/useSocketIO'
@@ -255,7 +256,7 @@ function formatEta(seconds: number | null) {
 
 function formatTime(iso: string | null) {
   if (!iso) return '--'
-  return new Date(iso).toLocaleString()
+  return fmtApiTime(iso)
 }
 
 async function refreshAll() {

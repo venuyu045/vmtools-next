@@ -64,13 +64,14 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { useWarehouseStore } from '@/stores/warehouse'
+import { fmtApiTime } from '@/utils/time'
 import { ElMessage } from 'element-plus'
 import { fmtBigNum, fmtExact } from '@/utils/format'
 
 function fmtTime(iso: string | null): string {
   if (!iso) return '--'
   try {
-    return new Date(iso).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
+    return fmtApiTime(iso, { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
   } catch {
     return iso
   }

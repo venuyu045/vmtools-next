@@ -101,6 +101,7 @@ import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import ItemIcon from '@/components/ItemIcon.vue'
+import { fmtApiTime } from '@/utils/time'
 import { warehouseApi } from '@/api/warehouse'
 import { boxCount, fmtBigNum, fmtExact } from '@/utils/format'
 
@@ -125,7 +126,7 @@ function fmtNum(v: any): string {
   return Number(v).toLocaleString()
 }
 function fmtTime(iso: string): string {
-  try { return new Date(iso).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) } catch { return iso }
+  try { return fmtApiTime(iso, { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) } catch { return iso }
 }
 function gotoWarehouse(id: string) { router.push(`/warehouse-status/${id}`) }
 
