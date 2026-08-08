@@ -262,9 +262,11 @@ onBeforeUnmount(() => {
 }
 
 .page-title {
-  font-family: var(--font-pixel);
-  font-size: 16px;
-  color: var(--green-primary);
+  font-family: var(--font-display);
+  font-size: 24px;
+  font-weight: 400;
+  letter-spacing: -0.6px;
+  color: var(--text-primary);
   margin: 0;
 }
 

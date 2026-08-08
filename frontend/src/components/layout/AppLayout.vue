@@ -176,7 +176,7 @@ onBeforeUnmount(() => {
   width: 260px !important;
   max-width: 80vw;
   z-index: 200;
-  box-shadow: 4px 0 20px rgba(0, 0, 0, 0.6);
+  box-shadow: var(--shadow-lg);
 }
 
 /* ---- Mobile Overlay ---- */

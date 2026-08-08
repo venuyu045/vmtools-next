@@ -242,8 +242,9 @@ function isActive(item: { path: string }): boolean {
 
 .collapse-btn {
   background: none;
-  border: 1px solid var(--border-card);
-  color: var(--green-primary);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  color: var(--text-secondary);
   width: 30px;
   height: 30px;
   display: flex;
@@ -252,11 +253,12 @@ function isActive(item: { path: string }): boolean {
   cursor: pointer;
   font-size: 12px;
   flex-shrink: 0;
+  transition: background-color 150ms var(--ease-out), border-color 150ms var(--ease-out), color 150ms var(--ease-out);
 }
 
 .collapse-btn:hover {
-  border-color: var(--border-active);
-  background: var(--green-glow);
+  border-color: var(--accent);
+  background: var(--bg-hover);
   color: var(--text-primary);
 }
 
@@ -268,9 +270,11 @@ function isActive(item: { path: string }): boolean {
 }
 
 .logo-text {
-  font-family: var(--font-pixel);
-  font-size: 14px;
-  color: var(--green-primary);
+  font-family: var(--font-display);
+  font-size: 18px;
+  font-weight: 400;
+  letter-spacing: -0.5px;
+  color: var(--text-primary);
   white-space: nowrap;
   transition: opacity 0.2s ease;
 }
@@ -302,25 +306,27 @@ function isActive(item: { path: string }): boolean {
   align-items: center;
   gap: 8px;
   width: 100%;
-  padding: 8px 16px;
+  padding: 8px 14px;
   background: none;
   border: none;
+  border-radius: var(--radius-md);
   cursor: pointer;
   color: var(--text-muted);
-  font-family: var(--font-mono);
-  font-size: 11px;
-  letter-spacing: 1px;
+  font-family: var(--font-sans);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
   text-transform: uppercase;
-  opacity: 0.75;
-  transition: all 0.12s;
+  opacity: 0.9;
+  transition: background-color 150ms var(--ease-out), color 150ms var(--ease-out);
   text-align: left;
   min-height: 34px;
 }
 
 .nav-group-title-btn:hover {
   opacity: 1;
-  color: var(--green-primary);
-  background: var(--green-glow);
+  color: var(--accent);
+  background: var(--bg-hover);
 }
 
 /* 整栏折叠（collapsed）时分组标题不可点击：置灰并禁用 hover 反馈 */
@@ -343,13 +349,14 @@ function isActive(item: { path: string }): boolean {
 }
 
 .nav-group-title-btn:hover .group-arrow {
-  color: var(--green-primary);
+  color: var(--accent);
 }
 
 .group-dot {
   width: 6px;
   height: 6px;
-  background: var(--green-primary);
+  border-radius: 50%;
+  background: var(--accent);
   opacity: 0.5;
   flex-shrink: 0;
 }
@@ -368,36 +375,51 @@ function isActive(item: { path: string }): boolean {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 10px 20px;
+  padding: 0 12px;
   text-decoration: none;
   color: var(--text-secondary);
-  font-family: var(--font-body);
+  font-family: var(--font-sans);
   font-size: 14px;
-  transition: all 0.1s;
+  font-weight: 500;
+  border-radius: var(--radius-md);
+  position: relative;
+  transition: background-color 150ms var(--ease-out), color 150ms var(--ease-out);
   cursor: pointer;
   /* Touch-friendly: min 44px height */
   min-height: 44px;
 }
 
 .sidebar.collapsed .nav-item {
-  padding: 10px 0;
+  padding: 0;
   justify-content: center;
 }
 
 .nav-item:hover {
-  background: var(--green-glow);
+  background: var(--bg-hover);
   color: var(--text-primary);
 }
 
 .nav-item.active {
-  background: var(--green-glow);
-  color: var(--green-primary);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.nav-item.active::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 12px;
+  bottom: 12px;
+  width: 3px;
+  border-radius: 2px;
+  background: var(--accent);
 }
 
 .nav-dot {
   width: 6px;
   height: 6px;
-  background: var(--green-primary);
+  border-radius: 50%;
+  background: var(--accent);
   flex-shrink: 0;
 }
 
@@ -429,17 +451,18 @@ function isActive(item: { path: string }): boolean {
 }
 
 .status-text {
-  font-family: var(--font-mono);
-  font-size: 14px;
-  color: var(--green-primary);
-  opacity: 0.7;
+  font-family: var(--font-sans);
+  font-size: 13px;
+  color: var(--text-secondary);
+  opacity: 0.85;
   white-space: nowrap;
 }
 
 .status-dot {
   width: 8px;
   height: 8px;
-  background: var(--green-primary);
+  border-radius: 50%;
+  background: var(--success);
   flex-shrink: 0;
 }
 

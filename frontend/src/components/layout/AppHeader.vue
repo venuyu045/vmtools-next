@@ -138,8 +138,9 @@ async function submitChangePwd() {
 .sidebar-toggle,
 .mobile-menu-btn {
   background: none;
-  border: 1px solid var(--border-card);
-  color: var(--green-primary);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  color: var(--text-secondary);
   width: 32px;
   height: 32px;
   display: flex;
@@ -148,20 +149,23 @@ async function submitChangePwd() {
   cursor: pointer;
   font-size: 14px;
   flex-shrink: 0;
+  transition: background-color 150ms var(--ease-out), border-color 150ms var(--ease-out), color 150ms var(--ease-out);
 }
 
 .sidebar-toggle:hover,
 .mobile-menu-btn:hover {
-  border-color: var(--border-active);
-  background: var(--green-glow);
+  border-color: var(--accent);
+  background: var(--bg-hover);
   color: var(--text-primary);
 }
 
 /* ---- Page Title ---- */
 .page-title {
-  font-family: var(--font-pixel);
-  font-size: 16px;
-  color: var(--green-primary);
+  font-family: var(--font-display);
+  font-size: 18px;
+  font-weight: 400;
+  letter-spacing: -0.5px;
+  color: var(--text-primary);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -178,7 +182,8 @@ async function submitChangePwd() {
 .user-dot {
   width: 8px;
   height: 8px;
-  background: var(--green-primary);
+  border-radius: 50%;
+  background: var(--success);
   flex-shrink: 0;
 }
 
@@ -195,19 +200,21 @@ async function submitChangePwd() {
 
 .profile-btn {
   background: none;
-  border: 1px solid var(--border-card);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
   color: var(--text-secondary);
   padding: 5px 14px;
   font-size: 12px;
   cursor: pointer;
-  font-family: var(--font-body);
+  font-family: var(--font-sans);
   flex-shrink: 0;
+  transition: background-color 150ms var(--ease-out), border-color 150ms var(--ease-out), color 150ms var(--ease-out);
 }
 
 .profile-btn:hover {
-  border-color: var(--border-active);
+  border-color: var(--accent);
   color: var(--text-primary);
-  background: var(--green-glow);
+  background: var(--bg-hover);
 }
 
 /* 未登录「登录」按钮（访客模式入口） */
@@ -258,9 +265,9 @@ async function submitChangePwd() {
   font-size: 13px;
   color: var(--text-primary);
   cursor: pointer;
-  border-radius: 4px;
-  font-family: var(--font-body);
-  transition: background 0.15s;
+  border-radius: var(--radius-md);
+  font-family: var(--font-sans);
+  transition: background-color 150ms var(--ease-out), color 150ms var(--ease-out);
 }
 
 .profile-item:hover {
