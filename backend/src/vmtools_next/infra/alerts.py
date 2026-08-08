@@ -52,6 +52,7 @@ class AlertRule:
         self.severity = severity
         self.cooldown_seconds = cooldown_seconds
         self.last_triggered: float = 0
+        self.enabled: bool = True  # 规则启用状态（接口 /api/monitor/alerts 依赖此字段）
 
     def evaluate(self, value: float) -> bool:
         """Check if the rule is triggered."""
