@@ -4,7 +4,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from vmtools_next.api.deps import get_current_user, require_admin
+from vmtools_next.api.deps import require_admin
 
 router = APIRouter(prefix="/api/plugins", tags=["plugins"])
 
@@ -22,67 +22,67 @@ class ConfigUpdateRequest(BaseModel):
 
 
 @router.get("", response_model=list[PluginResponse])
-def list_plugins(user=Depends(get_current_user)):
+def list_plugins(user=Depends(require_admin)):
     """List all plugins (mineflayer engine only)."""
-    try:
-        from vmtools_next.main import get_plugin_manager
-        pm = get_plugin_manager()
-        if pm:
-            return [
-                PluginResponse(
-                    name=p.name,
-                    version=p.version,
-                    enabled=pm.is_enabled(p.name),
-                    engine=getattr(p, "engine", "mineflayer"),
-                    description=getattr(p, "description", ""),
-                )
-                for p in pm.plugins.values()
-            ]
-    except Exception:
-        pass
-    return []
+    from vmtools_next.main import get_plugin_manager
+    pm = get_plugin_manager()
+    if pm is None:
+        raise HTTPException(status_code=503, detail="Plugin manager unavailable")
+    return [
+        PluginResponse(
+            name=p.name,
+            version=p.version,
+            enabled=pm.is_enabled(p.name),
+            engine=getattr(p, "engine", "mineflayer"),
+            description=getattr(p, "description", ""),
+        )
+        for p in pm.plugins.values()
+    ]
 
 
 @router.post("/{name}/enable")
 async def enable_plugin(name: str, user=Depends(require_admin)):
     """Enable a plugin."""
-    try:
-        from vmtools_next.main import get_plugin_manager
-        pm = get_plugin_manager()
-        if pm:
-            success = await pm.enable(name)
-            return {"name": name, "status": "enabled" if success else "not_found"}
-    except Exception:
-        pass
-    return {"name": name, "status": "error"}
+    from vmtools_next.main import get_plugin_manager
+    pm = get_plugin_manager()
+    if pm is None:
+        raise HTTPException(status_code=503, detail="Plugin manager unavailable")
+    if name not in pm.plugins:
+        raise HTTPException(status_code=404, detail=f"Plugin not found: {name}")
+    ok = await pm.enable(name)
+    if not ok:
+        raise HTTPException(status_code=500, detail=f"Failed to enable plugin: {name}")
+    return {"name": name, "status": "enabled"}
 
 
 @router.post("/{name}/disable")
 async def disable_plugin(name: str, user=Depends(require_admin)):
     """Disable a plugin."""
-    try:
-        from vmtools_next.main import get_plugin_manager
-        pm = get_plugin_manager()
-        if pm:
-            success = await pm.disable(name)
-            return {"name": name, "status": "disabled" if success else "not_found"}
-    except Exception:
-        pass
-    return {"name": name, "status": "error"}
+    from vmtools_next.main import get_plugin_manager
+    pm = get_plugin_manager()
+    if pm is None:
+        raise HTTPException(status_code=503, detail="Plugin manager unavailable")
+    if name not in pm.plugins:
+        raise HTTPException(status_code=404, detail=f"Plugin not found: {name}")
+    ok = await pm.disable(name)
+    if not ok:
+        raise HTTPException(status_code=500, detail=f"Failed to disable plugin: {name}")
+    return {"name": name, "status": "disabled"}
 
 
 @router.post("/{name}/reload")
 async def reload_plugin(name: str, user=Depends(require_admin)):
     """Reload a plugin."""
-    try:
-        from vmtools_next.main import get_plugin_manager
-        pm = get_plugin_manager()
-        if pm:
-            success = await pm.reload(name)
-            return {"name": name, "status": "reloaded" if success else "not_found"}
-    except Exception:
-        pass
-    return {"name": name, "status": "error"}
+    from vmtools_next.main import get_plugin_manager
+    pm = get_plugin_manager()
+    if pm is None:
+        raise HTTPException(status_code=503, detail="Plugin manager unavailable")
+    if name not in pm.plugins:
+        raise HTTPException(status_code=404, detail=f"Plugin not found: {name}")
+    ok = await pm.reload(name)
+    if not ok:
+        raise HTTPException(status_code=500, detail=f"Failed to reload plugin: {name}")
+    return {"name": name, "status": "reloaded"}
 
 
 @router.get("/{name}/config")

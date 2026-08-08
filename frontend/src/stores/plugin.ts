@@ -32,7 +32,8 @@ export const usePluginStore = defineStore('plugin', {
       } else {
         await pluginApi.enablePlugin(name)
       }
-      plugin.enabled = !plugin.enabled
+      // 后端失败会抛错（4xx/5xx），成功则重新拉取确保与真实状态一致
+      await this.fetchPlugins()
     },
     async reloadPlugin(name: string) {
       await pluginApi.reloadPlugin(name)

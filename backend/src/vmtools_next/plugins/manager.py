@@ -76,6 +76,24 @@ def _load_persisted_config(name: str) -> Optional[dict]:
         return None
 
 
+def _load_persisted_enabled(name: str) -> Optional[bool]:
+    """Read persisted enabled flag; None if never saved (default enabled)."""
+    try:
+        from vmtools_next.data.db import get_session_factory
+        from vmtools_next.data.models.plugin import PluginStateModel
+        db = get_session_factory()()
+        try:
+            row = db.query(PluginStateModel).filter(PluginStateModel.name == name).first()
+            if row is None:
+                return None
+            return bool(row.enabled)
+        finally:
+            db.close()
+    except Exception as e:
+        logger.warning("Failed to load plugin enabled %s: %s", name, e)
+        return None
+
+
 class PluginManager:
     """Manages plugin lifecycle."""
 
@@ -120,11 +138,14 @@ class PluginManager:
                     plugin.apply_config(merged)
                 except Exception as e:
                     logger.warning("Plugin %s apply_config failed: %s", plugin.name, e)
-                _persist_plugin_state(plugin.name, plugin.version, True, merged)
+                # 启用状态持久化：DB 中已禁用则保持禁用（重启不自动恢复启用）
+                persisted_enabled = _load_persisted_enabled(plugin.name)
+                enabled = persisted_enabled if persisted_enabled is not None else True
+                _persist_plugin_state(plugin.name, plugin.version, enabled, merged)
                 self._plugins[plugin.name] = plugin
-                self._enabled[plugin.name] = True
-                logger.info("Loaded builtin plugin: %s v%s (engine=%s)",
-                            plugin.name, plugin.version, plugin.engine)
+                self._enabled[plugin.name] = enabled
+                logger.info("Loaded builtin plugin: %s v%s (engine=%s, enabled=%s)",
+                            plugin.name, plugin.version, plugin.engine, enabled)
             except Exception as e:
                 logger.warning("Failed to load builtin plugin %s: %s", module_path.name, e)
 
