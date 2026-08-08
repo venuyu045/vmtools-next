@@ -174,6 +174,29 @@ function initTerminal() {
         autoScroll.value = true
       }
     }, { passive: true })
+
+    // 移动端边界拦截（双保险）：终端内可滚动时，滚到顶/底继续同向滑 → preventDefault，
+    // 防止手势穿透让页面跟着滚（老浏览器不认 overscroll-behavior）。终端无可滚动内容时不干预。
+    let touchStartY = 0
+    let touchActive = false
+    viewport.addEventListener('touchstart', (e) => {
+      touchActive = true
+      touchStartY = e.touches[0].clientY
+    }, { passive: true })
+    viewport.addEventListener('touchmove', (e) => {
+      if (!terminal || !touchActive) return
+      const maxScroll = viewport.scrollHeight - viewport.clientHeight
+      if (maxScroll <= 0) return // 无历史可滚 → 交还页面滚动
+      const dy = e.touches[0].clientY - touchStartY
+      const atTop = viewport.scrollTop <= 0
+      const atBottom = viewport.scrollTop >= maxScroll - 1
+      // 手指下滑（dy>0，看更早历史）已到顶 / 手指上滑（dy<0，看新内容）已到底 → 拦截穿透
+      if ((atTop && dy > 0) || (atBottom && dy < 0)) {
+        e.preventDefault()
+      }
+    }, { passive: false })
+    viewport.addEventListener('touchend', () => { touchActive = false }, { passive: true })
+    viewport.addEventListener('touchcancel', () => { touchActive = false }, { passive: true })
   }
 
   resizeObserver = new ResizeObserver(() => fitTerminal())
@@ -496,6 +519,12 @@ onBeforeUnmount(() => {
 .conn-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
 .search-icon-btn { cursor: pointer; padding: 2px; margin-left: 4px; }
 .search-icon-btn:hover { color: var(--green-primary); }
+/* 移动端：搜索箭头/发送按钮加大触控区（≥40px，防误触） */
+.search-icon-btn { display: inline-flex; align-items: center; justify-content: center; }
+@media (max-width: 768px) {
+  .search-icon-btn { padding: 8px; margin-left: 2px; }
+  .terminal-input-row .pixel-btn { min-height: 44px; }
+}
 :deep(.xterm) { height: 100%; }
 :deep(.xterm-viewport) {
   scrollbar-color: var(--green-primary) #000;
@@ -503,6 +532,12 @@ onBeforeUnmount(() => {
   overscroll-behavior: contain;
   /* 老 iOS 惯性滚动 */
   -webkit-overflow-scrolling: touch;
+  /* 纵向滚动手势直接交给 viewport（避免浏览器等待双击缩放判定造成延迟/卡顿） */
+  touch-action: pan-y;
+}
+:deep(.xterm-screen) {
+  /* 触摸实际落在 screen 上：声明允许纵向平移，滚动才跟手（xterm 默认 auto 会与页面手势抢） */
+  touch-action: pan-y;
 }
 :deep(.xterm-screen) { /* 去掉绿色辉光，默认白色文本更干净 */ }
 
