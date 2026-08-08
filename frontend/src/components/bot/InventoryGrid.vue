@@ -14,7 +14,7 @@
               @click.left="click(9+(row-1)*9+col-1)"
               @click.right.prevent="rclick(9+(row-1)*9+col-1, $event)"
             >
-              <img v-if="get(9+(row-1)*9+col-1)" :src="icon(get(9+(row-1)*9+col-1)!.item_id)" class="icon" />
+              <ItemIcon v-if="get(9+(row-1)*9+col-1)" :item-id="get(9+(row-1)*9+col-1)!.item_id" :name="label(get(9+(row-1)*9+col-1)!.item_id)" :size="32" class="icon" />
               <span v-if="get(9+(row-1)*9+col-1)" class="count">{{ get(9+(row-1)*9+col-1)!.count }}</span>
             </div>
           </div>
@@ -28,7 +28,7 @@
             @click.left="click(i-1)"
             @click.right.prevent="rclick(i-1, $event)"
           >
-            <img v-if="get(i-1)" :src="icon(get(i-1)!.item_id)" class="icon" />
+            <ItemIcon v-if="get(i-1)" :item-id="get(i-1)!.item_id" :name="label(get(i-1)!.item_id)" :size="32" class="icon" />
             <span v-if="get(i-1)" class="count">{{ get(i-1)!.count }}</span>
             <span class="num">{{ i }}</span>
           </div>
@@ -44,7 +44,7 @@
           @click.left="click(36+i)"
           @click.right.prevent="rclick(36+i, $event)"
         >
-          <img v-if="get(36+i)" :src="icon(get(36+i)!.item_id)" class="icon" />
+          <ItemIcon v-if="get(36+i)" :item-id="get(36+i)!.item_id" :name="label(get(36+i)!.item_id)" :size="32" class="icon" />
           <span v-if="get(36+i)" class="count">{{ get(36+i)!.count }}</span>
           <span class="num">{{ label }}</span>
         </div>
@@ -56,7 +56,7 @@
             @click.left="click(s)"
             @click.right.prevent="rclick(s, $event)"
           >
-            <img v-if="get(s)" :src="icon(get(s)!.item_id)" class="icon" />
+            <ItemIcon v-if="get(s)" :item-id="get(s)!.item_id" :name="label(get(s)!.item_id)" :size="32" class="icon" />
             <span v-if="get(s)" class="count">{{ get(s)!.count }}</span>
           </div>
         </div>
@@ -80,6 +80,7 @@
 
 <script setup lang="ts">
 import { ref, computed } from 'vue'
+import ItemIcon from '@/components/ItemIcon.vue'
 
 interface Slot { slot: number; item_id: string; display_name: string; count: number }
 interface Data { bot_id: string; inventory_id: number; slots: Slot[]; hotbar: number[]; selected_hotbar: number; empty_slots: number; total_items: number }
@@ -99,15 +100,6 @@ const sm = computed(() => {
   return m
 })
 function get(i: number): Slot | undefined { return sm.value[i] }
-
-function icon(id: string): string {
-  return `https://minecraft.wiki/images/Invicon_${inviconName(id)}.png`
-}
-
-function inviconName(id: string): string {
-  // ShulkerBox → Shulker_Box, PlayerHead → Player_Head, Azalea → Azalea
-  return (id||'').replace('minecraft:','').replace(/([a-z])([A-Z])/g,'$1_$2')
-}
 
 function label(id: string): string {
   return (id||'').replace('minecraft:','').replace(/_/g,' ').replace(/\b\w/g,c=>c.toUpperCase())
