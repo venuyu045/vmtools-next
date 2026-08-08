@@ -522,6 +522,9 @@ async def inventory_action(bot_id: str, data: InventoryActionRequest,
             slot_id=data.slot_id,
             action_type=data.action,
         )
+        # MF 引擎不支持窗口槽位点击（返回 success:false）→ 转 400 友好提示
+        if isinstance(result, dict) and result.get("success") is False:
+            raise HTTPException(400, result.get("error", "该引擎不支持此操作"))
         return {"success": True, "action": data.action, "slot": data.slot_id, "result": result}
     except MccMcpError as e:
         raise HTTPException(502, f"MCP error: {str(e) or repr(e)}")

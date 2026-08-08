@@ -32,6 +32,7 @@ METHOD_CLOSE_CONTAINER = "close_container"
 METHOD_GET_CONTAINER_SNAPSHOT = "get_container_snapshot"
 METHOD_WITHDRAW_CONTAINER_ITEM = "withdraw_container_item"
 METHOD_DEPOSIT_CONTAINER_ITEM = "deposit_container_item"
+METHOD_DROP_ITEM = "drop_item"
 
 # Servux 容器预览（不打开容器，直接请求方块实体 NBT）
 METHOD_SERVUX_HANDSHAKE = "servux_handshake"
