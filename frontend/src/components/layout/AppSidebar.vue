@@ -1,7 +1,13 @@
 <template>
   <div class="sidebar" :class="{ collapsed, 'is-mobile': isMobile }">
     <div class="sidebar-logo">
-      <button class="collapse-btn" @click="emit('toggle')" :title="collapseTitle">
+      <button
+        class="collapse-btn"
+        @click="emit('toggle')"
+        :title="collapseTitle"
+        :aria-label="collapseTitle"
+        :aria-expanded="isMobile ? undefined : !collapsed"
+      >
         <span class="collapse-icon">{{ collapseIcon }}</span>
       </button>
       <span class="logo-text" v-show="!collapsed">VMTools</span>
@@ -13,6 +19,8 @@
           <button
             class="nav-group-title-btn"
             :title="group.title"
+            :disabled="collapsed"
+            :aria-expanded="collapsed ? undefined : expanded[group.title]"
             @click="toggleGroup(group.title)"
           >
             <span class="group-arrow" v-show="!collapsed">{{ expanded[group.title] ? '▾' : '▸' }}</span>
@@ -28,6 +36,7 @@
                 class="nav-item"
                 :class="{ active: isActive(item) }"
                 :title="item.label"
+                :aria-current="isActive(item) ? 'page' : undefined"
                 @click="onNavClick"
               >
                 <span class="nav-dot"></span>
@@ -43,6 +52,7 @@
               class="nav-item"
               :class="{ active: isActive(item) }"
               :title="item.label"
+              :aria-current="isActive(item) ? 'page' : undefined"
               @click="onNavClick"
             >
               <span class="nav-dot"></span>
@@ -311,6 +321,18 @@ function isActive(item: { path: string }): boolean {
   opacity: 1;
   color: var(--green-primary);
   background: var(--green-glow);
+}
+
+/* 整栏折叠（collapsed）时分组标题不可点击：置灰并禁用 hover 反馈 */
+.nav-group-title-btn:disabled {
+  cursor: default;
+  opacity: 0.4;
+}
+
+.nav-group-title-btn:disabled:hover {
+  opacity: 0.4;
+  color: var(--text-muted);
+  background: none;
 }
 
 .group-arrow {

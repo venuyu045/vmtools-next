@@ -1,8 +1,8 @@
 <template>
   <div class="app-layout" :class="{ 'mobile-open': mobileDrawerOpen }">
     <!-- Desktop Sidebar（访客也显示：未登录 roleRank=guest，侧边栏自动只显示总览+工具） -->
-    <aside class="app-sidebar desktop-only" :class="{ collapsed: isCollapsed }">
-      <AppSidebar :collapsed="isCollapsed" @toggle="isCollapsed = !isCollapsed" />
+    <aside class="app-sidebar desktop-only" :class="{ collapsed: sidebarCollapsed }">
+      <AppSidebar :collapsed="sidebarCollapsed" @toggle="toggleSidebar" />
     </aside>
 
     <!-- Mobile Drawer Overlay -->
@@ -20,8 +20,7 @@
     <div class="app-body">
       <header class="app-header">
         <AppHeader
-          :is-mobile="true"
-          @toggle-sidebar="isCollapsed = !isCollapsed"
+          @toggle-sidebar="toggleSidebar"
           @open-mobile-menu="mobileDrawerOpen = true"
         />
       </header>
@@ -46,7 +45,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import AppSidebar from './AppSidebar.vue'
@@ -92,23 +91,56 @@ onBeforeUnmount(() => {
   }
 })
 
-const isCollapsed = ref(false)
+/** 桌面侧边栏折叠状态：localStorage 持久化，刷新/重进不丢失 */
+const COLLAPSE_STATE_KEY = 'vmtools-sidebar-collapsed'
+const isCollapsed = ref(localStorage.getItem(COLLAPSE_STATE_KEY) === '1')
 const mobileDrawerOpen = ref(false)
+
+function toggleSidebar() {
+  isCollapsed.value = !isCollapsed.value
+  try {
+    localStorage.setItem(COLLAPSE_STATE_KEY, isCollapsed.value ? '1' : '0')
+  } catch { /* 忽略（隐私模式等） */ }
+}
+
+/**
+ * 平板（769–1024px）：global.css 媒体查询强制桌面侧边栏 60px 宽，
+ * 但 CSS 无法同步组件内部折叠态 → 需 JS 联动，否则展开态内容（logo/分组标题/标签）溢出被裁剪。
+ * sidebarCollapsed = 用户手动折叠 || 平板区间自动折叠。
+ */
+const isTabletAutoCollapsed = ref(false)
+const sidebarCollapsed = computed(() => isCollapsed.value || isTabletAutoCollapsed.value)
+
+/** 移动抽屉打开时锁定 body 滚动（防背景滚动穿透）；ESC 关闭抽屉 */
+watch(mobileDrawerOpen, (open) => {
+  document.body.style.overflow = open ? 'hidden' : ''
+})
+function onDrawerKeydown(e: KeyboardEvent) {
+  if (e.key === 'Escape' && mobileDrawerOpen.value) {
+    mobileDrawerOpen.value = false
+  }
+}
 
 /** 桌面宽度下强制关闭移动抽屉，避免「窗口拉宽后桌面栏+抽屉并存」出现两个侧边栏 */
 function handleViewportChange() {
   if (window.matchMedia('(min-width: 769px)').matches) {
     mobileDrawerOpen.value = false
   }
+  isTabletAutoCollapsed.value =
+    window.matchMedia('(max-width: 1024px)').matches &&
+    window.matchMedia('(min-width: 769px)').matches
 }
 
 onMounted(() => {
   window.addEventListener('resize', handleViewportChange)
+  window.addEventListener('keydown', onDrawerKeydown)
   handleViewportChange()
 })
 
 onBeforeUnmount(() => {
   window.removeEventListener('resize', handleViewportChange)
+  window.removeEventListener('keydown', onDrawerKeydown)
+  document.body.style.overflow = ''
 })
 </script>
 

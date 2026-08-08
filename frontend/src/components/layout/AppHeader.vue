@@ -74,7 +74,6 @@ import { ElMessage } from 'element-plus'
 import { useAuthStore, roleLabel } from '@/stores/auth'
 import { authApi } from '@/api/auth'
 
-defineProps<{ isMobile?: boolean }>()
 const emit = defineEmits<{
   toggleSidebar: []
   openMobileMenu: []
