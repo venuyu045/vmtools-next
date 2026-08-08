@@ -4,7 +4,7 @@
     <div class="stats-row">
       <div class="stat-item">
         <div class="stat-indicator" style="border-color: rgba(0,255,0,0.3)">
-          <span class="stat-value" style="color: var(--green-primary)">{{ botStore.onlineCount }}</span>
+          <span class="stat-value" style="color: var(--green-primary)">{{ statValue(botStore.loading, botStore.bots.length > 0, botStore.onlineCount) }}</span>
         </div>
         <div>
           <div class="stat-label">在线 Bot</div>
@@ -13,7 +13,7 @@
       </div>
       <div class="stat-item">
         <div class="stat-indicator" style="border-color: rgba(24,144,255,0.3)">
-          <span class="stat-value" style="color: #1890ff">{{ playerStore.count }}</span>
+          <span class="stat-value" style="color: #1890ff">{{ localPlayerCount }}</span>
         </div>
         <div>
           <div class="stat-label">在线玩家</div>
@@ -22,7 +22,7 @@
       </div>
       <div class="stat-item">
         <div class="stat-indicator" style="border-color: rgba(255,255,0,0.3)">
-          <span class="stat-value" style="color: #ffff00">{{ warehouseStore.warehouses.length }}</span>
+          <span class="stat-value" style="color: #ffff00">{{ statValue(warehouseStore.loading, warehouseStore.warehouses.length > 0, warehouseStore.warehouses.length) }}</span>
         </div>
         <div>
           <div class="stat-label">仓库数量</div>
@@ -85,6 +85,7 @@
               <span class="bot-name">{{ bot.name || bot.bot_id }}</span>
               <span class="bot-id mono">{{ bot.bot_id }}</span>
             </div>
+            <div v-if="botStore.onlineBots.length > 6" class="more-hint mono">… 还有 {{ botStore.onlineBots.length - 6 }} 个，见状态页</div>
           </div>
         </div>
       </div>
@@ -102,6 +103,7 @@
               <span class="wh-name">{{ w.name || w.warehouse_id.slice(0, 8) }}</span>
               <span class="wh-meta mono">{{ fmtBigNum(w.total_items || 0) }} 物品</span>
             </div>
+            <div v-if="warehouseStore.warehouses.length > 5" class="more-hint mono">… 还有 {{ warehouseStore.warehouses.length - 5 }} 个仓库</div>
           </div>
         </div>
 
@@ -143,23 +145,41 @@ const playerStore = useOnlinePlayersStore()
 
 const totalItems = computed(() => warehouseStore.warehouses.reduce((sum, w) => sum + (w.total_items || 0), 0))
 
+// 在线玩家统计：与「当前在线玩家」面板口径一致（排除 foreign 玩家，避免数字与列表不符）
+const localPlayerCount = computed(() => playerStore.players.filter(p => !p.foreign).length)
+
+// 统计卡加载态：数据尚未就绪时显示 "--"，避免首次进入闪烁 0
+function statValue(loading: boolean, hasData: boolean, value: number | string): string {
+  if (loading && !hasData) return '--'
+  return String(value)
+}
+
 function fmtTime(ts: number): string {
   const d = new Date(ts)
   const pad = (n: number) => String(n).padStart(2, '0')
-  return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
+  const hm = `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
+  // 跨天事件带日期，避免只看时分无法区分昨天/今天
+  const sameDay = d.toDateString() === new Date().toDateString()
+  return sameDay ? hm : `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${hm}`
 }
 
 let interval: ReturnType<typeof setInterval> | undefined
 
 onMounted(async () => {
-  await Promise.all([
-    botStore.fetchBots(),
-    warehouseStore.fetchWarehouses(),
-  ])
+  try {
+    await Promise.all([
+      botStore.fetchBots(),
+      warehouseStore.fetchWarehouses(),
+    ])
+  } catch (e) {
+    console.error('[Dashboard] 初始数据加载失败:', e)
+  }
   // 玩家在线数/领地数由 Socket.IO 推送（online_players_update / residences_update），
   // 此处仅定期刷新 Bot 状态（玩家数据不额外拉取，避免大体积请求）。
   interval = setInterval(() => {
-    botStore.fetchBots()
+    botStore.fetchBots().catch((e) => {
+      console.error('[Dashboard] Bot 状态刷新失败:', e)
+    })
   }, 10000)
 })
 
@@ -214,6 +234,8 @@ onBeforeUnmount(() => {
 .view-all:hover { opacity: 1; }
 
 .empty-text { color: var(--text-muted); text-align: center; padding: 20px; font-size: 14px; }
+
+.more-hint { font-size: 12px; color: var(--text-disabled); text-align: center; padding: 8px 0 2px; }
 
 /* 在线玩家 */
 .world-groups { display: flex; flex-direction: column; gap: 10px; }
