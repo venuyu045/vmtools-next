@@ -399,8 +399,14 @@ class MineflayerBridgeClient(AbstractBotAgent):
                 item_id = str(raw_id).strip()
                 if not item_id:
                     continue
+                # mineflayer 玩家窗口槽位：36-44=快捷栏、9-35=主背包；
+                # 前端背包布局按标准 protocol（0-8 快捷栏、9-35 主背包、36-39 盔甲、40 副手），
+                # 因此把快捷栏 36-44 映射到 0-8，避免「盔甲位显示快捷栏物品」的错位。
+                _slot = s.get("slot", -1)
+                if isinstance(_slot, int) and 36 <= _slot <= 44:
+                    _slot = _slot - 36
                 items.append({
-                    "slot": s.get("slot", -1),
+                    "slot": _slot,
                     "type": item_id,
                     "displayName": s.get("displayName") or s.get("display_name") or item_id,
                     "count": s.get("count", s.get("amount", 0)) or 0,
