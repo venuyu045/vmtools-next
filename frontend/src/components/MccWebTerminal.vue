@@ -243,14 +243,33 @@ function submitFromInput() {
   pendingDraft = ''
 }
 
+/**
+ * Minecraft 遗留格式码（§a/§r/§l 等）→ ANSI 转义序列。
+ * 服务器聊天/系统消息（mineflayer bot.on('message') toString()）带 § 颜色码，
+ * xterm 不识别 § 码，需先转成 ANSI 才能按服务器配色渲染（MF 终端彩色文字修复）。
+ * 使用 bright 色系（xterm 主题已定义 bright* 色板），k（随机闪烁）忽略。
+ */
+const MC_FORMAT_TO_ANSI: Record<string, string> = {
+  '0': '\x1b[30m', '1': '\x1b[34m', '2': '\x1b[32m', '3': '\x1b[36m',
+  '4': '\x1b[31m', '5': '\x1b[35m', '6': '\x1b[33m', '7': '\x1b[37m',
+  '8': '\x1b[90m', '9': '\x1b[94m', a: '\x1b[92m', b: '\x1b[96m',
+  c: '\x1b[91m', d: '\x1b[95m', e: '\x1b[93m', f: '\x1b[97m',
+  l: '\x1b[1m', m: '\x1b[9m', n: '\x1b[4m', o: '\x1b[3m', r: '\x1b[0m',
+}
+
+function mcFormatToAnsi(text: string): string {
+  return text.replace(/[\u00a7§]([0-9a-fk-or])/gi, (_, code: string) => MC_FORMAT_TO_ANSI[code.toLowerCase()] ?? '')
+}
+
 function formatLine(line: MccTerminalLine): string {
+  const content = mcFormatToAnsi(line.content)
   if (line.stream === 'stdin') {
     // 输入行（仅其他观察者可见，本机已本地回显）：弱化前缀与时间戳
-    return `\x1b[36m> ${line.content.replace(/^>\s*/, '')}\x1b[0m`
+    return `\x1b[36m> ${content.replace(/^>\s*/, '')}\x1b[0m`
   }
   const time = line.created_at ? new Date(line.created_at).toLocaleTimeString() : '--:--:--'
   const streamColor = line.stream === 'stderr' ? '\x1b[31m' : '\x1b[90m'
-  return `\x1b[90m[${time}]\x1b[0m ${streamColor}[${line.stream}]\x1b[0m ${line.content}`
+  return `\x1b[90m[${time}]\x1b[0m ${streamColor}[${line.stream}]\x1b[0m ${content}`
 }
 
 /** True when this stdin echo line was produced by the current browser tab. */
