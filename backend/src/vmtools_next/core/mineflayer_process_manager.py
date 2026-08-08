@@ -588,13 +588,13 @@ class MineflayerProcessManager:
             try:
                 ok = await pool.connect_bot(bot_id, port=ws_port)
                 if ok:
-                    logger.info("Auto-connected mineflayer WS for instance {} bot={} (attempt {})",
+                    logger.info("Auto-connected mineflayer WS for instance %s bot=%s (attempt %d)",
                                 instance_id, bot_id, attempt + 1)
                     return
             except Exception as exc:
-                logger.warning("Auto-connect attempt {} for {} failed: {}",
+                logger.warning("Auto-connect attempt %d for %s failed: %s",
                                attempt + 1, instance_id, exc)
-        logger.warning("Auto-connect mineflayer WS timed out for instance {} bot={}", instance_id, bot_id)
+        logger.warning("Auto-connect mineflayer WS timed out for instance %s bot=%s", instance_id, bot_id)
 
     async def _desired_state_is(self, instance_id: str, state: str) -> bool:
         """Check the instance's desired_state in the DB."""
