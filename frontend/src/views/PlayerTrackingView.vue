@@ -101,8 +101,8 @@ const playerStore = useOnlinePlayersStore()
 .page-subtitle { color: var(--text-muted); font-size: 13px; margin-bottom: 16px; }
 
 .online-panel {
-  background: rgba(0, 200, 83, 0.06);
-  border: 1px solid rgba(0, 200, 83, 0.25);
+  background: var(--success-bg);
+  border: 1px solid var(--border-subtle);
   border-radius: 8px;
   padding: 16px;
 }
@@ -115,13 +115,13 @@ const playerStore = useOnlinePlayersStore()
 .panel-header h3 { margin: 0; font-size: 16px; display: flex; align-items: center; gap: 8px; }
 .count-badge {
   background: var(--success);
-  color: #fff;
+  color: var(--text-inverse);
   font-size: 13px;
   padding: 2px 10px;
   border-radius: var(--radius-md);
 }
-.update-time { font-size: 12px; color: var(--text-disabled); }
-.empty-hint { color: var(--text-disabled); font-style: italic; font-size: 13px; }
+.update-time { font-size: 12px; color: var(--text-muted); }
+.empty-hint { color: var(--text-muted); font-style: italic; font-size: 13px; }
 
 /* 分组 */
 .player-groups { display: flex; flex-direction: column; gap: 14px; }
@@ -134,7 +134,7 @@ const playerStore = useOnlinePlayersStore()
   align-items: center;
   gap: 6px;
 }
-.group-count { font-size: 11px; color: var(--text-disabled); }
+.group-count { font-size: 11px; color: var(--text-muted); }
 .status-dot {
   display: inline-block;
   width: 8px;
@@ -178,7 +178,7 @@ const playerStore = useOnlinePlayersStore()
   margin-bottom: 8px;
 }
 .events-header h4 { margin: 0; font-size: 14px; color: var(--text-secondary); }
-.events-count { font-size: 12px; color: var(--text-disabled); }
+.events-count { font-size: 12px; color: var(--text-muted); }
 .event-list { max-height: 480px; overflow-y: auto; }
 .event-item {
   display: flex;
@@ -189,7 +189,7 @@ const playerStore = useOnlinePlayersStore()
   border-bottom: 1px solid var(--border-subtle);
 }
 .event-item.leave { opacity: 0.7; }
-.event-time { color: var(--text-disabled); font-size: 11px; min-width: 150px; }
+.event-time { color: var(--text-muted); font-size: 11px; min-width: 150px; }
 .event-dot {
   display: inline-block;
   width: 8px;
@@ -199,5 +199,5 @@ const playerStore = useOnlinePlayersStore()
 }
 .event-name { font-weight: 600; }
 .event-action { color: var(--text-secondary); }
-.event-world { color: var(--text-disabled); font-size: 11px; }
+.event-world { color: var(--text-muted); font-size: 11px; }
 </style>

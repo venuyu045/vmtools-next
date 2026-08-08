@@ -120,7 +120,7 @@
               class="event-item"
               :class="ev.event"
             >
-              <span class="event-icon">{{ ev.event === 'join' ? '⬆' : '⬇' }}</span>
+              <span class="event-icon" :class="ev.event">{{ ev.event === 'join' ? '▲' : '▼' }}</span>
               <span class="event-name">{{ ev.name }}</span>
               <span class="event-action">{{ ev.event === 'join' ? '上线' : '离线' }}</span>
               <span class="event-time mono">{{ fmtTime(ev.time) }}</span>
@@ -274,7 +274,9 @@ onBeforeUnmount(() => {
 .event-item { display: flex; align-items: center; gap: 8px; padding: 7px 0; font-size: 13px; border-bottom: 1px solid var(--border-subtle); }
 .event-item:last-child { border-bottom: none; }
 .event-item.leave { opacity: 0.7; }
-.event-icon { font-size: 13px; }
+.event-item.join .event-icon { color: var(--success); }
+.event-item.leave .event-icon { color: var(--text-muted); }
+.event-icon { font-size: 10px; line-height: 1; }
 .event-name { font-weight: 600; color: var(--text-primary); }
 .event-action { color: var(--text-secondary); }
 .event-time { color: var(--text-muted); font-size: 11px; margin-left: auto; }

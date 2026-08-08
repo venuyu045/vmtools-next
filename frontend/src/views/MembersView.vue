@@ -262,6 +262,7 @@ onMounted(loadUsers)
   font-size: 12px;
   font-family: var(--font-mono);
   border: 1px solid var(--border-card);
+  border-radius: var(--radius-md);
 }
 .status-tag.pending { color: var(--color-warning); border-color: var(--warning-bg); }
 .status-tag.approved { color: var(--success); border-color: var(--success-bg); }

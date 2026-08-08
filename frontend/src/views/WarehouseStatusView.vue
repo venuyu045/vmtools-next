@@ -129,61 +129,6 @@ function fmtTime(iso: string): string {
 }
 function gotoWarehouse(id: string) { router.push(`/warehouse-status/${id}`) }
 
-/** 物品类别 → emoji 图标 */
-function itemEmoji(itemId: string): string {
-  const s = itemId.toLowerCase()
-  if (s.includes('diamond')) return '💎'
-  if (s.includes('emerald')) return '🟢'
-  if (s.includes('netherite')) return '⚫'
-  if (s.includes('gold')) return '🟡'
-  if (s.includes('iron')) return '🔩'
-  if (s.includes('coal')) return '⬛'
-  if (s.includes('redstone')) return '🔴'
-  if (s.includes('lapis')) return '🔵'
-  if (s.includes('quartz')) return '🤍'
-  if (s.includes('obsidian')) return '🟣'
-  if (s.includes('shulker')) return '📦'
-  if (s.includes('chest') || s.includes('barrel')) return '🧰'
-  if (s.includes('log') || s.includes('plank') || s.includes('wood') || s.includes('bamboo')) return '🪵'
-  if (s.includes('stone') || s.includes('cobblestone') || s.includes('deepslate') || s.includes('granite') || s.includes('andesite') || s.includes('diorite') || s.includes('tuff') || s.includes('calcite') || s.includes('sand') || s.includes('gravel') || s.includes('clay')) return '🪨'
-  if (s.includes('brick') || s.includes('terracotta') || s.includes('concrete')) return '🧱'
-  if (s.includes('glass') || s.includes('pane')) return '🪟'
-  if (s.includes('soul') || s.includes('nether')) return '🔥'
-  if (s.includes('cooked') || s.includes('beef') || s.includes('pork') || s.includes('chicken') || s.includes('fish') || s.includes('mutton')) return '🍖'
-  if (s.includes('bread') || s.includes('apple') || s.includes('carrot') || s.includes('potato') || s.includes('melon') || s.includes('wheat') || s.includes('berry') || s.includes('egg') || s.includes('milk') || s.includes('pumpkin') || s.includes('beetroot')) return '🍎'
-  if (s.includes('potion')) return '🧪'
-  if (s.includes('sword')) return '⚔️'
-  if (s.includes('pickaxe') || s.includes('axe') || s.includes('shovel') || s.includes('hoe')) return '⛏️'
-  if (s.includes('helmet') || s.includes('chestplate') || s.includes('legging') || s.includes('boots')) return '🛡️'
-  if (s.includes('bow') || s.includes('arrow') || s.includes('crossbow') || s.includes('trident')) return '🏹'
-  if (s.includes('book') || s.includes('map') || s.includes('paper')) return '📖'
-  if (s.includes('ender') || s.includes('dragon') || s.includes('chorus') || s.includes('pearl') || s.includes('eye')) return '👁️'
-  if (s.includes('red')) return '🔴'
-  if (s.includes('blue')) return '🔵'
-  if (s.includes('green')) return '🟢'
-  if (s.includes('yellow')) return '🟡'
-  if (s.includes('white')) return '⚪'
-  if (s.includes('black')) return '⚫'
-  if (s.includes('flower') || s.includes('tulip') || s.includes('rose') || s.includes('dandelion') || s.includes('poppy') || s.includes('lily') || s.includes('allium') || s.includes('orchid') || s.includes('peony') || s.includes('sunflower') || s.includes('lilac')) return '🌸'
-  return '📦'
-}
-
-/** 物品类别 → 图标底色 */
-function iconBg(itemId: string): string {
-  const s = itemId.toLowerCase()
-  if (s.includes('diamond') || s.includes('emerald') || s.includes('lapis')) return 'rgba(80,200,255,.18)'
-  if (s.includes('gold') || s.includes('yellow')) return 'rgba(255,210,80,.18)'
-  if (s.includes('red') || s.includes('redstone')) return 'rgba(255,90,90,.18)'
-  if (s.includes('green')) return 'rgba(120,220,120,.18)'
-  if (s.includes('blue')) return 'rgba(90,140,255,.18)'
-  if (s.includes('netherite') || s.includes('black') || s.includes('obsidian')) return 'rgba(150,120,200,.18)'
-  if (s.includes('log') || s.includes('plank') || s.includes('wood')) return 'rgba(160,110,60,.18)'
-  if (s.includes('stone') || s.includes('cobble') || s.includes('sand') || s.includes('gravel') || s.includes('brick') || s.includes('concrete') || s.includes('terracotta')) return 'rgba(150,150,150,.15)'
-  if (s.includes('cooked') || s.includes('apple') || s.includes('bread') || s.includes('pork') || s.includes('beef')) return 'rgba(255,140,90,.18)'
-  if (s.includes('potion') || s.includes('glass')) return 'rgba(180,120,255,.18)'
-  return 'rgba(20,20,19,0.06)'
-}
-
 function toggleExpand(item: ItemResult) {
   const next = new Set(expanded.value)
   if (next.has(item.item_id)) next.delete(item.item_id)
@@ -255,12 +200,6 @@ onMounted(async () => {
 .item-main { display: flex; align-items: center; gap: 12px; padding: 12px 14px; cursor: pointer; min-width: 0; }
 .item-main:hover { background: var(--green-glow); }
 .item-icon-wrap { flex-shrink: 0; display: flex; }
-.item-icon {
-  width: 40px; height: 40px; flex-shrink: 0; border-radius: 6px;
-  display: flex; align-items: center; justify-content: center;
-  font-size: 22px; border: 1px solid var(--border-subtle);
-  background: var(--bg-hover);
-}
 .item-info { flex: 1; min-width: 0; }
 .item-name { font-size: 15px; color: var(--text-primary); font-weight: bold; }
 .item-id { font-size: 11px; color: var(--text-muted); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

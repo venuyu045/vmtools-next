@@ -1,11 +1,11 @@
 <template>
   <div class="miaomiao-page">
-    <h2>🛠️ 妙妙工具</h2>
+    <h2>妙妙工具</h2>
     <p class="subtitle">领地排行榜 · 标记点目录 · MSPT排行榜</p>
 
     <el-tabs v-model="activeTab" class="mm-tabs" @tab-change="onTabChange">
       <!-- Tab 1: 领地排行榜 -->
-      <el-tab-pane label="🏠 领地排行榜" name="residences">
+      <el-tab-pane label="领地排行榜" name="residences">
         <div class="tab-toolbar">
           <el-radio-group v-model="resSort" size="small" @change="refreshResTable">
             <el-radio-button value="area">按面积</el-radio-button>
@@ -19,7 +19,7 @@
             style="width: 220px"
             @input="refreshResTable"
           />
-          <el-button size="small" :loading="refreshing" @click="refreshMarkers">🔄 刷新</el-button>
+          <el-button size="small" :loading="refreshing" @click="refreshMarkers">刷新</el-button>
         </div>
 
         <el-table
@@ -77,7 +77,7 @@
       </el-tab-pane>
 
       <!-- Tab 2: 标记点目录 -->
-      <el-tab-pane label="📍 标记点目录" name="markers">
+      <el-tab-pane label="标记点目录" name="markers">
         <div class="tab-toolbar">
           <el-input
             v-model="mkSearch"
@@ -87,7 +87,7 @@
             style="width: 260px"
           />
           <span class="mk-count">共 {{ filteredMarkers.length }} 个</span>
-          <el-button size="small" :loading="refreshing" @click="refreshMarkers">🔄 刷新</el-button>
+          <el-button size="small" :loading="refreshing" @click="refreshMarkers">刷新</el-button>
         </div>
 
         <div class="markers-grid">
@@ -120,7 +120,7 @@
       </el-tab-pane>
 
       <!-- Tab 2.5: 服务器地标目录（新） -->
-      <el-tab-pane label="🏛️ 服务器地标" name="landmarks">
+      <el-tab-pane label="服务器地标" name="landmarks">
         <div class="tab-toolbar">
           <el-input
             v-model="lmSearch"
@@ -130,7 +130,7 @@
             style="width: 220px"
           />
           <span class="mk-count">共 {{ playerStore.landmarks.length }} 个地标 · {{ playerStore.landmarkTypes.length }} 类</span>
-          <el-button size="small" :loading="refreshing" @click="refreshMarkers">🔄 刷新</el-button>
+          <el-button size="small" :loading="refreshing" @click="refreshMarkers">刷新</el-button>
         </div>
 
         <!-- 类型统计 -->
@@ -179,10 +179,10 @@
       </el-tab-pane>
 
       <!-- Tab 2.6: 地铁线路（新） -->
-      <el-tab-pane label="🚇 地铁线路" name="metro">
+      <el-tab-pane label="地铁线路" name="metro">
         <div class="tab-toolbar">
           <span class="mk-count">共 {{ playerStore.metroLines.length }} 条线路 · {{ playerStore.metroStations.length }} 个站点</span>
-          <el-button size="small" :loading="refreshing" @click="refreshMarkers">🔄 刷新</el-button>
+          <el-button size="small" :loading="refreshing" @click="refreshMarkers">刷新</el-button>
         </div>
 
         <div v-if="playerStore.metroLines.length === 0" class="empty-hint">暂无地铁线路数据</div>
@@ -222,7 +222,7 @@
       </el-tab-pane>
 
       <!-- Tab 3: 区域 MSPT 排行榜 -->
-      <el-tab-pane label="⚡ MSPT排行榜" name="mspt">
+      <el-tab-pane label="MSPT 排行榜" name="mspt">
         <div class="tab-toolbar">
           <el-radio-group v-model="msptSort" size="small">
             <el-radio-button value="mspt">按 MSPT</el-radio-button>
@@ -238,7 +238,7 @@
             style="width: 200px"
           />
           <span class="mk-count">{{ filteredRegions.length }} 个区域</span>
-          <el-button size="small" :loading="refreshing" @click="refreshMarkers">🔄 刷新</el-button>
+          <el-button size="small" :loading="refreshing" @click="refreshMarkers">刷新</el-button>
         </div>
 
         <el-table
@@ -593,7 +593,7 @@ function tpsClass(v: number | null): string {
   margin-bottom: 16px;
 }
 
-.mk-count { font-size: 13px; color: var(--text-disabled); }
+.mk-count { font-size: 13px; color: var(--text-muted); }
 
 /* 领地排行榜分页 */
 .table-pagination {
@@ -624,7 +624,7 @@ function tpsClass(v: number | null): string {
 }
 .owner-rank {
   font-weight: 700;
-  color: var(--text-disabled);
+  color: var(--text-muted);
   min-width: 20px;
 }
 .owner-name { font-weight: 600; flex: 1; }
@@ -656,9 +656,9 @@ function tpsClass(v: number | null): string {
 }
 .world-tag-sm { font-size: 10px; padding: 0 6px; vertical-align: 1px; }
 .mk-pos { color: var(--text-secondary); font-size: 11px; margin-top: 4px; }
-.mk-detail { color: var(--text-disabled); font-size: 11px; margin-top: 4px; line-height: 1.4; }
-.na { color: var(--text-disabled); font-style: italic; }
-.empty-hint { color: var(--text-disabled); font-style: italic; font-size: 13px; text-align: center; padding: 24px; }
+.mk-detail { color: var(--text-muted); font-size: 11px; margin-top: 4px; line-height: 1.4; }
+.na { color: var(--text-muted); font-style: italic; }
+.empty-hint { color: var(--text-muted); font-style: italic; font-size: 13px; text-align: center; padding: 24px; }
 
 /* MSPT / TPS badges */
 .perf-badge {
@@ -768,7 +768,7 @@ function tpsClass(v: number | null): string {
   margin-top: 6px;
 }
 .metro-line-meta {
-  color: var(--text-disabled);
+  color: var(--text-muted);
   font-size: 11px;
   margin-top: 4px;
 }

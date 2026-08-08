@@ -382,6 +382,7 @@ onBeforeUnmount(() => {
   font-size: 11px;
   padding: 3px 10px;
   border: 1px solid var(--border-card);
+  border-radius: var(--radius-md);
   font-family: var(--font-mono);
   letter-spacing: 1px;
 }
@@ -491,22 +492,23 @@ onBeforeUnmount(() => {
   margin-right: 6px;
   font-size: 11px;
   border: 1px solid var(--border-card);
+  border-radius: var(--radius-md);
   font-family: var(--font-mono);
 }
 
 .task-type.logistics {
-  color: #42a5f5;
-  border-color: #42a5f5;
+  color: var(--chart-4);
+  border-color: var(--chart-4);
 }
 
 .task-type.mapart {
-  color: #ab47bc;
-  border-color: #ab47bc;
+  color: var(--chart-8);
+  border-color: var(--chart-8);
 }
 
 .task-type.scan {
-  color: #ffa726;
-  border-color: #ffa726;
+  color: var(--chart-2);
+  border-color: var(--chart-2);
 }
 
 .dim {

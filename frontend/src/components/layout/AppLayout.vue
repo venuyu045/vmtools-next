@@ -277,14 +277,14 @@ onBeforeUnmount(() => {
 }
 
 .app-footer a {
-  color: #666;
+  color: var(--text-muted);
   font-size: 12px;
   text-decoration: none;
   transition: color 0.2s;
 }
 
 .app-footer a:hover {
-  color: #999;
+  color: var(--text-secondary);
 }
 
 /* ============ TABLET: auto-collapse sidebar ============ */

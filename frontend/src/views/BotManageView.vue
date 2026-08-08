@@ -48,7 +48,7 @@
             <span class="bar-val mono">{{ fmtNum(getBot(instance)!.current_health) }}</span>
             <span class="bar-label fd">FD</span>
             <span class="bar-val mono">{{ fmtNum(getBot(instance)!.current_food) }}</span>
-            <span class="bar-pos mono" :title="'坐标: ' + fmtPos(getBot(instance)!.current_location)">📍 {{ fmtPos(getBot(instance)!.current_location) }}</span>
+            <span class="bar-pos mono" :title="'坐标: ' + fmtPos(getBot(instance)!.current_location)">POS {{ fmtPos(getBot(instance)!.current_location) }}</span>
           </div>
         </div>
 

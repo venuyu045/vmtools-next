@@ -11,19 +11,19 @@
     <!-- 概览统计 -->
     <div class="stat-row">
       <div class="pixel-card stat-item">
-        <span class="stat-val" :style="{ color: '#d4a843' }">{{ latest?.cpu_percent != null ? latest.cpu_percent.toFixed(1) : '--' }}%</span>
+        <span class="stat-val" :style="{ color: 'var(--chart-2)' }">{{ latest?.cpu_percent != null ? latest.cpu_percent.toFixed(1) : '--' }}%</span>
         <span class="stat-lbl mono">CPU</span>
       </div>
       <div class="pixel-card stat-item">
-        <span class="stat-val" :style="{ color: '#8A9A5B' }">{{ latest?.memory_percent != null ? latest.memory_percent.toFixed(1) : '--' }}%</span>
+        <span class="stat-val" :style="{ color: 'var(--chart-3)' }">{{ latest?.memory_percent != null ? latest.memory_percent.toFixed(1) : '--' }}%</span>
         <span class="stat-lbl mono">内存（{{ memText }}）</span>
       </div>
       <div class="pixel-card stat-item">
-        <span class="stat-val" :style="{ color: '#7C8B7E' }">{{ latest?.disk_percent != null ? latest.disk_percent.toFixed(1) : '--' }}%</span>
+        <span class="stat-val" :style="{ color: 'var(--chart-4)' }">{{ latest?.disk_percent != null ? latest.disk_percent.toFixed(1) : '--' }}%</span>
         <span class="stat-lbl mono">磁盘（{{ diskText }}）</span>
       </div>
       <div class="pixel-card stat-item">
-        <span class="stat-val" :style="{ color: '#D97757' }">↑{{ netText.sent }} <span style="color:#B08D57">↓{{ netText.recv }}</span></span>
+        <span class="stat-val" :style="{ color: 'var(--chart-1)' }">↑{{ netText.sent }} <span style="color:var(--chart-2)">↓{{ netText.recv }}</span></span>
         <span class="stat-lbl mono">网络速率</span>
       </div>
     </div>
@@ -216,9 +216,9 @@ onBeforeUnmount(() => {
 }
 .alert-row:last-child, .rule-row:last-child { border-bottom: none; }
 .sev-tag { flex-shrink: 0; font-size: 10px; padding: 1px 6px; border: 1px solid var(--border-card); font-family: var(--font-mono); }
-.sev-tag.warning { color: #e6a23c; border-color: rgba(230, 162, 60, 0.4); }
-.sev-tag.critical { color: #f56c6c; border-color: rgba(245, 108, 108, 0.5); background: rgba(245, 108, 108, 0.08); }
-.sev-tag.error { color: #f56c6c; border-color: rgba(245, 108, 108, 0.4); }
+.sev-tag.warning { color: var(--warning); border-color: var(--warning-bg); }
+.sev-tag.critical { color: var(--danger); border-color: var(--danger-bg); background: var(--danger-bg); }
+.sev-tag.error { color: var(--danger); border-color: var(--danger-bg); }
 .alert-msg { flex: 1; min-width: 0; color: var(--text-secondary); }
 .alert-time { flex-shrink: 0; color: var(--text-muted); font-size: 11px; }
 .rule-name { color: var(--text-primary); }

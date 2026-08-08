@@ -172,21 +172,6 @@ onMounted(() => {
   align-items: center;
   justify-content: center;
   background: var(--bg-page);
-  position: relative;
-}
-
-.login-page::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background: repeating-linear-gradient(
-    0deg,
-    rgba(20, 20, 19, 0.02) 0px,
-    rgba(20, 20, 19, 0.02) 1px,
-    transparent 1px,
-    transparent 3px
-  );
-  pointer-events: none;
 }
 
 .login-card {
