@@ -47,7 +47,7 @@ class ScanQueueManager:
     async def start(self) -> None:
         self._running = True
         self._scheduler_task = asyncio.create_task(self._scheduler_loop())
-        logger.info("ScanQueueManager started (max_concurrent=%d)", self._max_concurrent)
+        logger.info("ScanQueueManager started (max_concurrent={})", self._max_concurrent)
 
     async def stop(self) -> None:
         self._running = False
@@ -206,7 +206,7 @@ class ScanQueueManager:
             try:
                 await self._schedule_once()
             except Exception as e:
-                logger.warning("Scan scheduler error: %s", e)
+                logger.warning("Scan scheduler error: {}", e)
             await asyncio.sleep(self._poll_interval)
 
     async def _schedule_once(self) -> None:
@@ -288,11 +288,11 @@ class ScanQueueManager:
                 blocks = (scan_res or {}).get("blocks") or []
                 kept = [(b["x"], b["y"], b["z"]) for b in blocks if in_zones(b["x"], b["y"], b["z"])]
                 if kept:
-                    logger.info("Scan queue %s discovered %d containers (box=%s, zone-filtered)",
+                    logger.info("Scan queue {} discovered {} containers (box={}, zone-filtered)",
                                 qid[:8], len(kept), "yes" if box else "no")
                     return kept
             except Exception as e:
-                logger.warning("scan_nearby_blocks(box=%s) failed: %s", "yes" if box else "no", e)
+                logger.warning("scan_nearby_blocks(box={}) failed: {}", "yes" if box else "no", e)
 
             # 2) 兜底：scan_loaded_containers（遍历已加载区块）
             try:
@@ -300,11 +300,11 @@ class ScanQueueManager:
                 blocks = (scan_res or {}).get("blocks") or []
                 kept = [(b["x"], b["y"], b["z"]) for b in blocks if in_zones(b["x"], b["y"], b["z"])]
                 if kept:
-                    logger.info("Scan queue %s discovered %d containers in loaded chunks (zone-filtered)",
+                    logger.info("Scan queue {} discovered {} containers in loaded chunks (zone-filtered)",
                                 qid[:8], len(kept))
                     return kept
             except Exception as e:
-                logger.warning("scan_loaded_containers failed: %s", e)
+                logger.warning("scan_loaded_containers failed: {}", e)
 
         # 不再做 zone 全坐标枚举兜底：超大 zone（如全物品 142×73×108 ≈112 万格）
         # 会生成大量非容器假坐标，导致扫描器空转。发现不到就如实报错。
@@ -400,7 +400,7 @@ class ScanQueueManager:
                     await client.run_command(teleport_cmd)
                     await asyncio.sleep(5)  # 等传送完成 + 目标区块加载
                 except Exception as e:
-                    logger.warning("Teleport to warehouse %s failed: %s", wh_id, e)
+                    logger.warning("Teleport to warehouse {} failed: {}", wh_id, e)
 
             # 容器坐标
             container_positions = await self._discover_containers(db, qid, wh_id, client, engine_type)
@@ -551,7 +551,7 @@ class ScanQueueManager:
                 db.commit()
                 await sio.emit("scan_alert", {"type": "error", "queue_id": queue_id, "message": "扫描失败"})
         except Exception as e:
-            logger.error("Persist scan results failed for %s: %s", queue_id, e)
+            logger.error("Persist scan results failed for {}: {}", queue_id, e)
         finally:
             db.close()
             self._scanners.pop(queue_id, None)
@@ -566,4 +566,4 @@ class ScanQueueManager:
             items = await self.list_queue()
             await sio.emit("scan_queue_update", {"items": items})
         except Exception as e:
-            logger.debug("scan_queue_update emit skipped: %s", e)
+            logger.debug("scan_queue_update emit skipped: {}", e)

@@ -59,7 +59,7 @@ def update_mcc_config(data: MccConfigUpdate, user=Depends(_require_site_admin)):
         )
         return {"status": "saved", "mcc": config.mcc.model_dump()}
     except Exception as e:
-        logger.error("Failed to update MCC config: %s", e)
+        logger.error("Failed to update MCC config: {}", e)
         raise HTTPException(status_code=500, detail="Failed to save configuration")
 
 
@@ -70,5 +70,5 @@ def reload(user=Depends(_require_site_admin)):
         new_config = reload_config()
         return {"status": "reloaded", "config": new_config.model_dump()}
     except Exception as e:
-        logger.error("Failed to reload config: %s", e)
+        logger.error("Failed to reload config: {}", e)
         raise HTTPException(status_code=500, detail="Failed to reload configuration")

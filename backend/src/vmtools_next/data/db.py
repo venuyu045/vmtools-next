@@ -169,7 +169,7 @@ def _run_lightweight_migrations(engine) -> None:
                 conn.execute(text("UPDATE users SET role='user' WHERE role='org_member'"))
                 conn.execute(text("UPDATE users SET role='admin' WHERE role='org_admin'"))
             except Exception as _e:
-                logger.warning("Role migration check: %s", _e)
+                logger.warning("Role migration check: {}", _e)
             if _DATABASE_URL and _DATABASE_URL.startswith("sqlite"):
                 columns = {row[1] for row in conn.execute(text("PRAGMA table_info(mcc_instances)")).fetchall()}
                 if "account_profile_id" not in columns:
@@ -195,7 +195,7 @@ def _run_lightweight_migrations(engine) -> None:
                         "ON users (qq_openid) WHERE qq_openid IS NOT NULL"
                     ))
                 except Exception as _e:
-                    logger.warning("users qq migration check: %s", _e)
+                    logger.warning("users qq migration check: {}", _e)
                 # scan_status 实时进度扩展列（扫描队列）
                 try:
                     s_columns = {row[1] for row in conn.execute(text("PRAGMA table_info(scan_status)")).fetchall()}
@@ -206,7 +206,7 @@ def _run_lightweight_migrations(engine) -> None:
                     if "finished_at" not in s_columns:
                         conn.execute(text("ALTER TABLE scan_status ADD COLUMN finished_at DATETIME"))
                 except Exception as _e:
-                    logger.warning("scan_status migration check: %s", _e)
+                    logger.warning("scan_status migration check: {}", _e)
             conn.commit()
     except Exception as e:
         logger.warning("Lightweight migration check: {}", e)

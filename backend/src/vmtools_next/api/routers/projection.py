@@ -48,9 +48,9 @@ def _load_projections() -> dict[str, dict]:
         try:
             data = json.loads(_PROJECTION_INDEX_PATH.read_text(encoding="utf-8"))
             _projections.update(data)
-            logger.info("Loaded %d projections from disk cache", len(data))
+            logger.info("Loaded {} projections from disk cache", len(data))
         except Exception as e:
-            logger.warning("Failed to load projection index: %s", e)
+            logger.warning("Failed to load projection index: {}", e)
     return _projections
 
 
@@ -63,7 +63,7 @@ def _save_projections() -> None:
             encoding="utf-8",
         )
     except Exception as e:
-        logger.warning("Failed to save projection index: %s", e)
+        logger.warning("Failed to save projection index: {}", e)
 
 
 class ProjectionResponse(BaseModel):
@@ -154,7 +154,7 @@ async def upload_projection(
     }
     _save_projections()
 
-    logger.info("Uploaded projection: %s (%d blocks, %d materials) [%s]",
+    logger.info("Uploaded projection: {} ({} blocks, {} materials) [{}]",
                 parsed.name, parsed.total_blocks, len(materials), proj_id)
 
     return ProjectionResponse(
@@ -252,5 +252,5 @@ def delete_projection(projection_id: str, user=Depends(get_current_user)):
 
     del proj[projection_id]
     _save_projections()
-    logger.info("Deleted projection: %s", projection_id)
+    logger.info("Deleted projection: {}", projection_id)
     return {"status": "deleted"}

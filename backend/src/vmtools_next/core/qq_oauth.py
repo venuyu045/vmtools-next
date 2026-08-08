@@ -124,9 +124,9 @@ async def get_user_info(access_token: str, openid: str) -> dict:
                     "nickname": data.get("nickname", ""),
                     "avatar": data.get("figureurl_qq_2") or data.get("figureurl_qq_1") or "",
                 }
-            logger.warning("QQ get_user_info failed: %s", data.get("msg"))
+            logger.warning("QQ get_user_info failed: {}", data.get("msg"))
     except Exception as exc:
-        logger.warning("QQ get_user_info error: %s", exc)
+        logger.warning("QQ get_user_info error: {}", exc)
     return {}
 
 

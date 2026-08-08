@@ -54,7 +54,7 @@ def _persist_plugin_state(name: str, version: str, enabled: bool, config: Option
         finally:
             db.close()
     except Exception as e:
-        logger.warning("Failed to persist plugin state %s: %s", name, e)
+        logger.warning("Failed to persist plugin state {}: {}", name, e)
 
 
 def _load_persisted_config(name: str) -> Optional[dict]:
@@ -72,7 +72,7 @@ def _load_persisted_config(name: str) -> Optional[dict]:
         finally:
             db.close()
     except Exception as e:
-        logger.warning("Failed to load plugin config %s: %s", name, e)
+        logger.warning("Failed to load plugin config {}: {}", name, e)
         return None
 
 
@@ -90,7 +90,7 @@ def _load_persisted_enabled(name: str) -> Optional[bool]:
         finally:
             db.close()
     except Exception as e:
-        logger.warning("Failed to load plugin enabled %s: %s", name, e)
+        logger.warning("Failed to load plugin enabled {}: {}", name, e)
         return None
 
 
@@ -124,7 +124,7 @@ class PluginManager:
                 plugin_cls = module.Plugin
                 plugin = plugin_cls()
                 if getattr(plugin, "engine", "mineflayer") != SUPPORTED_ENGINE:
-                    logger.info("Skip plugin %s: engine=%s (only %s supported)",
+                    logger.info("Skip plugin {}: engine={} (only {} supported)",
                                 getattr(plugin, "name", module_path.stem),
                                 getattr(plugin, "engine", "?"), SUPPORTED_ENGINE)
                     continue
@@ -137,17 +137,17 @@ class PluginManager:
                 try:
                     plugin.apply_config(merged)
                 except Exception as e:
-                    logger.warning("Plugin %s apply_config failed: %s", plugin.name, e)
+                    logger.warning("Plugin {} apply_config failed: {}", plugin.name, e)
                 # 启用状态持久化：DB 中已禁用则保持禁用（重启不自动恢复启用）
                 persisted_enabled = _load_persisted_enabled(plugin.name)
                 enabled = persisted_enabled if persisted_enabled is not None else True
                 _persist_plugin_state(plugin.name, plugin.version, enabled, merged)
                 self._plugins[plugin.name] = plugin
                 self._enabled[plugin.name] = enabled
-                logger.info("Loaded builtin plugin: %s v%s (engine=%s, enabled=%s)",
+                logger.info("Loaded builtin plugin: {} v{} (engine={}, enabled={})",
                             plugin.name, plugin.version, plugin.engine, enabled)
             except Exception as e:
-                logger.warning("Failed to load builtin plugin %s: %s", module_path.name, e)
+                logger.warning("Failed to load builtin plugin {}: {}", module_path.name, e)
 
     async def start_all(self) -> None:
         """Start all enabled plugins."""
@@ -155,9 +155,9 @@ class PluginManager:
             if self._enabled.get(name, False):
                 try:
                     await plugin.start()
-                    logger.info("Started plugin: %s", name)
+                    logger.info("Started plugin: {}", name)
                 except Exception as e:
-                    logger.error("Failed to start plugin %s: %s", name, e)
+                    logger.error("Failed to start plugin {}: {}", name, e)
 
     async def stop_all(self) -> None:
         """Stop all plugins."""
@@ -165,21 +165,21 @@ class PluginManager:
             try:
                 await plugin.stop()
             except Exception as e:
-                logger.warning("Error stopping plugin %s: %s", name, e)
+                logger.warning("Error stopping plugin {}: {}", name, e)
 
     async def enable(self, name: str) -> bool:
         """Enable a plugin."""
         if name not in self._plugins:
-            logger.warning("Plugin not found: %s", name)
+            logger.warning("Plugin not found: {}", name)
             return False
         self._enabled[name] = True
         try:
             await self._plugins[name].start()
             _persist_plugin_state(name, self._plugins[name].version, True, None)
-            logger.info("Enabled plugin: %s", name)
+            logger.info("Enabled plugin: {}", name)
             return True
         except Exception as e:
-            logger.error("Failed to enable plugin %s: %s", name, e)
+            logger.error("Failed to enable plugin {}: {}", name, e)
             return False
 
     async def disable(self, name: str) -> bool:
@@ -190,10 +190,10 @@ class PluginManager:
         try:
             await self._plugins[name].stop()
             _persist_plugin_state(name, self._plugins[name].version, False, None)
-            logger.info("Disabled plugin: %s", name)
+            logger.info("Disabled plugin: {}", name)
             return True
         except Exception as e:
-            logger.error("Failed to disable plugin %s: %s", name, e)
+            logger.error("Failed to disable plugin {}: {}", name, e)
             return False
 
     async def reload(self, name: str) -> bool:
@@ -202,10 +202,10 @@ class PluginManager:
             return False
         try:
             await self._plugins[name].reload()
-            logger.info("Reloaded plugin: %s", name)
+            logger.info("Reloaded plugin: {}", name)
             return True
         except Exception as e:
-            logger.error("Failed to reload plugin %s: %s", name, e)
+            logger.error("Failed to reload plugin {}: {}", name, e)
             return False
 
     async def reload_all(self) -> None:
@@ -213,9 +213,9 @@ class PluginManager:
         for name in list(self._plugins.keys()):
             try:
                 await self._plugins[name].reload()
-                logger.info("Reloaded plugin: %s", name)
+                logger.info("Reloaded plugin: {}", name)
             except Exception as e:
-                logger.error("Failed to reload plugin %s: %s", name, e)
+                logger.error("Failed to reload plugin {}: {}", name, e)
 
     def is_enabled(self, name: str) -> bool:
         return self._enabled.get(name, False)
@@ -257,10 +257,10 @@ class PluginManager:
         try:
             plugin.apply_config(merged)
         except Exception as e:
-            logger.error("Plugin %s apply_config failed: %s", name, e)
+            logger.error("Plugin {} apply_config failed: {}", name, e)
             return False
         _persist_plugin_state(name, plugin.version, self._enabled.get(name, True), merged)
-        logger.info("Plugin %s config updated: %s", name, merged)
+        logger.info("Plugin {} config updated: {}", name, merged)
         return True
 
     async def dispatch_event(self, event_type: str, payload: dict) -> None:
@@ -270,4 +270,4 @@ class PluginManager:
                 try:
                     await plugin.on_event(event_type, payload)
                 except Exception as e:
-                    logger.warning("Plugin %s event error: %s", name, e)
+                    logger.warning("Plugin {} event error: {}", name, e)

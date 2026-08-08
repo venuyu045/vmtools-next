@@ -58,10 +58,10 @@ class QqBotClient:
         self._client = httpx.AsyncClient(timeout=httpx.Timeout(10.0))
         try:
             await self._ensure_token()
-            logger.info("QQ Bot connected: app_id=%s", self._app_id)
+            logger.info("QQ Bot connected: app_id={}", self._app_id)
             return True
         except Exception as e:
-            logger.warning("QQ Bot token fetch failed: %s", e)
+            logger.warning("QQ Bot token fetch failed: {}", e)
             return False
 
     async def stop(self):
@@ -585,7 +585,7 @@ class QqBotClient:
             data = resp.json() if resp.text else {}
             if resp.status_code != 200:
                 logger.warning(
-                    "QQ send_group_message failed: HTTP %d body=%s payload=%s",
+                    "QQ send_group_message failed: HTTP {} body={} payload={}",
                     resp.status_code, resp.text[:300], payload,
                 )
                 # If markdown failed, retry as plain text
@@ -603,7 +603,7 @@ class QqBotClient:
                     data = resp2.json() if resp2.text else {}
                     if resp2.status_code != 200:
                         logger.warning(
-                            "QQ text fallback also failed: HTTP %d body=%s",
+                            "QQ text fallback also failed: HTTP {} body={}",
                             resp2.status_code, resp2.text[:300],
                         )
             return data
@@ -625,7 +625,7 @@ class QqBotClient:
             data = resp.json() if resp.text else {}
             if resp.status_code != 200:
                 logger.warning(
-                    "QQ send_private_message failed: HTTP %d body=%s",
+                    "QQ send_private_message failed: HTTP {} body={}",
                     resp.status_code, resp.text[:300],
                 )
             return data
