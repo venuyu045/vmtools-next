@@ -403,12 +403,11 @@ function fitTerminal() {
 }
 
 /**
- * 移动端终端触摸滚动（window 捕获阶段监听）。
- *  - 不依赖浏览器原生滚动：xterm 自身触摸处理器会 preventDefault/stopPropagation，
- *    导致原生滚动与普通元素监听全部失效 → 手动操作 viewport.scrollTop。
- *  - capture:true 在 window 上监听，事件必然到达（早于 xterm 的 bubble 处理器）。
- *  - 仅处理触摸起点在终端容器内的手势；可滚时手动滚动并 preventDefault，
- *    已到顶/底或无历史时放行（不 preventDefault），由页面接手。
+ * 终端触摸/触控滚动（window 捕获阶段监听）。
+ *  - 兼容 Pointer Events（Edge 电脑模式等桌面 UA 下触摸走 pointer 而非 touch）
+ *    与 Touch Events（老设备/WebView 兜底）。
+ *  - 鼠标 pointer 不接管（保留 xterm 文本选择/光标交互），仅 touch/pen 接管滚动。
+ *  - 手动操作 viewport.scrollTop，不依赖浏览器原生滚动；边界/无历史时放行页面。
  */
 function setupTerminalTouch(): () => void {
   const shell = () => terminalContainer.value
@@ -418,19 +417,13 @@ function setupTerminalTouch(): () => void {
     return !!el && !!target && el.contains(target as Node)
   }
 
-  function onTouchStart(e: TouchEvent) {
-    if (!insideShell(e.target)) return
-    touchStartY = e.touches[0]?.clientY ?? null
-    touchLastY = e.touches[0]?.clientY ?? null
-    touchMode = 'none'
-  }
+  let activePointerId: number | null = null
 
-  function onTouchMove(e: TouchEvent) {
-    if (!insideShell(e.target)) return
+  function handleDrag(clientY: number, e: Event) {
     if (!terminal || !viewportEl) return
-    const y = e.touches[0]?.clientY
+    const y = clientY
     if (y == null) return
-    // 兜底：touchstart 被吞时以当前点初始化，避免 dy=NaN
+    // 兜底：起点被吞时以当前点初始化，避免 dy=NaN
     if (touchLastY == null) touchLastY = y
     if (touchStartY == null) touchStartY = y
     const dy = y - touchLastY
@@ -454,18 +447,63 @@ function setupTerminalTouch(): () => void {
     // 到边界：不 preventDefault → 手势交给页面滚动
   }
 
-  function onTouchEnd() {
+  // ── Pointer Events（Edge 电脑模式 / 现代浏览器主路径） ──
+  function onPointerDown(e: PointerEvent) {
+    if (!insideShell(e.target)) return
+    if (e.pointerType !== 'touch' && e.pointerType !== 'pen') return // 鼠标不接管
+    activePointerId = e.pointerId
+    touchStartY = e.clientY
+    touchLastY = e.clientY
     touchMode = 'none'
-    touchStartY = null
-    touchLastY = null
+  }
+  function onPointerMove(e: PointerEvent) {
+    if (e.pointerId !== activePointerId) return
+    handleDrag(e.clientY, e)
+  }
+  function onPointerUp(e: PointerEvent) {
+    if (e.pointerId === activePointerId) {
+      activePointerId = null
+      touchMode = 'none'
+      touchStartY = null
+      touchLastY = null
+    }
   }
 
+  // ── Touch Events 兜底（老设备/WebView 无 pointer 时） ──
+  function onTouchStart(e: TouchEvent) {
+    if (activePointerId !== null) return // pointer 已接管同一手势
+    if (!insideShell(e.target)) return
+    touchStartY = e.touches[0]?.clientY ?? null
+    touchLastY = e.touches[0]?.clientY ?? null
+    touchMode = 'none'
+  }
+  function onTouchMove(e: TouchEvent) {
+    if (activePointerId !== null) return
+    if (!insideShell(e.target)) return
+    handleDrag(e.touches[0]?.clientY ?? 0, e)
+  }
+  function onTouchEnd() {
+    if (activePointerId === null) {
+      touchMode = 'none'
+      touchStartY = null
+      touchLastY = null
+    }
+  }
+
+  window.addEventListener('pointerdown', onPointerDown, { capture: true })
+  window.addEventListener('pointermove', onPointerMove, { capture: true })
+  window.addEventListener('pointerup', onPointerUp, { capture: true })
+  window.addEventListener('pointercancel', onPointerUp, { capture: true })
   window.addEventListener('touchstart', onTouchStart, { passive: true, capture: true })
   window.addEventListener('touchmove', onTouchMove, { passive: false, capture: true })
   window.addEventListener('touchend', onTouchEnd, { passive: true, capture: true })
   window.addEventListener('touchcancel', onTouchEnd, { passive: true, capture: true })
 
   return () => {
+    window.removeEventListener('pointerdown', onPointerDown, { capture: true } as any)
+    window.removeEventListener('pointermove', onPointerMove, { capture: true } as any)
+    window.removeEventListener('pointerup', onPointerUp, { capture: true } as any)
+    window.removeEventListener('pointercancel', onPointerUp, { capture: true } as any)
     window.removeEventListener('touchstart', onTouchStart, { capture: true } as any)
     window.removeEventListener('touchmove', onTouchMove, { capture: true } as any)
     window.removeEventListener('touchend', onTouchEnd, { capture: true } as any)
@@ -569,7 +607,7 @@ onBeforeUnmount(() => {
 .terminal-toolbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 .search-input { width: 220px; }
 .terminal-toolbar .pixel-btn { padding: 8px 14px; }
-.xterm-shell { width: 100%; min-height: 260px; padding: 8px; background: #000; border: 1px solid var(--border-card); overflow: hidden; touch-action: none; overscroll-behavior: contain; }
+.xterm-shell { width: 100%; min-height: 260px; padding: 8px; background: #000; border: 1px solid var(--border-card); overflow: hidden; touch-action: pan-y; overscroll-behavior: contain; }
 .terminal-input-row { display: flex; gap: 10px; align-items: center; }
 .terminal-input { flex: 1; }
 .terminal-input :deep(.el-input__wrapper) { background: #000; border: 1px solid var(--border-card); box-shadow: none; }
@@ -594,12 +632,12 @@ onBeforeUnmount(() => {
   overscroll-behavior: contain;
   /* 老 iOS 惯性滚动 */
   -webkit-overflow-scrolling: touch;
-  /* 触摸完全交由 JS 手动滚动控制（见 setupTerminalTouch），禁用浏览器原生滚动/缩放 */
-  touch-action: none;
+  /* 允许纵向手势/滚动条拖动（JS 手动滚动为主，原生滚动兜底） */
+  touch-action: pan-y;
 }
 :deep(.xterm-screen) {
-  /* 触摸实际落在 screen 上：禁用浏览器原生手势，全部由 JS 接管滚动 */
-  touch-action: none;
+  /* 触摸落在 screen 上：允许纵向手势（JS 在捕获阶段接管滚动） */
+  touch-action: pan-y;
 }
 :deep(.xterm-screen) { /* 去掉绿色辉光，默认白色文本更干净 */ }
 
