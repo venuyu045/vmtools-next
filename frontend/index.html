@@ -1,18 +1,29 @@
 <!doctype html>
-<html lang="zh-CN" class="dark">
+<html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=5.0, user-scalable=yes" />
-    <meta name="theme-color" content="#000000" />
+    <meta name="theme-color" content="#ECE9E0" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-    <title>VenusYu的第一个网站</title>
+    <title>Minecraft 假人控制面板</title>
+    <script>
+      // 防闪白：在任何 CSS 加载前，按 localStorage / 系统偏好设置 data-theme
+      (function () {
+        try {
+          var saved = localStorage.getItem('vmtools-theme');
+          var theme = saved || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+          document.documentElement.setAttribute('data-theme', theme);
+        } catch (e) { /* 隐私模式等异常场景，默认亮色 */ }
+      })();
+    </script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=VT323&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=DM+Sans:wght@400;500;600&family=Lora:ital,wght@0,400;0,500;1,400&family=JetBrains+Mono:wght@400;500&family=Noto+Sans+SC:wght@400;500&family=Noto+Serif+SC:wght@400;600&display=swap" rel="stylesheet">
     <style>
-      body { margin: 0; background: #000; }
+      body { margin: 0; background: #ECE9E0; }
+      [data-theme="dark"] body { background: #1A1916; }
     </style>
   </head>
   <body>

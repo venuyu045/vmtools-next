@@ -1,46 +1,173 @@
+/* ============================================================
+   vmtools-next 主题 Token · Anthropic 风格（暖米色 + 陶土橙）
+   依据：UI重构设计规范-完整版.md 附录 A
+   - 亮色 :root / [data-theme="light"]
+   - 暗色 [data-theme="dark"]（html 根元素由 index.html 防闪白脚本设置）
+   - 兼容别名：保留像素风旧变量名（--bg-primary / --green-* / --font-pixel 等）
+     映射到新色值，保证旧组件无需改动即可获得新视觉
+   ============================================================ */
+
 :root {
-  /* Background - CRT pixel terminal */
-  --bg-primary: #000000;
-  --bg-card: #0a0a0a;
-  --bg-elevated: #0a0a0a;
-  --bg-input: #0a0a0a;
+  /* ---------- 间距（4px 网格） ---------- */
+  --space-1: 4px; --space-2: 8px; --space-3: 12px; --space-4: 16px;
+  --space-5: 20px; --space-6: 24px; --space-8: 32px; --space-10: 40px;
+  --space-16: 64px; --space-32: 128px;
 
-  /* Neon green palette */
-  --green-primary: #00ff00;
-  --green-bright: #00ff00;
-  --green-dim: #00cc00;
-  --green-dark: #00aa00;
-  --green-faded: #006600;
-  --green-glow: rgba(0, 255, 0, 0.1);
+  /* ---------- 圆角 ---------- */
+  --radius-md: 8px; --radius-lg: 12px; --radius-xl: 16px; --radius-2xl: 24px;
 
-  /* Text */
-  --text-primary: #00ff00;
-  --text-secondary: #00cc00;
-  --text-muted: #008800;
-  --text-disabled: #005500;
+  /* ---------- 字体 ---------- */
+  --font-display: 'DM Serif Display', 'Lora', 'Source Han Serif SC', 'Noto Serif SC', serif;
+  --font-sans: 'DM Sans', 'Poppins', 'Source Han Sans SC', 'Noto Sans SC', sans-serif;
+  --font-body: 'Lora', 'Source Han Serif SC', 'Noto Serif SC', serif;
+  --font-mono: 'JetBrains Mono', 'SFMono-Regular', Consolas, monospace;
 
-  /* Status colors */
-  --color-success: #00ff00;
-  --color-warning: #ffff00;
-  --color-error: #ff0000;
-  --color-info: #1890ff;
+  /* ---------- 动效 ---------- */
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --dur-fast: 150ms; --dur-base: 250ms; --dur-slow: 400ms;
 
-  /* Border */
-  --border-subtle: rgba(0, 255, 0, 0.15);
-  --border-card: rgba(0, 255, 0, 0.2);
-  --border-active: #00ff00;
+  /* ---------- 数据色（亮暗一致，低饱和暖色系） ---------- */
+  --chart-1: #D97757; --chart-2: #B08D57; --chart-3: #8A9A5B;
+  --chart-4: #7C8B7E; --chart-5: #B89B3E; --chart-6: #A67C52;
+  --chart-7: #B5564A; --chart-8: #6E5F52;
+}
 
-  /* Shadow - hard pixel shadows */
-  --shadow-card: 3px 3px 0 rgba(0, 255, 0, 0.15);
-  --shadow-button: 3px 3px 0 rgba(0, 255, 0, 0.4);
-  --shadow-glow: 0 0 40px rgba(0, 255, 0, 0.2);
+/* ============ 亮色模式 ============ */
+:root, [data-theme="light"] {
+  /* 背景 */
+  --bg-page: #ECE9E0;
+  --bg-card: #F5F3EC;
+  --bg-elevated: #FBF9F4;
+  --bg-deep: #141413;
+  --bg-hover: rgba(20, 20, 19, 0.04);
+  --bg-active: rgba(20, 20, 19, 0.07);
 
-  /* Typography */
-  --font-pixel: 'Press Start 2P', 'Courier New', monospace;
-  --font-mono: 'VT323', 'Courier New', monospace;
-  --font-body: 'Arial', 'Microsoft YaHei', sans-serif;
+  /* 文字 */
+  --text-primary: #141413;
+  --text-secondary: #6B6860;
+  --text-muted: #8A877D;
+  --text-disabled: #B5B2A8;
+  --text-inverse: #F5F3EC;
 
-  /* Spacing - 8px base unit for pixel grid */
-  --radius-none: 0px;
-  --radius-btn: 0px;
+  /* 强调色（唯一暖橙） */
+  --accent: #D97757;
+  --accent-hover: #C86645;
+  --accent-active: #B85C38;
+  --accent-soft: rgba(217, 119, 87, 0.10);
+  --accent-ring: rgba(217, 119, 87, 0.35);
+
+  /* 边框 */
+  --border-subtle: #D8D5CC;
+  --border-default: #C9C5BA;
+  --border-strong: #A9A599;
+
+  /* 语义色 */
+  --success: #4A7C59; --success-bg: #E8EFE4;
+  --warning: #9A6B1F; --warning-bg: #F5EDE2;
+  --danger: #C0453A; --danger-bg: #F9E8E6;
+  --info: #6E6A5E; --info-bg: #EFEDE6;
+
+  /* 图表辅助 */
+  --chart-axis: #D8D5CC; --chart-label: #6B6860; --chart-grid: rgba(20, 20, 19, 0.06);
+
+  /* 阴影 */
+  --shadow-sm: 0 1px 2px rgba(20,20,19,0.05), 0 1px 3px rgba(20,20,19,0.08);
+  --shadow-md: 0 4px 12px -2px rgba(20,20,19,0.08), 0 8px 16px -4px rgba(20,20,19,0.10);
+  --shadow-lg: 0 12px 32px -8px rgba(20,20,19,0.18), 0 16px 40px rgba(20,20,19,0.10);
+
+  /* 终端（始终深色，不随主题反转） */
+  --terminal-bg: #141413;
+  --terminal-text: #F5F3EC;
+
+  /* ===== 像素风旧变量 → 新色值映射（兼容旧组件） ===== */
+  --bg-primary: #ECE9E0;
+  --bg-input: #F5F3EC;
+  --green-primary: #D97757;
+  --green-bright: #D97757;
+  --green-dim: #C86645;
+  --green-dark: #B85C38;
+  --green-faded: rgba(217, 119, 87, 0.35);
+  --green-glow: rgba(217, 119, 87, 0.10);
+  --color-success: #4A7C59;
+  --color-warning: #9A6B1F;
+  --color-error: #C0453A;
+  --color-info: #6E6A5E;
+  --border-card: #C9C5BA;
+  --border-active: #D97757;
+  --shadow-card: 0 1px 2px rgba(20,20,19,0.05), 0 1px 3px rgba(20,20,19,0.08);
+  --shadow-button: 0 2px 6px rgba(217, 119, 87, 0.25);
+  --shadow-glow: 0 0 0 rgba(0, 0, 0, 0);
+  --radius-none: 8px;
+  --radius-btn: 8px;
+  --font-pixel: 'DM Serif Display', 'Noto Serif SC', serif;
+}
+
+/* ============ 暗色模式 ============ */
+[data-theme="dark"] {
+  /* 背景 */
+  --bg-page: #1A1916;
+  --bg-card: #222119;
+  --bg-elevated: #2C2B26;
+  --bg-deep: #F5F3EC;
+  --bg-hover: rgba(234, 231, 220, 0.05);
+  --bg-active: rgba(234, 231, 220, 0.09);
+
+  /* 文字 */
+  --text-primary: #EAE7DC;
+  --text-secondary: #9D9A91;
+  --text-muted: #6E6B63;
+  --text-disabled: #5C5A54;
+  --text-inverse: #1A1916;
+
+  /* 强调色（不变） */
+  --accent: #D97757;
+  --accent-hover: #E08A6C;
+  --accent-active: #E69A7F;
+  --accent-soft: rgba(217, 119, 87, 0.14);
+  --accent-ring: rgba(217, 119, 87, 0.45);
+
+  /* 边框 */
+  --border-subtle: #2E2D27;
+  --border-default: #3A3830;
+  --border-strong: #4C4A41;
+
+  /* 语义色 */
+  --success: #7FB08A; --success-bg: rgba(127, 176, 138, 0.14);
+  --warning: #C9A05C; --warning-bg: rgba(201, 160, 92, 0.14);
+  --danger: #E0665A; --danger-bg: rgba(224, 102, 90, 0.14);
+  --info: #A39E90; --info-bg: rgba(163, 158, 144, 0.14);
+
+  /* 图表辅助 */
+  --chart-axis: #2E2D27; --chart-label: #9D9A91; --chart-grid: rgba(234, 231, 220, 0.06);
+
+  /* 阴影（半透明叠加） */
+  --shadow-sm: 0 1px 2px rgba(0,0,0,0.30);
+  --shadow-md: 0 4px 16px -2px rgba(0,0,0,0.40);
+  --shadow-lg: 0 16px 40px -8px rgba(0,0,0,0.55);
+
+  /* 终端（始终深色） */
+  --terminal-bg: #141413;
+  --terminal-text: #F5F3EC;
+
+  /* ===== 像素风旧变量 → 新色值映射（兼容旧组件） ===== */
+  --bg-primary: #1A1916;
+  --bg-input: #222119;
+  --green-primary: #D97757;
+  --green-bright: #D97757;
+  --green-dim: #E08A6C;
+  --green-dark: #E69A7F;
+  --green-faded: rgba(217, 119, 87, 0.45);
+  --green-glow: rgba(217, 119, 87, 0.14);
+  --color-success: #7FB08A;
+  --color-warning: #C9A05C;
+  --color-error: #E0665A;
+  --color-info: #A39E90;
+  --border-card: #3A3830;
+  --border-active: #D97757;
+  --shadow-card: 0 1px 2px rgba(0,0,0,0.30);
+  --shadow-button: 0 2px 8px rgba(0,0,0,0.35);
+  --shadow-glow: 0 0 0 rgba(0,0,0,0);
+  --radius-none: 8px;
+  --radius-btn: 8px;
+  --font-pixel: 'DM Serif Display', 'Noto Serif SC', serif;
 }
