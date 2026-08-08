@@ -38,15 +38,15 @@
       <!-- Armor 36-39 + Offhand 40 + Crafting 41-44 -->
       <div class="side-area">
         <div class="side-label">Armor</div>
-        <div v-for="(label, i) in ['头','胸','腿','脚','副']" :key="'a'+i"
+        <div v-for="(armor, i) in ['头','胸','腿','脚','副']" :key="'a'+i"
           class="slot" :class="slotCls(36+i)"
-          :title="label + ': ' + tip(36+i)"
+          :title="armor + ': ' + tip(36+i)"
           @click.left="click(36+i)"
           @click.right.prevent="rclick(36+i, $event)"
         >
           <ItemIcon v-if="get(36+i)" :item-id="get(36+i)!.item_id" :name="label(get(36+i)!.item_id)" :size="32" class="icon" />
           <span v-if="get(36+i)" class="count">{{ get(36+i)!.count }}</span>
-          <span class="num">{{ label }}</span>
+          <span class="num">{{ armor }}</span>
         </div>
         <div class="side-label" style="margin-top:8px">Craft</div>
         <div class="craft-grid">
