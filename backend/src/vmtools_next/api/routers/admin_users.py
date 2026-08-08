@@ -37,6 +37,7 @@ class UserOut(BaseModel):
     organization_id: str | None = None
     created_at: datetime | None = None
     approved_at: datetime | None = None
+    last_seen_at: datetime | None = None  # 上次上线时间（最近一次访问网页/登录）
 
 
 def _serialize(u: UserModel) -> UserOut:
@@ -49,6 +50,7 @@ def _serialize(u: UserModel) -> UserOut:
         organization_id=u.organization_id,
         created_at=u.created_at,
         approved_at=u.approved_at,
+        last_seen_at=u.last_seen_at,
     )
 
 
@@ -109,3 +111,33 @@ def update_user(
     db.commit()
     db.refresh(user)
     return _serialize(user)
+
+
+@router.delete("/{user_id}")
+def delete_user(
+    user_id: str,
+    db: Session = Depends(get_db),
+    admin: UserModel = Depends(require_site_admin),
+):
+    """删除成员（仅 site_admin）。
+
+    保护：不能删除最后一个 site_admin（避免全员锁死）；
+    不能删除自己（防止管理员误删当前会话）。
+    """
+    user = db.query(UserModel).filter(UserModel.id == user_id).first()
+    if not user:
+        raise HTTPException(404, "User not found")
+
+    if user.id == admin.id:
+        raise HTTPException(400, "不能删除当前登录的管理员账号")
+
+    if user.role == "site_admin":
+        site_admin_count = (
+            db.query(UserModel).filter(UserModel.role == "site_admin").count()
+        )
+        if site_admin_count <= 1:
+            raise HTTPException(400, "不能删除最后一个站点管理员")
+
+    db.delete(user)
+    db.commit()
+    return {"status": "deleted", "user_id": user_id, "game_id": user.game_id}

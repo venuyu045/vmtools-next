@@ -187,6 +187,9 @@ def _run_lightweight_migrations(engine) -> None:
                         conn.execute(text("ALTER TABLE users ADD COLUMN qq_openid VARCHAR"))
                     if "qq_nickname" not in u_columns:
                         conn.execute(text("ALTER TABLE users ADD COLUMN qq_nickname VARCHAR"))
+                    # 上次上线时间（成员管理「上次上线」列；登录 / 访问网页时更新）
+                    if "last_seen_at" not in u_columns:
+                        conn.execute(text("ALTER TABLE users ADD COLUMN last_seen_at DATETIME"))
                     conn.execute(text(
                         "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_qq_openid "
                         "ON users (qq_openid) WHERE qq_openid IS NOT NULL"

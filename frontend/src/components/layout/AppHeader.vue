@@ -17,6 +17,9 @@
       </div>
     </div>
     <div class="header-right">
+      <!-- 未登录（访客）：显示「登录」按钮，点击进入登录页 -->
+      <router-link v-if="!authStore.isLoggedIn" to="/login" class="profile-btn login-link">登录</router-link>
+      <template v-else>
       <span class="user-dot"></span>
       <span class="username hide-on-mobile">{{ authStore.user?.display_name || authStore.user?.game_id }}</span>
       <span class="username-mobile show-on-mobile">{{ shortName }}</span>
@@ -59,6 +62,7 @@
           <el-button type="primary" :loading="pwdSaving" @click="submitChangePwd">确认修改</el-button>
         </template>
       </el-dialog>
+      </template>
     </div>
   </div>
 </template>
@@ -205,6 +209,13 @@ async function submitChangePwd() {
   border-color: var(--border-active);
   color: var(--text-primary);
   background: var(--green-glow);
+}
+
+/* 未登录「登录」按钮（访客模式入口） */
+.login-link {
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
 }
 
 /* 个人中心弹窗 */

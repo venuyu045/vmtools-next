@@ -6,7 +6,7 @@ import re
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from vmtools_next.api.deps import get_db, get_current_user, require_admin
+from vmtools_next.api.deps import get_db, get_current_user, get_optional_user, require_admin
 from vmtools_next.data.models.auth import UserModel
 from vmtools_next.api.schemas.mcc import (
     MccBotCreate, MccBotResponse, MccBotConnectRequest,
@@ -34,7 +34,7 @@ def _get_scoped_bot(db: Session, user: UserModel, bot_id: str) -> MccBotModel:
 
 
 @router.get("", response_model=list[MccBotResponse])
-def list_bots(db: Session = Depends(get_db), user=Depends(get_current_user)):
+def list_bots(db: Session = Depends(get_db), user=Depends(get_optional_user)):
     """List MCC bots visible to the user (same org, site_admin sees all)."""
     bots = _scoped_bot_query(db, user).all()
     return [MccBotResponse(
@@ -180,7 +180,7 @@ def _get_bot_current_task(db: Session, bot_id: str):
 
 @router.get("/status/overview", response_model=MccBotStatusList)
 def bot_status_overview(engine: str = "mcc",
-                        db: Session = Depends(get_db), user=Depends(get_current_user)):
+                        db: Session = Depends(get_db), user=Depends(get_optional_user)):
     """每个 bot 的实时状态：在线情况/血量/饱食度/坐标/最近领地/当前工作。
 
     ``engine``：'mcc' | 'mineflayer'（MCC 状态与 MF 状态共用同一接口）。
