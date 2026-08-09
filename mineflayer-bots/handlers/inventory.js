@@ -122,6 +122,8 @@ function createInventoryHandlers(bot) {
         items,
         total_slots: bot.inventory.slots.length,
         held_item: bot.heldItem ? { name: bot.heldItem.name, count: bot.heldItem.count } : null,
+        // 当前选中快捷栏索引（0-8）：前端黄色框跟随手持
+        selectedHotbar: (typeof bot.quickBarSlot === 'number' && bot.quickBarSlot >= 0) ? bot.quickBarSlot : 0,
       };
     } catch (err) {
       return { success: false, error: err.message };

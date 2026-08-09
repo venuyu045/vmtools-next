@@ -2,7 +2,7 @@
   <div class="inv-container">
     <div v-if="moveMode" class="cursor-bar move">📦 移动模式：点击要移动的物品（高亮），再点击目标槽位完成移动/交换 · 点击原槽位/ESC 取消</div>
     <div v-else-if="cursorMsg" class="cursor-bar">{{ cursorMsg }}</div>
-    <div class="help">{{ p.clickable ? '左键=拿/放/交换 · 右键=丢弃 · 🔄刷新看结果' : '点击快捷栏=设为手持 · 点击物品=查看详情 · 移动/丢弃走按钮' }}</div>
+    <div class="help">{{ p.clickable ? '左键=拿/放/交换 · 右键=丢弃 · 🔄刷新看结果' : '点击物品=详情（手持/移动/丢弃）· 手持物品在详情中「设为手持」' }}</div>
 
     <div class="layout">
       <!-- Main inventory: slots 9-35 (3 rows), with armor/offhand on right -->
@@ -99,7 +99,7 @@
 
         <div class="detail-actions">
           <el-button v-if="isHotbarSlot(detail.item.slot)" size="small" type="primary" @click="doHold">✋ 设为手持</el-button>
-          <el-button v-else size="small" @click="doMoveFromDetail">📦 移动</el-button>
+          <el-button size="small" @click="doMoveFromDetail">📦 移动</el-button>
           <el-button size="small" @click="doDropOne">丢 1 个</el-button>
           <el-button size="small" type="danger" @click="doDropStack">丢整组 ({{ detail.item.count }})</el-button>
         </div>
@@ -262,16 +262,9 @@ async function onSlotClick(slotIdx: number) {
     return
   }
 
-  // MF 模式：快捷栏点击=设为手持；其余物品点击=查看详情
+  // MF 模式：单击任意槽位（含快捷栏）→ 打开物品详情（详情内可设为手持/移动/丢弃）
+  // 统一入口避免「快捷栏点击=手持」与「移动/丢弃」的交互冲突
   if (p.clickable === false) {
-    if (isHotbarSlot(slotIdx)) {
-      if (get(slotIdx)) {
-        emit('selectHotbar', slotIdx)
-      } else {
-        ElMessage.warning('该快捷栏槽位为空')
-      }
-      return
-    }
     const s = get(slotIdx)
     if (s) detail.value = { show: true, item: s }
     return
