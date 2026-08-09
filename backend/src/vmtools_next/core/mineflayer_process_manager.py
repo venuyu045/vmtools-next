@@ -224,6 +224,8 @@ class MineflayerProcessManager:
                 cmd += ["--viewer-port", str(viewer_port), "--viewer-host", self._viewer_host]
                 if self._viewer_prefix:
                     cmd += ["--viewer-prefix", self._viewer_prefix]
+                # 渲染范围（chunk，默认 4；见 config.py mineflayer_viewer_distance）
+                cmd += ["--viewer-distance", str(getattr(config, "mineflayer_viewer_distance", 4))]
 
             # ── 认���方式处理 ──
             auth_type = account_profile.auth_type if account_profile else "offline"

@@ -112,6 +112,9 @@ class MccConfig(BaseModel):
     mineflayer_viewer_preferred_port: int = 3007
     mineflayer_viewer_host: str = "0.0.0.0"
     mineflayer_viewer_prefix: str = ""
+    # viewer 渲染范围（chunk）：默认 4（81 chunk，几何计算/带宽较 6 省 ~33%，
+    # 2 核 2G 服务器友好）；调大显著增加浏览器负载与首屏时间
+    mineflayer_viewer_distance: int = 4
 
 
 class MineflayerConfig(BaseModel):
