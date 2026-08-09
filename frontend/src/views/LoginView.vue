@@ -245,6 +245,9 @@ onMounted(() => {
 }
 
 .qq-btn {
+  /* 覆盖 EP 相邻按钮默认 margin-left:12px（.el-button + .el-button），
+     否则 QQ 登录按钮会整体右偏 12px（与上方「登录」按钮不对齐） */
+  margin-left: 0 !important;
   background: #12b7f5;
   border-color: #12b7f5;
   color: #fff;
