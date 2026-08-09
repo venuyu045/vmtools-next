@@ -15,6 +15,11 @@ METHOD_LOOK_AT = "look_at"
 METHOD_GET_PLAYER_STATE = "get_player_state"
 METHOD_CANCEL_PATHING = "cancel_pathing"
 METHOD_IS_PLAYER_NEARBY = "is_player_nearby"
+# 玩家操控（2026-08-09 背包页移动控制台）
+METHOD_SET_CONTROL_STATE = "set_control_state"
+METHOD_LOOK = "look"
+METHOD_JUMP = "jump"
+METHOD_SNEAK = "sneak"
 
 # Block operations
 METHOD_PLACE_BLOCK = "place_block"

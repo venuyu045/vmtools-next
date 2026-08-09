@@ -49,4 +49,20 @@ export const botApi = {
   inventoryUse(botId: string, data: { item_type?: string; slot_id?: number }) {
     return client.post(`/mcc-bots/${botId}/inventory/use`, data)
   },
+  // 移动控制（mineflayer only）
+  control(botId: string, data: { direction: string; state: boolean }) {
+    return client.post(`/mcc-bots/${botId}/control`, data)
+  },
+  getState(botId: string) {
+    return client.get(`/mcc-bots/${botId}/state`)
+  },
+  jump(botId: string) {
+    return client.post(`/mcc-bots/${botId}/jump`)
+  },
+  sneak(botId: string, state?: boolean) {
+    return client.post(`/mcc-bots/${botId}/sneak`, state === undefined ? {} : { state })
+  },
+  look(botId: string, data: { yaw: number; pitch?: number; force?: boolean }) {
+    return client.post(`/mcc-bots/${botId}/look`, data)
+  },
 }

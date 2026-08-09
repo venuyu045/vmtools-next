@@ -12,7 +12,7 @@ from vmtools_next.api.schemas.mcc import (
     MccBotCreate, MccBotResponse, MccBotConnectRequest,
     InventorySnapshot, InventorySlot, InventoryActionRequest,
     InventorySelectHotbarRequest, InventoryDropRequest, InventoryMoveRequest,
-    InventoryUseRequest,
+    InventoryUseRequest, MoveControlRequest, LookRequest, SneakRequest,
     MccBotStatusList, MccBotStatusItem,
 )
 from vmtools_next.data.models.logistics import MccBotModel
@@ -679,6 +679,100 @@ async def inventory_use(bot_id: str, data: InventoryUseRequest,
         if isinstance(result, dict) and result.get("success") is False:
             raise HTTPException(400, result.get("error", "使用失败"))
         return {"success": True, "item": result.get("item"), "result": result}
+    except MccMcpError as e:
+        raise HTTPException(502, f"MCP error: {str(e) or repr(e)}")
+    finally:
+        if owned: await client.disconnect()
+
+
+# ── 玩家操控（MF 移动控制台：前后左右/跳跃/蹲下/视角） ──
+# 仅 mineflayer 引擎（bot.setControlState / bot.look 等）
+
+@router.get("/{bot_id}/state")
+async def bot_state(bot_id: str, db: Session = Depends(get_db), user=Depends(get_current_user)):
+    """获取 bot 实时状态（MF 含 yaw/pitch/坐标，移动控制台视角基准用）。"""
+    _get_scoped_bot(db, user, bot_id)
+    client, owned = await _get_mcp_client(bot_id)
+    try:
+        if isinstance(client, MccMcpClient):
+            raise HTTPException(400, "MCC 引擎请使用状态页（state 仅 mineflayer）")
+        result = await client.get_player_state()
+        return {"success": True, "result": result}
+    except MccMcpError as e:
+        raise HTTPException(502, f"MCP error: {str(e) or repr(e)}")
+    finally:
+        if owned: await client.disconnect()
+
+
+@router.post("/{bot_id}/control")
+async def bot_control(bot_id: str, data: MoveControlRequest,
+                      db: Session = Depends(get_db), user=Depends(require_admin)):
+    """持续按住/松开控制键（mineflayer only）：forward/back/left/right/jump/sneak/sprint。"""
+    _get_scoped_bot(db, user, bot_id)
+    client, owned = await _get_mcp_client(bot_id)
+    try:
+        if isinstance(client, MccMcpClient):
+            raise HTTPException(400, "MCC 引擎不支持移动控制（control 仅 mineflayer）")
+        result = await client.set_control_state(data.direction, data.state)
+        if isinstance(result, dict) and result.get("success") is False:
+            raise HTTPException(400, result.get("error", "控制失败"))
+        return {"success": True, "direction": data.direction, "state": data.state, "result": result}
+    except MccMcpError as e:
+        raise HTTPException(502, f"MCP error: {str(e) or repr(e)}")
+    finally:
+        if owned: await client.disconnect()
+
+
+@router.post("/{bot_id}/jump")
+async def bot_jump(bot_id: str, db: Session = Depends(get_db), user=Depends(require_admin)):
+    """跳跃一次（mineflayer only）。"""
+    _get_scoped_bot(db, user, bot_id)
+    client, owned = await _get_mcp_client(bot_id)
+    try:
+        if isinstance(client, MccMcpClient):
+            raise HTTPException(400, "MCC 引擎不支持跳跃（jump 仅 mineflayer）")
+        result = await client.jump()
+        if isinstance(result, dict) and result.get("success") is False:
+            raise HTTPException(400, result.get("error", "跳跃失败"))
+        return {"success": True, "result": result}
+    except MccMcpError as e:
+        raise HTTPException(502, f"MCP error: {str(e) or repr(e)}")
+    finally:
+        if owned: await client.disconnect()
+
+
+@router.post("/{bot_id}/sneak")
+async def bot_sneak(bot_id: str, data: SneakRequest,
+                    db: Session = Depends(get_db), user=Depends(require_admin)):
+    """蹲下/站起（mineflayer only；state=None 切换）。"""
+    _get_scoped_bot(db, user, bot_id)
+    client, owned = await _get_mcp_client(bot_id)
+    try:
+        if isinstance(client, MccMcpClient):
+            raise HTTPException(400, "MCC 引擎不支持蹲下（sneak 仅 mineflayer）")
+        result = await client.sneak(data.state)
+        if isinstance(result, dict) and result.get("success") is False:
+            raise HTTPException(400, result.get("error", "操作失败"))
+        return {"success": True, "sneaking": result.get("sneaking"), "result": result}
+    except MccMcpError as e:
+        raise HTTPException(502, f"MCP error: {str(e) or repr(e)}")
+    finally:
+        if owned: await client.disconnect()
+
+
+@router.post("/{bot_id}/look")
+async def bot_look(bot_id: str, data: LookRequest,
+                   db: Session = Depends(get_db), user=Depends(require_admin)):
+    """视角控制：平滑转向（mineflayer only；yaw/pitch 弧度）。"""
+    _get_scoped_bot(db, user, bot_id)
+    client, owned = await _get_mcp_client(bot_id)
+    try:
+        if isinstance(client, MccMcpClient):
+            raise HTTPException(400, "MCC 引擎不支持视角控制（look 仅 mineflayer）")
+        result = await client.look(data.yaw, data.pitch, data.force)
+        if isinstance(result, dict) and result.get("success") is False:
+            raise HTTPException(400, result.get("error", "视角控制失败"))
+        return {"success": True, "yaw": data.yaw, "pitch": data.pitch, "result": result}
     except MccMcpError as e:
         raise HTTPException(502, f"MCP error: {str(e) or repr(e)}")
     finally:

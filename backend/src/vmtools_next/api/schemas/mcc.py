@@ -133,3 +133,23 @@ class InventoryUseRequest(BaseModel):
     """使用物品（吃食物等，mineflayer：bot.consume）。slot_id 为前端标准槽位，可选。"""
     item_type: Optional[str] = None
     slot_id: Optional[int] = None
+
+
+# ── 玩家操控（移动控制台） ──
+
+class MoveControlRequest(BaseModel):
+    """持续按住/松开控制键（mineflayer setControlState）。"""
+    direction: str  # forward | back | left | right | jump | sneak | sprint
+    state: bool = True
+
+
+class LookRequest(BaseModel):
+    """视角控制：平滑转向（yaw/pitch 弧度）。"""
+    yaw: float
+    pitch: Optional[float] = None
+    force: bool = False
+
+
+class SneakRequest(BaseModel):
+    """蹲下/站起（state=None 时切换）。"""
+    state: Optional[bool] = None

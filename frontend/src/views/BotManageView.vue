@@ -113,13 +113,37 @@
     </el-dialog>
 
     <!-- Detail drawer (Terminal / Account / Files) -->
-    <el-drawer v-model="detailOpen" size="72%" :title="drawerTitle">
+    <el-drawer v-model="detailOpen" size="86%" :title="drawerTitle">
       <div v-if="selectedInstance" class="detail-panel">
         <div class="terminal-meta mono">
           <span>{{ selectedInstance.display_name }}</span>
           <span>PID: {{ selectedInstance.pid || '--' }}</span>
           <span>PORT: {{ selectedInstance.mcp_port }}</span>
+          <span v-if="isMf" class="live-coord" :title="'实时坐标'">📍 {{ liveCoord }}</span>
           <span>{{ selectedInstance.instance_dir }}</span>
+        </div>
+
+        <!-- MF 实时 3D 预览（内嵌 viewer iframe + token 鉴权） -->
+        <div v-if="isMf && showMfPreview" class="mf-preview">
+          <div class="preview-head">
+            <span class="preview-title">▶ 实时 3D 预览</span>
+            <span class="preview-hint">坐标变化实时跟随 · 渲染较慢请耐心等待</span>
+            <a
+              v-if="viewerSrc"
+              class="preview-new"
+              :href="viewerSrc.split('?')[0]"
+              target="_blank"
+              rel="noopener"
+            >新窗口打开</a>
+          </div>
+          <iframe
+            v-if="viewerSrc"
+            :src="viewerSrc"
+            class="preview-frame"
+            allowfullscreen
+            sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
+          />
+          <div v-else class="preview-loading">预览加载中…</div>
         </div>
 
         <el-tabs v-model="activeTab" class="mcc-tabs" @tab-change="handleTabChange">
@@ -179,6 +203,11 @@
 
           <el-tab-pane label="背包" name="inventory">
             <div v-if="selectedInstance" class="inventory-tab">
+              <!-- MF 移动控制台：前后左右/跳/蹲/视角摇杆 -->
+              <MoveControlPad
+                v-if="isMf && selectedInstance.bot_id"
+                :bot-id="selectedInstance.bot_id"
+              />
               <InventoryGrid
                 :bot-id="selectedInstance.bot_id || ''"
                 :inventory="inventoryData"
@@ -234,9 +263,11 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import MccWebTerminal from '@/components/MccWebTerminal.vue'
 import MccFileManagerPanel from '@/components/MccFileManagerPanel.vue'
 import InventoryGrid from '@/components/bot/InventoryGrid.vue'
+import MoveControlPad from '@/components/bot/MoveControlPad.vue'
 import { useMccInstanceStore } from '@/stores/mccInstance'
 import { useBotStore } from '@/stores/bot'
 import { botApi } from '@/api/bot'
+import api from '@/api/client'
 import type { MccAccountConfig, MccAuthType, MccInstance } from '@/api/mccInstance'
 import { mccInstanceApi } from '@/api/mccInstance'
 
@@ -269,6 +300,66 @@ const showCreate = ref(false)
 const showProfileCreate = ref(false)
 const detailOpen = ref(false)
 const activeTab = ref<'terminal' | 'account' | 'files' | 'inventory'>('terminal')
+
+// ── MF 实时预览 + 实时坐标（实例详情抽屉顶部） ──
+const isMf = computed(() => engine.value === 'mineflayer')
+const showMfPreview = ref(false)
+const viewerSrc = ref('')
+const liveCoord = ref('—')
+let coordTimer: number | undefined
+let viewerLoadSeq = 0
+
+function viewerBase(): string {
+  return `${window.location.protocol}//${window.location.hostname}/viewer/`
+}
+
+/** 打开抽屉时：MF 在线实例加载 viewer 预览 + 坐标轮询 */
+async function setupMfPreview(instance: MccInstance) {
+  showMfPreview.value = false
+  viewerSrc.value = ''
+  liveCoord.value = '—'
+  if (!isMf.value || instance.status !== 'running' || !instance.bot_id) return
+  const seq = ++viewerLoadSeq
+  try {
+    // 从 MF 状态概览取 viewer_port（实时）与当前坐标
+    const resp = await api.get('/mcc-bots/status/overview?engine=mineflayer')
+    if (seq !== viewerLoadSeq) return
+    const bot = (resp.data?.items || []).find((b: any) => b.bot_id === instance.bot_id)
+    if (!bot) return
+    if (bot.current_location) {
+      liveCoord.value = `x ${Math.round(bot.current_location.x)} y ${Math.round(bot.current_location.y)} z ${Math.round(bot.current_location.z)}`
+    }
+    if (!bot.viewer_port) return
+    showMfPreview.value = true
+    const tokenResp = await api.get('/auth/viewer-token')
+    const token = tokenResp.data?.token
+    viewerSrc.value = token ? `${viewerBase()}?t=${encodeURIComponent(token)}` : viewerBase()
+  } catch {
+    /* 预览失败不阻塞抽屉 */
+  }
+  // 坐标轮询（5s）——viewer iframe 内世界实时，这里只刷新顶部坐标文字
+  if (coordTimer) window.clearInterval(coordTimer)
+  coordTimer = window.setInterval(async () => {
+    if (!selectedInstance.value?.bot_id || !isMf.value) return
+    try {
+      const r = await api.get('/mcc-bots/status/overview?engine=mineflayer')
+      const b = (r.data?.items || []).find((x: any) => x.bot_id === selectedInstance.value!.bot_id)
+      if (b?.current_location) {
+        liveCoord.value = `x ${Math.round(b.current_location.x)} y ${Math.round(b.current_location.y)} z ${Math.round(b.current_location.z)}`
+      }
+    } catch { /* ignore */ }
+  }, 5000)
+}
+
+function clearMfPreview() {
+  viewerLoadSeq++
+  showMfPreview.value = false
+  viewerSrc.value = ''
+  if (coordTimer) {
+    window.clearInterval(coordTimer)
+    coordTimer = undefined
+  }
+}
 
 // Inventory state
 const inventoryData = ref<any>(null)
@@ -512,6 +603,8 @@ async function openInstance(instance: MccInstance, tab: 'terminal' | 'account' |
   activeTab.value = tab
   detailOpen.value = true
   await loadActiveTab()
+  // MF 实例：抽屉顶部加载实时 3D 预览 + 坐标
+  await setupMfPreview(instance)
 }
 
 async function loadActiveTab() {
@@ -651,7 +744,10 @@ async function applySelectedProfile() {
 }
 
 watch(detailOpen, (open) => {
-  if (!open) selectedInstance.value = null
+  if (!open) {
+    selectedInstance.value = null
+    clearMfPreview()
+  }
 })
 
 onMounted(() => refreshAll())
@@ -757,12 +853,62 @@ watch(
   .account-toolbar .el-select { width: 100%; }
   .account-form { max-width: 100%; }
   .terminal-meta { font-size: 12px; gap: 10px; }
+  .live-coord { font-size: 12px; }
   /* 详情抽屉移动端全宽 */
   :deep(.el-drawer) { width: 100% !important; }
+  .mf-preview { max-height: 240px; }
+  .preview-frame { height: 220px; }
 }
 @media (max-width: 480px) {
   .actions .pixel-btn { flex: none; font-size: 11px; padding: 4px 8px; }
   .header-actions .pixel-btn { font-size: 11px; padding: 4px 8px; }
   .instance-dir { font-size: 10px; }
+}
+
+/* ── MF 实时预览（抽屉顶部） ── */
+.live-coord { color: var(--success); font-size: 13px; }
+.mf-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 14px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  background: var(--bg-card);
+  max-height: 340px;
+}
+.preview-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  background: var(--bg-elevated);
+  border-bottom: 1px solid var(--border-subtle);
+}
+.preview-title { font-size: 13px; color: var(--accent); font-weight: 600; }
+.preview-hint { font-size: 11px; color: var(--text-muted); }
+.preview-new {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--accent);
+  text-decoration: none;
+  white-space: nowrap;
+}
+.preview-new:hover { text-decoration: underline; }
+.preview-frame {
+  display: block;
+  width: 100%;
+  height: 300px;
+  border: none;
+  background: var(--bg-card);
+}
+.preview-loading {
+  height: 200px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  font-size: 13px;
 }
 </style>

@@ -132,7 +132,68 @@ function createMovementHandlers(bot) {
     return { x: bot.entity.position.x, y: bot.entity.position.y, z: bot.entity.position.z };
   }
 
-  return { move_to, look_at, get_player_state, cancel_pathing, is_player_nearby };
+  // ── 移动控制（玩家操控：前后左右/跳跃/蹲下/视角） ──
+// mineflayer setControlState：持续按住某个控制键直到再次调用关闭。
+// 前端按下 → state=true，松开 → state=false（WebSocket 往返延迟低，可接受）。
+
+const CONTROL_KEYS = ['forward', 'back', 'left', 'right', 'jump', 'sneak', 'sprint'];
+
+function set_control_state({ control, state = true } = {}) {
+  try {
+    if (!control || !CONTROL_KEYS.includes(control)) {
+      return { success: false, error: `control must be one of: ${CONTROL_KEYS.join(', ')}` };
+    }
+    bot.setControlState(control, !!state);
+    return { success: true, control, state: !!state };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+}
+
+// ── 视角控制（平滑转向） ──
+// yaw/pitch 为弧度（mineflayer 语义：yaw -π~π，pitch -π/2~π/2）。
+// 前端摇杆累计目标角度后调用；force=false 由客户端平滑转向（服务器限制转向速度）。
+function look({ yaw, pitch = null, force = false } = {}) {
+  try {
+    if (typeof yaw !== 'number' || isNaN(yaw)) {
+      return { success: false, error: 'yaw (radians) is required' };
+    }
+    if (pitch !== null && (typeof pitch !== 'number' || isNaN(pitch))) {
+      return { success: false, error: 'pitch (radians) must be a number' };
+    }
+    const targetPitch = pitch !== null ? Math.max(-Math.PI / 2, Math.min(Math.PI / 2, pitch)) : null;
+    bot.look(yaw, targetPitch, !!force);
+    return { success: true, yaw, pitch: targetPitch, force: !!force };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+}
+
+// ── 跳跃一次（按住 jump 约 150ms 后松开） ──
+async function jump({} = {}) {
+  try {
+    bot.setControlState('jump', true);
+    await new Promise(r => setTimeout(r, 150));
+    bot.setControlState('jump', false);
+    return { success: true };
+  } catch (err) {
+    bot.setControlState('jump', false);
+    return { success: false, error: err.message };
+  }
+}
+
+// ── 蹲下/站起（toggle 或显式 state） ──
+function sneak({ state = null } = {}) {
+  try {
+    const target = state === null ? !bot.controlState.sneak : !!state;
+    bot.setControlState('sneak', target);
+    return { success: true, sneaking: target };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+}
+
+return { move_to, look_at, get_player_state, cancel_pathing, is_player_nearby, set_control_state, look, jump, sneak };
 }
 
 module.exports = { createMovementHandlers };

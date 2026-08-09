@@ -22,6 +22,10 @@ from .protocol import (
     METHOD_GET_PLAYER_STATE,
     METHOD_CANCEL_PATHING,
     METHOD_IS_PLAYER_NEARBY,
+    METHOD_SET_CONTROL_STATE,
+    METHOD_LOOK,
+    METHOD_JUMP,
+    METHOD_SNEAK,
     METHOD_PLACE_BLOCK,
     METHOD_DIG_BLOCK,
     METHOD_GET_WORLD_BLOCK_AT,
@@ -366,6 +370,33 @@ class MineflayerBridgeClient(AbstractBotAgent):
         return await self._send_request(METHOD_IS_PLAYER_NEARBY, {
             "radius": radius,
         }, timeout=DEFAULT_CMD_TIMEOUT)
+
+    # ── 玩家操控（背包页移动控制台：前后左右/跳跃/蹲下/视角） ──
+
+    async def set_control_state(self, control: str, state: bool = True) -> dict:
+        """持续按住/松开某个控制键（forward/back/left/right/jump/sneak/sprint）。"""
+        return await self._send_request(METHOD_SET_CONTROL_STATE, {
+            "control": control,
+            "state": bool(state),
+        }, timeout=DEFAULT_CMD_TIMEOUT)
+
+    async def look(self, yaw: float, pitch: float | None = None, force: bool = False) -> dict:
+        """视角控制：平滑转向（yaw/pitch 弧度；force=false 客户端平滑转向）。"""
+        params: dict[str, Any] = {"yaw": yaw, "force": force}
+        if pitch is not None:
+            params["pitch"] = pitch
+        return await self._send_request(METHOD_LOOK, params, timeout=DEFAULT_CMD_TIMEOUT)
+
+    async def jump(self) -> dict:
+        """跳跃一次。"""
+        return await self._send_request(METHOD_JUMP, {}, timeout=DEFAULT_CMD_TIMEOUT)
+
+    async def sneak(self, state: bool | None = None) -> dict:
+        """蹲下/站起（state=None 时切换）。"""
+        params: dict[str, Any] = {}
+        if state is not None:
+            params["state"] = bool(state)
+        return await self._send_request(METHOD_SNEAK, params, timeout=DEFAULT_CMD_TIMEOUT)
 
     # ── 物品栏 ──
 
