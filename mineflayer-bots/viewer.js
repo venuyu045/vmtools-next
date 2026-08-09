@@ -224,9 +224,11 @@ module.exports = function startViewer(bot, options = {}) {
       socket.emit('version', bot.version);
       sockets.push(socket);
 
-      // ⚠️ 2026-08-09 紧急禁用：预渲染 useGeometry 推送导致浏览器 worker 全空（方块不渲染）。
-      // 排查中（怀疑 geometry 序列化/格式或 preRendered 逻辑 bug）。恢复后取消注释。
-      // 浏览器端 worker 的 useGeometry 处理仍在（patch），但服务端不推 → preRendered 空 → 纯本地计算。
+      // 推送服务端预渲染的 core 区 geometry（浏览器 worker 直接用，跳过本地计算）
+      // 2026-08-09：preRendered 声明缺失已修复（2e5c554），重新启用
+      for (const [key, geometry] of prerenderCache) {
+        socket.emit('useGeometry', { key, geometry });
+      }
 
       const worldView = new WorldView(bot.world, viewDistance, bot.entity.position, socket);
       worldView.init(bot.entity.position);
