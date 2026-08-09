@@ -69,6 +69,7 @@ class MineflayerProcessManager:
         self._preferred_viewer_port = getattr(config, 'mineflayer_viewer_preferred_port', 3007)
         self._viewer_host = getattr(config, 'mineflayer_viewer_host', '0.0.0.0')
         self._viewer_prefix = getattr(config, 'mineflayer_viewer_prefix', '')
+        self._viewer_distance = getattr(config, 'mineflayer_viewer_distance', 4)
         self._node_path = self._find_node()
         self._script_path = self._find_script()
         # 终端日志缓冲：与 MccProcessManager 共用 TerminalLogBuffer，
@@ -225,7 +226,7 @@ class MineflayerProcessManager:
                 if self._viewer_prefix:
                     cmd += ["--viewer-prefix", self._viewer_prefix]
                 # 渲染范围（chunk，默认 4；见 config.py mineflayer_viewer_distance）
-                cmd += ["--viewer-distance", str(getattr(config, "mineflayer_viewer_distance", 4))]
+                cmd += ["--viewer-distance", str(self._viewer_distance)]
 
             # ── 认���方式处理 ──
             auth_type = account_profile.auth_type if account_profile else "offline"
