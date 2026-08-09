@@ -187,6 +187,8 @@
                 @refresh="fetchInventory"
                 @action="handleInventoryAction"
                 @drop="handleInventoryDrop"
+                @select-hotbar="handleSelectHotbar"
+                @move="handleInventoryMove"
               />
             </div>
             <div v-else class="empty-state">选择 Bot 实例查看背包</div>
@@ -571,6 +573,35 @@ async function handleInventoryDrop(payload: { item_type: string; count: number }
     fetchInventory()
   } catch (e: any) {
     ElMessage.error('丢弃失败: ' + (e?.response?.data?.detail || e))
+  }
+}
+
+/** MF：点击快捷栏槽位 → 设置为主手 */
+async function handleSelectHotbar(slot: number) {
+  const botId = selectedInstance.value?.bot_id
+  if (!botId) { ElMessage.warning('未绑定 Bot'); return }
+  try {
+    await botApi.inventorySelectHotbar(botId, slot)
+    ElMessage.success(`已切换到快捷栏槽位 ${slot + 1}`)
+    fetchInventory()
+  } catch (e: any) {
+    ElMessage.error('切换手持失败: ' + (e?.response?.data?.detail || e))
+  }
+}
+
+/** MF：移动/交换背包槽位 */
+async function handleInventoryMove(payload: { slot_id: number; dest_slot_id: number }) {
+  const botId = selectedInstance.value?.bot_id
+  if (!botId) { ElMessage.warning('未绑定 Bot'); return }
+  try {
+    await botApi.inventoryMove(botId, {
+      slot_id: payload.slot_id,
+      dest_slot_id: payload.dest_slot_id,
+    })
+    ElMessage.success(`已移动槽位 ${payload.slot_id} → ${payload.dest_slot_id}`)
+    fetchInventory()
+  } catch (e: any) {
+    ElMessage.error('移动失败: ' + (e?.response?.data?.detail || e))
   }
 }
 

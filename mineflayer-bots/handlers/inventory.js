@@ -78,17 +78,45 @@ function createInventoryHandlers(bot) {
   }
 
   // ── 获取背包快照 ──
+  // 附带物品详情字段（耐久/附魔），供前端「物品详情」弹窗展示。
+  function itemDetail(item) {
+    const maxDur = (item && item.maxDurability) || null;
+    let durability = null;
+    let durabilityUsed = 0;
+    try { durabilityUsed = item.durabilityUsed || 0; } catch (e) { durabilityUsed = 0; }
+    if (maxDur) {
+      durability = Math.max(0, maxDur - durabilityUsed);
+    }
+    let enchantments = [];
+    try {
+      const ench = item.enchants;
+      if (Array.isArray(ench) && ench.length) {
+        // enchants: [{name, lvl}]（prismarine-item 已解析）；过滤掉无名的条目
+        enchantments = ench
+          .filter(e => e && (e.name || e.lvl != null))
+          .map(e => ({ name: e.name || '', lvl: e.lvl || 1 }));
+      }
+    } catch (e) { enchantments = []; }
+    return { durability, max_durability: maxDur, enchantments };
+  }
+
   function get_inventory_snapshot({} = {}) {
     try {
-      const items = bot.inventory.items().map(item => ({
-        slot: item.slot,
-        name: item.name,
-        type: item.type,
-        count: item.count,
-        display_name: item.displayName,
-        displayName: item.displayName,
-        max_stack_size: item.maxStackSize,
-      }));
+      const items = bot.inventory.items().map(item => {
+        const detail = itemDetail(item);
+        return {
+          slot: item.slot,
+          name: item.name,
+          type: item.type,
+          count: item.count,
+          display_name: item.displayName,
+          displayName: item.displayName,
+          max_stack_size: item.maxStackSize,
+          durability: detail.durability,
+          max_durability: detail.max_durability,
+          enchantments: detail.enchantments,
+        };
+      });
       return {
         success: true,
         items,
@@ -239,6 +267,39 @@ function createInventoryHandlers(bot) {
     }
   }
 
+  // ── 移动/交换背包槽位（mineflayer 原生窗口点击：拿起源槽 → 放到目标槽） ──
+  // slot / dest_slot 均为 bot.inventory 原始槽位（0-45，由 Python 端负责
+  // 「前端标准槽位 → 原始槽位」的反向映射，与 get_inventory_snapshot 归一化成对）。
+  async function move_item({ slot, dest_slot } = {}) {
+    try {
+      if (slot === undefined || dest_slot === undefined) {
+        return { success: false, error: 'slot and dest_slot are required' };
+      }
+      if (typeof slot !== 'number' || typeof dest_slot !== 'number') {
+        return { success: false, error: 'slot/dest_slot must be numbers' };
+      }
+      if (slot === dest_slot) {
+        return { success: false, error: 'source and destination slot are the same' };
+      }
+      if (slot < 0 || slot > 45 || dest_slot < 0 || dest_slot > 45) {
+        return { success: false, error: 'slot must be in 0-45' };
+      }
+      const srcItem = bot.inventory.slots[slot];
+      if (!srcItem) {
+        return { success: false, error: `No item in source slot ${slot}` };
+      }
+      await bot.moveSlotItem(slot, dest_slot);
+      return {
+        success: true,
+        from: slot,
+        to: dest_slot,
+        item: { name: srcItem.name, count: srcItem.count },
+      };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  }
+
   return {
     select_hotbar_item,
     set_quick_bar_slot,
@@ -249,6 +310,7 @@ function createInventoryHandlers(bot) {
     withdraw_container_item,
     deposit_container_item,
     drop_item,
+    move_item,
   };
 }
 

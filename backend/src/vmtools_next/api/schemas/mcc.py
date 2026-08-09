@@ -87,11 +87,13 @@ class InventorySlot(BaseModel):
     slot: int
     item_id: str = ""
     display_name: str = ""
+    item_name_zh: str = ""  # 中文名（后端 item_names_zh 映射）
     count: int = 0
     max_stack: int = 64
     durability: Optional[int] = None
     max_durability: Optional[int] = None
     nbt: Optional[str] = None
+    enchantments: Optional[list] = None  # [{name, lvl}, ...]（mineflayer 端解析）
 
 
 class InventorySnapshot(BaseModel):
@@ -118,3 +120,9 @@ class InventoryDropRequest(BaseModel):
     item_type: str
     count: int = 64
     inventory_id: int = 0
+
+
+class InventoryMoveRequest(BaseModel):
+    """移动/交换背包槽位（mineflayer：bot.moveSlotItem）。槽位为前端标准布局。"""
+    slot_id: int
+    dest_slot_id: int

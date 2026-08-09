@@ -36,6 +36,7 @@ from .protocol import (
     METHOD_WITHDRAW_CONTAINER_ITEM,
     METHOD_DEPOSIT_CONTAINER_ITEM,
     METHOD_DROP_ITEM,
+    METHOD_MOVE_ITEM,
     METHOD_SERVUX_HANDSHAKE,
     METHOD_PREVIEW_CONTAINER_AT,
     METHOD_SEND_CHAT,
@@ -418,6 +419,10 @@ class MineflayerBridgeClient(AbstractBotAgent):
                     "displayName": s.get("displayName") or s.get("display_name") or item_id,
                     "count": s.get("count", s.get("amount", 0)) or 0,
                     "maxStackSize": s.get("max_stack_size", s.get("maxStackSize", 64)),
+                    # 物品详情（前端「物品详情」弹窗）：耐久/附魔
+                    "durability": s.get("durability"),
+                    "maxDurability": s.get("max_durability", s.get("maxDurability")),
+                    "enchantments": s.get("enchantments") or [],
                 })
             result["items"] = items
         return result
@@ -476,6 +481,35 @@ class MineflayerBridgeClient(AbstractBotAgent):
         """mineflayer 不支持通用窗口槽位点击（MCC 的 LeftClick/RightClick）——
         返回明确错误，避免前端 500。"""
         return {"success": False, "error": "mineflayer 不支持窗口槽位点击操作（仅支持查看背包 / 丢弃物品 / 切换快捷栏）"}
+
+    # ── 前端标准槽位 → mineflayer 原始槽位（与 get_inventory_snapshot 归一化成对） ──
+    # 前端标准布局：0-8=快捷栏、9-35=主背包、36-39=盔甲、40=副手、41-45=合成
+    # mineflayer 原始布局：0-4=合成、5-8=盔甲、9-35=主背包、36-44=快捷栏、45=副手
+    @staticmethod
+    def _frontend_to_node_slot(slot: int) -> int:
+        if not isinstance(slot, int):
+            return slot
+        if 0 <= slot <= 8:
+            return slot + 36            # 快捷栏 0-8 → 36-44
+        if 36 <= slot <= 39:
+            return slot - 31            # 盔甲 36-39 → 5-8
+        if slot == 40:
+            return 45                   # 副手 40 → 45
+        if 41 <= slot <= 45:
+            return slot - 41            # 合成 41-45 → 0-4
+        return slot                     # 主背包 9-35 → 9-35
+
+    async def move_inventory_item(self, slot_id: int, dest_slot_id: int) -> dict:
+        """移动/交换背包槽位（MF: bot.moveSlotItem，mineflayer 原生窗口点击）。
+
+        slot_id / dest_slot_id 为前端标准槽位，此处转换为 mineflayer 原始槽位后下发。
+        """
+        src = self._frontend_to_node_slot(slot_id)
+        dst = self._frontend_to_node_slot(dest_slot_id)
+        return await self._send_request(METHOD_MOVE_ITEM, {
+            "slot": src,
+            "dest_slot": dst,
+        }, timeout=DEFAULT_CMD_TIMEOUT)
 
     # ── Servux 容器预览（不打开容器） ──
 

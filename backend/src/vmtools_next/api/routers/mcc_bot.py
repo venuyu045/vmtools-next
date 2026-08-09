@@ -11,7 +11,7 @@ from vmtools_next.data.models.auth import UserModel
 from vmtools_next.api.schemas.mcc import (
     MccBotCreate, MccBotResponse, MccBotConnectRequest,
     InventorySnapshot, InventorySlot, InventoryActionRequest,
-    InventorySelectHotbarRequest, InventoryDropRequest,
+    InventorySelectHotbarRequest, InventoryDropRequest, InventoryMoveRequest,
     MccBotStatusList, MccBotStatusItem,
 )
 from vmtools_next.data.models.logistics import MccBotModel
@@ -554,12 +554,17 @@ async def get_inventory(bot_id: str, mcp_port: int = 0,
             item_id = (s.get("type") or s.get("itemId") or "").strip()
             _slot = s.get("slot", 0)
         if item_id:
+            from vmtools_next.core.item_names_zh import get_item_zh
             parsed.append(InventorySlot(
                 slot=_slot,
                 item_id=item_id,
                 display_name=s.get("displayName", "") or item_id,
+                item_name_zh=get_item_zh(item_id, fallback=s.get("displayName", "") or item_id),
                 count=s.get("count", s.get("amount", 0)) or 0,
                 max_stack=s.get("maxStackSize", 64),
+                durability=s.get("durability"),
+                max_durability=s.get("maxDurability", s.get("max_durability")),
+                enchantments=s.get("enchantments") or None,
             ))
 
     return InventorySnapshot(
@@ -630,6 +635,26 @@ async def inventory_select_hotbar(bot_id: str, data: InventorySelectHotbarReques
     try:
         result = await client.change_hotbar_slot(data.slot)
         return {"success": True, "slot": data.slot, "result": result}
+    except MccMcpError as e:
+        raise HTTPException(502, f"MCP error: {str(e) or repr(e)}")
+    finally:
+        if owned: await client.disconnect()
+
+
+@router.post("/{bot_id}/inventory/move")
+async def inventory_move(bot_id: str, data: InventoryMoveRequest,
+                         db: Session = Depends(get_db), user=Depends(require_admin)):
+    """Move/swap inventory slots (mineflayer only; slots in frontend standard layout)."""
+    _get_scoped_bot(db, user, bot_id)
+    client, owned = await _get_mcp_client(bot_id)
+    try:
+        # 仅 mineflayer 支持窗口槽位移动；MCC 走 inventory/action（MCC MCP 无 move 语义）
+        if isinstance(client, MccMcpClient):
+            raise HTTPException(400, "MCC 引擎请使用「窗口点击」操作（inventory/action）")
+        result = await client.move_inventory_item(data.slot_id, data.dest_slot_id)
+        if isinstance(result, dict) and result.get("success") is False:
+            raise HTTPException(400, result.get("error", "移动失败"))
+        return {"success": True, "from": data.slot_id, "to": data.dest_slot_id, "result": result}
     except MccMcpError as e:
         raise HTTPException(502, f"MCP error: {str(e) or repr(e)}")
     finally:

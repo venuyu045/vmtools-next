@@ -43,4 +43,7 @@ export const botApi = {
   inventorySelectHotbar(botId: string, slot: number) {
     return client.post(`/mcc-bots/${botId}/inventory/select-hotbar`, { slot })
   },
+  inventoryMove(botId: string, data: { slot_id: number; dest_slot_id: number }) {
+    return client.post(`/mcc-bots/${botId}/inventory/move`, data)
+  },
 }
