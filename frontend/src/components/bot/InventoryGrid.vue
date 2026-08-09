@@ -100,6 +100,7 @@
         <div class="detail-actions">
           <el-button v-if="isHotbarSlot(detail.item.slot)" size="small" type="primary" @click="doHold">✋ 设为手持</el-button>
           <el-button size="small" @click="doMoveFromDetail">📦 移动</el-button>
+          <el-button size="small" type="warning" @click="doUse">🍖 使用</el-button>
           <el-button size="small" @click="doDropOne">丢 1 个</el-button>
           <el-button size="small" type="danger" @click="doDropStack">丢整组 ({{ detail.item.count }})</el-button>
         </div>
@@ -160,6 +161,7 @@ const emit = defineEmits<{
   drop: [p: { item_type: string; count: number; slot?: number }]
   selectHotbar: [slot: number]
   move: [p: { slot_id: number; dest_slot_id: number }]
+  use: [p: { item_type: string; slot: number }]
 }>()
 
 const cursorSlot = ref(-1)
@@ -313,6 +315,14 @@ function doHold() {
   const slot = detail.value.item.slot
   detail.value.show = false
   emit('selectHotbar', slot)
+}
+
+// ── 使用物品（吃食物等） ──
+function doUse() {
+  if (!detail.value.item) return
+  const it = detail.value.item
+  detail.value.show = false
+  emit('use', { item_type: it.item_id, slot: it.slot })
 }
 
 // ── 丢弃（按钮） ──

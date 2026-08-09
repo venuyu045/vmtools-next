@@ -346,6 +346,56 @@ function createInventoryHandlers(bot) {
     }
   }
 
+  // ── 使用物品（吃食物等） ──
+  // 指定 slot / item_type：自动装备到手持（equip 会移到快捷栏并选中）后 bot.consume() 食用；
+  // 不指定：直接使用当前手持物品。
+  async function use_item({ item_type = null, slot = null } = {}) {
+    try {
+      let item = null;
+      if (slot !== null && slot !== undefined && slot !== '') {
+        item = bot.inventory.slots[slot];
+        if (!item) {
+          return { success: false, error: `No item in slot ${slot}` };
+        }
+        if (item_type && item.name !== item_type && item.type?.toString() !== item_type) {
+          return { success: false, error: `Slot ${slot} contains ${item.name}, not ${item_type}` };
+        }
+      } else if (item_type) {
+        for (let i = 0; i < bot.inventory.slots.length; i++) {
+          const it = bot.inventory.slots[i];
+          if (it && (it.name === item_type || it.type?.toString() === item_type)) {
+            item = it;
+            break;
+          }
+        }
+        if (!item) {
+          return { success: false, error: `Item ${item_type} not found in inventory` };
+        }
+      }
+
+      if (item) {
+        // 装备到手持：物品在快捷栏则直接选中；否则移到快捷栏空槽并选中
+        await bot.equip(item, 'hand');
+        // 等待 heldItem 更新（moveSlotItem / setQuickBarSlot 后立即读可能仍是旧值）
+        await new Promise(r => setTimeout(r, 400));
+      }
+      if (!bot.heldItem) {
+        return { success: false, error: 'No item in hand' };
+      }
+      const name = bot.heldItem.name;
+      try {
+        await bot.consume();
+        return { success: true, item: name, action: 'consume' };
+      } catch (err) {
+        // consume 失败：食物已满 / 不可食用（超时等）→ 回退 activateItem 直接使用一次？
+        // 不，保持明确错误提示，避免误用（如拿着剑点使用挥空）。
+        return { success: false, item: name, error: err.message };
+      }
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  }
+
   return {
     select_hotbar_item,
     set_quick_bar_slot,
@@ -357,6 +407,7 @@ function createInventoryHandlers(bot) {
     deposit_container_item,
     drop_item,
     move_item,
+    use_item,
   };
 }
 

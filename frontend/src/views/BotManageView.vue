@@ -189,6 +189,7 @@
                 @drop="handleInventoryDrop"
                 @select-hotbar="handleSelectHotbar"
                 @move="handleInventoryMove"
+                @use="handleInventoryUse"
               />
             </div>
             <div v-else class="empty-state">选择 Bot 实例查看背包</div>
@@ -603,6 +604,22 @@ async function handleInventoryMove(payload: { slot_id: number; dest_slot_id: num
     fetchInventory()
   } catch (e: any) {
     ElMessage.error('移动失败: ' + (e?.response?.data?.detail || e))
+  }
+}
+
+/** MF：使用物品（吃食物等） */
+async function handleInventoryUse(payload: { item_type: string; slot: number }) {
+  const botId = selectedInstance.value?.bot_id
+  if (!botId) { ElMessage.warning('未绑定 Bot'); return }
+  try {
+    await botApi.inventoryUse(botId, {
+      item_type: payload.item_type,
+      slot_id: payload.slot,
+    })
+    ElMessage.success(`已使用 ${payload.item_type}`)
+    fetchInventory()
+  } catch (e: any) {
+    ElMessage.error('使用失败: ' + (e?.response?.data?.detail || e))
   }
 }
 

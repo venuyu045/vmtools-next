@@ -37,6 +37,7 @@ from .protocol import (
     METHOD_DEPOSIT_CONTAINER_ITEM,
     METHOD_DROP_ITEM,
     METHOD_MOVE_ITEM,
+    METHOD_USE_ITEM,
     METHOD_SERVUX_HANDSHAKE,
     METHOD_PREVIEW_CONTAINER_AT,
     METHOD_SEND_CHAT,
@@ -518,6 +519,19 @@ class MineflayerBridgeClient(AbstractBotAgent):
             "slot": src,
             "dest_slot": dst,
         }, timeout=DEFAULT_CMD_TIMEOUT)
+
+    async def use_item(self, item_type: str | None = None, slot_id: int | None = None) -> dict:
+        """使用物品（吃食物等）：自动装备到手持后 bot.consume() 食用。
+
+        slot_id 为前端标准槽位（可选）；不传时按 item_type 全局查找；都不传则使用当前手持物品。
+        """
+        params: dict[str, Any] = {}
+        if item_type:
+            params["item_type"] = item_type
+        if slot_id is not None:
+            params["slot"] = self._frontend_to_node_slot(slot_id)
+        return await self._send_request(METHOD_USE_ITEM, params,
+                                        timeout=DEFAULT_CMD_TIMEOUT)
 
     # ── Servux 容器预览（不打开容器） ──
 

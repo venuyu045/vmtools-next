@@ -46,4 +46,7 @@ export const botApi = {
   inventoryMove(botId: string, data: { slot_id: number; dest_slot_id: number }) {
     return client.post(`/mcc-bots/${botId}/inventory/move`, data)
   },
+  inventoryUse(botId: string, data: { item_type?: string; slot_id?: number }) {
+    return client.post(`/mcc-bots/${botId}/inventory/use`, data)
+  },
 }

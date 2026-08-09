@@ -127,3 +127,9 @@ class InventoryMoveRequest(BaseModel):
     """移动/交换背包槽位（mineflayer：bot.moveSlotItem）。槽位为前端标准布局。"""
     slot_id: int
     dest_slot_id: int
+
+
+class InventoryUseRequest(BaseModel):
+    """使用物品（吃食物等，mineflayer：bot.consume）。slot_id 为前端标准槽位，可选。"""
+    item_type: Optional[str] = None
+    slot_id: Optional[int] = None

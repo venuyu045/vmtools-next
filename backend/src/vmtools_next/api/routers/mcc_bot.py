@@ -12,6 +12,7 @@ from vmtools_next.api.schemas.mcc import (
     MccBotCreate, MccBotResponse, MccBotConnectRequest,
     InventorySnapshot, InventorySlot, InventoryActionRequest,
     InventorySelectHotbarRequest, InventoryDropRequest, InventoryMoveRequest,
+    InventoryUseRequest,
     MccBotStatusList, MccBotStatusItem,
 )
 from vmtools_next.data.models.logistics import MccBotModel
@@ -657,6 +658,27 @@ async def inventory_move(bot_id: str, data: InventoryMoveRequest,
         if isinstance(result, dict) and result.get("success") is False:
             raise HTTPException(400, result.get("error", "移动失败"))
         return {"success": True, "from": data.slot_id, "to": data.dest_slot_id, "result": result}
+    except MccMcpError as e:
+        raise HTTPException(502, f"MCP error: {str(e) or repr(e)}")
+    finally:
+        if owned: await client.disconnect()
+
+
+@router.post("/{bot_id}/inventory/use")
+async def inventory_use(bot_id: str, data: InventoryUseRequest,
+                        db: Session = Depends(get_db), user=Depends(require_admin)):
+    """Use item (eat food etc., mineflayer only). slot_id in frontend standard layout (optional)."""
+    _get_scoped_bot(db, user, bot_id)
+    client, owned = await _get_mcp_client(bot_id)
+    try:
+        if isinstance(client, MccMcpClient):
+            raise HTTPException(400, "MCC 引擎不支持使用物品（inventory/use 仅 mineflayer）")
+        if not data.item_type and data.slot_id is None:
+            raise HTTPException(400, "item_type 与 slot_id 至少传一个")
+        result = await client.use_item(item_type=data.item_type, slot_id=data.slot_id)
+        if isinstance(result, dict) and result.get("success") is False:
+            raise HTTPException(400, result.get("error", "使用失败"))
+        return {"success": True, "item": result.get("item"), "result": result}
     except MccMcpError as e:
         raise HTTPException(502, f"MCP error: {str(e) or repr(e)}")
     finally:
