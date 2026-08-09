@@ -34,7 +34,15 @@ module.exports = function startViewer(bot, options = {}) {
   function setupRoutes(expressApp, routePrefix = '') {
     const pkgRoot = path.dirname(require.resolve('prismarine-viewer'));
     expressApp.use(compression());
-    expressApp.use(routePrefix + '/', express.static(path.join(pkgRoot, 'public')));
+    // 强制 no-cache：worker.js / blocksStates/*.json / textures/*.png 等大文件更新后，
+    // 浏览器必须重新拉取，避免旧缓存导致「方块缺失/紫色」误判（历史教训见交接文档 3.13）
+    expressApp.use(routePrefix + '/', express.static(path.join(pkgRoot, 'public'), {
+      setHeaders: (res) => {
+        res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+        res.setHeader('Pragma', 'no-cache');
+        res.setHeader('Expires', '0');
+      }
+    }));
   }
   setupRoutes(app, prefix);
 
