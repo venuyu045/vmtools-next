@@ -21,7 +21,7 @@
       <header class="app-header">
         <AppHeader
           @toggle-sidebar="toggleSidebar"
-          @open-mobile-menu="mobileDrawerOpen = true"
+          @open-mobile-menu="openMobileMenu"
         />
       </header>
       <main ref="mainRef" class="app-main">
@@ -101,6 +101,13 @@ function toggleSidebar() {
   try {
     localStorage.setItem(COLLAPSE_STATE_KEY, isCollapsed.value ? '1' : '0')
   } catch { /* 忽略（隐私模式等） */ }
+}
+
+/** 打开移动抽屉：仅 ≤768px 响应（桌面端抽屉 display:none，若误触发只剩灰遮罩） */
+function openMobileMenu() {
+  if (window.matchMedia('(max-width: 768px)').matches) {
+    mobileDrawerOpen.value = true
+  }
 }
 
 /**

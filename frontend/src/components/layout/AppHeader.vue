@@ -334,7 +334,14 @@ async function submitChangePwd() {
 }
 
 /* ============ RESPONSIVE ============ */
+/* 桌面：仅显示 sidebar-toggle（折叠按钮），隐藏移动汉堡（防 global utility 被 scoped display:flex 覆盖） */
+@media (min-width: 769px) {
+  .mobile-menu-btn { display: none; }
+}
+
 @media (max-width: 768px) {
+  .sidebar-toggle { display: none; }
+
   .header {
     padding: 0 12px;
   }
