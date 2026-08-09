@@ -85,6 +85,7 @@
       @closed="closeViewer"
     >
       <div v-if="viewerLoading" class="viewer-loading">预览加载中…</div>
+      <div class="viewer-slow-hint">渲染速度较慢，请耐心等待</div>
       <iframe
         v-if="viewerSrc"
         :src="viewerSrc"
@@ -454,6 +455,16 @@ onBeforeUnmount(() => {
   justify-content: center;
   color: var(--text-muted);
   font-size: 14px;
+}
+
+/* 渲染较慢提示（服务端预渲染已停用，浏览器本地计算） */
+.viewer-slow-hint {
+  padding: 6px 10px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 12px;
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--bg-elevated);
 }
 
 .viewer-footer {

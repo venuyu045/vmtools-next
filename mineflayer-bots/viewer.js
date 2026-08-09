@@ -171,23 +171,9 @@ module.exports = function startViewer(bot, options = {}) {
 
   bot.viewer = new (require('events').EventEmitter)();
 
-  // ── 服务端预渲染：独立小范围 WorldView（不连浏览器），loadChunk 时预渲染 geometry ──
-  // 只算 bot 周围核心区（viewDistance 取 min(配置,2)≈5×5 chunk），LRU 缓存上限见 PRERENDER_MAX_SECTIONS
-  const prerenderEmitter = new (require('events').EventEmitter)();
-  let prerenderWorldView = null;
-  try {
-    prerenderWorldView = new WorldView(bot.world, Math.min(viewDistance, 2), bot.entity.position, prerenderEmitter);
-    prerenderEmitter.on('loadChunk', ({ x, z, chunk }) => prerenderChunk(x, z, chunk));
-    prerenderWorldView.init(bot.entity.position).catch(() => {});
-    initPrerender(pkgRoot);
-    // 预渲染位置跟随 bot（独立于浏览器连接，close 时移除）
-    const onMove = () => { if (prerenderWorldView) prerenderWorldView.updatePosition(bot.entity.position); };
-    bot.on('move', onMove);
-    bot.viewer.prerenderCleanup = () => { bot.removeListener('move', onMove); };
-    console.log('[viewer] prerender WorldView active');
-  } catch (err) {
-    console.error('[viewer] prerender WorldView init failed:', err);
-  }
+  // ── 服务端预渲染（2026-08-09 已停用）────────────────────────────────
+  // 2 核 2G 服务器内存压力大（LRU 缓存 + worker 线程），用户决定放弃预渲染，
+  // 浏览器端纯本地计算（viewDistance 默认 4 已生效）。函数保留备用，不再调用。
 
 
   bot.viewer.erase = (id) => {
@@ -224,11 +210,8 @@ module.exports = function startViewer(bot, options = {}) {
       socket.emit('version', bot.version);
       sockets.push(socket);
 
-      // 推送服务端预渲染的 core 区 geometry（浏览器 worker 直接用，跳过本地计算）
-      // 2026-08-09：preRendered 声明缺失已修复（2e5c554），重新启用
-      for (const [key, geometry] of prerenderCache) {
-        socket.emit('useGeometry', { key, geometry });
-      }
+      // 服务端预渲染已停用（2026-08-09，内存压力），不再推送 useGeometry；
+      // 浏览器纯本地计算，渲染较慢为预期（前端已加提示）。
 
       const worldView = new WorldView(bot.world, viewDistance, bot.entity.position, socket);
       worldView.init(bot.entity.position);
