@@ -266,6 +266,10 @@ class MineflayerProcessManager:
             env["VMT_INSTANCE_ID"] = instance.instance_id
             if plain_password:
                 env["MC_PASSWORD"] = plain_password  # 密码不进 argv（M2）
+            # viewer 鉴权：把后端 JWT 密钥传给 bot 进程，viewer.js 用它校验
+            # /viewer/?t=<token> 与 socket.io cookie（见 mineflayer-bots/viewer.js）
+            if viewer_port > 0:
+                env["VMT_VIEWER_SECRET"] = get_config().server.secret_key
             if extra_env:
                 env.update({str(k): str(v) for k, v in extra_env.items()})
 

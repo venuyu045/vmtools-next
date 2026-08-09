@@ -78,6 +78,28 @@ def _make_token(user: UserModel) -> str:
     )
 
 
+@router.get("/viewer-token")
+def get_viewer_token(user=Depends(get_current_user)):
+    """签发 viewer 专用短时效 JWT（aud=viewer，10 分钟）。
+
+    供 MF 状态页「视奸→」内嵌 iframe 使用：iframe 加载 /viewer/?t=<token>
+    （OpenResty 反代到 prismarine-viewer），viewer 服务（mineflayer-bots/viewer.js）
+    用同一 secret_key 校验并种 HttpOnly cookie，此后 iframe 内静态资源与
+    socket.io 连接自动携带 cookie，未登录用户无法打开预览/连接世界数据流。
+    """
+    config = get_config()
+    token = jwt.encode(
+        {
+            "sub": user.id,
+            "aud": "viewer",
+            "exp": datetime.now(timezone.utc) + timedelta(minutes=10),
+        },
+        config.server.secret_key,
+        algorithm=config.server.jwt_algorithm,
+    )
+    return {"token": token, "expires_in": 600}
+
+
 @router.post("/login", response_model=LoginResponse)
 def login(data: LoginRequest, request: Request, db: Session = Depends(get_db)):
     """Login with game_id and password."""

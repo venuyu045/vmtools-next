@@ -16,6 +16,40 @@ const compression = require('compression');
 // WorldView 在 prismarine-viewer 的 viewer 子模块导出（顶层没有，官方写法 require('../viewer')）
 const { WorldView } = require('prismarine-viewer').viewer;
 
+// ── viewer 登录鉴权（2026-08-09 新增） ────────────────────────────────
+// 后端在启动 bot 时注入 VMT_VIEWER_SECRET（= server.secret_key）；未设置时视为
+// 本地开发模式，跳过鉴权（保持向后兼容）。
+// 鉴权流程：前端 iframe 打开 /viewer/?t=<后端签发的 aud=viewer JWT> →
+// 页面入口校验通过后种 HttpOnly cookie（viewer_token）→ iframe 内静态资源与
+// socket.io 连接自动携带 cookie → socket.io 中间件校验 cookie 放行（世界数据防线）。
+const VIEWER_SECRET = process.env.VMT_VIEWER_SECRET || '';
+const VIEWER_COOKIE = 'viewer_token';
+const VIEWER_TOKEN_TTL_MS = 10 * 60 * 1000; // 与后端签发有效期一致（10 分钟）
+
+function verifyViewerToken (token) {
+  if (!VIEWER_SECRET || !token) return false;
+  try {
+    const jwt = require('jsonwebtoken');
+    jwt.verify(token, VIEWER_SECRET, { audience: 'viewer' });
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+function parseCookies (header) {
+  const out = {};
+  for (const part of String(header || '').split(';')) {
+    const i = part.indexOf('=');
+    if (i > 0) {
+      try {
+        out[part.slice(0, i).trim()] = decodeURIComponent(part.slice(i + 1).trim());
+      } catch (e) { /* ignore bad cookie */ }
+    }
+  }
+  return out;
+}
+
 module.exports = function startViewer(bot, options = {}) {
   const {
     viewDistance = 6,
@@ -34,6 +68,27 @@ module.exports = function startViewer(bot, options = {}) {
   function setupRoutes(expressApp, routePrefix = '') {
     const pkgRoot = path.dirname(require.resolve('prismarine-viewer'));
     expressApp.use(compression());
+    // 页面入口鉴权：GET {prefix}/ 校验 ?t=<viewer-token> 或 cookie，
+    // 通过后种 HttpOnly cookie（iframe 内静态资源与 socket.io 自动携带）。
+    // 仅精确匹配入口路径；index.js/worker.js 等静态资源是公开 MC 资产，
+    // 世界数据走 socket.io（其握手单独校验），因此无需逐资源拦截。
+    if (VIEWER_SECRET) {
+      expressApp.get(routePrefix + '/', (req, res, next) => {
+        const token = req.query.t || parseCookies(req.headers.cookie)[VIEWER_COOKIE] || '';
+        if (verifyViewerToken(token)) {
+          try {
+            res.cookie(VIEWER_COOKIE, token, {
+              httpOnly: true,
+              sameSite: 'lax',
+              maxAge: VIEWER_TOKEN_TTL_MS,
+              path: routePrefix || '/',
+            });
+          } catch (e) { /* cookie 设置失败不阻塞页面 */ }
+          return next();
+        }
+        return res.status(401).type('text/plain').send('Unauthorized: 请先登录 vmtools 后打开预览');
+      });
+    }
     // 强制 no-cache：worker.js / blocksStates/*.json / textures/*.png 等大文件更新后，
     // 浏览器必须重新拉取，避免旧缓存导致「方块缺失/紫色」误判（历史教训见交接文档 3.13）
     expressApp.use(routePrefix + '/', express.static(path.join(pkgRoot, 'public'), {
@@ -45,6 +100,17 @@ module.exports = function startViewer(bot, options = {}) {
     }));
   }
   setupRoutes(app, prefix);
+
+  // socket.io 握手鉴权：世界数据经此通道推送，必须校验 cookie 里的 viewer token
+  if (VIEWER_SECRET) {
+    io.use((socket, next) => {
+      const cookies = parseCookies(socket.handshake.headers.cookie || '');
+      if (verifyViewerToken(cookies[VIEWER_COOKIE] || '')) {
+        return next();
+      }
+      return next(new Error('unauthorized: viewer token missing or invalid'));
+    });
+  }
 
   const sockets = [];
   const primitives = {};

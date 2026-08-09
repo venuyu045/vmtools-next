@@ -21,14 +21,12 @@
         <div class="card-head">
           <span class="bot-name">{{ bot.name }}</span>
           <span class="bot-id">{{ bot.bot_id }}</span>
-          <a
+          <button
             v-if="bot.viewer_port && bot.status === 'online'"
             class="viewer-link"
-            :href="viewerUrl(bot)"
-            target="_blank"
-            rel="noopener"
-            title="打开该 MF 实例的实时 3D 预览"
-          >视奸→</a>
+            @click="openViewer(bot)"
+            title="打开该 MF 实例的实时 3D 预览（内嵌）"
+          >视奸→</button>
           <span class="status-badge" :class="bot.status">{{ statusLabel(bot.status) }}</span>
         </div>
 
@@ -75,6 +73,38 @@
         </div>
       </div>
     </div>
+
+    <!-- MF 3D 实时预览（内嵌 iframe + viewer token 鉴权） -->
+    <el-dialog
+      v-model="viewerVisible"
+      :title="viewerTitle"
+      width="92%"
+      top="4vh"
+      class="viewer-dialog"
+      append-to-body
+      @closed="closeViewer"
+    >
+      <div v-if="viewerLoading" class="viewer-loading">预览加载中…</div>
+      <iframe
+        v-if="viewerSrc"
+        :src="viewerSrc"
+        class="viewer-frame"
+        allowfullscreen
+        sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
+      />
+      <template #footer>
+        <div class="viewer-footer">
+          <a
+            v-if="viewerSrc"
+            class="viewer-open-new"
+            :href="viewerSrc.split('?')[0]"
+            target="_blank"
+            rel="noopener"
+          >新窗口打开</a>
+          <button class="viewer-close-btn" @click="viewerVisible = false">关闭</button>
+        </div>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -185,6 +215,41 @@ function viewerUrl(bot: BotStatus): string {
   // 前端用当前访问 vmtools 的 hostname + 反代路径即可，无需知道实例的原始 viewer 端口
   if (!bot.viewer_port) return '#'
   return `${window.location.protocol}//${window.location.hostname}/viewer/`
+}
+
+// ── MF 3D 实时预览（内嵌 iframe + viewer token 鉴权，2026-08-09） ──
+const viewerVisible = ref(false)
+const viewerLoading = ref(false)
+const viewerSrc = ref('')
+const viewerTitle = ref('')
+
+function viewerBase(): string {
+  return `${window.location.protocol}//${window.location.hostname}/viewer/`
+}
+
+async function openViewer(bot: BotStatus) {
+  if (!bot.viewer_port) return
+  viewerTitle.value = `${bot.name}（${bot.bot_id}）实时预览`
+  viewerVisible.value = true
+  viewerLoading.value = true
+  viewerSrc.value = ''
+  try {
+    // 向后端换取 viewer 专用短时效 token（aud=viewer），iframe 凭它通过 viewer 鉴权
+    const resp = await api.get('/auth/viewer-token')
+    const token = resp.data?.token
+    viewerSrc.value = token ? `${viewerBase()}?t=${encodeURIComponent(token)}` : viewerBase()
+  } catch {
+    // 取 token 失败仍尝试打开（viewer 无密钥时兼容），世界数据仍受 viewer 侧鉴权保护
+    viewerSrc.value = viewerBase()
+  } finally {
+    viewerLoading.value = false
+  }
+}
+
+function closeViewer() {
+  // 清空 src 卸载 iframe，停止后台加载与 socket.io 连接
+  viewerSrc.value = ''
+  viewerLoading.value = false
 }
 
 async function load() {
@@ -348,7 +413,7 @@ onBeforeUnmount(() => {
   gap: 10px;
 }
 
-/* 「视奸→」：白色小字，贴在卡片右上角（状态徽章左侧） */
+/* 「视奸→」：白色小字，贴在卡片右上角（状态徽章左侧）；现为按钮（内嵌预览） */
 .viewer-link {
   margin-left: auto;
   color: var(--accent);
@@ -358,11 +423,70 @@ onBeforeUnmount(() => {
   cursor: pointer;
   white-space: nowrap;
   font-family: var(--font-body);
+  background: none;
+  border: none;
+  padding: 2px 4px;
 }
 
 .viewer-link:hover {
   opacity: 1;
   text-decoration: underline;
+}
+
+/* ── MF 3D 实时预览 dialog（内嵌 iframe） ── */
+.viewer-dialog :deep(.el-dialog__body) {
+  padding: 0;
+  background: var(--bg-card);
+}
+
+.viewer-frame {
+  display: block;
+  width: 100%;
+  height: 72vh;
+  border: none;
+  background: var(--bg-card);
+}
+
+.viewer-loading {
+  height: 72vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  font-size: 14px;
+}
+
+.viewer-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 14px;
+}
+
+.viewer-open-new {
+  font-size: 13px;
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.viewer-open-new:hover {
+  text-decoration: underline;
+}
+
+.viewer-close-btn {
+  background: none;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  color: var(--text-secondary);
+  padding: 5px 16px;
+  font-size: 13px;
+  cursor: pointer;
+  font-family: var(--font-body);
+}
+
+.viewer-close-btn:hover {
+  border-color: var(--border-active);
+  color: var(--text-primary);
 }
 
 .bot-name {
