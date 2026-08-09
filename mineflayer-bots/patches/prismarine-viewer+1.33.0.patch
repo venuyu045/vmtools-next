@@ -117,3 +117,17 @@ index 8f525ad..025734c 100644
    const atlas = makeTextureAtlas(assets)
    const out = fs.createWriteStream(path.resolve(texturesPath, version + '.png'))
    const stream = atlas.canvas.pngStream()
+
+diff --git a/node_modules/prismarine-viewer/viewer/lib/entities.js b/node_modules/prismarine-viewer/viewer/lib/entities.js
+index 459e3f3..bce73e1 100644
+--- a/node_modules/prismarine-viewer/viewer/lib/entities.js
++++ b/node_modules/prismarine-viewer/viewer/lib/entities.js
+@@ -39,7 +39,7 @@ function getEntityMesh (entity, scene) {
+ 
+   const geometry = new THREE.BoxGeometry(entity.width, entity.height, entity.width)
+   geometry.translate(0, entity.height / 2, 0)
+-  const material = new THREE.MeshBasicMaterial({ color: 0xff00ff })
++  const material = new THREE.MeshBasicMaterial({ color: 0x9aa0a6, transparent: true, opacity: 0.65 })
+   const cube = new THREE.Mesh(geometry, material)
+   return cube
+ }
