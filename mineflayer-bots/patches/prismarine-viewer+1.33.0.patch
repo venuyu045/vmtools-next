@@ -76,7 +76,7 @@ index d1577c9..6a65bec 100644
          }
 
 diff --git a/node_modules/prismarine-viewer/viewer/lib/models.js b/node_modules/prismarine-viewer/viewer/lib/models.js
-index 9f8938e..e827729 100644
+index 9f8938e..2c194f4 100644
 --- a/node_modules/prismarine-viewer/viewer/lib/models.js
 +++ b/node_modules/prismarine-viewer/viewer/lib/models.js
 @@ -1,6 +1,6 @@
@@ -87,6 +87,15 @@ index 9f8938e..e827729 100644
  
  for (const key of Object.keys(tints)) {
    tints[key] = prepareTints(tints[key])
+@@ -479,7 +479,7 @@ function matchProperties (block, properties) {
+ 
+ function getModelVariants (block, blockStates) {
+   // air, cave_air, void_air and so on...
+-  if (block.name.includes('air')) return []
++  if (block.name === 'air' || block.name.endsWith('_air')) return []
+   const state = blockStates[block.name] ?? blockStates.missing_texture
+   if (!state) return []
+   if (state.variants) {
 
 diff --git a/node_modules/prismarine-viewer/viewer/prerender.js b/node_modules/prismarine-viewer/viewer/prerender.js
 index 8f525ad..025734c 100644
