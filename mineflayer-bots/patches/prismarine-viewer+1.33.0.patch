@@ -131,3 +131,68 @@ index 459e3f3..bce73e1 100644
    const cube = new THREE.Mesh(geometry, material)
    return cube
  }
+
+diff --git a/node_modules/prismarine-viewer/viewer/lib/worker.js b/node_modules/prismarine-viewer/viewer/lib/worker.js
+index b743167..aed35af 100644
+--- a/node_modules/prismarine-viewer/viewer/lib/worker.js
++++ b/node_modules/prismarine-viewer/viewer/lib/worker.js
+@@ -51,12 +51,20 @@ self.onmessage = ({ data }) => {
+     world.addColumn(data.x, data.z, data.chunk)
+   } else if (data.type === 'unloadChunk') {
+     world.removeColumn(data.x, data.z)
++  } else if (data.type === 'useGeometry') {
++    if (data.key && data.geometry) {
++      preRendered[data.key] = true
++      const g = data.geometry
++      postMessage({ type: 'geometry', key: data.key, geometry: g }, [g.positions.buffer, g.normals.buffer, g.colors.buffer, g.uvs.buffer, g.indices.buffer].filter(Boolean))
++    }
+   } else if (data.type === 'blockUpdate') {
+     const loc = new Vec3(data.pos.x, data.pos.y, data.pos.z).floored()
+     world.setBlockStateId(loc, data.stateId)
++    delete preRendered[sectionKey(loc)]
+   } else if (data.type === 'reset') {
+     world = null
+     blocksStates = null
++    for (const k in preRendered) delete preRendered[k]
+   }
+ }
+ 
+@@ -69,6 +77,7 @@ setInterval(() => {
+ 
+   // const start = performance.now()
+   for (const key of sections) {
++    if (preRendered[key]) { postMessage({ type: 'sectionFinished', key }); continue }
+     let [x, y, z] = key.split(',')
+     x = parseInt(x, 10)
+     y = parseInt(y, 10)
+
+diff --git a/node_modules/prismarine-viewer/viewer/lib/viewer.js b/node_modules/prismarine-viewer/viewer/lib/viewer.js
+index db02d90..48f14fb 100644
+--- a/node_modules/prismarine-viewer/viewer/lib/viewer.js
++++ b/node_modules/prismarine-viewer/viewer/lib/viewer.js
+@@ -99,6 +99,9 @@ class Viewer {
+       this.removeColumn(x, z)
+     })
+ 
++    emitter.on('useGeometry', (data) => {
++      this.world.useGeometry(data)
++    })
+     emitter.on('blockUpdate', ({ pos, stateId }) => {
+       this.setBlockStateId(new Vec3(pos.x, pos.y, pos.z), stateId)
+     })
+
+diff --git a/node_modules/prismarine-viewer/viewer/lib/worldrenderer.js b/node_modules/prismarine-viewer/viewer/lib/worldrenderer.js
+index 744224a..3dab78c 100644
+--- a/node_modules/prismarine-viewer/viewer/lib/worldrenderer.js
++++ b/node_modules/prismarine-viewer/viewer/lib/worldrenderer.js
+@@ -139,6 +139,10 @@ class WorldRenderer {
+     }
+   }
+ 
++  useGeometry (data) {
++    // 服务端预渲染 geometry：转发给 worker0，worker 直接 postMessage 渲染并跳过本地计算
++    if (this.workers[0]) this.workers[0].postMessage({ type: 'useGeometry', key: data.key, geometry: data.geometry })
++  }
+   setBlockStateId (pos, stateId) {
+     for (const worker of this.workers) {
+       worker.postMessage({ type: 'blockUpdate', pos, stateId })

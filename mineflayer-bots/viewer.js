@@ -50,6 +50,51 @@ function parseCookies (header) {
   return out;
 }
 
+// ── 服务端预渲染（2026-08-09 方案②）────────────────────────────────────
+// 用 worker_threads 跑「打包的 worker.js」（与浏览器端同一套渲染代码），
+// 提前计算 bot 周围核心区的 section geometry 并缓存（LRU）。
+// 浏览器连接时把缓存推给它（useGeometry），浏览器 worker 直接用、跳过本地计算
+// → 多人打开秒见核心区（2 核 2G 服务器：LRU 上限 ~512 section ≈ 50-100MB 可承受）。
+const fs = require('fs');
+const { Worker } = require('worker_threads');
+const prerenderCache = new Map(); // key = `${x},${y},${z}`（section 起点，16 倍数）→ geometry
+const PRERENDER_MAX_SECTIONS = 512;
+let prerenderWorker = null;
+let prerenderBs = null;
+
+function initPrerender (pkgRoot) {
+  if (prerenderWorker) return;
+  try {
+    prerenderBs = JSON.parse(fs.readFileSync(path.join(pkgRoot, 'public/blocksStates/26.1.json'), 'utf8'));
+    prerenderWorker = new Worker(path.join(pkgRoot, 'public/worker.js'));
+    prerenderWorker.on('message', (msg) => {
+      if (msg && msg.type === 'geometry' && msg.geometry) {
+        prerenderCache.set(msg.key, msg.geometry);
+        while (prerenderCache.size > PRERENDER_MAX_SECTIONS) {
+          prerenderCache.delete(prerenderCache.keys().next().value); // 淘汰最旧（LRU 近似）
+        }
+      }
+    });
+    prerenderWorker.postMessage({ type: 'version', version: '26.1' });
+    prerenderWorker.postMessage({ type: 'blockStates', json: prerenderBs });
+    console.log('[viewer] prerender worker initialized');
+  } catch (err) {
+    console.error('[viewer] prerender init failed:', err);
+    prerenderWorker = null;
+  }
+}
+
+function prerenderChunk (x, z, chunkJson) {
+  if (!prerenderWorker || !chunkJson) return;
+  try {
+    prerenderWorker.postMessage({ type: 'chunk', x, z, chunk: chunkJson });
+    // 标记该 chunk 所有 y 层 section dirty（worker 会自动跳过不存在的 section）
+    for (let sy = 0; sy < 384; sy += 16) {
+      prerenderWorker.postMessage({ type: 'dirty', x, y: sy, z, value: true });
+    }
+  } catch (err) { /* 预渲染失败不影响 viewer 主流程 */ }
+}
+
 module.exports = function startViewer(bot, options = {}) {
   const {
     viewDistance = 6,
@@ -59,6 +104,7 @@ module.exports = function startViewer(bot, options = {}) {
     prefix = '',
   } = options;
 
+  const pkgRoot = path.dirname(require.resolve('prismarine-viewer'));
   const express = require('express');
   const app = express();
   const http = require('http').createServer(app);
@@ -66,7 +112,6 @@ module.exports = function startViewer(bot, options = {}) {
 
   // 静态资源：prismarine-viewer 包内 public（webpack 构建的浏览器端）
   function setupRoutes(expressApp, routePrefix = '') {
-    const pkgRoot = path.dirname(require.resolve('prismarine-viewer'));
     expressApp.use(compression());
     // 页面入口鉴权：GET {prefix}/ 校验 ?t=<viewer-token> 或 cookie，
     // 通过后种 HttpOnly cookie（iframe 内静态资源与 socket.io 自动携带）。
@@ -115,6 +160,24 @@ module.exports = function startViewer(bot, options = {}) {
   const sockets = [];
   const primitives = {};
 
+  // ── 服务端预渲染：独立小范围 WorldView（不连浏览器），loadChunk 时预渲染 geometry ──
+  // 只算 bot 周围核心区（viewDistance 取 min(配置,2)≈5×5 chunk），LRU 缓存上限见 PRERENDER_MAX_SECTIONS
+  const prerenderEmitter = new (require('events').EventEmitter)();
+  let prerenderWorldView = null;
+  try {
+    prerenderWorldView = new WorldView(bot.world, Math.min(viewDistance, 2), bot.entity.position, prerenderEmitter);
+    prerenderEmitter.on('loadChunk', ({ x, z, chunk }) => prerenderChunk(x, z, chunk));
+    prerenderWorldView.init(bot.entity.position).catch(() => {});
+    initPrerender(pkgRoot);
+    // 预渲染位置跟随 bot（独立于浏览器连接，close 时移除）
+    const onMove = () => { if (prerenderWorldView) prerenderWorldView.updatePosition(bot.entity.position); };
+    bot.on('move', onMove);
+    bot.viewer.prerenderCleanup = () => { bot.removeListener('move', onMove); };
+    console.log('[viewer] prerender WorldView active');
+  } catch (err) {
+    console.error('[viewer] prerender WorldView init failed:', err);
+  }
+
   bot.viewer = new (require('events').EventEmitter)();
 
   bot.viewer.erase = (id) => {
@@ -150,6 +213,11 @@ module.exports = function startViewer(bot, options = {}) {
     try {
       socket.emit('version', bot.version);
       sockets.push(socket);
+
+      // 推送服务端预渲染的 core 区 geometry（浏览器 worker 直接用，跳过本地计算）
+      for (const [key, geometry] of prerenderCache) {
+        socket.emit('useGeometry', { key, geometry });
+      }
 
       const worldView = new WorldView(bot.world, viewDistance, bot.entity.position, socket);
       worldView.init(bot.entity.position);
@@ -189,6 +257,9 @@ module.exports = function startViewer(bot, options = {}) {
   });
 
   bot.viewer.close = () => {
+    try { if (bot.viewer.prerenderCleanup) bot.viewer.prerenderCleanup(); } catch (e) { /* ignore */ }
+    try { if (prerenderWorker) prerenderWorker.terminate(); } catch (e) { /* ignore */ }
+    prerenderWorker = null;
     try { http.close(); } catch (e) { /* ignore */ }
     for (const socket of sockets) {
       try { socket.disconnect(); } catch (e) { /* ignore */ }
