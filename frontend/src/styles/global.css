@@ -370,6 +370,20 @@ html {
   background: var(--bg-elevated) !important;
 }
 
+/* ===== TOOLTIP：跟随主题（.el-popper 背景被覆盖后必须同步文字色，
+        否则亮色下 effect="dark" 的白字会落在米白底上不可见） ===== */
+.el-tooltip__popper {
+  color: var(--text-primary) !important;
+  background: var(--bg-elevated) !important;
+  border: 1px solid var(--border-subtle) !important;
+}
+.el-tooltip__popper.is-light {
+  color: var(--text-primary) !important;
+}
+.el-tooltip__popper.is-dark {
+  color: var(--text-primary) !important;
+}
+
 /* ===== ELEMENT PLUS MESSAGE BOX ===== */
 .el-message-box {
   background: var(--bg-elevated) !important;

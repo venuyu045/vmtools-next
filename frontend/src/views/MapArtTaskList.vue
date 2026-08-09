@@ -37,7 +37,7 @@
           <el-upload :auto-upload="false" :on-change="onFileChange" :limit="1" accept=".litematic">
             <el-button>选择 .litematic 文件</el-button>
           </el-upload>
-          <span v-if="uploadedPath" style="color: green; font-size: 12px;">已上传: {{ uploadedPath }}</span>
+          <span v-if="uploadedPath" style="color: var(--success); font-size: 12px;">已上传: {{ uploadedPath }}</span>
         </el-form-item>
         <el-form-item label="原点 X">
           <el-input-number v-model="form.origin_x" />
@@ -57,7 +57,7 @@
               :value="bot.bot_id"
             />
           </el-select>
-          <span v-if="!allBots.length" style="color: #888; font-size: 12px;">暂无 Mineflayer Bot，请先在 MF 管理中创建 Mineflayer 实例并绑定 Bot</span>
+          <span v-if="!allBots.length" style="color: var(--text-muted); font-size: 12px;">暂无 Mineflayer Bot，请先在 MF 管理中创建 Mineflayer 实例并绑定 Bot</span>
         </el-form-item>
       </el-form>
       <template #footer>

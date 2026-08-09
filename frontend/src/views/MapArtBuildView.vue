@@ -267,7 +267,7 @@ onUnmounted(() => {
   gap: 12px;
 }
 .progress-text {
-  color: #888;
+  color: var(--text-muted);
   font-size: 14px;
 }
 .main-content {
@@ -298,7 +298,7 @@ onUnmounted(() => {
 }
 .bot-row {
   padding: 6px 0;
-  border-bottom: 1px solid #333;
+  border-bottom: 1px solid var(--border-subtle);
 }
 .bot-row:last-child { border-bottom: none }
 .bot-header {
@@ -308,15 +308,15 @@ onUnmounted(() => {
 }
 .bot-dot { width: 10px; height: 10px; border-radius: 50%; }
 .bot-progress { display: flex; align-items: center; gap: 8px; margin: 4px 0; }
-.bot-stats { font-size: 12px; color: #888; white-space: nowrap; }
-.bot-meta { display: flex; justify-content: space-between; font-size: 11px; color: #666; }
+.bot-stats { font-size: 12px; color: var(--text-muted); white-space: nowrap; }
+.bot-meta { display: flex; justify-content: space-between; font-size: 11px; color: var(--text-secondary); }
 .mat-row {
   display: flex; align-items: center; gap: 8px;
   padding: 3px 0; font-size: 12px;
 }
 .mat-dot { width: 10px; height: 10px; border-radius: 2px; flex-shrink: 0; }
 .mat-name { flex: 1; }
-.mat-count { color: #888; font-variant-numeric: tabular-nums; }
+.mat-count { color: var(--text-muted); font-variant-numeric: tabular-nums; }
 .stat-row { display: flex; justify-content: space-between; padding: 4px 0; font-size: 13px; }
-.empty { color: #666; padding: 12px 0; text-align: center; }
+.empty { color: var(--text-muted); padding: 12px 0; text-align: center; }
 </style>

@@ -7,6 +7,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import type { MetricSample } from '@/stores/monitor'
+import { useTheme } from '@/composables/useTheme'
 
 const props = defineProps<{
   metrics: MetricSample[]
@@ -28,7 +29,19 @@ function toKbps(n: number | undefined): number {
   return ((n || 0) / 1024).toFixed(1) as unknown as number
 }
 
+const { resolved: themeResolved } = useTheme()
+const isDark = computed(() => themeResolved.value === 'dark')
+
 const chartOption = computed(() => {
+  // 图表配色跟随主题（亮：暖米底 + 深灰文字；暗：暖墨底 + 浅色文字）
+  const axisColor = isDark.value ? '#3A3830' : '#C9C5BA'
+  const labelColor = isDark.value ? '#9D9A91' : '#6B6860'
+  const gridColor = isDark.value ? '#2E2D27' : 'rgba(20, 20, 19, 0.06)'
+  const tipBg = isDark.value ? '#2C2B26' : '#FBF9F4'
+  const tipBorder = isDark.value ? '#3A3830' : '#D8D5CC'
+  const tipText = isDark.value ? '#EAE7DC' : '#141413'
+  const tipMuted = isDark.value ? '#9D9A91' : '#6B6860'
+
   const timestamps = props.metrics.map(m => new Date(m.timestamp * 1000).toLocaleTimeString())
   const cpuData = props.metrics.map(m => m.cpu_percent)
   const memData = props.metrics.map(m => m.memory_percent)
@@ -38,29 +51,29 @@ const chartOption = computed(() => {
 
   return {
     backgroundColor: 'transparent',
-    textStyle: { color: '#9D9A91' },
+    textStyle: { color: labelColor },
     tooltip: {
       trigger: 'axis',
-      backgroundColor: '#2C2B26',
-      borderColor: '#3A3830',
-      textStyle: { color: '#EAE7DC', fontSize: 12 },
+      backgroundColor: tipBg,
+      borderColor: tipBorder,
+      textStyle: { color: tipText, fontSize: 12 },
       formatter: (params: any[]) => {
         const i = params?.[0]?.dataIndex ?? 0
         const m = props.metrics[i]
         if (!m) return ''
         const lines = params.map(p => `${p.marker} ${p.seriesName}: ${p.value}`).join('<br/>')
         const abs = m.memory_total
-          ? `<br/><span style="color:#9D9A91">内存: ${fmtBytes(m.memory_used)} / ${fmtBytes(m.memory_total)}</span>`
+          ? `<br/><span style="color:${tipMuted}">内存: ${fmtBytes(m.memory_used)} / ${fmtBytes(m.memory_total)}</span>`
           : ''
         const absD = m.disk_total
-          ? `<br/><span style="color:#9D9A91">磁盘: ${fmtBytes(m.disk_used)} / ${fmtBytes(m.disk_total)}</span>`
+          ? `<br/><span style="color:${tipMuted}">磁盘: ${fmtBytes(m.disk_used)} / ${fmtBytes(m.disk_total)}</span>`
           : ''
         return `<b>${new Date(m.timestamp * 1000).toLocaleTimeString()}</b><br/>${lines}${abs}${absD}`
       },
     },
     legend: {
       data: ['CPU', '内存', '磁盘', '上行', '下行'],
-      textStyle: { color: '#9D9A91' },
+      textStyle: { color: labelColor },
       top: 0,
     },
     grid: {
@@ -72,8 +85,8 @@ const chartOption = computed(() => {
     xAxis: {
       type: 'category',
       data: timestamps,
-      axisLine: { lineStyle: { color: '#3A3830' } },
-      axisLabel: { color: '#9D9A91', fontSize: 10 },
+      axisLine: { lineStyle: { color: axisColor } },
+      axisLabel: { color: labelColor, fontSize: 10 },
     },
     yAxis: [
       {
@@ -81,16 +94,16 @@ const chartOption = computed(() => {
         name: '%',
         min: 0,
         max: 100,
-        axisLine: { lineStyle: { color: '#3A3830' } },
-        axisLabel: { color: '#9D9A91', formatter: '{value}%' },
-        splitLine: { lineStyle: { color: '#2E2D27' } },
+        axisLine: { lineStyle: { color: axisColor } },
+        axisLabel: { color: labelColor, formatter: '{value}%' },
+        splitLine: { lineStyle: { color: gridColor } },
       },
       {
         type: 'value',
         name: 'KB/s',
         min: 0,
         axisLine: { show: false },
-        axisLabel: { color: '#9D9A91', formatter: '{value}' },
+        axisLabel: { color: labelColor, formatter: '{value}' },
         splitLine: { show: false },
       },
     ],

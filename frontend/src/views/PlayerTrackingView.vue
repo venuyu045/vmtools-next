@@ -152,7 +152,7 @@ const playerStore = useOnlinePlayersStore()
   flex-direction: column;
   gap: 4px;
   padding-left: 14px;
-  border-left: 1px solid rgba(64, 158, 255, 0.25);
+  border-left: 1px solid var(--border-subtle);
 }
 .bot-owner-label {
   font-size: 12px;

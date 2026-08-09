@@ -20,7 +20,13 @@ const resolved = ref<'light' | 'dark'>(
 function apply() {
   const dark = mode.value === 'dark' || (mode.value === 'system' && media.matches)
   resolved.value = dark ? 'dark' : 'light'
-  document.documentElement.setAttribute('data-theme', resolved.value)
+  const root = document.documentElement
+  root.setAttribute('data-theme', resolved.value)
+  // EP 暗色 css-vars.css 只认 html.dark，需与 data-theme 同步挂 class（global.css 双选择器兼容）
+  root.classList.toggle('dark', dark)
+  // 浏览器地址栏/状态栏颜色随主题切换（亮=暖米 / 暗=暖墨）
+  const meta = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]')
+  if (meta) meta.content = dark ? '#1A1916' : '#ECE9E0'
 }
 
 /** 设置模式并持久化 */
