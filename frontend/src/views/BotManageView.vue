@@ -145,10 +145,10 @@
               <span>PID: {{ selectedInstance.pid || '--' }}</span>
               <span>PORT: {{ selectedInstance.mcp_port }}</span>
               <span v-if="isMf" class="live-coord" :title="'实时坐标'">📍 {{ liveCoord }}</span>
-              <span>{{ selectedInstance.instance_dir }}</span>
+              <span class="meta-path">{{ selectedInstance.instance_dir }}</span>
             </div>
             <el-tabs v-model="activeTab" class="mcc-tabs" @tab-change="handleTabChange">
-              <el-tab-pane label="Terminal" name="terminal">
+              <el-tab-pane label="终端" name="terminal">
                 <MccWebTerminal
                   v-if="selectedInstance"
                   :instance-id="selectedInstance.instance_id"
@@ -159,7 +159,7 @@
                 />
               </el-tab-pane>
 
-              <el-tab-pane label="Account" name="account">
+              <el-tab-pane label="账号" name="account">
                 <div class="account-toolbar">
                   <el-select v-model="selectedProfileId" clearable placeholder="选择账号模板应用到此实例">
                     <el-option v-for="profile in mccStore.accountProfiles" :key="profile.profile_id" :label="`${profile.name} · ${profile.username}`" :value="profile.profile_id" />
@@ -193,7 +193,7 @@
                 </el-form>
               </el-tab-pane>
 
-              <el-tab-pane label="Files" name="files">
+              <el-tab-pane label="文件" name="files">
                 <MccFileManagerPanel
                   v-if="selectedInstance"
                   :instance-id="selectedInstance.instance_id"
@@ -235,10 +235,10 @@
             <span>PID: {{ selectedInstance.pid || '--' }}</span>
             <span>PORT: {{ selectedInstance.mcp_port }}</span>
             <span v-if="isMf" class="live-coord" :title="'实时坐标'">📍 {{ liveCoord }}</span>
-            <span>{{ selectedInstance.instance_dir }}</span>
+            <span class="meta-path">{{ selectedInstance.instance_dir }}</span>
           </div>
           <el-tabs v-model="activeTab" class="mcc-tabs" @tab-change="handleTabChange">
-            <el-tab-pane label="Terminal" name="terminal">
+            <el-tab-pane label="终端" name="terminal">
               <MccWebTerminal
                 v-if="selectedInstance"
                 :instance-id="selectedInstance.instance_id"
@@ -249,7 +249,7 @@
               />
             </el-tab-pane>
 
-            <el-tab-pane label="Account" name="account">
+            <el-tab-pane label="账号" name="account">
               <div class="account-toolbar">
                 <el-select v-model="selectedProfileId" clearable placeholder="选择账号模板应用到此实例">
                   <el-option v-for="profile in mccStore.accountProfiles" :key="profile.profile_id" :label="`${profile.name} · ${profile.username}`" :value="profile.profile_id" />
@@ -283,7 +283,7 @@
               </el-form>
             </el-tab-pane>
 
-            <el-tab-pane label="Files" name="files">
+            <el-tab-pane label="文件" name="files">
               <MccFileManagerPanel
                 v-if="selectedInstance"
                 :instance-id="selectedInstance.instance_id"
@@ -914,6 +914,7 @@ watch(
 .empty-text { grid-column: 1 / -1; color: var(--text-muted); text-align: center; padding: 60px 0; font-size: 18px; }
 .detail-panel { height: 100%; display: flex; flex-direction: column; gap: 12px; }
 .terminal-meta { display: flex; flex-wrap: wrap; gap: 20px; color: var(--text-secondary); font-size: 14px; margin-bottom: 12px; }
+.meta-path { max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .account-toolbar { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-bottom: 16px; }
 .account-toolbar .el-select { width: 360px; }
 .account-form { max-width: 760px; }
