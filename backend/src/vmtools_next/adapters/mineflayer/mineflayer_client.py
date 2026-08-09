@@ -465,12 +465,20 @@ class MineflayerBridgeClient(AbstractBotAgent):
     # ── 背包管理（与 MCC /mcc-bots/{id}/inventory 系列接口对齐） ──
 
     async def drop_inventory_item(self, item_type: str, count: int = 64,
-                                  inventory_id: int = 0) -> dict:
-        """丢弃背包中的指定物品（MF: bot.toss；inventory_id 仅为兼容 MCC 接口签名，MF 忽略）。"""
-        return await self._send_request(METHOD_DROP_ITEM, {
+                                  inventory_id: int = 0, slot_id: int | None = None) -> dict:
+        """丢弃背包中的物品（MF: bot.toss/tossStack；inventory_id 仅为兼容 MCC 接口签名）。
+
+        slot_id 为前端标准槽位（可选）：指定时精确丢弃该槽位（修复按类型全局
+        findItemRange 找第一个槽位导致丢错槽位的问题）；不指定时按类型全局丢弃。
+        """
+        params: dict[str, Any] = {
             "item_type": item_type,
             "count": count,
-        }, timeout=DEFAULT_CMD_TIMEOUT)
+        }
+        if slot_id is not None:
+            params["slot"] = self._frontend_to_node_slot(slot_id)
+        return await self._send_request(METHOD_DROP_ITEM, params,
+                                        timeout=DEFAULT_CMD_TIMEOUT)
 
     async def change_hotbar_slot(self, slot_index: int) -> dict:
         """切换快捷栏槽位（与 MCC select-hotbar 接口对齐）。"""

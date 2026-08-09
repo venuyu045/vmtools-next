@@ -120,6 +120,7 @@ class InventoryDropRequest(BaseModel):
     item_type: str
     count: int = 64
     inventory_id: int = 0
+    slot_id: Optional[int] = None  # 前端标准槽位；指定时精确丢弃该槽位（否则按类型全局）
 
 
 class InventoryMoveRequest(BaseModel):

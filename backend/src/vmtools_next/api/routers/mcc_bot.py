@@ -615,11 +615,13 @@ async def inventory_drop(bot_id: str, data: InventoryDropRequest,
             item_type=data.item_type,
             count=data.count,
             inventory_id=data.inventory_id,
+            slot_id=data.slot_id,
         )
         # MF 引擎 drop_item 返回 success:false（如物品不存在）→ 转 400 友好提示
         if isinstance(result, dict) and result.get("success") is False:
             raise HTTPException(400, result.get("error", "丢弃失败"))
-        return {"success": True, "dropped": data.item_type, "count": data.count, "result": result}
+        return {"success": True, "dropped": data.item_type, "count": data.count,
+                "slot": data.slot_id, "result": result}
     except MccMcpError as e:
         raise HTTPException(502, f"MCP error: {str(e) or repr(e)}")
     finally:

@@ -561,15 +561,16 @@ async function handleInventoryAction(payload: { action: string; slot_id: number;
   }
 }
 
-async function handleInventoryDrop(payload: { item_type: string; count: number }) {
+async function handleInventoryDrop(payload: { item_type: string; count: number; slot?: number }) {
   const botId = selectedInstance.value?.bot_id
   if (!botId) { ElMessage.warning('未绑定 Bot'); return }
   try {
     await botApi.inventoryDrop(botId, {
       item_type: payload.item_type,
       count: payload.count,
+      ...(payload.slot !== undefined ? { slot_id: payload.slot } : {}),
     })
-    ElMessage.success(`丢弃 ${payload.item_type} ×${payload.count}`)
+    ElMessage.success(`丢弃 ${payload.item_type} ×${payload.count}${payload.slot !== undefined ? `（槽位 ${payload.slot}）` : ''}`)
     fetchInventory()
   } catch (e: any) {
     ElMessage.error('丢弃失败: ' + (e?.response?.data?.detail || e))

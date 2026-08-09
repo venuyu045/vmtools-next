@@ -37,7 +37,7 @@ export const botApi = {
   inventoryAction(botId: string, data: { inventory_id: number; slot_id: number; action: string }) {
     return client.post(`/mcc-bots/${botId}/inventory/action`, data)
   },
-  inventoryDrop(botId: string, data: { item_type: string; count: number; inventory_id?: number }) {
+  inventoryDrop(botId: string, data: { item_type: string; count: number; inventory_id?: number; slot_id?: number }) {
     return client.post(`/mcc-bots/${botId}/inventory/drop`, data)
   },
   inventorySelectHotbar(botId: string, slot: number) {

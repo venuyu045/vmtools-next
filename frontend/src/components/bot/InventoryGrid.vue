@@ -157,7 +157,7 @@ const p = defineProps<{ botId: string; inventory: Data | null; loading: boolean;
 const emit = defineEmits<{
   refresh: []
   action: [p: { action: string; slot_id: number }]
-  drop: [p: { item_type: string; count: number }]
+  drop: [p: { item_type: string; count: number; slot?: number }]
   selectHotbar: [slot: number]
   move: [p: { slot_id: number; dest_slot_id: number }]
 }>()
@@ -327,14 +327,15 @@ function doDropOne() {
   if (!detail.value.item) return
   const it = detail.value.item
   detail.value.show = false
-  emit('drop', { item_type: it.item_id, count: 1 })
+  // 精确槽位丢弃：传 slot，避免按类型全局找第一个槽位丢错
+  emit('drop', { item_type: it.item_id, count: 1, slot: it.slot })
 }
 
 function doDropStack() {
   if (!detail.value.item) return
   const it = detail.value.item
   detail.value.show = false
-  emit('drop', { item_type: it.item_id, count: it.count })
+  emit('drop', { item_type: it.item_id, count: it.count, slot: it.slot })
 }
 
 function openDropDlg() {
@@ -349,6 +350,7 @@ function doDropAll() {
   const it = dropDlg.value.itemType
   const cnt = Math.max(1, Math.floor(dropDlg.value.count || 1))
   dropDlg.value.show = false
+  // 批量丢弃：不指定 slot，按类型全局凑足数量（语义正确）
   emit('drop', { item_type: it, count: cnt })
 }
 

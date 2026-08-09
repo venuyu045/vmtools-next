@@ -249,19 +249,49 @@ function createInventoryHandlers(bot) {
     }
   }
 
-  // ── 丢弃背包物品（bot.toss；供 MF 背包管理「丢弃」操作使用） ──
-  async function drop_item({ item_type, count = 64 } = {}) {
+  // ── 丢弃背包物品 ──
+  // 支持两种模式：
+  //   1) 指定 slot（精确槽位丢弃）：只丢该槽位的物品（tossStack 整组 / 窗口点击精确数量）。
+  //      ——修复「按类型全局 findItemRange 找第一个槽位」导致丢错槽位的问题。
+  //   2) 仅 item_type（批量丢弃语义）：按类型在背包中查找凑足数量（保持原逻辑）。
+  async function drop_item({ item_type, count = 64, slot = null } = {}) {
     try {
-      const items = bot.inventory.items();
-      const match = items.find(item =>
-        item.name === item_type || item.type?.toString() === item_type
-      );
-      if (!match) {
-        return { success: false, error: `Item ${item_type} not found in inventory` };
+      let match = null;
+      if (slot !== null && slot !== undefined && slot !== '') {
+        // 精确槽位：只操作该槽位
+        match = bot.inventory.slots[slot];
+        if (!match) {
+          return { success: false, error: `No item in slot ${slot}` };
+        }
+        if (item_type && match.name !== item_type && match.type?.toString() !== item_type) {
+          return { success: false, error: `Slot ${slot} contains ${match.name}, not ${item_type}` };
+        }
+      } else {
+        // 按类型：全背包找匹配（第一个匹配的槽位），保持原语义
+        const items = bot.inventory.items();
+        match = items.find(item =>
+          item.name === item_type || item.type?.toString() === item_type
+        );
+        if (!match) {
+          return { success: false, error: `Item ${item_type} not found in inventory` };
+        }
       }
-      const dropCount = Math.min(count, match.count);
-      await bot.toss(match.type, null, dropCount);
-      return { success: true, item: match.name, count: dropCount };
+
+      const dropCount = Math.min(Number(count) || match.count, match.count);
+      if (dropCount >= match.count) {
+        // 整组丢弃：拿起 → 丢出 → 关闭窗口（tossStack 按 item.slot 精确操作）
+        await bot.tossStack(match);
+      } else {
+        // 精确数量（按槽位）：拿起整组 → 右键虚空丢 N 个 → 剩余放回
+        await bot.clickWindow(match.slot, 0, 0);   // 拿起整组
+        for (let i = 0; i < dropCount; i++) {
+          await bot.clickWindow(-999, 1, 0);        // 右键虚空 = 丢弃 1 个
+        }
+        if (bot.inventory.selectedItem) {
+          await bot.clickWindow(match.slot, 0, 0);  // 剩余放回原槽位
+        }
+      }
+      return { success: true, item: match.name, count: dropCount, slot: match.slot };
     } catch (err) {
       return { success: false, error: err.message };
     }
