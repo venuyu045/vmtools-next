@@ -133,10 +133,18 @@ index 459e3f3..bce73e1 100644
  }
 
 diff --git a/node_modules/prismarine-viewer/viewer/lib/worker.js b/node_modules/prismarine-viewer/viewer/lib/worker.js
-index b743167..aed35af 100644
+index b743167..b12a4b0 100644
 --- a/node_modules/prismarine-viewer/viewer/lib/worker.js
 +++ b/node_modules/prismarine-viewer/viewer/lib/worker.js
-@@ -51,12 +51,20 @@ self.onmessage = ({ data }) => {
+@@ -22,6 +22,7 @@ function sectionKey (x, y, z) {
+ }
+ 
+ const dirtySections = {}
++const preRendered = {} // 服务端预渲染 geometry（useGeometry 提供），跳过本地计算
+ 
+ function setSectionDirty (pos, value = true) {
+   const x = Math.floor(pos.x / 16) * 16
+@@ -51,12 +52,20 @@ self.onmessage = ({ data }) => {
      world.addColumn(data.x, data.z, data.chunk)
    } else if (data.type === 'unloadChunk') {
      world.removeColumn(data.x, data.z)
@@ -157,7 +165,7 @@ index b743167..aed35af 100644
    }
  }
  
-@@ -69,6 +77,7 @@ setInterval(() => {
+@@ -69,6 +78,7 @@ setInterval(() => {
  
    // const start = performance.now()
    for (const key of sections) {
