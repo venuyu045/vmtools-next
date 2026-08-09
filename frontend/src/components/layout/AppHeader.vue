@@ -24,7 +24,7 @@
         :title="`主题：${themeResolved === 'dark' ? '暗色' : '亮色'}（点击切换）`"
         :aria-label="`切换为${themeResolved === 'dark' ? '亮色' : '暗色'}主题`"
       >
-        {{ themeResolved === 'dark' ? '◐ 暗' : '◐ 亮' }}
+        <span class="theme-btn-icon">◐</span><span class="theme-btn-text">{{ themeResolved === 'dark' ? '暗' : '亮' }}</span>
       </button>
       <!-- 未登录（访客）：显示「登录」按钮，点击进入登录页 -->
       <router-link v-if="!authStore.isLoggedIn" to="/login" class="profile-btn login-link">登录</router-link>
@@ -233,7 +233,16 @@ async function submitChangePwd() {
   cursor: pointer;
   font-family: var(--font-sans);
   flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 32px;
   transition: background-color 150ms var(--ease-out), border-color 150ms var(--ease-out), color 150ms var(--ease-out);
+}
+
+.theme-btn-icon {
+  font-size: 13px;
+  line-height: 1;
 }
 
 .theme-btn:hover {
@@ -348,6 +357,7 @@ async function submitChangePwd() {
 
   .header-left {
     gap: 10px;
+    min-width: 0;
   }
 
   .sidebar-toggle,
@@ -359,6 +369,12 @@ async function submitChangePwd() {
 
   .page-title {
     font-size: 13px;
+    max-width: 38vw;
+  }
+
+  .theme-btn {
+    min-height: 36px;
+    padding: 4px 10px;
   }
 
   .profile-btn {
@@ -379,11 +395,26 @@ async function submitChangePwd() {
 
   .page-title {
     font-size: 11px;
+    max-width: 30vw;
+  }
+
+  /* 超窄屏：主题按钮图标化（隐藏文字），为标题/个人按钮腾出空间 */
+  .theme-btn {
+    padding: 6px 9px;
+    font-size: 13px;
+    gap: 0;
+  }
+  .theme-btn-text {
+    display: none;
   }
 
   .profile-btn {
     padding: 4px 8px;
     font-size: 10px;
+  }
+
+  .header-right {
+    gap: 6px;
   }
 }
 </style>

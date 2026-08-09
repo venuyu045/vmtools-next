@@ -298,9 +298,20 @@ onBeforeUnmount(() => {
 @media (max-width: 480px) {
   .dashboard { gap: 12px; }
   .stats-row { gap: 8px; }
-  .stats-row .stat-item { padding: 12px; gap: 8px; }
-  .stat-value { font-size: 16px; }
-  .stat-label { font-size: 11px; }
+  /* 超窄屏：统计卡纵向排列（图标在上、文字在下），避免 320px 下横向挤压 */
+  .stats-row .stat-item {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 12px;
+    min-width: 0;
+  }
+  .stats-row .stat-indicator {
+    min-width: 0;
+    padding: 6px 10px;
+  }
+  .stat-value { font-size: 18px; }
+  .stat-label { font-size: 12px; }
   .stat-sub { font-size: 12px; }
   .pixel-card { padding: 16px; }
   .section-title { font-size: 12px; margin-bottom: 12px; }

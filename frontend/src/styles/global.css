@@ -913,3 +913,83 @@ html {
     transition-duration: 0.01ms !important;
   }
 }
+
+/* ============================================================
+   移动端通用增强（2026-08 明暗/移动端适配补充）
+   - 覆盖所有页面：窄屏下 el-form 标签换行、输入组按钮紧凑、
+     分页收缩、表单控件宽度自适应
+   ============================================================ */
+
+/* 窄屏：el-form 标签换行（label 在上），避免固定 label 宽度挤压输入框 */
+@media (max-width: 768px) {
+  .el-form-item {
+    display: block !important;
+    margin-bottom: 16px !important;
+  }
+  .el-form-item__label {
+    width: auto !important;
+    display: block;
+    text-align: left;
+    height: auto;
+    line-height: 1.5;
+    padding: 0 0 6px;
+    float: none !important;
+  }
+  .el-form-item__content {
+    margin-left: 0 !important;
+    display: block;
+  }
+  /* 表单控件宽度自适应（按钮/按钮组保持内容宽度，不强制拉伸） */
+  .el-form-item__content > .el-input,
+  .el-form-item__content > .el-select,
+  .el-form-item__content > .el-textarea,
+  .el-form-item__content > .el-input-number,
+  .el-form-item__content > .el-cascader {
+    width: 100% !important;
+  }
+  .el-form-item__content > .el-input-group {
+    width: 100% !important;
+  }
+}
+
+/* 窄屏：搜索框 append/prepend 按钮紧凑（仓库搜索等带内嵌按钮的输入框） */
+@media (max-width: 768px) {
+  .el-input-group__append,
+  .el-input-group__prepend {
+    padding: 0 12px !important;
+  }
+  .el-input-group__append .el-button,
+  .el-input-group__prepend .el-button {
+    margin: 0 !important;
+    padding: 8px 12px !important;
+    min-height: 44px !important;
+  }
+}
+
+/* 窄屏：分页收缩（隐藏总数 + 居中换行），避免 320px 下溢出 */
+@media (max-width: 480px) {
+  .el-pagination {
+    flex-wrap: wrap;
+    justify-content: center;
+    row-gap: 6px;
+  }
+  .el-pagination__total {
+    display: none !important;
+  }
+  .el-pagination .el-pager li {
+    min-width: 28px !important;
+  }
+}
+
+/* 窄屏：页头操作区允许换行（BotManageView 等按钮较多的页头） */
+@media (max-width: 768px) {
+  .page-header,
+  .mcc-page-header {
+    gap: 10px;
+  }
+}
+
+/* 暗色：Element Plus 表单校验消息/日期选择等浮层文字随主题（EP 暗色变量已覆盖，这里兜底） */
+[data-theme="dark"] .el-form-item__error {
+  color: var(--danger) !important;
+}

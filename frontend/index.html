@@ -5,19 +5,31 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=5.0, user-scalable=yes" />
     <meta name="theme-color" content="#ECE9E0" />
+    <meta name="color-scheme" content="light dark" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <title>VenusYu的第一个网站</title>
     <script>
       // 防闪白：在任何 CSS 加载前，按 localStorage / 系统偏好设置 data-theme
+      // 关键点（修复历史 bug）：
+      //  1) 用户手动选择（light/dark）优先于系统设置；
+      //  2) 选择「跟随系统」（system）时必须按 prefers-color-scheme 解析为实际主题，
+      //     绝不能把 data-theme 设成 'system'——CSS 无此选择器，会导致主题变量全部失效、
+      //     html.dark 未挂 → 暗色用户刷新闪白、EP 组件样式错乱（"切换主题后 UI 失效"根因）；
+      //  3) 同步挂 html.dark（Element Plus 暗色 css-vars 只认它）与 meta theme-color（地址栏）。
       (function () {
         try {
           var saved = localStorage.getItem('vmtools-theme');
-          var theme = saved || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+          var prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+          var theme = 'light';
+          if (saved === 'dark') theme = 'dark';
+          else if (saved === 'light') theme = 'light';
+          else theme = prefersDark ? 'dark' : 'light'; // 'system' / 无记录 / 异常值 → 跟随系统
           var root = document.documentElement;
           root.setAttribute('data-theme', theme);
-          // EP 暗色 css-vars.css 只认 html.dark，防闪白阶段同步挂 class 避免暗色组件浅色闪动
-          if (theme === 'dark') root.classList.add('dark');
+          root.classList.toggle('dark', theme === 'dark');
+          var meta = document.querySelector('meta[name="theme-color"]');
+          if (meta) meta.setAttribute('content', theme === 'dark' ? '#1A1916' : '#ECE9E0');
         } catch (e) { /* 隐私模式等异常场景，默认亮色 */ }
       })();
     </script>
@@ -25,6 +37,8 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=DM+Sans:wght@400;500;600&family=Lora:ital,wght@0,400;0,500;1,400&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
     <style>
+      :root { color-scheme: light; }
+      [data-theme="dark"] { color-scheme: dark; }
       body { margin: 0; background: #ECE9E0; }
       [data-theme="dark"] body { background: #1A1916; }
     </style>

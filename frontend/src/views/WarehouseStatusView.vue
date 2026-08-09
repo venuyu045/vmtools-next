@@ -236,4 +236,20 @@ onMounted(async () => {
   .item-icon { width: 34px; height: 34px; font-size: 18px; }
   .container-row { grid-template-columns: 1fr 60px 70px; font-size: 11px; }
 }
+
+@media (max-width: 480px) {
+  /* 超窄屏：搜索结果行换行布局——物品名/图标占首行，数量区换到第二行，
+     避免数量（大数+精确值+盒数三行）与物品名互相挤压 */
+  .item-main { flex-wrap: wrap; }
+  .item-count {
+    flex: 1 1 100%;
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+    text-align: left;
+    padding-left: 0;
+  }
+  .count-lbl { display: inline; }
+  .item-detail { padding: 10px 12px; }
+}
 </style>

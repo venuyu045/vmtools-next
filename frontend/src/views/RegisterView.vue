@@ -1,5 +1,7 @@
 <template>
   <div class="login-page">
+    <!-- 右上角主题切换（三态：跟随系统 / 亮 / 暗，localStorage 持久化） -->
+    <ThemeSwitch class="login-theme-switch" />
     <div class="login-card pixel-card">
       <div class="login-header">
         <h1 class="pixel">注册账号</h1>
@@ -74,6 +76,7 @@ import { onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { ElMessage } from 'element-plus'
+import ThemeSwitch from '@/components/ThemeSwitch.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -168,10 +171,20 @@ onMounted(() => {
 <style scoped>
 .login-page {
   height: 100vh;
+  height: 100dvh; /* 移动端 Safari 地址栏收起时用动态视口，避免底部被遮挡 */
   display: flex;
   align-items: center;
   justify-content: center;
   background: var(--bg-page);
+  position: relative;
+}
+
+/* 右上角主题切换：固定悬浮，避让刘海屏安全区 */
+.login-theme-switch {
+  position: fixed;
+  top: calc(env(safe-area-inset-top, 0px) + 12px);
+  right: 14px;
+  z-index: 50;
 }
 
 .login-card {

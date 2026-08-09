@@ -1,5 +1,7 @@
 <template>
   <div class="login-page">
+    <!-- 右上角主题切换（三态：跟随系统 / 亮 / 暗，localStorage 持久化） -->
+    <ThemeSwitch class="login-theme-switch" />
     <!-- 左：深色 Hero（品牌区） -->
     <div class="login-hero">
       <div class="hero-inner">
@@ -69,6 +71,7 @@ import { onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { ElMessage } from 'element-plus'
+import ThemeSwitch from '@/components/ThemeSwitch.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -140,6 +143,14 @@ onMounted(() => {
   display: flex;
   background: var(--bg-page);
   position: relative;
+}
+
+/* 右上角主题切换：固定悬浮，避让刘海屏安全区 */
+.login-theme-switch {
+  position: fixed;
+  top: calc(env(safe-area-inset-top, 0px) + 12px);
+  right: 14px;
+  z-index: 50;
 }
 
 /* ---- 左：深色 Hero（始终深色，不随主题反转） ---- */
