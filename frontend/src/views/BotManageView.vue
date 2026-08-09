@@ -113,117 +113,208 @@
     </el-dialog>
 
     <!-- Detail drawer (Terminal / Account / Files) -->
-    <el-drawer v-model="detailOpen" size="86%" :title="drawerTitle">
-      <div v-if="selectedInstance" class="detail-panel">
-        <div class="terminal-meta mono">
-          <span>{{ selectedInstance.display_name }}</span>
-          <span>PID: {{ selectedInstance.pid || '--' }}</span>
-          <span>PORT: {{ selectedInstance.mcp_port }}</span>
-          <span v-if="isMf" class="live-coord" :title="'实时坐标'">📍 {{ liveCoord }}</span>
-          <span>{{ selectedInstance.instance_dir }}</span>
-        </div>
-
-        <!-- MF 实时 3D 预览（内嵌 viewer iframe + token 鉴权） -->
-        <div v-if="isMf && showMfPreview" class="mf-preview">
-          <div class="preview-head">
-            <span class="preview-title">▶ 实时 3D 预览</span>
-            <span class="preview-hint">坐标变化实时跟随 · 渲染较慢请耐心等待</span>
-            <a
+    <el-drawer v-model="detailOpen" size="92%" :title="drawerTitle">
+      <div v-if="selectedInstance" class="detail-panel" :class="{ split: isMf && showMfPreview }">
+        <!-- MF 分栏布局：左=实时3D预览，右=信息+控制台+背包 -->
+        <template v-if="isMf && showMfPreview">
+          <div class="detail-left">
+            <div class="preview-head">
+              <span class="preview-title">▶ 实时 3D 预览</span>
+              <span class="preview-hint">坐标变化实时跟随</span>
+              <a
+                v-if="viewerSrc"
+                class="preview-new"
+                :href="viewerSrc.split('?')[0]"
+                target="_blank"
+                rel="noopener"
+              >新窗口打开</a>
+            </div>
+            <iframe
               v-if="viewerSrc"
-              class="preview-new"
-              :href="viewerSrc.split('?')[0]"
-              target="_blank"
-              rel="noopener"
-            >新窗口打开</a>
+              :src="viewerSrc"
+              class="preview-frame"
+              allowfullscreen
+              sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
+            />
+            <div v-else class="preview-loading">预览加载中…</div>
           </div>
-          <iframe
-            v-if="viewerSrc"
-            :src="viewerSrc"
-            class="preview-frame"
-            allowfullscreen
-            sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
-          />
-          <div v-else class="preview-loading">预览加载中…</div>
-        </div>
 
-        <el-tabs v-model="activeTab" class="mcc-tabs" @tab-change="handleTabChange">
-          <el-tab-pane label="Terminal" name="terminal">
-            <MccWebTerminal
-              v-if="selectedInstance"
-              :instance-id="selectedInstance.instance_id"
-              :slug="selectedInstance.slug"
-              :title="selectedInstance.display_name || selectedInstance.slug"
-              height="480px"
-              embedded
-            />
-          </el-tab-pane>
-
-          <el-tab-pane label="Account" name="account">
-            <div class="account-toolbar">
-              <el-select v-model="selectedProfileId" clearable placeholder="选择账号模板应用到此实例">
-                <el-option v-for="profile in mccStore.accountProfiles" :key="profile.profile_id" :label="`${profile.name} · ${profile.username}`" :value="profile.profile_id" />
-              </el-select>
-              <button class="pixel-btn outline" :disabled="!selectedProfileId" @click="applySelectedProfile">应用模板</button>
-              <button class="pixel-btn outline" @click="showProfileCreate = true">新建模板</button>
+          <div class="detail-right">
+            <div class="terminal-meta mono">
+              <span>{{ selectedInstance.display_name }}</span>
+              <span>PID: {{ selectedInstance.pid || '--' }}</span>
+              <span>PORT: {{ selectedInstance.mcp_port }}</span>
+              <span v-if="isMf" class="live-coord" :title="'实时坐标'">📍 {{ liveCoord }}</span>
+              <span>{{ selectedInstance.instance_dir }}</span>
             </div>
-            <el-form :model="accountForm" label-width="130px" class="account-form">
-              <el-form-item label="登录方式">
-                <el-select v-model="accountForm.auth_type">
-                  <el-option label="离线模式" value="offline" />
-                  <el-option label="Microsoft 正版" value="microsoft" />
-                  <el-option label="Mojang" value="mojang" />
-                  <el-option label="Yggdrasil / 皮肤站" value="yggdrasil" />
-                  <el-option label="自定义认证" value="custom" />
+            <el-tabs v-model="activeTab" class="mcc-tabs" @tab-change="handleTabChange">
+              <el-tab-pane label="Terminal" name="terminal">
+                <MccWebTerminal
+                  v-if="selectedInstance"
+                  :instance-id="selectedInstance.instance_id"
+                  :slug="selectedInstance.slug"
+                  :title="selectedInstance.display_name || selectedInstance.slug"
+                  height="480px"
+                  embedded
+                />
+              </el-tab-pane>
+
+              <el-tab-pane label="Account" name="account">
+                <div class="account-toolbar">
+                  <el-select v-model="selectedProfileId" clearable placeholder="选择账号模板应用到此实例">
+                    <el-option v-for="profile in mccStore.accountProfiles" :key="profile.profile_id" :label="`${profile.name} · ${profile.username}`" :value="profile.profile_id" />
+                  </el-select>
+                  <button class="pixel-btn outline" :disabled="!selectedProfileId" @click="applySelectedProfile">应用模板</button>
+                  <button class="pixel-btn outline" @click="showProfileCreate = true">新建模板</button>
+                </div>
+                <el-form :model="accountForm" label-width="130px" class="account-form">
+                  <el-form-item label="登录方式">
+                    <el-select v-model="accountForm.auth_type">
+                      <el-option label="离线模式" value="offline" />
+                      <el-option label="Microsoft 正版" value="microsoft" />
+                      <el-option label="Mojang" value="mojang" />
+                      <el-option label="Yggdrasil / 皮肤站" value="yggdrasil" />
+                      <el-option label="自定义认证" value="custom" />
+                    </el-select>
+                  </el-form-item>
+                  <el-form-item label="用户名/邮箱"><el-input v-model="accountForm.username" /></el-form-item>
+                  <el-form-item label="密码"><el-input v-model="accountForm.password" type="password" show-password :placeholder="accountForm.password_set ? '已保存；留空则不修改' : '可选'" /></el-form-item>
+                  <el-form-item label="认证服务器"><el-input v-model="accountForm.auth_server_url" placeholder="https://auth.example.com" /></el-form-item>
+                  <el-form-item label="API Path"><el-input v-model="accountForm.auth_api_path" placeholder="/api/yggdrasil" /></el-form-item>
+                  <el-form-item label="Authlib Injector"><el-input v-model="accountForm.authlib_injector_path" placeholder="authlib-injector.jar 路径" /></el-form-item>
+                  <el-form-item label="MC 服务器"><el-input v-model="accountForm.mc_server_host" placeholder="play.example.com" /></el-form-item>
+                  <el-form-item label="服务器端口"><el-input-number v-model="accountForm.mc_server_port" :min="1" :max="65535" /></el-form-item>
+                  <el-form-item label="游戏版本"><el-input v-model="accountForm.mc_version" /></el-form-item>
+                  <el-form-item label="MCP 端口"><el-input :model-value="accountForm.mcp_port" disabled /></el-form-item>
+                  <el-form-item>
+                    <button class="pixel-btn" type="button" @click="saveAccountConfig">保存 MinecraftClient.ini</button>
+                    <button class="pixel-btn warning" type="button" :disabled="selectedInstance.status !== 'running'" @click="handleRestart(selectedInstance)">保存后重启</button>
+                  </el-form-item>
+                </el-form>
+              </el-tab-pane>
+
+              <el-tab-pane label="Files" name="files">
+                <MccFileManagerPanel
+                  v-if="selectedInstance"
+                  :instance-id="selectedInstance.instance_id"
+                  :slug="selectedInstance.slug"
+                  embedded
+                />
+              </el-tab-pane>
+
+              <el-tab-pane label="背包" name="inventory">
+                <div v-if="selectedInstance" class="inventory-tab">
+                  <!-- MF 移动控制台：前后左右/跳/蹲/视角摇杆 -->
+                  <MoveControlPad
+                    v-if="isMf && selectedInstance.bot_id"
+                    :bot-id="selectedInstance.bot_id"
+                  />
+                  <InventoryGrid
+                    :bot-id="selectedInstance.bot_id || ''"
+                    :inventory="inventoryData"
+                    :loading="inventoryLoading"
+                    :clickable="selectedInstance.bot_engine !== 'mineflayer'"
+                    @refresh="fetchInventory"
+                    @action="handleInventoryAction"
+                    @drop="handleInventoryDrop"
+                    @select-hotbar="handleSelectHotbar"
+                    @move="handleInventoryMove"
+                    @use="handleInventoryUse"
+                  />
+                </div>
+                <div v-else class="empty-state">选择 Bot 实例查看背包</div>
+              </el-tab-pane>
+            </el-tabs>
+          </div>
+        </template>
+
+        <!-- 非 MF / 预览不可用：单栏布局 -->
+        <template v-else>
+          <div class="terminal-meta mono">
+            <span>{{ selectedInstance.display_name }}</span>
+            <span>PID: {{ selectedInstance.pid || '--' }}</span>
+            <span>PORT: {{ selectedInstance.mcp_port }}</span>
+            <span v-if="isMf" class="live-coord" :title="'实时坐标'">📍 {{ liveCoord }}</span>
+            <span>{{ selectedInstance.instance_dir }}</span>
+          </div>
+          <el-tabs v-model="activeTab" class="mcc-tabs" @tab-change="handleTabChange">
+            <el-tab-pane label="Terminal" name="terminal">
+              <MccWebTerminal
+                v-if="selectedInstance"
+                :instance-id="selectedInstance.instance_id"
+                :slug="selectedInstance.slug"
+                :title="selectedInstance.display_name || selectedInstance.slug"
+                height="480px"
+                embedded
+              />
+            </el-tab-pane>
+
+            <el-tab-pane label="Account" name="account">
+              <div class="account-toolbar">
+                <el-select v-model="selectedProfileId" clearable placeholder="选择账号模板应用到此实例">
+                  <el-option v-for="profile in mccStore.accountProfiles" :key="profile.profile_id" :label="`${profile.name} · ${profile.username}`" :value="profile.profile_id" />
                 </el-select>
-              </el-form-item>
-              <el-form-item label="用户名/邮箱"><el-input v-model="accountForm.username" /></el-form-item>
-              <el-form-item label="密码"><el-input v-model="accountForm.password" type="password" show-password :placeholder="accountForm.password_set ? '已保存；留空则不修改' : '可选'" /></el-form-item>
-              <el-form-item label="认证服务器"><el-input v-model="accountForm.auth_server_url" placeholder="https://auth.example.com" /></el-form-item>
-              <el-form-item label="API Path"><el-input v-model="accountForm.auth_api_path" placeholder="/api/yggdrasil" /></el-form-item>
-              <el-form-item label="Authlib Injector"><el-input v-model="accountForm.authlib_injector_path" placeholder="authlib-injector.jar 路径" /></el-form-item>
-              <el-form-item label="MC 服务器"><el-input v-model="accountForm.mc_server_host" placeholder="play.example.com" /></el-form-item>
-              <el-form-item label="服务器端口"><el-input-number v-model="accountForm.mc_server_port" :min="1" :max="65535" /></el-form-item>
-              <el-form-item label="游戏版本"><el-input v-model="accountForm.mc_version" /></el-form-item>
-              <el-form-item label="MCP 端口"><el-input :model-value="accountForm.mcp_port" disabled /></el-form-item>
-              <el-form-item>
-                <button class="pixel-btn" type="button" @click="saveAccountConfig">保存 MinecraftClient.ini</button>
-                <button class="pixel-btn warning" type="button" :disabled="selectedInstance.status !== 'running'" @click="handleRestart(selectedInstance)">保存后重启</button>
-              </el-form-item>
-            </el-form>
-          </el-tab-pane>
+                <button class="pixel-btn outline" :disabled="!selectedProfileId" @click="applySelectedProfile">应用模板</button>
+                <button class="pixel-btn outline" @click="showProfileCreate = true">新建模板</button>
+              </div>
+              <el-form :model="accountForm" label-width="130px" class="account-form">
+                <el-form-item label="登录方式">
+                  <el-select v-model="accountForm.auth_type">
+                    <el-option label="离线模式" value="offline" />
+                    <el-option label="Microsoft 正版" value="microsoft" />
+                    <el-option label="Mojang" value="mojang" />
+                    <el-option label="Yggdrasil / 皮肤站" value="yggdrasil" />
+                    <el-option label="自定义认证" value="custom" />
+                  </el-select>
+                </el-form-item>
+                <el-form-item label="用户名/邮箱"><el-input v-model="accountForm.username" /></el-form-item>
+                <el-form-item label="密码"><el-input v-model="accountForm.password" type="password" show-password :placeholder="accountForm.password_set ? '已保存；留空则不修改' : '可选'" /></el-form-item>
+                <el-form-item label="认证服务器"><el-input v-model="accountForm.auth_server_url" placeholder="https://auth.example.com" /></el-form-item>
+                <el-form-item label="API Path"><el-input v-model="accountForm.auth_api_path" placeholder="/api/yggdrasil" /></el-form-item>
+                <el-form-item label="Authlib Injector"><el-input v-model="accountForm.authlib_injector_path" placeholder="authlib-injector.jar 路径" /></el-form-item>
+                <el-form-item label="MC 服务器"><el-input v-model="accountForm.mc_server_host" placeholder="play.example.com" /></el-form-item>
+                <el-form-item label="服务器端口"><el-input-number v-model="accountForm.mc_server_port" :min="1" :max="65535" /></el-form-item>
+                <el-form-item label="游戏版本"><el-input v-model="accountForm.mc_version" /></el-form-item>
+                <el-form-item label="MCP 端口"><el-input :model-value="accountForm.mcp_port" disabled /></el-form-item>
+                <el-form-item>
+                  <button class="pixel-btn" type="button" @click="saveAccountConfig">保存 MinecraftClient.ini</button>
+                  <button class="pixel-btn warning" type="button" :disabled="selectedInstance.status !== 'running'" @click="handleRestart(selectedInstance)">保存后重启</button>
+                </el-form-item>
+              </el-form>
+            </el-tab-pane>
 
-          <el-tab-pane label="Files" name="files">
-            <MccFileManagerPanel
-              v-if="selectedInstance"
-              :instance-id="selectedInstance.instance_id"
-              :slug="selectedInstance.slug"
-              embedded
-            />
-          </el-tab-pane>
+            <el-tab-pane label="Files" name="files">
+              <MccFileManagerPanel
+                v-if="selectedInstance"
+                :instance-id="selectedInstance.instance_id"
+                :slug="selectedInstance.slug"
+                embedded
+              />
+            </el-tab-pane>
 
-          <el-tab-pane label="背包" name="inventory">
-            <div v-if="selectedInstance" class="inventory-tab">
-              <!-- MF 移动控制台：前后左右/跳/蹲/视角摇杆 -->
-              <MoveControlPad
-                v-if="isMf && selectedInstance.bot_id"
-                :bot-id="selectedInstance.bot_id"
-              />
-              <InventoryGrid
-                :bot-id="selectedInstance.bot_id || ''"
-                :inventory="inventoryData"
-                :loading="inventoryLoading"
-                :clickable="selectedInstance.bot_engine !== 'mineflayer'"
-                @refresh="fetchInventory"
-                @action="handleInventoryAction"
-                @drop="handleInventoryDrop"
-                @select-hotbar="handleSelectHotbar"
-                @move="handleInventoryMove"
-                @use="handleInventoryUse"
-              />
-            </div>
-            <div v-else class="empty-state">选择 Bot 实例查看背包</div>
-          </el-tab-pane>
-        </el-tabs>
+            <el-tab-pane label="背包" name="inventory">
+              <div v-if="selectedInstance" class="inventory-tab">
+                <MoveControlPad
+                  v-if="isMf && selectedInstance.bot_id"
+                  :bot-id="selectedInstance.bot_id"
+                />
+                <InventoryGrid
+                  :bot-id="selectedInstance.bot_id || ''"
+                  :inventory="inventoryData"
+                  :loading="inventoryLoading"
+                  :clickable="selectedInstance.bot_engine !== 'mineflayer'"
+                  @refresh="fetchInventory"
+                  @action="handleInventoryAction"
+                  @drop="handleInventoryDrop"
+                  @select-hotbar="handleSelectHotbar"
+                  @move="handleInventoryMove"
+                  @use="handleInventoryUse"
+                />
+              </div>
+              <div v-else class="empty-state">选择 Bot 实例查看背包</div>
+            </el-tab-pane>
+          </el-tabs>
+        </template>
       </div>
     </el-drawer>
 
@@ -856,8 +947,10 @@ watch(
   .live-coord { font-size: 12px; }
   /* 详情抽屉移动端全宽 */
   :deep(.el-drawer) { width: 100% !important; }
-  .mf-preview { max-height: 240px; }
-  .preview-frame { height: 220px; }
+  /* MF 分栏移动端上下堆叠：预览在上，控制台+背包在下 */
+  .detail-panel.split { flex-direction: column; overflow: auto; }
+  .detail-left { min-height: 260px; flex: none; }
+  .preview-frame, .preview-loading { min-height: 240px; }
 }
 @media (max-width: 480px) {
   .actions .pixel-btn { flex: none; font-size: 11px; padding: 4px 8px; }
@@ -865,19 +958,34 @@ watch(
   .instance-dir { font-size: 10px; }
 }
 
-/* ── MF 实时预览（抽屉顶部） ── */
-.live-coord { color: var(--success); font-size: 13px; }
-.mf-preview {
+/* ── MF 分栏布局：左=实时预览，右=信息+控制台+背包 ── */
+.detail-panel.split {
+  flex-direction: row;
+  gap: 14px;
+  overflow: hidden;
+}
+.detail-left {
+  flex: 1 1 50%;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 8px;
-  margin-bottom: 14px;
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
   overflow: hidden;
   background: var(--bg-card);
-  max-height: 340px;
 }
+.detail-right {
+  flex: 1 1 50%;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: auto;
+}
+.detail-right .mcc-tabs { flex: 1; min-height: 0; }
+.detail-right .mcc-tabs :deep(.el-tabs__content) { overflow: auto; }
+
+.live-coord { color: var(--success); font-size: 13px; }
 .preview-head {
   display: flex;
   align-items: center;
@@ -898,13 +1006,15 @@ watch(
 .preview-new:hover { text-decoration: underline; }
 .preview-frame {
   display: block;
+  flex: 1;
   width: 100%;
-  height: 300px;
+  min-height: 320px;
   border: none;
   background: var(--bg-card);
 }
 .preview-loading {
-  height: 200px;
+  flex: 1;
+  min-height: 320px;
   display: flex;
   align-items: center;
   justify-content: center;
