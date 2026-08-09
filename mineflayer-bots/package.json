@@ -4,6 +4,9 @@
   "description": "Mineflayer bot processes for VMTools automation engine",
   "private": true,
   "main": "bot_main.js",
+  "scripts": {
+    "postinstall": "patch-package"
+  },
   "dependencies": {
     "mineflayer": "^4.37.1",
     "mineflayer-pathfinder": "^2.4.0",
@@ -14,5 +17,8 @@
     "ws": "^8.0.0",
     "uuid": "^10.0.0",
     "vec3": "^0.1.0"
+  },
+  "devDependencies": {
+    "patch-package": "^8.0.0"
   }
 }

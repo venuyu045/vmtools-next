@@ -1,0 +1,64 @@
+diff --git a/node_modules/mineflayer/lib/plugins/time.js b/node_modules/mineflayer/lib/plugins/time.js
+index 0b9411d..b6c13af 100644
+--- a/node_modules/mineflayer/lib/plugins/time.js
++++ b/node_modules/mineflayer/lib/plugins/time.js
+@@ -13,11 +13,28 @@ function inject (bot) {
+     age: null
+   }
+   bot._client.on('update_time', (packet) => {
+-    const time = longToBigInt(packet.time)
+-    const age = longToBigInt(packet.age)
+-    const doDaylightCycle = packet.tickDayTime !== undefined ? !!packet.tickDayTime : time >= 0n
++    // 26.x 新协议：packet = { age: i64, clockUpdates: [{id, totalTicks, partialTick, rate}] }
++    // 旧协议(≤1.21.11)：packet = { age: i64, time: i64, tickDayTime: bool }
++    const hasClockUpdates = Array.isArray(packet.clockUpdates)
++
++    let timeBI
++    let ageBI
++    let doDaylightCycle
++
++    if (hasClockUpdates) {
++      ageBI = longToBigInt(packet.age)
++      // 26.x 无 time 字段：取 id=0 的主时钟 totalTicks 作为世界时间，否则用 age 兜底
++      const mainClock = packet.clockUpdates.find(c => c && c.id === 0) || packet.clockUpdates[0]
++      timeBI = mainClock ? bigIntVal(mainClock.totalTicks) : ageBI
++      doDaylightCycle = true
++    } else {
++      timeBI = longToBigInt(packet.time)
++      ageBI = longToBigInt(packet.age)
++      doDaylightCycle = packet.tickDayTime !== undefined ? !!packet.tickDayTime : timeBI >= 0n
++    }
++
+     // When doDaylightCycle is false, we need to take the absolute value of time
+-    const finalTime = doDaylightCycle ? time : (time < 0n ? -time : time)
++    const finalTime = doDaylightCycle ? timeBI : (timeBI < 0n ? -timeBI : timeBI)
+ 
+     bot.time.doDaylightCycle = doDaylightCycle
+     bot.time.bigTime = finalTime
+@@ -26,13 +43,23 @@ function inject (bot) {
+     bot.time.day = Math.floor(bot.time.time / 24000)
+     bot.time.isDay = bot.time.timeOfDay >= 0 && bot.time.timeOfDay < 13000
+     bot.time.moonPhase = bot.time.day % 8
+-    bot.time.bigAge = age
+-    bot.time.age = Number(age)
++    bot.time.bigAge = ageBI
++    bot.time.age = Number(ageBI)
+ 
+     bot.emit('time')
+   })
+ }
+ 
++function bigIntVal (v) {
++  if (typeof v === 'bigint') return v
++  if (v === undefined || v === null) return 0n
++  return BigInt(v)
++}
++
+ function longToBigInt (arr) {
+-  return BigInt.asIntN(64, (BigInt(arr[0]) << 32n)) | BigInt(arr[1])
++  if (typeof arr === 'bigint') return arr
++  if (Array.isArray(arr) && arr.length >= 2) {
++    return BigInt.asIntN(64, (BigInt(arr[0]) << 32n)) | BigInt(arr[1])
++  }
++  return bigIntVal(arr)
+ }

@@ -1,0 +1,110 @@
+diff --git a/node_modules/prismarine-viewer/viewer/lib/version.js b/node_modules/prismarine-viewer/viewer/lib/version.js
+index 39e3ad8..d5006a0 100644
+--- a/node_modules/prismarine-viewer/viewer/lib/version.js
++++ b/node_modules/prismarine-viewer/viewer/lib/version.js
+@@ -1,4 +1,4 @@
+-const supportedVersions = ['1.8.8', '1.9.4', '1.10.2', '1.11.2', '1.12.2', '1.13.2', '1.14.4', '1.15.2', '1.16.1', '1.16.4', '1.17.1', '1.18.1', '1.19', '1.20.1', '1.21.1', '1.21.4']
++const supportedVersions = ['1.8.8', '1.9.4', '1.10.2', '1.11.2', '1.12.2', '1.13.2', '1.14.4', '1.15.2', '1.16.1', '1.16.4', '1.17.1', '1.18.1', '1.19', '1.20.1', '1.21.1', '1.21.4', '26.1']
+ 
+ const lastOfMajor = {}
+ for (const version of supportedVersions) {
+
+diff --git a/node_modules/prismarine-viewer/webpack.config.js b/node_modules/prismarine-viewer/webpack.config.js
+index d1577c9..6a65bec 100644
+--- a/node_modules/prismarine-viewer/webpack.config.js
++++ b/node_modules/prismarine-viewer/webpack.config.js
+@@ -9,7 +9,20 @@ const blockedIndexFiles = ['blocksB2J', 'blocksJ2B', 'blockMappings', 'steve', '
+ const allowedWorkerFiles = ['blocks', 'blockCollisionShapes', 'tints', 'blockStates',
+   'biomes', 'features', 'version', 'legacy', 'versions', 'version', 'protocolVersions']
+ 
++// 只打包 26.1 版本的 minecraft-data json（其余版本不打包，控制 worker 体积与构建内存）
++const DATA_VERSION = '26.1'
++const isTargetDataVersion = (req) => {
++  // 必须检查 req.request（完整相对路径，含版本目录）：
++  // req.context 是发起 require 的模块目录（minecraft-data 根），不含版本信息，会导致全部被误裁剪
++  const r = req.request || ''
++  const c = req.context || ''
++  if (r.includes('/pc/' + DATA_VERSION + '/') || r.includes('/pc/' + DATA_VERSION + '.') ||
++      r.includes('/common/') || r.includes('/bedrock/common/')) return true
++  return c.includes('/pc/' + DATA_VERSION) || c.includes('/common')
++}
++
+ const indexConfig = {
++
+   entry: './lib/index.js',
+   mode: 'production',
+   output: {
+@@ -18,7 +31,9 @@ const indexConfig = {
+   },
+   resolve: {
+     fallback: {
+-      zlib: false
++      zlib: false,
++      assert: false,
++      stream: false
+     }
+   },
+   plugins: [
+@@ -40,7 +55,7 @@ const indexConfig = {
+     function (req, cb) {
+       if (req.context.includes('minecraft-data') && req.request.endsWith('.json')) {
+         const fileName = req.request.split('/').pop().replace('.json', '')
+-        if (blockedIndexFiles.includes(fileName)) {
++        if (!isTargetDataVersion(req) || blockedIndexFiles.includes(fileName)) {
+           cb(null, [])
+           return
+         }
+@@ -59,7 +74,9 @@ const workerConfig = {
+   },
+   resolve: {
+     fallback: {
+-      zlib: false
++      zlib: false,
++      assert: false,
++      stream: false
+     }
+   },
+   plugins: [
+@@ -75,7 +92,7 @@ const workerConfig = {
+     function (req, cb) {
+       if (req.context.includes('minecraft-data') && req.request.endsWith('.json')) {
+         const fileName = req.request.split('/').pop().replace('.json', '')
+-        if (!allowedWorkerFiles.includes(fileName)) {
++        if (!isTargetDataVersion(req) || !allowedWorkerFiles.includes(fileName)) {
+           cb(null, [])
+           return
+         }
+
+diff --git a/node_modules/prismarine-viewer/viewer/lib/models.js b/node_modules/prismarine-viewer/viewer/lib/models.js
+index 9f8938e..e827729 100644
+--- a/node_modules/prismarine-viewer/viewer/lib/models.js
++++ b/node_modules/prismarine-viewer/viewer/lib/models.js
+@@ -1,6 +1,6 @@
+ const { Vec3 } = require('vec3')
+ 
+-const tints = require('minecraft-data')('1.16.2').tints
++const tints = require('minecraft-data')('26.1').tints
+ 
+ for (const key of Object.keys(tints)) {
+   tints[key] = prepareTints(tints[key])
+
+diff --git a/node_modules/prismarine-viewer/viewer/prerender.js b/node_modules/prismarine-viewer/viewer/prerender.js
+index 8f525ad..025734c 100644
+--- a/node_modules/prismarine-viewer/viewer/prerender.js
++++ b/node_modules/prismarine-viewer/viewer/prerender.js
+@@ -17,7 +17,14 @@ fs.mkdirSync(blockStatesPath, { recursive: true })
+ const supportedVersions = require('./lib/version').supportedVersions
+ 
+ for (const version of supportedVersions) {
+-  const assets = mcAssets(version)
++  // minecraft-assets 未覆盖的新版本（如 26.x）回退到 1.21.8 资产生成纹理/模型；
++  // stateId→方块名映射由 webpack 打包的 minecraft-data(26.1) 提供，既有方块可正常渲染。
++  let assets = null
++  try { assets = mcAssets(version) } catch (e) { assets = null }
++  if (!assets) {
++    console.log('[prerender] ' + version + ' not in minecraft-assets, fallback to 1.21.8 assets')
++    assets = mcAssets('1.21.8')
++  }
+   const atlas = makeTextureAtlas(assets)
+   const out = fs.createWriteStream(path.resolve(texturesPath, version + '.png'))
+   const stream = atlas.canvas.pngStream()
