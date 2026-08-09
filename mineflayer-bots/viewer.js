@@ -67,6 +67,15 @@ function initPrerender (pkgRoot) {
   try {
     prerenderBs = JSON.parse(fs.readFileSync(path.join(pkgRoot, 'public/blocksStates/26.1.json'), 'utf8'));
     prerenderWorker = new Worker(path.join(pkgRoot, 'public/worker.js'));
+    // 关键：worker 线程任何错误必须捕获，否则 Node 会崩整个 bot 进程（历史教训）
+    prerenderWorker.on('error', (err) => {
+      console.error('[viewer] prerender worker error:', err && err.message);
+      prerenderWorker = null;
+    });
+    prerenderWorker.on('exit', (code) => {
+      if (code !== 0) console.error('[viewer] prerender worker exited:', code);
+      prerenderWorker = null;
+    });
     prerenderWorker.on('message', (msg) => {
       if (msg && msg.type === 'geometry' && msg.geometry) {
         prerenderCache.set(msg.key, msg.geometry);
@@ -160,6 +169,8 @@ module.exports = function startViewer(bot, options = {}) {
   const sockets = [];
   const primitives = {};
 
+  bot.viewer = new (require('events').EventEmitter)();
+
   // ── 服务端预渲染：独立小范围 WorldView（不连浏览器），loadChunk 时预渲染 geometry ──
   // 只算 bot 周围核心区（viewDistance 取 min(配置,2)≈5×5 chunk），LRU 缓存上限见 PRERENDER_MAX_SECTIONS
   const prerenderEmitter = new (require('events').EventEmitter)();
@@ -178,7 +189,6 @@ module.exports = function startViewer(bot, options = {}) {
     console.error('[viewer] prerender WorldView init failed:', err);
   }
 
-  bot.viewer = new (require('events').EventEmitter)();
 
   bot.viewer.erase = (id) => {
     delete primitives[id];
