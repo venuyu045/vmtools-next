@@ -35,10 +35,15 @@ function createInventoryHandlers(bot) {
       );
 
       if (!match) {
-        // 尝试在所有背包物品中查找
-        const anyMatch = items.find(item =>
-          item.name === item_type || item.type?.toString() === item_type
-        );
+        // 尝试在所有背包物品中查找（遍历完整 slots，含副手/盔甲/合成）
+        let anyMatch = null;
+        for (let i = 0; i < bot.inventory.slots.length; i++) {
+          const it = bot.inventory.slots[i];
+          if (it && (it.name === item_type || it.type?.toString() === item_type)) {
+            anyMatch = it;
+            break;
+          }
+        }
         if (!anyMatch) {
           return { success: false, error: `Item ${item_type} not found in inventory` };
         }
@@ -102,9 +107,15 @@ function createInventoryHandlers(bot) {
 
   function get_inventory_snapshot({} = {}) {
     try {
-      const items = bot.inventory.items().map(item => {
+      // 注意：不能用 bot.inventory.items()——它只返回主背包+快捷栏（inventoryStart~inventoryEnd，
+      // 即槽位 9-44），【不含】副手 45 / 盔甲 5-8 / 合成 0-4（此前移到副手的物品快照读不到 → 前端不显示）。
+      // 必须遍历完整 slots 数组（0-45），由 Python 端统一归一化为前端标准槽位。
+      const items = [];
+      for (let i = 0; i < bot.inventory.slots.length; i++) {
+        const item = bot.inventory.slots[i];
+        if (!item) continue;
         const detail = itemDetail(item);
-        return {
+        items.push({
           slot: item.slot,
           name: item.name,
           type: item.type,
@@ -115,8 +126,8 @@ function createInventoryHandlers(bot) {
           durability: detail.durability,
           max_durability: detail.max_durability,
           enchantments: detail.enchantments,
-        };
-      });
+        });
+      }
       return {
         success: true,
         items,
@@ -269,11 +280,14 @@ function createInventoryHandlers(bot) {
           return { success: false, error: `Slot ${slot} contains ${match.name}, not ${item_type}` };
         }
       } else {
-        // 按类型：全背包找匹配（第一个匹配的槽位），保持原语义
-        const items = bot.inventory.items();
-        match = items.find(item =>
-          item.name === item_type || item.type?.toString() === item_type
-        );
+        // 按类型：全背包找匹配（遍历完整 slots，含副手/盔甲/合成——items() 不含这些槽位）
+        for (let i = 0; i < bot.inventory.slots.length; i++) {
+          const it = bot.inventory.slots[i];
+          if (it && (it.name === item_type || it.type?.toString() === item_type)) {
+            match = it;
+            break;
+          }
+        }
         if (!match) {
           return { success: false, error: `Item ${item_type} not found in inventory` };
         }
