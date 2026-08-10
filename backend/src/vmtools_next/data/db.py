@@ -180,6 +180,8 @@ def _run_lightweight_migrations(engine) -> None:
                     conn.execute(text("ALTER TABLE mcc_instances ADD COLUMN bot_engine VARCHAR DEFAULT 'mcc'"))
                 if "mcp_host" not in columns:
                     conn.execute(text("ALTER TABLE mcc_instances ADD COLUMN mcp_host VARCHAR DEFAULT '127.0.0.1'"))
+                if "viewer_port" not in columns:
+                    conn.execute(text("ALTER TABLE mcc_instances ADD COLUMN viewer_port INTEGER"))
                 # QQ 互联绑定列（users.qq_openid 唯一——一个 QQ 只能注册一个账号）
                 try:
                     u_columns = {row[1] for row in conn.execute(text("PRAGMA table_info(users)")).fetchall()}

@@ -212,10 +212,11 @@ function coordText(bot: BotStatus): string {
 }
 
 function viewerUrl(bot: BotStatus): string {
-  // viewer 经 OpenResty 反代挂在同域 /viewer/ 下（80/443 端口，用户侧非常规端口 3007 常被网络拦截）
-  // 前端用当前访问 vmtools 的 hostname + 反代路径即可，无需知道实例的原始 viewer 端口
+  // viewer 经 OpenResty 反代挂在同域 /viewer/<slug>/ 下（80/443 端口，用户侧非常规端口常被网络拦截）
+  // 每实例独立路径：/viewer/mf-006/、/viewer/mf-007/…（反代按 slug 分流到对应 viewer 端口）
+  // 前端用当前访问 vmtools 的 hostname + 实例 bot_id 拼路径即可，无需知道实例的原始 viewer 端口
   if (!bot.viewer_port) return '#'
-  return `${window.location.protocol}//${window.location.hostname}/viewer/`
+  return `${window.location.protocol}//${window.location.hostname}/viewer/${encodeURIComponent(bot.bot_id)}/`
 }
 
 // ── MF 3D 实时预览（内嵌 iframe + viewer token 鉴权，2026-08-09） ──
@@ -224,8 +225,8 @@ const viewerLoading = ref(false)
 const viewerSrc = ref('')
 const viewerTitle = ref('')
 
-function viewerBase(): string {
-  return `${window.location.protocol}//${window.location.hostname}/viewer/`
+function viewerBase(bot: BotStatus): string {
+  return `${window.location.protocol}//${window.location.hostname}/viewer/${encodeURIComponent(bot.bot_id)}/`
 }
 
 async function openViewer(bot: BotStatus) {
@@ -238,10 +239,10 @@ async function openViewer(bot: BotStatus) {
     // 向后端换取 viewer 专用短时效 token（aud=viewer），iframe 凭它通过 viewer 鉴权
     const resp = await api.get('/auth/viewer-token')
     const token = resp.data?.token
-    viewerSrc.value = token ? `${viewerBase()}?t=${encodeURIComponent(token)}` : viewerBase()
+    viewerSrc.value = token ? `${viewerBase(bot)}?t=${encodeURIComponent(token)}` : viewerBase(bot)
   } catch {
     // 取 token 失败仍尝试打开（viewer 无密钥时兼容），世界数据仍受 viewer 侧鉴权保护
-    viewerSrc.value = viewerBase()
+    viewerSrc.value = viewerBase(bot)
   } finally {
     viewerLoading.value = false
   }

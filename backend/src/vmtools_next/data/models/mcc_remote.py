@@ -43,6 +43,10 @@ class MccInstanceModel(Base):
     mcp_auth_token_secret = Column(Text, nullable=True)
     mcp_auth_token_env = Column(String, default="MCC_MCP_AUTH_TOKEN", nullable=False)
 
+    # 3D viewer HTTP 端口（prismarine-viewer，mineflayer 引擎专用；持久化保证重启后稳定，
+    # 配合公网反代 /viewer/<slug>/ 按实例分流）
+    viewer_port = Column(Integer, nullable=True, index=True)
+
     mc_username = Column(String, default="", nullable=False)
     mc_server_host = Column(String, default="", nullable=False)
     mc_server_port = Column(Integer, default=25565, nullable=False)

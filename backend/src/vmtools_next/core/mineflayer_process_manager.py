@@ -183,14 +183,24 @@ class MineflayerProcessManager:
             finally:
                 db_session.close()
 
-            # 分配 3D 查看器端口（prismarine-viewer，每实例一个；preferred 便于原型验证，
-            # 被占用则顺延；分配失败仅禁查看器，不影响 bot 启动）
+            # 分配 3D 查看器端口（prismarine-viewer，每实例一个；优先复用持久化端口保证
+            # 重启后稳定——公网反代 /viewer/<slug>/ 依赖端口不漂移；被占用则顺延；
+            # 分配失败仅禁查看器，不影响 bot 启动）
             viewer_port = 0
             try:
                 db_session2 = Session()
                 try:
+                    preferred = getattr(instance, "viewer_port", None) or self._preferred_viewer_port
                     viewer_port = self._viewer_port_allocator.allocate(
-                        db_session2, preferred=self._preferred_viewer_port)
+                        db_session2, preferred=preferred)
+                    # 持久化分配结果（首次启动/端口变化时写入，重启后复用同一端口）
+                    if getattr(instance, "viewer_port", None) != viewer_port:
+                        inst_db = db_session2.query(MccInstanceModel).filter(
+                            MccInstanceModel.instance_id == instance_id,
+                        ).first()
+                        if inst_db:
+                            inst_db.viewer_port = viewer_port
+                            db_session2.commit()
                 finally:
                     db_session2.close()
             except Exception as exc:
@@ -223,8 +233,10 @@ class MineflayerProcessManager:
             # 3D 查看器参数（viewer_port>0 才启用）
             if viewer_port > 0:
                 cmd += ["--viewer-port", str(viewer_port), "--viewer-host", self._viewer_host]
-                if self._viewer_prefix:
-                    cmd += ["--viewer-prefix", self._viewer_prefix]
+                # 每实例独立公网路径前缀：/viewer/<slug>/（多 MF 实例共存，OpenResty 按 slug 分流；
+                # self._viewer_prefix 为全局基础前缀，config.yaml mineflayer_viewer_prefix=/viewer）
+                base_prefix = (self._viewer_prefix or "/viewer").rstrip("/")
+                cmd += ["--viewer-prefix", f"{base_prefix}/{instance.slug}"]
                 # 渲染范围（chunk，默认 4；见 config.py mineflayer_viewer_distance）
                 cmd += ["--viewer-distance", str(self._viewer_distance)]
 
