@@ -119,10 +119,13 @@
         <template v-if="isMf && showMfPreview">
           <div class="detail-left">
             <div class="preview-head">
-              <span class="preview-title">▶ 实时 3D 预览</span>
-              <span class="preview-hint">坐标变化实时跟随</span>
+              <span class="preview-title">{{ previewCollapsed ? '▶ 3D 预览（已折叠）' : '▶ 实时 3D 预览' }}</span>
+              <span v-if="!previewCollapsed" class="preview-hint">坐标变化实时跟随</span>
+              <button class="pixel-btn mini outline preview-toggle" @click="togglePreview">
+                {{ previewCollapsed ? '展开' : '折叠' }}
+              </button>
               <a
-                v-if="viewerSrc"
+                v-if="viewerSrc && !previewCollapsed"
                 class="preview-new"
                 :href="viewerSrc.split('?')[0]"
                 target="_blank"
@@ -130,13 +133,13 @@
               >新窗口打开</a>
             </div>
             <iframe
-              v-if="viewerSrc"
+              v-if="viewerSrc && !previewCollapsed"
               :src="viewerSrc"
               class="preview-frame"
               allowfullscreen
               sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
             />
-            <div v-else class="preview-loading">预览加载中…</div>
+            <div v-else-if="!previewCollapsed" class="preview-loading">预览加载中…</div>
           </div>
 
           <div class="detail-right">
@@ -405,18 +408,21 @@ const activeTab = ref<'terminal' | 'account' | 'files' | 'inventory'>('terminal'
 // ── MF 实时预览 + 实时坐标（实例详情抽屉顶部） ──
 const isMf = computed(() => engine.value === 'mineflayer')
 const showMfPreview = ref(false)
+const previewCollapsed = ref(false)
 const viewerSrc = ref('')
 const liveCoord = ref('—')
 let coordTimer: number | undefined
 let viewerLoadSeq = 0
 
-function viewerBase(): string {
-  return `${window.location.protocol}//${window.location.hostname}/viewer/`
+function viewerBase(botId: string): string {
+  // 每实例独立 viewer 路径：/viewer/<slug>/（反代按 slug 分流到对应端口，2026-08-10）
+  return `${window.location.protocol}//${window.location.hostname}/viewer/${encodeURIComponent(botId)}/`
 }
 
 /** 打开抽屉时：MF 在线实例加载 viewer 预览 + 坐标轮询 */
 async function setupMfPreview(instance: MccInstance) {
   showMfPreview.value = false
+  previewCollapsed.value = false
   viewerSrc.value = ''
   liveCoord.value = '—'
   if (!isMf.value || instance.status !== 'running' || !instance.bot_id) return
@@ -432,9 +438,7 @@ async function setupMfPreview(instance: MccInstance) {
     }
     if (!bot.viewer_port) return
     showMfPreview.value = true
-    const tokenResp = await api.get('/auth/viewer-token')
-    const token = tokenResp.data?.token
-    viewerSrc.value = token ? `${viewerBase()}?t=${encodeURIComponent(token)}` : viewerBase()
+    await loadPreviewSrc(instance)
   } catch {
     /* 预览失败不阻塞抽屉 */
   }
@@ -450,6 +454,30 @@ async function setupMfPreview(instance: MccInstance) {
       }
     } catch { /* ignore */ }
   }, 5000)
+}
+
+/** 换 viewer token 并加载 iframe（折叠展开时重新加载，token 10 分钟过期） */
+async function loadPreviewSrc(instance: MccInstance) {
+  if (!instance.bot_id) return
+  try {
+    const tokenResp = await api.get('/auth/viewer-token')
+    const token = tokenResp.data?.token
+    viewerSrc.value = token ? `${viewerBase(instance.bot_id)}?t=${encodeURIComponent(token)}` : viewerBase(instance.bot_id)
+  } catch {
+    viewerSrc.value = viewerBase(instance.bot_id)
+  }
+}
+
+/** 折叠 / 展开 3D 预览小窗口（折叠时卸载 iframe 停止连接） */
+async function togglePreview() {
+  if (previewCollapsed.value) {
+    // 展开：重新加载（token 可能已过期）
+    previewCollapsed.value = false
+    if (selectedInstance.value) await loadPreviewSrc(selectedInstance.value)
+  } else {
+    previewCollapsed.value = true
+    viewerSrc.value = ''
+  }
 }
 
 function clearMfPreview() {
@@ -1007,6 +1035,7 @@ watch(
 }
 .preview-title { font-size: 13px; color: var(--accent); font-weight: 600; }
 .preview-hint { font-size: 11px; color: var(--text-muted); }
+.preview-toggle { padding: 2px 10px; font-size: 12px; }
 .preview-new {
   margin-left: auto;
   font-size: 12px;
