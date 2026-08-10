@@ -90,6 +90,7 @@ class MccInstanceService:
             slug=slug,
             display_name=data.display_name or slug,
             bot_id=data.bot_id,
+            account_profile_id=getattr(data, "account_profile_id", None),
             instance_dir=str(instance_dir),
             binary_mode=data.binary_mode,
             mcc_binary_path=str(binary_path) if binary_path else "",

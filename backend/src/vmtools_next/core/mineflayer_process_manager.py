@@ -328,6 +328,40 @@ class MineflayerProcessManager:
             )
             self._processes[instance_id] = handle
 
+            # 自动注册/更新 mcc_bots 记录（mineflayer 引擎首次启动时；状态页/背包/控制接口
+            # 都依赖 mcc_bots 表——此前新实例需手动 POST /api/mcc-bots 否则全部 404）
+            try:
+                from vmtools_next.data.db import get_session_factory as _gsf
+                from vmtools_next.data.models.logistics import MccBotModel as _BotModel
+                _Session3 = _gsf()
+                _db3 = _Session3()
+                try:
+                    _bot_id = instance.bot_id or instance.slug
+                    existing_bot = _db3.query(_BotModel).filter(
+                        _BotModel.bot_id == _bot_id).first()
+                    if existing_bot is None:
+                        _db3.add(_BotModel(
+                            bot_id=_bot_id,
+                            name=instance.display_name or instance.slug,
+                            ws_host="127.0.0.1",
+                            ws_port=ws_port,
+                            mc_username=instance.mc_username or "",
+                            mc_account_type=(account_profile.auth_type if account_profile else "offline"),
+                            mc_server_host=instance.mc_server_host or "",
+                            mc_server_port=instance.mc_server_port or 25565,
+                            status="online",
+                        ))
+                        _db3.commit()
+                        logger.info("Auto-registered mcc_bots record for %s (ws_port=%s)", _bot_id, ws_port)
+                    elif existing_bot.ws_port != ws_port:
+                        existing_bot.ws_port = ws_port
+                        existing_bot.status = "online"
+                        _db3.commit()
+                finally:
+                    _db3.close()
+            except Exception as exc:
+                logger.warning("Auto-register mcc_bots failed for %s: %s", instance_id[:8], exc)
+
             # 启动 stdout 读取和退出监控
             handle.output_task = asyncio.create_task(
                 self._read_output_loop(handle)
