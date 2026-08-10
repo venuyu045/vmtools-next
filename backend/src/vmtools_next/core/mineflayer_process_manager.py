@@ -57,6 +57,8 @@ class MineflayerProcessManager:
         self._instance_root = pathlib.Path(config.instance_root)
         self._processes: dict[str, ProcessHandle] = {}
         self._locks: dict[str, asyncio.Lock] = {}
+        # 端口分配全局锁（WS/viewer 分配串行化，避免并发恢复时 socket 探测竞态互换/撞车）
+        self._alloc_lock = asyncio.Lock()
         self._port_allocator = MccPortAllocator(
             start_port=getattr(config, 'mineflayer_ws_start_port', 44444),
             end_port=getattr(config, 'mineflayer_ws_end_port', 44500),
@@ -176,36 +178,47 @@ class MineflayerProcessManager:
             if not self._script_path or not os.path.exists(self._script_path):
                 raise ValueError(f"bot_main.js not found: {self._script_path!r}")
 
-            # 分配 WS 端口
-            db_session = Session()
-            try:
-                ws_port = self._port_allocator.allocate(db_session)
-            finally:
-                db_session.close()
-
-            # 分配 3D 查看器端口（prismarine-viewer，每实例一个；优先复用持久化端口保证
-            # 重启后稳定——公网反代 /viewer/<slug>/ 依赖端口不漂移；被占用则顺延；
-            # 分配失败仅禁查看器，不影响 bot 启动）
-            viewer_port = 0
-            try:
-                db_session2 = Session()
+            # 分配 WS / Viewer 端口（串行化 + 持久化，避免并发恢复时 socket 探测竞态
+            # 导致端口互换/撞车；端口持久化到 mcc_instances.ws_port / viewer_port，
+            # 重启后各自复用同一端口，公网反代 /viewer/<slug>/ 配置长期稳定）
+            async with self._alloc_lock:
+                db_session = Session()
                 try:
-                    preferred = getattr(instance, "viewer_port", None) or self._preferred_viewer_port
-                    viewer_port = self._viewer_port_allocator.allocate(
-                        db_session2, preferred=preferred)
-                    # 持久化分配结果（首次启动/端口变化时写入，重启后复用同一端口）
-                    if getattr(instance, "viewer_port", None) != viewer_port:
-                        inst_db = db_session2.query(MccInstanceModel).filter(
+                    ws_preferred = getattr(instance, "ws_port", None)
+                    ws_port = self._port_allocator.allocate(db_session, preferred=ws_preferred)
+                    # 持久化 ws_port（首次启动/变化时写入）
+                    if getattr(instance, "ws_port", None) != ws_port:
+                        inst_db = db_session.query(MccInstanceModel).filter(
                             MccInstanceModel.instance_id == instance_id,
                         ).first()
                         if inst_db:
-                            inst_db.viewer_port = viewer_port
-                            db_session2.commit()
+                            inst_db.ws_port = ws_port
+                            db_session.commit()
                 finally:
-                    db_session2.close()
-            except Exception as exc:
-                logger.warning("Viewer port allocation failed for %s: %s", instance_id, exc)
+                    db_session.close()
+
+                # 3D 查看器端口（prismarine-viewer，每实例一个；优先复用持久化端口保证
+                # 重启后稳定；被占用则顺延；分配失败仅禁查看器，不影响 bot 启动）
                 viewer_port = 0
+                try:
+                    db_session2 = Session()
+                    try:
+                        preferred = getattr(instance, "viewer_port", None) or self._preferred_viewer_port
+                        viewer_port = self._viewer_port_allocator.allocate(
+                            db_session2, preferred=preferred)
+                        # 持久化分配结果（首次启动/端口变化时写入，重启后复用同一端口）
+                        if getattr(instance, "viewer_port", None) != viewer_port:
+                            inst_db = db_session2.query(MccInstanceModel).filter(
+                                MccInstanceModel.instance_id == instance_id,
+                            ).first()
+                            if inst_db:
+                                inst_db.viewer_port = viewer_port
+                                db_session2.commit()
+                    finally:
+                        db_session2.close()
+                except Exception as exc:
+                    logger.warning("Viewer port allocation failed for %s: %s", instance_id, exc)
+                    viewer_port = 0
 
             # 加载关联的账号配置（如果有）
             account_profile = None

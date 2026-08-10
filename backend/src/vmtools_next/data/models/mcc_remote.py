@@ -46,6 +46,8 @@ class MccInstanceModel(Base):
     # 3D viewer HTTP 端口（prismarine-viewer，mineflayer 引擎专用；持久化保证重启后稳定，
     # 配合公网反代 /viewer/<slug>/ 按实例分流）
     viewer_port = Column(Integer, nullable=True, index=True)
+    # mineflayer WS 端口（持久化保证重启后复用同一端口，避免并发恢复时竞态互换）
+    ws_port = Column(Integer, nullable=True, index=True)
 
     mc_username = Column(String, default="", nullable=False)
     mc_server_host = Column(String, default="", nullable=False)
