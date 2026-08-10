@@ -48,6 +48,12 @@ from .protocol import (
     METHOD_RUN_COMMAND,
     METHOD_GET_SERVER_INFO,
     METHOD_FIND_BLOCKS,
+    METHOD_GET_NEARBY_ENTITIES,
+    METHOD_ATTACK,
+    METHOD_SET_AUTO_ATTACK,
+    METHOD_SET_GUARD,
+    METHOD_GET_COMBAT_STATUS,
+    METHOD_STOP_COMBAT,
     DEFAULT_CMD_TIMEOUT,
     MOVE_TIMEOUT,
     CONTAINER_TIMEOUT,
@@ -370,6 +376,55 @@ class MineflayerBridgeClient(AbstractBotAgent):
         return await self._send_request(METHOD_IS_PLAYER_NEARBY, {
             "radius": radius,
         }, timeout=DEFAULT_CMD_TIMEOUT)
+
+    # ── 战斗（自动攻击/手动攻击/守护，2026-08-10） ──
+    async def get_nearby_entities(self, radius: int = 16,
+                                  target_types: list[str] | None = None) -> dict:
+        return await self._send_request(METHOD_GET_NEARBY_ENTITIES, {
+            "radius": radius,
+            "target_types": target_types or [],
+        }, timeout=DEFAULT_CMD_TIMEOUT)
+
+    async def attack(self, target_id: int | None = None,
+                     target_type: str | None = None) -> dict:
+        return await self._send_request(METHOD_ATTACK, {
+            "target_id": target_id,
+            "target_type": target_type,
+        }, timeout=DEFAULT_CMD_TIMEOUT)
+
+    async def set_auto_attack(self, enabled: bool = True, radius: int = 8,
+                              target_types: list[str] | None = None,
+                              interval_ms: int = 1000,
+                              stop_durability: float = 0.1) -> dict:
+        return await self._send_request(METHOD_SET_AUTO_ATTACK, {
+            "enabled": enabled,
+            "radius": radius,
+            "target_types": target_types or [],
+            "interval_ms": interval_ms,
+            "stop_durability": stop_durability,
+        }, timeout=DEFAULT_CMD_TIMEOUT)
+
+    async def set_guard(self, enabled: bool = True, x: float | None = None,
+                        y: float | None = None, z: float | None = None,
+                        radius: int = 8, target_types: list[str] | None = None,
+                        interval_ms: int = 1000,
+                        stop_durability: float = 0.1) -> dict:
+        return await self._send_request(METHOD_SET_GUARD, {
+            "enabled": enabled,
+            "x": x, "y": y, "z": z,
+            "radius": radius,
+            "target_types": target_types or [],
+            "interval_ms": interval_ms,
+            "stop_durability": stop_durability,
+        }, timeout=DEFAULT_CMD_TIMEOUT)
+
+    async def get_combat_status(self) -> dict:
+        return await self._send_request(METHOD_GET_COMBAT_STATUS, {},
+                                        timeout=DEFAULT_CMD_TIMEOUT)
+
+    async def stop_combat(self) -> dict:
+        return await self._send_request(METHOD_STOP_COMBAT, {},
+                                        timeout=5.0)
 
     # ── 玩家操控（背包页移动控制台：前后左右/跳跃/蹲下/视角） ──
 

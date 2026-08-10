@@ -1,8 +1,35 @@
 """MCC Bot schemas."""
 from __future__ import annotations
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Optional
+
+
+class CombatAutoAttackRequest(BaseModel):
+    """自动攻击配置（mineflayer，2026-08-10）。"""
+    enabled: bool = True
+    radius: int = Field(default=8, ge=1, le=64)
+    target_types: list[str] = Field(default_factory=list)
+    interval_ms: int = Field(default=1000, ge=100, le=60000)
+    stop_durability: float = Field(default=0.1, ge=0.0, le=1.0)
+
+
+class CombatGuardRequest(BaseModel):
+    """守护模式配置（绕点巡逻，入侵者自动攻击）。"""
+    enabled: bool = True
+    x: Optional[float] = None
+    y: Optional[float] = None
+    z: Optional[float] = None
+    radius: int = Field(default=8, ge=1, le=64)
+    target_types: list[str] = Field(default_factory=list)
+    interval_ms: int = Field(default=1000, ge=100, le=60000)
+    stop_durability: float = Field(default=0.1, ge=0.0, le=1.0)
+
+
+class CombatAttackRequest(BaseModel):
+    """手动攻击一次（target_id 或 target_type，缺省攻击最近实体）。"""
+    target_id: Optional[int] = None
+    target_type: Optional[str] = None
 
 
 class MccBotCreate(BaseModel):

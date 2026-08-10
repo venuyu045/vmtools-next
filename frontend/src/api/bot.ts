@@ -65,4 +65,31 @@ export const botApi = {
   look(botId: string, data: { yaw: number; pitch?: number; force?: boolean }) {
     return client.post(`/mcc-bots/${botId}/look`, data)
   },
+  // 战斗（mineflayer only，2026-08-10）
+  combatEntities(botId: string, radius = 16, targetTypes: string[] = []) {
+    return client.get(`/mcc-bots/${botId}/combat/entities`, {
+      params: { radius, target_types: targetTypes.join(',') },
+    })
+  },
+  combatAutoAttack(botId: string, data: {
+    enabled: boolean; radius: number; target_types: string[];
+    interval_ms: number; stop_durability: number
+  }) {
+    return client.post(`/mcc-bots/${botId}/combat/auto-attack`, data)
+  },
+  combatAttack(botId: string, data: { target_id?: number | null; target_type?: string | null }) {
+    return client.post(`/mcc-bots/${botId}/combat/attack`, data)
+  },
+  combatGuard(botId: string, data: {
+    enabled: boolean; x?: number | null; y?: number | null; z?: number | null;
+    radius: number; target_types: string[]; interval_ms: number; stop_durability: number
+  }) {
+    return client.post(`/mcc-bots/${botId}/combat/guard`, data)
+  },
+  combatStatus(botId: string) {
+    return client.get(`/mcc-bots/${botId}/combat/status`)
+  },
+  combatStop(botId: string) {
+    return client.post(`/mcc-bots/${botId}/combat/stop`)
+  },
 }

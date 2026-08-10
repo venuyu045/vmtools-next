@@ -19,6 +19,7 @@ const { createInventoryHandlers } = require('./handlers/inventory');
 const { createWorldHandlers } = require('./handlers/world');
 const { createChatHandlers } = require('./handlers/chat');
 const { createServuxHandlers } = require('./handlers/servux');
+const { createCombatHandlers } = require('./handlers/combat');
 const {
   createSuccessResponse,
   createErrorResponse,
@@ -314,6 +315,8 @@ async function createBotProcess(options) {
         ...createWorldHandlers(bot),
         ...createChatHandlers(bot),
         ...servuxHandlers,
+        // 战斗 handler 需要广播能力（耐久低事件），传入 broadcast/createEvent 闭包
+        ...createCombatHandlers(bot, { broadcast, createEvent }),
       };
 
       // 注册所有方法

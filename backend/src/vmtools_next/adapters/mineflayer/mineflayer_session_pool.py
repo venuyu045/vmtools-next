@@ -258,6 +258,21 @@ class MineflayerSessionPool:
             elif event in ("bot_kicked", "bot_disconnected", "bot_error"):
                 logger.info("Bot %s event %s: %s", bot_id, event, data)
                 await self._sync_bot_status(bot_id, "error" if event == "bot_error" else "offline")
+            elif event == "combat_durability_low":
+                # 自动攻击因主手武器耐久过低自动停止 → QQ 群 @bot 主人通知
+                ratio = data.get("durability_ratio", 0) or 0
+                weapon = data.get("weapon") or "主手武器"
+                logger.warning(
+                    "Bot %s 主手武器 %s 耐久不足（剩 %.0f%%），自动攻击已停止",
+                    bot_id, weapon, ratio * 100,
+                )
+                try:
+                    from vmtools_next.core import qqbot_notify
+                    await qqbot_notify.broadcast(
+                        f"[{bot_id}] 主手武器 {weapon} 耐久仅剩 {round(ratio * 100)}%，自动攻击已停止，请及时更换武器！"
+                    )
+                except Exception as exc:
+                    logger.warning("QQ durability notify failed for %s: %s", bot_id, exc)
 
             # 事件桥接：MF bot 的全部事件（bot_chat / status / bot_ready 等）注入
             # bot_id 后转发给插件管理器，供仅服务 mineflayer 引擎的插件订阅

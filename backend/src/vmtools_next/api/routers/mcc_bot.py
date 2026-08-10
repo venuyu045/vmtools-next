@@ -14,6 +14,7 @@ from vmtools_next.api.schemas.mcc import (
     InventorySelectHotbarRequest, InventoryDropRequest, InventoryMoveRequest,
     InventoryUseRequest, MoveControlRequest, LookRequest, SneakRequest,
     MccBotStatusList, MccBotStatusItem,
+    CombatAutoAttackRequest, CombatGuardRequest, CombatAttackRequest,
 )
 from vmtools_next.data.models.logistics import MccBotModel
 from vmtools_next.adapters.mcc.mcc_mcp_client import MccMcpClient, MccMcpError
@@ -792,6 +793,120 @@ async def bot_look(bot_id: str, data: LookRequest,
         if isinstance(result, dict) and result.get("success") is False:
             raise HTTPException(400, result.get("error", "视角控制失败"))
         return {"success": True, "yaw": data.yaw, "pitch": data.pitch, "result": result}
+    except (MccMcpError, MineflayerError) as e:
+        raise HTTPException(502, f"MCP error: {str(e) or repr(e)}")
+    finally:
+        if owned: await client.disconnect()
+
+
+# ── 战斗（自动攻击 / 手动攻击 / 守护，2026-08-10，仅 mineflayer） ──
+async def _get_combat_client(bot_id: str, db: Session, user) -> tuple:
+    """获取战斗 client（仅 mineflayer 引擎；MCC 不支持）。"""
+    _get_scoped_bot(db, user, bot_id)
+    from vmtools_next.core.bot_engine import resolve_bot_engine
+    engine = resolve_bot_engine(bot_id, db)
+    if engine != "mineflayer":
+        raise HTTPException(400, "战斗功能仅支持 mineflayer 引擎（MCC 请用 MinecraftClient.ini 的 AutoAttack）")
+    return await _get_mcp_client(bot_id)
+
+
+@router.get("/{bot_id}/combat/entities")
+async def combat_nearby_entities(bot_id: str, radius: int = 16,
+                                 target_types: str = "",
+                                 db: Session = Depends(get_db),
+                                 user=Depends(require_admin)):
+    """列出附近可攻击实体（radius 格内；target_types 逗号分隔，空=全部）。"""
+    client, owned = await _get_combat_client(bot_id, db, user)
+    try:
+        types = [t.strip() for t in target_types.split(",") if t.strip()] if target_types else []
+        result = await client.get_nearby_entities(radius, types)
+        return result
+    except (MccMcpError, MineflayerError) as e:
+        raise HTTPException(502, f"MCP error: {str(e) or repr(e)}")
+    finally:
+        if owned: await client.disconnect()
+
+
+@router.post("/{bot_id}/combat/auto-attack")
+async def combat_auto_attack(bot_id: str, data: CombatAutoAttackRequest,
+                             db: Session = Depends(get_db),
+                             user=Depends(require_admin)):
+    """自动攻击最近匹配实体（可设半径/目标类型/攻击间隔/耐久阈值）。"""
+    client, owned = await _get_combat_client(bot_id, db, user)
+    try:
+        result = await client.set_auto_attack(
+            enabled=data.enabled, radius=data.radius,
+            target_types=data.target_types, interval_ms=data.interval_ms,
+            stop_durability=data.stop_durability,
+        )
+        if isinstance(result, dict) and result.get("success") is False:
+            raise HTTPException(400, result.get("error", "配置失败"))
+        return {"success": True, "bot_id": bot_id, "config": result.get("config")}
+    except (MccMcpError, MineflayerError) as e:
+        raise HTTPException(502, f"MCP error: {str(e) or repr(e)}")
+    finally:
+        if owned: await client.disconnect()
+
+
+@router.post("/{bot_id}/combat/attack")
+async def combat_attack(bot_id: str, data: CombatAttackRequest,
+                        db: Session = Depends(get_db),
+                        user=Depends(require_admin)):
+    """手动攻击一次（target_id 或 target_type；缺省攻击最近实体）。"""
+    client, owned = await _get_combat_client(bot_id, db, user)
+    try:
+        result = await client.attack(target_id=data.target_id, target_type=data.target_type)
+        if isinstance(result, dict) and result.get("success") is False:
+            raise HTTPException(400, result.get("error", "攻击失败"))
+        return {"success": True, "bot_id": bot_id, "result": result}
+    except (MccMcpError, MineflayerError) as e:
+        raise HTTPException(502, f"MCP error: {str(e) or repr(e)}")
+    finally:
+        if owned: await client.disconnect()
+
+
+@router.post("/{bot_id}/combat/guard")
+async def combat_guard(bot_id: str, data: CombatGuardRequest,
+                       db: Session = Depends(get_db),
+                       user=Depends(require_admin)):
+    """守护模式：绕指定点（缺省当前位置）巡逻，入侵者进入半径自动攻击。"""
+    client, owned = await _get_combat_client(bot_id, db, user)
+    try:
+        result = await client.set_guard(
+            enabled=data.enabled, x=data.x, y=data.y, z=data.z,
+            radius=data.radius, target_types=data.target_types,
+            interval_ms=data.interval_ms, stop_durability=data.stop_durability,
+        )
+        if isinstance(result, dict) and result.get("success") is False:
+            raise HTTPException(400, result.get("error", "配置失败"))
+        return {"success": True, "bot_id": bot_id, "config": result.get("config")}
+    except (MccMcpError, MineflayerError) as e:
+        raise HTTPException(502, f"MCP error: {str(e) or repr(e)}")
+    finally:
+        if owned: await client.disconnect()
+
+
+@router.get("/{bot_id}/combat/status")
+async def combat_status(bot_id: str, db: Session = Depends(get_db),
+                        user=Depends(require_admin)):
+    """当前战斗状态（模式/配置/主手武器耐久/实体数）。"""
+    client, owned = await _get_combat_client(bot_id, db, user)
+    try:
+        return await client.get_combat_status()
+    except (MccMcpError, MineflayerError) as e:
+        raise HTTPException(502, f"MCP error: {str(e) or repr(e)}")
+    finally:
+        if owned: await client.disconnect()
+
+
+@router.post("/{bot_id}/combat/stop")
+async def combat_stop(bot_id: str, db: Session = Depends(get_db),
+                      user=Depends(require_admin)):
+    """停止自动攻击 / 守护模式。"""
+    client, owned = await _get_combat_client(bot_id, db, user)
+    try:
+        result = await client.stop_combat()
+        return {"success": True, "bot_id": bot_id, "result": result}
     except (MccMcpError, MineflayerError) as e:
         raise HTTPException(502, f"MCP error: {str(e) or repr(e)}")
     finally:

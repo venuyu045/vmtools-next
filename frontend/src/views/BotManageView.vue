@@ -209,6 +209,11 @@
                     v-if="isMf && selectedInstance.bot_id"
                     :bot-id="selectedInstance.bot_id"
                   />
+                  <!-- MF 战斗面板：自动攻击/手动攻击/守护（仅 mineflayer） -->
+                  <CombatPanel
+                    v-if="isMf && selectedInstance.bot_id"
+                    :bot-id="selectedInstance.bot_id"
+                  />
                   <InventoryGrid
                     :bot-id="selectedInstance.bot_id || ''"
                     :inventory="inventoryData"
@@ -298,6 +303,10 @@
                   v-if="isMf && selectedInstance.bot_id"
                   :bot-id="selectedInstance.bot_id"
                 />
+                <CombatPanel
+                  v-if="isMf && selectedInstance.bot_id"
+                  :bot-id="selectedInstance.bot_id"
+                />
                 <InventoryGrid
                   :bot-id="selectedInstance.bot_id || ''"
                   :inventory="inventoryData"
@@ -355,6 +364,7 @@ import MccWebTerminal from '@/components/MccWebTerminal.vue'
 import MccFileManagerPanel from '@/components/MccFileManagerPanel.vue'
 import InventoryGrid from '@/components/bot/InventoryGrid.vue'
 import MoveControlPad from '@/components/bot/MoveControlPad.vue'
+import CombatPanel from '@/components/bot/CombatPanel.vue'
 import { useMccInstanceStore } from '@/stores/mccInstance'
 import { useBotStore } from '@/stores/bot'
 import { botApi } from '@/api/bot'

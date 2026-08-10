@@ -53,8 +53,15 @@ METHOD_RUN_COMMAND = "run_command"
 METHOD_GET_SERVER_INFO = "get_server_info"
 METHOD_FIND_BLOCKS = "find_blocks"
 
-# ── Event names pushed by the bot process ──
+# Combat（自动攻击/手动攻击/守护模式，2026-08-10）
+METHOD_GET_NEARBY_ENTITIES = "get_nearby_entities"
+METHOD_ATTACK = "attack"
+METHOD_SET_AUTO_ATTACK = "set_auto_attack"
+METHOD_SET_GUARD = "set_guard"
+METHOD_GET_COMBAT_STATUS = "get_combat_status"
+METHOD_STOP_COMBAT = "stop_combat"
 
+# ── Event names pushed by the bot process ──
 EVENT_BOT_READY = "bot_ready"
 EVENT_BOT_SPAWNED = "bot_spawned"
 EVENT_BOT_DEATH = "bot_death"
@@ -64,6 +71,7 @@ EVENT_BOT_DISCONNECTED = "bot_disconnected"
 EVENT_BOT_CHAT = "bot_chat"
 EVENT_PLAYER_JOINED = "player_joined"
 EVENT_PLAYER_LEFT = "player_left"
+EVENT_COMBAT_DURABILITY_LOW = "combat_durability_low"
 
 # ── Default timeout ──
 
