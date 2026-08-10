@@ -300,8 +300,9 @@ function onScanAlert(payload: any) {
         duration: 4000,
       })
     }
-    // 结束后刷新材料与状态
-    if (['finished', 'cancelled', 'failed', 'success'].includes(payload?.type)) {
+    // 结束后刷新材料与状态；'error'/'info' 也刷新（如"未找到活动任务已重置状态"、
+    // 入队失败等，避免 UI 卡在扫描中/按钮状态与后端不一致）
+    if (['finished', 'cancelled', 'failed', 'success', 'error', 'info'].includes(payload?.type)) {
       refreshAll()
     }
   }

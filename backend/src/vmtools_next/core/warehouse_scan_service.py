@@ -60,6 +60,27 @@ def mark_scan_started(db: Session, warehouse_id: str, total_containers: int) -> 
     db.commit()
 
 
+def mark_scan_failed(db: Session, warehouse_id: str, error: str = "") -> None:
+    """Mark scan_status failed — 与 scan_queue.status=failed 保持一致。
+
+    修复：_start_scan 失败分支（bot 未连接/Servux 未就绪/未发现容器/启动失败）
+    原先只更新 scan_queue，scan_status 残留 queued/scanning → 前端显示扫描中
+    但后端无活动任务（"未找到活动的扫描任务"）。
+    """
+    from datetime import datetime, timezone
+    st = db.query(ScanStatusModel).filter(
+        ScanStatusModel.warehouse_fk == warehouse_id).first()
+    if st is None:
+        st = ScanStatusModel(warehouse_fk=warehouse_id)
+        db.add(st)
+    st.status = "failed"
+    st.progress = st.progress or 0.0
+    st.finished_at = datetime.now(timezone.utc)
+    if error:
+        st.current_pos = error[:255] if error else st.current_pos
+    db.commit()
+
+
 def update_scan_progress(db: Session, warehouse_id: str,
                          scanned: int, total: int,
                          current_pos: tuple[int, int, int] | None = None,

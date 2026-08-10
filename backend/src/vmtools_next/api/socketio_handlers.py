@@ -393,7 +393,27 @@ async def scan_control(sid, data):
                 finally:
                     db.close()
             if not queue_id:
-                await sio.emit("scan_alert", {"type": "error", "message": "未找到活动的扫描任务"}, to=sid)
+                # 找不到活动任务：可能是 scan_status 残留扫描态（queued/scanning/paused
+                # 但 scan_queue 无 active 记录——历史失败分支未同步 scan_status 导致）。
+                # 主动重置 scan_status，避免前端按钮永远卡在"取消"。
+                reset_msg = "未找到活动的扫描任务"
+                Session2 = get_session_factory()
+                db2 = Session2()
+                try:
+                    from vmtools_next.data.models.warehouse import ScanStatusModel
+                    st = db2.query(ScanStatusModel).filter(
+                        ScanStatusModel.warehouse_fk == warehouse_id).first()
+                    if st and st.status in ("queued", "scanning", "paused"):
+                        st.status = "idle"
+                        st.progress = 0.0
+                        st.scanned_containers = 0
+                        st.current_pos = None
+                        st.finished_at = None
+                        db2.commit()
+                        reset_msg = "未找到活动的扫描任务（已重置残留的扫描状态）"
+                finally:
+                    db2.close()
+                await sio.emit("scan_alert", {"type": "info", "message": reset_msg}, to=sid)
                 return
             result = await qm.control(queue_id, action)
             if result.get("ok"):

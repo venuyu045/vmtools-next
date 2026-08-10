@@ -46,6 +46,37 @@ class ScanQueueManager:
     # ── 生命周期 ──
     async def start(self) -> None:
         self._running = True
+        # 清理孤儿任务：上次运行中断（后端重启/崩溃）留下的 running/paused 队列项。
+        # 进程已不存在，若不清理：残留 running 占用并发名额、scan_status 残留扫描态
+        # → 前端按钮卡在"取消"但后端无活动任务（"未找到活动的扫描任务"）。
+        try:
+            Session = get_session_factory()
+            db = Session()
+            try:
+                from vmtools_next.data.models.warehouse import ScanQueueModel, ScanStatusModel
+                from datetime import datetime, timezone
+                orphans = db.query(ScanQueueModel).filter(
+                    ScanQueueModel.status.in_(["running", "paused"]),
+                ).all()
+                if orphans:
+                    now = datetime.now(timezone.utc)
+                    for o in orphans:
+                        o.status = "failed"
+                        o.error = "后端重启，扫描任务中断"
+                        o.finished_at = now
+                    db.commit()
+                    for o in orphans:
+                        st = db.query(ScanStatusModel).filter(
+                            ScanStatusModel.warehouse_fk == o.warehouse_id).first()
+                        if st:
+                            st.status = "failed"
+                            st.finished_at = now
+                    db.commit()
+                    logger.info("Cleaned {} orphan scan tasks after restart", len(orphans))
+            finally:
+                db.close()
+        except Exception as e:
+            logger.warning("Orphan scan cleanup failed: {}", e)
         self._scheduler_task = asyncio.create_task(self._scheduler_loop())
         logger.info("ScanQueueManager started (max_concurrent={})", self._max_concurrent)
 
@@ -200,6 +231,24 @@ class ScanQueueManager:
             "finished_at": q.finished_at.isoformat() if q.finished_at else None,
         }
 
+    @staticmethod
+    def _mark_queue_failed(db, q, error: str) -> None:
+        """标记队列项失败 + 同步 scan_status=failed。
+
+        修复：失败分支原先只更新 scan_queue，scan_status 残留 queued/scanning
+        → 前端按钮卡"取消"但后端无活动任务。
+        """
+        from datetime import datetime, timezone
+        q.status = "failed"
+        q.error = error
+        q.finished_at = datetime.now(timezone.utc)
+        db.commit()
+        try:
+            from vmtools_next.core.warehouse_scan_service import mark_scan_failed
+            mark_scan_failed(db, q.warehouse_id, error)
+        except Exception:
+            pass
+
     # ── 调度 ──
     async def _scheduler_loop(self) -> None:
         while self._running:
@@ -341,9 +390,7 @@ class ScanQueueManager:
             pool = get_pool_for_engine(engine_type)
             client = pool.get_client(bot_id) if pool else None
             if not client:
-                q.status = "failed"
-                q.error = f"Bot {bot_id} not connected"
-                db.commit()
+                self._mark_queue_failed(db, q, f"Bot {bot_id} not connected")
                 await self._broadcast_queue()
                 return
 
@@ -380,9 +427,8 @@ class ScanQueueManager:
                     except Exception as re_exc:
                         logger.warning("Reconnect attempt failed for {}: {}", bot_id, re_exc)
                 if not await minihud.ensure_servux(timeout_ms=4000):
-                    q.status = "failed"
-                    q.error = "Servux 未就绪：服务器未安装 Servux 插件或握手失败"
-                    db.commit()
+                    self._mark_queue_failed(
+                        db, q, "Servux 未就绪：服务器未安装 Servux 插件或握手失败")
                     await self._broadcast_queue()
                     return
             else:
@@ -405,9 +451,8 @@ class ScanQueueManager:
             # 容器坐标
             container_positions = await self._discover_containers(db, qid, wh_id, client, engine_type)
             if not container_positions:
-                q.status = "failed"
-                q.error = "未发现容器（zone 为空且 scan_nearby_blocks 无结果）"
-                db.commit()
+                self._mark_queue_failed(
+                    db, q, "未发现容器（zone 为空且 scan_nearby_blocks 无结果）")
                 await self._broadcast_queue()
                 return
 
@@ -486,9 +531,7 @@ class ScanQueueManager:
                 qq = db3.query(ScanQueueModel).filter(
                     ScanQueueModel.queue_id == qid).first()
                 if qq:
-                    qq.status = "failed"
-                    qq.error = "Failed to start scan"
-                    db3.commit()
+                    self._mark_queue_failed(db3, qq, "Failed to start scan")
             finally:
                 db3.close()
             await self._broadcast_queue()
