@@ -127,6 +127,31 @@
             </div>
           </div>
         </div>
+
+        <!-- P2-29：地图画建造状态卡片（mapArt store 消费，socket build_progress 增量更新） -->
+        <div class="pixel-card build-panel">
+          <div class="section-header">
+            <h3 class="pixel section-title">建造任务</h3>
+            <router-link to="/map-art-tasks" class="view-all mono">管理 ></router-link>
+          </div>
+          <div v-if="mapArtStore.loading && mapArtStore.tasks.length === 0" class="empty-text mono">-- 加载中 --</div>
+          <div v-else-if="mapArtStore.tasks.length === 0" class="empty-text mono">-- 暂无建造任务 --</div>
+          <div v-else class="build-list">
+            <div v-for="t in mapArtStore.tasks.slice(0, 3)" :key="t.task_id" class="build-row">
+              <div class="build-head">
+                <span class="build-name">{{ t.name }}</span>
+                <span class="build-status" :class="t.status">{{ statusLabel(t.status) }}</span>
+              </div>
+              <el-progress
+                :percentage="buildPct(t)"
+                :stroke-width="6"
+                :status="t.status === 'completed' ? 'success' : undefined"
+              />
+              <div class="build-meta mono">{{ t.placed_blocks || 0 }} / {{ t.total_blocks || 0 }} 方块</div>
+            </div>
+            <div v-if="mapArtStore.tasks.length > 3" class="more-hint mono">… 还有 {{ mapArtStore.tasks.length - 3 }} 个任务</div>
+          </div>
+        </div>
       </div>
     </div>
   </div>
@@ -137,16 +162,29 @@ import { computed, onBeforeUnmount, onMounted } from 'vue'
 import { useBotStore } from '@/stores/bot'
 import { useWarehouseStore } from '@/stores/warehouse'
 import { useOnlinePlayersStore } from '@/stores/onlinePlayers'
+import { useMapArtStore } from '@/stores/mapArt'
 import { fmtBigNum } from '@/utils/format'
 
 const botStore = useBotStore()
 const warehouseStore = useWarehouseStore()
 const playerStore = useOnlinePlayersStore()
+const mapArtStore = useMapArtStore()
 
 const totalItems = computed(() => warehouseStore.warehouses.reduce((sum, w) => sum + (w.total_items || 0), 0))
 
 // 在线玩家统计：与「当前在线玩家」面板口径一致（排除 foreign 玩家，避免数字与列表不符）
 const localPlayerCount = computed(() => playerStore.players.filter(p => !p.foreign).length)
+
+// P2-29：建造进度百分比（防除零/超 100）
+function buildPct(t: { placed_blocks?: number; total_blocks?: number }): number {
+  const total = t.total_blocks || 0
+  if (!total) return 0
+  return Math.min(100, Math.round(((t.placed_blocks || 0) / total) * 100))
+}
+
+function statusLabel(s: string): string {
+  return { draft: '草稿', pending: '待启动', running: '建造中', paused: '已暂停', completed: '已完成', cancelled: '已取消' }[s] ?? s
+}
 
 // 统计卡加载态：数据尚未就绪时显示 "--"，避免首次进入闪烁 0
 function statValue(loading: boolean, hasData: boolean, value: number | string): string {
@@ -170,6 +208,7 @@ onMounted(async () => {
     await Promise.all([
       botStore.fetchBots(),
       warehouseStore.fetchWarehouses(),
+      mapArtStore.fetchTasks(),  // P2-29：建造任务卡片初始数据
     ])
   } catch (e) {
     console.error('[Dashboard] 初始数据加载失败:', e)
@@ -179,6 +218,9 @@ onMounted(async () => {
   interval = setInterval(() => {
     botStore.fetchBots().catch((e) => {
       console.error('[Dashboard] Bot 状态刷新失败:', e)
+    })
+    mapArtStore.fetchTasks().catch((e) => {  // P2-29：任务进度定期刷新（socket 之外兜底）
+      console.error('[Dashboard] 建造任务刷新失败:', e)
     })
   }, 10000)
 })
@@ -268,6 +310,18 @@ onBeforeUnmount(() => {
 .wh-row:last-child { border-bottom: none; }
 .wh-name { font-size: 14px; color: var(--text-primary); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .wh-meta { font-size: 12px; color: var(--text-secondary); margin-left: auto; }
+
+/* 建造任务（P2-29） */
+.build-list { display: flex; flex-direction: column; gap: 14px; }
+.build-row { display: flex; flex-direction: column; gap: 6px; }
+.build-head { display: flex; align-items: center; gap: 8px; }
+.build-name { font-size: 14px; color: var(--text-primary); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+.build-status { font-size: 11px; padding: 1px 8px; border-radius: 999px; flex-shrink: 0; }
+.build-status.running { background: rgba(64, 158, 255, 0.15); color: #409eff; }
+.build-status.completed { background: rgba(103, 194, 58, 0.15); color: #67c23a; }
+.build-status.paused { background: rgba(230, 162, 60, 0.15); color: #e6a23c; }
+.build-status.cancelled, .build-status.draft, .build-status.pending { background: rgba(144, 147, 153, 0.15); color: #909399; }
+.build-meta { font-size: 11px; color: var(--text-muted); }
 
 /* 上下线事件 */
 .event-list { display: flex; flex-direction: column; }

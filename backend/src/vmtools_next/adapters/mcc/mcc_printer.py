@@ -1,3 +1,4 @@
+# ⚠️ 已废弃（2026-08-10）：建造功能已完全由 Mineflayer 地图画提供（/api/build/map-art/*）。MCC 侧投影建造不再使用，保留仅防 import 断链。勿再调用。
 """MCC Printer Adapter — block placement via MCP PlaceBlock.
 
 Replaces VMTools-v3 PrinterAdapter (which controlled litematica-printer mod).

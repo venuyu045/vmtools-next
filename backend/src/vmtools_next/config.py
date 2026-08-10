@@ -128,6 +128,13 @@ class MineflayerConfig(BaseModel):
     status_interval_ms: int = 5000
     yggdrasil_auth_server_url: str = ""  # 默认 Yggdrasil auth server URL
 
+    # ── 地图画建造（map art） ──
+    # EssentialsX 传送点名（补货回程用；换服务器需调整，P2-26 去硬编码）
+    map_art_warehouse_home: str = "mdssj"   # 仓库传送点（需管理员 /sethome）
+    map_art_temp_home: str = "gzqy"         # 临时回家点（建造位置）
+    # 分区补给箱建议位置的 y 偏移（相对建造层 origin_y；默认 -1 = 地面层，P2-8 防悬空）
+    map_art_supply_box_y_offset: int = -1
+
 
 class MonitorConfig(BaseModel):
     enabled: bool = True

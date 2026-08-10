@@ -21,47 +21,45 @@ function createMovementHandlers(bot) {
   let pathfindingResolver = null;
 
   // ── 寻路到附近 ──
+  // ⚠️ listener 必须全部清理：建造循环每格调用一次 move_to，若
+  // goal_reached/path_stop/path_timeout 的 once 监听残留，16384 格会
+  // 泄漏数万个 listener（emit 遍历变慢、内存膨胀）。统一用 finish() 收口。
   async function move_to({ x, y, z, max_offset = 3, timeout_ms = 15000 }) {
     return new Promise((resolve, reject) => {
       const goal = new GoalNear(x, y, z, max_offset);
-      const timeout = setTimeout(() => {
-        bot.pathfinder.stop();
-        pathfindingResolver = null;
-        resolve({ success: false, reason: 'timeout', position: getPos() });
-      }, timeout_ms);
+      let finished = false;
+      let timer = null;
 
-      pathfindingResolver = (result) => {
-        clearTimeout(timeout);
+      const cleanup = () => {
+        bot.removeListener('goal_reached', onGoalReached);
+        bot.removeListener('path_stop', onStopped);
+        bot.removeListener('path_timeout', onTimeout);
+      };
+      const finish = (result) => {
+        if (finished) return;
+        finished = true;
+        if (timer) clearTimeout(timer);
+        cleanup();
         pathfindingResolver = null;
         resolve(result);
       };
-
-      // 监听路径事件
-      const onGoalReached = () => {
-        const r = pathfindingResolver;
-        if (r) r({ success: true, position: getPos() });
-      };
-      const onStopped = () => {
-        const r = pathfindingResolver;
-        if (r) r({ success: false, reason: 'stopped', position: getPos() });
-      };
-      const onTimeout = () => {
-        const r = pathfindingResolver;
-        if (r) r({ success: false, reason: 'timeout', position: getPos() });
-      };
+      const onGoalReached = () => finish({ success: true, position: getPos() });
+      const onStopped = () => finish({ success: false, reason: 'stopped', position: getPos() });
+      const onTimeout = () => finish({ success: false, reason: 'timeout', position: getPos() });
 
       bot.once('goal_reached', onGoalReached);
       bot.once('path_stop', onStopped);
       bot.once('path_timeout', onTimeout);
 
+      timer = setTimeout(() => {
+        bot.pathfinder.stop();
+        finish({ success: false, reason: 'timeout', position: getPos() });
+      }, timeout_ms);
+
       try {
         bot.pathfinder.setGoal(goal);
       } catch (err) {
-        clearTimeout(timeout);
-        bot.removeListener('goal_reached', onGoalReached);
-        bot.removeListener('path_stop', onStopped);
-        bot.removeListener('path_timeout', onTimeout);
-        reject(err);
+        finish({ success: false, reason: `setGoal error: ${err.message}`, position: getPos() });
       }
     });
   }
@@ -95,6 +93,7 @@ function createMovementHandlers(bot) {
       dimension: bot.game?.dimension || 'unknown',
       game_mode: bot.game?.gameMode || 'unknown',
       is_on_ground: bot.entity.onGround,
+      ping: bot.player?.ping ?? -1,  // 往返延迟(ms)，供建造侧 RTT 自适应限速
     };
   }
 

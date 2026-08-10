@@ -12,10 +12,12 @@ Extends vmtools-backend's litematic_parser.py with:
 """
 from __future__ import annotations
 
+import asyncio
 import gzip
 import hashlib
 import logging
 import math
+import os
 from pathlib import Path
 from typing import Optional
 
@@ -1655,12 +1657,29 @@ def _block_state_to_item_id(block_state: str) -> str:
     return BLOCK_TO_ITEM.get(base, base)
 
 
+# P2-13：按 (path → (mtime, sha256)) 缓存文件 hash——同一文件在 TTL 窗口内
+# 不重复读全文件（parse_file 每次调用都会算 hash，即使缓存命中）。
+_file_hash_cache: dict[str, tuple[float, str]] = {}
+
+
 def _file_sha256(path: str) -> str:
+    try:
+        st = os.stat(path)
+        cached = _file_hash_cache.get(path)
+        if cached and cached[0] == st.st_mtime:
+            return cached[1]
+    except OSError:
+        pass
     h = hashlib.sha256()
     with open(path, "rb") as f:
         for chunk in iter(lambda: f.read(8192), b""):
             h.update(chunk)
-    return h.hexdigest()
+    digest = h.hexdigest()
+    try:
+        _file_hash_cache[path] = (os.stat(path).st_mtime, digest)
+    except OSError:
+        pass
+    return digest
 
 
 class ParsedProjection:
@@ -1684,14 +1703,29 @@ class LitematicaParser:
 
     @classmethod
     async def parse_file(cls, file_path: str) -> ParsedProjection:
-        """Parse a .litematic file and return structured data."""
-        # Check cache
+        """Parse a .litematic file and return structured data.
+
+        P2-18 优化：解析体（gzip 解压 + nbtlib + 全量遍历）是 CPU/IO 密集的
+        同步代码，改到线程池执行（asyncio.to_thread），避免大投影阻塞 event loop。
+        """
+        # Check cache（sha256 读文件较快，留主线程）
         file_hash = _file_sha256(file_path)
         if file_hash in cls._cache:
             logger.debug("Litematica cache hit: %s", file_path)
             return cls._cache[file_hash]
 
         logger.info("Parsing litematic: %s", file_path)
+        parsed = await asyncio.to_thread(cls._parse_file_sync, file_path)
+
+        # Cache（cachetools TTLCache 内部有锁，线程安全）
+        cls._cache[file_hash] = parsed
+        logger.info("Parsed litematic: %d blocks, %d materials, %d layers",
+                     parsed.total_blocks, len(parsed.materials), len(parsed.layers))
+        return parsed
+
+    @classmethod
+    def _parse_file_sync(cls, file_path: str) -> ParsedProjection:
+        """Synchronous parse body (runs in worker thread via to_thread)."""
         parsed = ParsedProjection()
 
         # Read NBT
@@ -1740,6 +1774,13 @@ class LitematicaParser:
 
             # Decode block states
             block_indices = _decode_block_states(block_states_raw, palette_bits, sx * sy * sz)
+            # P2-22：解码长度校验——数据不足时静默截断会导致"解析成功但缺块"
+            expected_volume = sx * sy * sz
+            if len(block_indices) < expected_volume:
+                logger.warning(
+                    "Region %s block states incomplete: %d/%d（投影可能损坏）",
+                    region_name, len(block_indices), expected_volume,
+                )
 
             region_info = {
                 "size": {"x": sx, "y": sy, "z": sz},
@@ -1777,11 +1818,6 @@ class LitematicaParser:
 
         parsed.materials = materials
         parsed.layers = layers
-
-        # Cache
-        cls._cache[file_hash] = parsed
-        logger.info("Parsed litematic: %d blocks, %d materials, %d layers",
-                     parsed.total_blocks, len(materials), len(layers))
         return parsed
 
     @classmethod

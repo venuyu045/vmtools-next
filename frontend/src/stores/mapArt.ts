@@ -22,6 +22,12 @@ export const useMapArtStore = defineStore('mapArt', {
     tasks: [] as MapArtTaskSummary[],
     loading: false,
   }),
+  getters: {
+    /** P2-29：运行中的建造任务（Dashboard 卡片消费） */
+    runningTasks: (state) => state.tasks.filter(t => t.status === 'running'),
+    /** 最近一次进度快照（build_progress socket 推送的最新 payload） */
+    lastProgress: (state) => state.tasks[0] ?? null,
+  },
   actions: {
     async fetchTasks() {
       this.loading = true

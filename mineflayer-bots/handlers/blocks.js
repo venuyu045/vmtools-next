@@ -20,23 +20,50 @@ const FACE_VECTORS = {
   'EAST':  new Vec3(1, 0, 0),
 };
 
+// 液体方块不能作为放置参考面（对齐 printer PrinterUtils.canBeClicked：无碰撞箱不可点击）
+function isLiquidBlock(block) {
+  const name = block?.name || '';
+  return name.includes('water') || name.includes('lava') || name.includes('bubble_column');
+}
+
 /**
  * @param {import('mineflayer').Bot} bot
  */
 function createBlockHandlers(bot) {
 
   // ── 放置方块 ──
+  // face: UP/DOWN/NORTH/SOUTH/WEST/EAST（点击参考方块的哪个面）
+  //       AUTO = 自动选面：遍历候选面找第一个非空气、非液体的参考方块
+  //              （对齐 litematica-printer Action.getValidSide 的简化版）
+  // 自动选面候选优先级（地图画场景：bot 站行北缘 → 优先北面参考，其次下方地面，
+  // 南面/行内/上方兜底）：
+  //   SOUTH（ref=北面 z-1）→ DOWN（ref=下方）→ NORTH（ref=南面）
+  //   → WEST/EAST（ref=行内 x±1）→ UP（ref=上方）
   async function place_block({ x, y, z, face = 'UP' } = {}) {
     try {
       const pos = new Vec3(x, y, z);
-      const faceVec = FACE_VECTORS[face] || FACE_VECTORS.UP;
+      let faceVec = FACE_VECTORS[face] || FACE_VECTORS.UP;
+      let refPos = pos.minus(faceVec);
+      let refBlock = bot.blockAt(refPos);
 
-      // 1. 获取参考方块位置（放置面的反方向）
-      const refPos = pos.minus(faceVec);
-      const refBlock = bot.blockAt(refPos);
+      // 1. 自动选面：face='AUTO' 或指定面参考缺失时，遍历候选面
+      const CANDIDATE_FACES = ['SOUTH', 'DOWN', 'NORTH', 'WEST', 'EAST', 'UP'];
+      if (face === 'AUTO' || !refBlock || refBlock.type === 0) {
+        for (const f of CANDIDATE_FACES) {
+          const fv = FACE_VECTORS[f];
+          const rp = pos.minus(fv);
+          const rb = bot.blockAt(rp);
+          if (rb && rb.type !== 0 && !isLiquidBlock(rb)) {
+            faceVec = fv;
+            refPos = rp;
+            refBlock = rb;
+            break;
+          }
+        }
+      }
 
-      if (!refBlock) {
-        return { success: false, error: `No reference block at ${refPos}` };
+      if (!refBlock || refBlock.type === 0) {
+        return { success: false, error: `No reference block near ${pos}` };
       }
 
       // 2. 检查手持物品
@@ -46,7 +73,7 @@ function createBlockHandlers(bot) {
 
       // 3. 放置方块
       await bot.placeBlock(refBlock, faceVec);
-      return { success: true, block: { x, y, z }, placed_with: bot.heldItem.name };
+      return { success: true, block: { x, y, z }, placed_with: bot.heldItem.name, face };
     } catch (err) {
       return { success: false, error: err.message };
     }

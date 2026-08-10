@@ -7,31 +7,27 @@
         <div class="dpad">
           <button
             class="dbtn up"
-            @pointerdown="down('forward')"
-            @pointerup="up('forward')"
-            @pointercancel="up('forward')"
-            @pointerleave="up('forward')"
+            @pointerdown="down($event, 'forward')"
+            @pointerup="up($event, 'forward')"
+            @pointercancel="up($event, 'forward')"
           >▲</button>
           <button
             class="dbtn left"
-            @pointerdown="down('left')"
-            @pointerup="up('left')"
-            @pointercancel="up('left')"
-            @pointerleave="up('left')"
+            @pointerdown="down($event, 'left')"
+            @pointerup="up($event, 'left')"
+            @pointercancel="up($event, 'left')"
           >◀</button>
           <button
             class="dbtn down"
-            @pointerdown="down('back')"
-            @pointerup="up('back')"
-            @pointercancel="up('back')"
-            @pointerleave="up('back')"
+            @pointerdown="down($event, 'back')"
+            @pointerup="up($event, 'back')"
+            @pointercancel="up($event, 'back')"
           >▼</button>
           <button
             class="dbtn right"
-            @pointerdown="down('right')"
-            @pointerup="up('right')"
-            @pointercancel="up('right')"
-            @pointerleave="up('right')"
+            @pointerdown="down($event, 'right')"
+            @pointerup="up($event, 'right')"
+            @pointercancel="up($event, 'right')"
           >▶</button>
         </div>
       </div>
@@ -56,6 +52,7 @@
 
 <script setup lang="ts">
 import { onBeforeUnmount, ref } from 'vue'
+import { ElMessage } from 'element-plus'
 import { botApi } from '@/api/bot'
 import Joystick from './Joystick.vue'
 
@@ -67,22 +64,38 @@ let baseYaw = 0
 let basePitch = 0
 let lookPending: { yaw: number; pitch: number } | null = null
 let lookTimer: number | undefined
+let lastLookErr = 0  // P2-17：视角错误限频提示（节流 80ms 发送，避免每帧弹窗）
 
 // ── 移动方向键 ──
-function down(direction: string) {
-  botApi.control(props.botId, { direction, state: true }).catch(() => {})
+// P2-16：pointer capture——按住后手指移出按钮不中断移动（长按体验修复）；
+// 松开/取消时才释放捕获并停止。P2-17：失败提示 + 自动复位，不再静默吞错。
+function down(e: PointerEvent, direction: string) {
+  try { (e.currentTarget as HTMLElement)?.setPointerCapture?.(e.pointerId) } catch { /* capture 失败不阻断 */ }
+  botApi.control(props.botId, { direction, state: true }).catch(() => {
+    ElMessage.error(`移动控制失败（${direction}）：bot 可能已掉线`)
+    botApi.control(props.botId, { direction, state: false }).catch(() => {})
+  })
 }
-function up(direction: string) {
-  botApi.control(props.botId, { direction, state: false }).catch(() => {})
+function up(e: PointerEvent, direction: string) {
+  try { (e.currentTarget as HTMLElement)?.releasePointerCapture?.(e.pointerId) } catch { /* ignore */ }
+  botApi.control(props.botId, { direction, state: false }).catch(() => {
+    ElMessage.error(`移动控制失败（${direction}）：bot 可能已掉线`)
+  })
 }
 
 function doJump() {
-  botApi.jump(props.botId).catch(() => {})
+  botApi.jump(props.botId).catch(() => {
+    ElMessage.error('跳跃失败：bot 可能已掉线')
+  })
 }
 
 function toggleSneak() {
-  sneaking.value = !sneaking.value
-  botApi.sneak(props.botId, sneaking.value).catch(() => {})
+  const next = !sneaking.value
+  botApi.sneak(props.botId, next).catch(() => {
+    sneaking.value = !next  // 失败回滚状态
+    ElMessage.error('蹲伏切换失败：bot 可能已掉线')
+  })
+  sneaking.value = next
 }
 
 // ── 视角摇杆：增量累计 → 节流发送 look → 回读实际角度修正基准 ──
@@ -112,7 +125,15 @@ function flushLook() {
         if (typeof r.pitch === 'number') basePitch = r.pitch
       }
     })
-    .catch(() => {})
+    .catch(() => {
+      // P2-17：限频提示（look 每 80ms 一次，失败连发会刷屏）
+      const now = Date.now()
+      if (now - lastLookErr > 5000) {
+        lastLookErr = now
+        ElMessage.error('视角控制失败：bot 可能已掉线')
+      }
+      stopLookTimer()
+    })
 }
 
 function onLookEnd() {

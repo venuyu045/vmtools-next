@@ -119,7 +119,7 @@ import { mapArtApi } from '@/api/mapArt'
 
 const route = useRoute()
 const taskId = computed(() => route.params.taskId as string)
-const { on: sockOn, emit: sockEmit } = useSocketIO()
+const { on: sockOn, off: sockOff, emit: sockEmit } = useSocketIO()
 
 const task = ref<any>(null)
 const bots = ref<any[]>([])
@@ -213,35 +213,44 @@ async function control(action: string) {
 }
 
 // ---- Socket.IO progress updates ----
+// ⚠️ 组件级 handler 必须在 onUnmounted 注销：否则多次进入页面会累积
+// 多个 build_progress/build_bot_status 监听（P1 修复：重复处理+内存泄漏）。
 
 onMounted(() => {
   fetchTask()
   sockEmit('build_map_join', { task_id: taskId.value })
 
-  sockOn('build_progress', (data: any) => {
-    if (data.task_id !== taskId.value) return
-    task.value = { ...task.value, status: data.status, placed_blocks: data.placed_blocks, total_blocks: data.total_blocks }
-    elapsed.value = data.elapsed_sec || 0
-    eta.value = data.eta_sec || 0
-    overallRate.value = data.placed_blocks > 0 && data.elapsed_sec > 0
-      ? (data.placed_blocks / (data.elapsed_sec / 60)).toFixed(1)
-      : '0'
-    if (data.materials) {
-      materials.value = Object.entries(data.materials).map(([k, v]: [string, any]) => ({
-        item_id: k, display_name: k.split(':')[1], placed: v.placed, required: v.required,
-      }))
-    }
-  })
-
-  sockOn('build_bot_status', (data: any) => {
-    if (data.task_id !== taskId.value) return
-    bots.value = data.bots || []
-  })
+  sockOn('build_progress', onBuildProgress)
+  sockOn('build_bot_status', onBuildBotStatus)
 })
 
 onUnmounted(() => {
+  sockOff('build_progress', onBuildProgress)
+  sockOff('build_bot_status', onBuildBotStatus)
   sockEmit('build_map_leave', { task_id: taskId.value })
 })
+
+function onBuildProgress(data: any) {
+  if (data.task_id !== taskId.value) return
+  task.value = { ...task.value, status: data.status, placed_blocks: data.placed_blocks, total_blocks: data.total_blocks }
+  elapsed.value = data.elapsed_sec || 0
+  eta.value = data.eta_sec || 0
+  overallRate.value = data.placed_blocks > 0 && data.elapsed_sec > 0
+    ? (data.placed_blocks / (data.elapsed_sec / 60)).toFixed(1)
+    : '0'
+  // 注意：后端 _aggregate 的 materials 当前为 {}（未填充），空对象是 truthy——
+  // 若不加 length 检查会每 2s 把 Materials 面板清空（P1 修复：空对象不覆盖）
+  if (data.materials && Object.keys(data.materials).length > 0) {
+    materials.value = Object.entries(data.materials).map(([k, v]: [string, any]) => ({
+      item_id: k, display_name: k.split(':')[1], placed: v.placed, required: v.required,
+    }))
+  }
+}
+
+function onBuildBotStatus(data: any) {
+  if (data.task_id !== taskId.value) return
+  bots.value = data.bots || []
+}
 </script>
 
 <style scoped>

@@ -88,44 +88,17 @@ class TaskEngine:
     async def start_build_task(self, bot_id: str, projection_path: str,
                                 origin_x: int = 0, origin_y: int = 0,
                                 origin_z: int = 0) -> Optional[str]:
-        """Start a build task for a bot.
+        """建造功能已完全由 Mineflayer 地图画提供（/api/build/map-art/*）。
 
-        Returns task_id on success, None on failure.
+        MCC 侧投影建造（BuildStateMachine/MccLitematicaAdapter）已废弃——
+        投影解析仅向 mineflayer 引擎提供。此处直接拒绝并返回 None
+        （前端/API 应引导用户走地图画接口）。
         """
-        # Check if bot already has a task
-        if bot_id in self._bot_tasks:
-            logger.warning("Bot %s already has task %s", bot_id, self._bot_tasks[bot_id])
-            return None
-
-        # Get MCP client
-        client = self._pool.get_client(bot_id)
-        if not client:
-            logger.error("Bot %s not connected", bot_id)
-            return None
-
-        # Create state machine
-        sm = self._create_build_sm(bot_id, client)
-        task_id = str(uuid.uuid4())
-
-        # Create projection info
-        from vmtools_next.core.dataclasses import ProjectionInfo
-        projection = ProjectionInfo(
-            file_path=projection_path,
-            origin_x=origin_x,
-            origin_y=origin_y,
-            origin_z=origin_z,
+        logger.warning(
+            "start_build_task 已废弃：建造功能仅支持 Mineflayer 地图画 "
+            "（POST /api/build/map-art/tasks）。bot=%s", bot_id,
         )
-
-        # Start the build
-        success = await sm.start(projection)
-        if success:
-            self._build_tasks[task_id] = sm
-            self._bot_tasks[bot_id] = task_id
-            logger.info("Build task %s started for bot %s", task_id, bot_id)
-            return task_id
-        else:
-            logger.error("Failed to start build task for bot %s", bot_id)
-            return None
+        return None
 
     async def start_logistics_task(self, bot_id: str, template_id: str) -> Optional[str]:
         """Start a logistics task for a bot.

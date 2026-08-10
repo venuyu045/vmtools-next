@@ -24,46 +24,51 @@ const openContainers = new Map();
  */
 function createInventoryHandlers(bot) {
 
-  // ── 在快捷栏中选择物品 ──
+  // ── 在快捷栏中选择物品（或从背包装备到主手） ──
+  // 对齐 litematica-printer InventoryUtils.switchToItems：物品在背包任意位置
+  // 都能装备，而不只限快捷栏——否则建造切换物品会因"不在快捷栏"失败。
   async function select_hotbar_item({ item_type, prefer_lowest_slot = true } = {}) {
     try {
       const items = bot.inventory.items();
-      // 在快捷栏中查找匹配的物品（快捷栏槽位 36-44）
-      const hotbarItems = items.filter(item => item.slot >= 36 && item.slot <= 44);
-      const match = hotbarItems.find(item =>
-        item.name === item_type || item.type?.toString() === item_type
-      );
+      const matchName = (it) => it.name === item_type || it.type?.toString() === item_type;
 
-      if (!match) {
-        // 尝试在所有背包物品中查找（遍历完整 slots，含副手/盔甲/合成）
-        let anyMatch = null;
-        for (let i = 0; i < bot.inventory.slots.length; i++) {
-          const it = bot.inventory.slots[i];
-          if (it && (it.name === item_type || it.type?.toString() === item_type)) {
-            anyMatch = it;
-            break;
-          }
-        }
-        if (!anyMatch) {
-          return { success: false, error: `Item ${item_type} not found in inventory` };
-        }
-        // 物品在背包中但不在快捷栏
+      // 1. 快捷栏优先（槽位 36-44，零成本切换）
+      const hotbarItems = items.filter(item => item.slot >= 36 && item.slot <= 44);
+      const match = hotbarItems.find(matchName);
+
+      if (match) {
+        // 计算快捷栏索引 (slot 36-44 → index 0-8)
+        const hotbarIndex = match.slot - 36;
+        bot.setQuickBarSlot(hotbarIndex);
         return {
-          success: false,
-          error: `Item ${item_type} found at slot ${anyMatch.slot} (not in hotbar)`,
-          item: { name: anyMatch.name, slot: anyMatch.slot, count: anyMatch.count },
+          success: true,
+          slot: hotbarIndex,
+          item: { name: match.name, count: match.count },
         };
       }
 
-      // 计算快捷栏索引 (slot 36-44 → index 0-8)
-      const hotbarIndex = match.slot - 36;
-      bot.setQuickBarSlot(hotbarIndex);
+      // 2. 快捷栏无匹配 → 尝试从背包装备到主手（printer switchToItems 等效）
+      const invMatch = items.find(matchName);
+      if (invMatch) {
+        try {
+          await bot.equip(invMatch.type, 'hand');
+          return {
+            success: true,
+            slot: -1,  // 非快捷栏（直接装备到主手）
+            item: { name: invMatch.name, count: invMatch.count },
+            equipped_from_inventory: true,
+          };
+        } catch (equipErr) {
+          return {
+            success: false,
+            error: `Equip from inventory failed: ${equipErr.message}`,
+            item: { name: invMatch.name, slot: invMatch.slot, count: invMatch.count },
+          };
+        }
+      }
 
-      return {
-        success: true,
-        slot: hotbarIndex,
-        item: { name: match.name, count: match.count },
-      };
+      // 3. 背包中完全没有该物品
+      return { success: false, error: `Item ${item_type} not found in inventory` };
     } catch (err) {
       return { success: false, error: err.message };
     }

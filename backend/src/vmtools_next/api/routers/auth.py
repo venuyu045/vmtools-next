@@ -71,8 +71,10 @@ class QqTicketLoginRequest(BaseModel):
 
 def _make_token(user: UserModel) -> str:
     config = get_config()
+    # P2-21：主 token 从 24h 延长到 7 天——管理后台低频使用，7 天免登录
+    # 大幅降低"操作到一半过期"概率；仍无 refresh_token（短期可接受，见审查报告）。
     return jwt.encode(
-        {"sub": user.id, "exp": datetime.now(timezone.utc) + timedelta(hours=24)},
+        {"sub": user.id, "exp": datetime.now(timezone.utc) + timedelta(days=7)},
         config.server.secret_key,
         algorithm=config.server.jwt_algorithm,
     )

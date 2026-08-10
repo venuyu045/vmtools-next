@@ -162,6 +162,7 @@ async function onFileChange(uploadFile: any) {
 
 async function createTask() {
   if (!uploadedPath.value) { ElMessage.warning('请先上传 .litematic 投影文件'); return }
+  if (!form.value.bot_ids?.length) { ElMessage.warning('请至少选择 1 个 Mineflayer Bot'); return }
   creating.value = true
   try {
     await mapArtApi.createTask({

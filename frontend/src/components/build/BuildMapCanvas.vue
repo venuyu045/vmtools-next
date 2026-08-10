@@ -5,7 +5,8 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, watch, computed, nextTick } from 'vue'
+import { ref, onMounted, onUnmounted, watch, nextTick } from 'vue'
+import { mapArtApi } from '@/api/mapArt'
 
 const props = defineProps<{
   taskId: string
@@ -99,9 +100,39 @@ function render() {
 
 watch(() => props.initData, () => nextTick(render), { deep: true })
 
-onMounted(() => nextTick(render))
+// ── P1-5：2D 画布随建造进度实时刷新 ──
+// 后端新增轻量接口 /blocks/placed（只返回已放置方块），前端每 5s 轮询一次，
+// 把画布上对应格子从"未放置灰"更新为"已放置色"（增量，不重拉全量 blocks）。
+let pollTimer: number | undefined
 
-onUnmounted(() => {})
+async function pollPlaced() {
+  if (!props.taskId) return
+  try {
+    const { data } = await mapArtApi.getPlacedBlocks(props.taskId)
+    const placedKeys = new Set(data.blocks.map((b: any) => `${b.x},${b.z}`))
+    const blocks = props.initData?.blocks
+    if (!blocks) return
+    let changed = false
+    for (const b of blocks) {
+      if (!b.placed && placedKeys.has(`${b.x},${b.z}`)) {
+        b.placed = true
+        changed = true
+      }
+    }
+    if (changed) render()
+  } catch {
+    // 轮询失败静默（bot/网络抖动），下个周期重试
+  }
+}
+
+onMounted(async () => {
+  await nextTick(render)
+  pollTimer = window.setInterval(pollPlaced, 5000)
+})
+
+onUnmounted(() => {
+  if (pollTimer) window.clearInterval(pollTimer)
+})
 
 defineExpose({ refresh: render })
 </script>

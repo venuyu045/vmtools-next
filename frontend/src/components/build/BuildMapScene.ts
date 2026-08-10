@@ -6,6 +6,12 @@
  *   - Frustum culling: automatic via Three.js
  */
 
+/**
+ * ⚠️ 已弃用（2026-08-10）：地图画渲染使用 BuildMapCanvas（2D Canvas 增量刷新）。
+ * 本 Three.js 3D 视图为早期遗留：blocks 用世界坐标、bot 标记用相对坐标（坐标系
+ * 不一致会错位）、animate() 无限 RAF 且 dispose() 未取消。若未来要启用 3D，
+ * 需先统一坐标系 + 取消 RAF + bot 位置用 build_bot_status.position。当前保留不删。
+ */
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 

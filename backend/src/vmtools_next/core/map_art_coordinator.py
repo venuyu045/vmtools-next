@@ -17,9 +17,11 @@ import asyncio
 import logging
 import time
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Optional
 
 from vmtools_next.adapters.abstract.bot_agent import AbstractBotAgent
+from vmtools_next.config import get_config
 from vmtools_next.data.db import sio
 
 logger = logging.getLogger("vmtools.map_art")
@@ -120,13 +122,19 @@ def assign_supply_boxes(
 ) -> list[tuple[int, int, int]]:
     """Place a supply box at the midpoint of each region's north edge.
 
+    y = origin_y + map_art_supply_box_y_offset（P2-8：默认 -1 把箱放地面层，
+    避免悬空；config 可调）。
     Returns list of (x, y, z) for each region's supply box.
     """
+    try:
+        y_offset = getattr(get_config().mineflayer, "map_art_supply_box_y_offset", -1) or 0
+    except Exception:
+        y_offset = 0
     boxes = []
     for r in regions:
         mid_x = origin_x + (r.x_start + r.x_end) // 2
         box_z = origin_z + r.z_start - 2  # 2 blocks north of region start
-        boxes.append((mid_x, origin_y, box_z))
+        boxes.append((mid_x, origin_y + y_offset, box_z))
     return boxes
 
 
@@ -141,9 +149,9 @@ class BotBuildLoop:
     from north edge (standing at Z-1, facing south).
     """
 
-    # EssentialsX传送点
-    WAREHOUSE_HOME = "mdssj"   # 仓库传送点 (需管理员预先 /sethome mdssj)
-    TEMP_HOME = "gzqy"         # 临时回家点 (建造位置)
+    # EssentialsX传送点（P2-26：从 config 读取，默认 mdssj/gzqy 保持旧行为）
+    WAREHOUSE_HOME = "mdssj"
+    TEMP_HOME = "gzqy"
 
     def __init__(
         self,
@@ -154,6 +162,8 @@ class BotBuildLoop:
         block_matrix: dict[tuple[int, int], str],   # (x, z) → block_id
         origin_x: int, origin_y: int, origin_z: int,
         mcp: AbstractBotAgent,
+        supply_box: Optional[tuple[int, int, int]] = None,  # 分区补给箱坐标（None→用传送）
+        on_done: Optional[callable] = None,  # 正常完成回调（coordinator 用于任务级完成判定）
     ):
         self.bot_id = bot_id
         self.bot_name = bot_name
@@ -167,12 +177,52 @@ class BotBuildLoop:
 
         self.progress = BotProgress(bot_id=bot_id, region=region)
         self.progress.blocks_total = region.block_count
+        self._on_done = on_done
 
         self._paused = asyncio.Event()
         self._paused.set()     # start unpaused
         self._stopped = False
         self._current_item: Optional[str] = None  # item currently in hand
-        self._supply_box: Optional[tuple[int, int, int]] = None  # 补给箱坐标（None→用传送）
+        self._supply_box: Optional[tuple[int, int, int]] = supply_box  # 分区补给箱坐标（None→用传送）
+
+        # P2-26：EssentialsX 传送点名从 config 读取（保持类默认值兼容）
+        try:
+            _mf = get_config().mineflayer
+            if getattr(_mf, "map_art_warehouse_home", None):
+                self.WAREHOUSE_HOME = _mf.map_art_warehouse_home
+            if getattr(_mf, "map_art_temp_home", None):
+                self.TEMP_HOME = _mf.map_art_temp_home
+        except Exception:
+            pass
+
+        # ── 建造/寻路调参（对齐开发文档：防放错、限速、容错） ──
+        # 放置间隔读 config.safety.place_interval_ticks（tick=50ms），下限 0.15s 防高频放置误判
+        try:
+            _ticks = getattr(get_config().safety, "place_interval_ticks", 3) or 3
+            self._place_interval: float = max(0.15, int(_ticks) / 20.0)
+        except Exception:
+            self._place_interval: float = 0.25
+        self._move_retries: int = 2             # 寻路失败重试次数
+        self._place_retries: int = 3            # 放置失败重试次数
+        self._move_timeout_ms: int = 20000      # 单次寻路超时
+        self._place_sample_count: int = 0       # 放置采样计数（RTT 自适应）
+        self._last_pos: Optional[tuple[int, int, int]] = None  # 最近一次移动到达的坐标（跳过重复寻路）
+
+        # ── 断点续建（DB 持久化）：放置成功/已正确的方块批量写库，行完成 flush ──
+        self._db_updates: list[tuple[int, int, int, str]] = []
+        self._db_flushed_rows: int = 0
+        # P2-9：同 run 内已验证正确的方块集合（跳过重复 get_world_block_at WS 往返）
+        self._verified_set: set[tuple[int, int, int]] = set()
+
+    # ── 蛇形寻路：偶数相对行正向（x_start→x_end），奇数行反向（x_end→x_start） ──
+    #    行间只需移动 1 格（z+1，x 不变），省掉每行从 x_end 走回 x_start 的 128 格回程。
+    def _row_is_forward(self, row_z: int) -> bool:
+        return (row_z - self.region.z_start) % 2 == 0
+
+    def _row_x_span(self) -> list[int]:
+        """当前行 X 放置顺序（正向升序 / 反向降序）。"""
+        xs = list(range(self.region.x_start, self.region.x_end + 1))
+        return xs if self._row_is_forward(self.progress.current_row) else xs[::-1]
 
     # ── Control ──────────────────────────────
 
@@ -195,6 +245,9 @@ class BotBuildLoop:
         logger.info("[%s] Build loop started: rows %d→%d",
                      self.bot_id, self.region.z_start, self.region.z_end)
 
+        # 断点续建：恢复 DB 中已放置进度（实际跳过由 _verify_block 对世界状态兜底）
+        await self._restore_progress()
+
         try:
             for row_z in range(self.region.z_start, self.region.z_end + 1):
                 if self._stopped:
@@ -204,44 +257,103 @@ class BotBuildLoop:
                 world_z = self.origin_z + row_z
 
                 # Position bot at north edge of current row
-                await self._move_to_row_edge(row_z)
+                moved = await self._move_to_row_edge(row_z)
+                if not moved or self._stopped:
+                    break  # 移动失败（bot 离线/不可达）→ 终止本 bot 循环
 
                 # Place blocks in this row, grouped by color
                 await self._place_row(row_z, world_z)
+                if self.progress.state == "offline":
+                    break  # 行内移动/放置中断 → 终止循环
 
             if not self._stopped:
                 self.progress.state = "completed"
                 logger.info("[%s] Region complete: %d blocks placed",
                             self.bot_id, self.progress.blocks_placed)
-        except Exception as e:
-            self.progress.state = "offline"
-            logger.error("[%s] MCP error: %s", self.bot_id, e)
+                # P1-10：通知 coordinator（任务级完成判定 + DB status 更新）
+                if self._on_done:
+                    try:
+                        self._on_done(self.bot_id)
+                    except Exception as e:
+                        logger.warning("[%s] on_done callback error: %s", self.bot_id, e)
         except asyncio.CancelledError:
+            # CancelledError 是 BaseException（Python 3.8+），不会被 except Exception 捕获
             self.progress.state = "offline"
-        except Exception:
-            logger.exception("[%s] Unexpected error in build loop", self.bot_id)
+        except Exception as e:
+            # P1-9：原代码有第二个不可达的 `except Exception`（死代码），已合并
             self.progress.state = "offline"
+            logger.error("[%s] Build loop error: %s", self.bot_id, e)
+        finally:
+            # P1-9：中断/异常时 flush 残留进度（防最后几行 DB 进度丢失；行内 offline 时
+            # _place_row 未执行到行尾 flush）
+            if self._db_updates:
+                try:
+                    await self._flush_db(self.progress.current_row)
+                except Exception:
+                    pass
 
     async def _move_to_row_edge(self, row_z: int):
-        """Move bot to the north edge of the given row."""
+        """Move bot to the north edge of the given row (plan D: stand at row edge).
+
+        Bot stands 1 block north of the row (z-1). Snake pattern: forward rows
+        start at x_start (walking east), backward rows start at x_end (walking
+        west) — so between rows the bot only moves 1 block (z+1, x unchanged).
+        """
+        xs = self._row_x_span()
+        target_x = self.origin_x + (xs[0] if xs else self.region.x_start)
+        target_z = self.origin_z + row_z - 1  # stand 1 block north
+        ok = await self._move_to(target_x, self.origin_y, target_z,
+                                 max_offset=1, label=f"row {row_z} edge")
+        if not ok:
+            self.progress.state = "offline"
+        return ok
+
+    async def _move_to(self, x: int, y: int, z: int, max_offset: int = 1,
+                       label: str = "", timeout_ms: int | None = None) -> bool:
+        """Move bot to within max_offset of (x, y, z) using pathfinder.
+
+        Returns True on arrival, False on failure (after retries).
+        """
         await self._paused.wait()
         if self._stopped:
-            return
+            return False
         self.progress.state = "moving"
-        target_x = self.origin_x + self.region.x_start
-        target_z = self.origin_z + row_z - 1  # stand 1 block north
-        # TODO: Use baritone or teleport to move bot
-        # For now, skip if already close
+        timeout = timeout_ms or self._move_timeout_ms
+        for attempt in range(self._move_retries + 1):
+            if self._stopped:
+                return False
+            try:
+                result = await self.mcp.move_to(
+                    x, y, z, max_offset=max_offset, timeout_ms=timeout,
+                )
+                if result.get("success"):
+                    self._last_pos = (x, y, z)
+                    return True
+                logger.warning("[%s] move_to %s (attempt %d/%d) failed: %s",
+                               self.bot_id, label or f"({x},{y},{z})",
+                               attempt + 1, self._move_retries + 1, result)
+            except Exception as e:
+                logger.warning("[%s] move_to %s (attempt %d/%d) error: %s",
+                               self.bot_id, label or f"({x},{y},{z})",
+                               attempt + 1, self._move_retries + 1, e)
+            await asyncio.sleep(0.5)
+        return False
 
     async def _place_row(self, row_z: int, world_z: int):
-        """Place all blocks in a single row, grouped by color."""
+        """Place all blocks in a single row, grouped by color.
+
+        Plan D + snake: bot stands 1 block north of each target (z-1), walks
+        along X (direction alternates per row), verifies the target state,
+        places with retry, and persists progress to DB (row-complete flush).
+        """
         await self._paused.wait()
         if self._stopped:
             return
 
-        # Gather blocks for this row
+        # Gather blocks for this row, ordered by snake direction
+        x_span = self._row_x_span()
         row_blocks: dict[str, list[int]] = {}  # color → [x, ...]
-        for x in range(self.region.x_start, self.region.x_end + 1):
+        for x in x_span:
             block_id = self.block_matrix.get((x, row_z))
             if block_id and block_id != "minecraft:air":
                 row_blocks.setdefault(block_id, []).append(x)
@@ -263,37 +375,227 @@ class BotBuildLoop:
                     return
 
                 world_x = self.origin_x + x
-                try:
-                    await self.mcp.place_block(
-                        x=world_x, y=self.origin_y, z=world_z,
-                        face="SOUTH",
-                        hand="MAIN_HAND",
-                        look_at_block=False,
-                    )
+                # 1) Walk along X: bot must stay within reach of the reference
+                #    block (target's north neighbour, z-1)
+                #    若上一步已在该站立点 2 格内（相邻方块），跳过重复寻路
+                stand_z = world_z - 1
+                if not self._is_near(world_x, self.origin_y, stand_z, threshold=2):
+                    if not await self._move_to(world_x, self.origin_y, stand_z,
+                                               max_offset=1, label=f"({world_x},{world_z})"):
+                        self.progress.state = "offline"
+                        return
+
+                # 2) Verify: skip if the target is already correct
+                if await self._verify_block(world_x, self.origin_y, world_z, block_id):
                     self.progress.record_place()
                     self.progress.last_completed_x = x
-                except Exception as e:
-                    logger.warning("[%s] Place failed at (%d,%d,%d): %s",
-                                   self.bot_id, world_x, self.origin_y, world_z, e)
+                    self._db_updates.append((world_x, self.origin_y, world_z, block_id))
+                    continue
+
+                # 3) Place with retry + rate limiting
+                if await self._place_with_retry(world_x, self.origin_y, world_z, block_id):
+                    self.progress.record_place()
+                    self.progress.last_completed_x = x
+                    self._db_updates.append((world_x, self.origin_y, world_z, block_id))
+
+                # 4) Rate limiting between placements (anti mis-place / anti-cheat)
+                #    RTT 自适应：每 10 次放置采样一次 ping，间隔 = max(base, RTT*1.5)
+                self._place_sample_count += 1
+                if self._place_sample_count % 10 == 0:
+                    await self._update_place_interval()
+                await asyncio.sleep(self._place_interval)
+
+        # 5) 行完成 → 批量持久化进度（断点续建）
+        await self._flush_db(row_z)
+
+    def _is_near(self, x: int, y: int, z: int, threshold: float = 2.0) -> bool:
+        """Check whether the bot's last known position is within `threshold` blocks."""
+        if self._last_pos is None:
+            return False
+        lx, ly, lz = self._last_pos
+        return abs(lx - x) <= threshold and abs(ly - y) <= threshold and abs(lz - z) <= threshold
+
+    async def _update_place_interval(self) -> None:
+        """RTT-adaptive rate limiting: interval = max(base, RTT*1.5), capped at 2s.
+
+        Mirrors litematica-printer's RttReplayController: never place faster
+        than one round-trip, preventing mis-placed/ghost blocks on laggy servers.
+        """
+        try:
+            state = await self.mcp.get_player_state()
+            ping_ms = state.get("ping") or 0
+            if ping_ms and ping_ms > 0:
+                rtt_interval = ping_ms / 1000.0 * 1.5
+                if rtt_interval > self._place_interval:
+                    self._place_interval = min(rtt_interval, 2.0)  # 上限 2s
+                    logger.info("[%s] RTT adaptive interval → %.2fs (ping=%dms)",
+                                self.bot_id, self._place_interval, ping_ms)
+        except Exception:
+            pass
+
+    async def _flush_db(self, row_z: int) -> None:
+        """Batch-persist placed/verified blocks to DB (breakpoint resume).
+
+        World state is the source of truth for resume (each block is
+        re-verified by _verify_block on next run); the DB is used for
+        progress stats (placed_blocks / UI) and fast completion check.
+        """
+        if not self._db_updates:
+            return
+        updates = self._db_updates
+        self._db_updates = []
+        try:
+            from vmtools_next.data.db import get_session_factory
+            from vmtools_next.data.models.build_map_art import MapArtBlockState
+            db = get_session_factory()()
+            try:
+                now = datetime.now(timezone.utc)
+                for x, y, z, block_id in updates:
+                    row = db.query(MapArtBlockState).filter(
+                        MapArtBlockState.task_id == self.task_id,
+                        MapArtBlockState.x == x,
+                        MapArtBlockState.y == y,
+                        MapArtBlockState.z == z,
+                    ).first()
+                    if row is None:
+                        continue
+                    row.placed = True
+                    row.verified = True
+                    row.actual_block = block_id.split("[")[0]
+                    row.placed_by_bot = self.bot_id
+                    row.placed_at = now
+                    row.verified_at = now
+                db.commit()
+            finally:
+                db.close()
+            self._db_flushed_rows += 1
+            if self._db_flushed_rows <= 5 or self._db_flushed_rows % 10 == 0:
+                logger.info("[%s] Progress persisted: row %d (%d blocks)",
+                            self.bot_id, row_z, len(updates))
+        except Exception as e:
+            logger.warning("[%s] DB flush failed (row %d): %s", self.bot_id, row_z, e)
+            # 失败不阻断建造：世界状态仍会被 _verify_block 兜底
+
+    async def _restore_progress(self) -> None:
+        """Restore previously persisted progress from DB (breakpoint resume).
+
+        Counts blocks already marked placed in this bot's region so the UI
+        starts with the correct placed_blocks figure; actual skipping is done
+        by _verify_block against world state.
+        """
+        try:
+            from vmtools_next.data.db import get_session_factory
+            from vmtools_next.data.models.build_map_art import MapArtBlockState
+            db = get_session_factory()()
+            try:
+                count = db.query(MapArtBlockState).filter(
+                    MapArtBlockState.task_id == self.task_id,
+                    MapArtBlockState.placed.is_(True),
+                    MapArtBlockState.x >= self.origin_x + self.region.x_start,
+                    MapArtBlockState.x <= self.origin_x + self.region.x_end,
+                    MapArtBlockState.z >= self.origin_z + self.region.z_start,
+                    MapArtBlockState.z <= self.origin_z + self.region.z_end,
+                ).count()
+                if count:
+                    self.progress.blocks_placed = count
+                    logger.info("[%s] Resumed with %d blocks already placed",
+                                self.bot_id, count)
+            finally:
+                db.close()
+        except Exception as e:
+            logger.warning("[%s] Progress restore failed: %s", self.bot_id, e)
+
+    async def _verify_block(self, x: int, y: int, z: int, block_id: str) -> bool:
+        """Compare world block at (x,y,z) with the expected block_id (name only).
+
+        P2-9：已验证正确的坐标缓存到 _verified_set——同一 run 内不重复
+        get_world_block_at（WS 往返）；方块变化由放置后重放兜底。
+        """
+        key = (x, y, z)
+        if key in self._verified_set:
+            return True
+        try:
+            result = await self.mcp.get_world_block_at(x, y, z)
+            actual = (result.get("name") or "air").split("[")[0]
+            expected = block_id.split("[")[0]
+            if actual == expected:
+                self._verified_set.add(key)
+                return True
+            return False
+        except Exception:
+            return False
+
+    async def _place_with_retry(self, x: int, y: int, z: int, block_id: str) -> bool:
+        """Place a block with retries; returns True if eventually placed."""
+        for attempt in range(self._place_retries):
+            await self._paused.wait()
+            if self._stopped:
+                return False
+            try:
+                # face="AUTO"：Node 侧自动选面（对齐 printer getValidSide），
+                # 优先北面参考（bot 站行北缘），其次下方/南面/行内/上方——参考
+                # 方块缺失时自动兜底，避免固定 face="SOUTH" 导致放置失败。
+                result = await self.mcp.place_block(
+                    x=x, y=y, z=z,
+                    face="AUTO",
+                    hand="MAIN_HAND",
+                    look_at_block=False,
+                )
+                if result.get("success"):
+                    return True
+                logger.warning("[%s] Place failed at (%d,%d,%d) attempt %d/%d: %s",
+                               self.bot_id, x, y, z, attempt + 1, self._place_retries, result)
+            except Exception as e:
+                logger.warning("[%s] Place error at (%d,%d,%d) attempt %d/%d: %s",
+                               self.bot_id, x, y, z, attempt + 1, self._place_retries, e)
+            await asyncio.sleep(0.5)
+        return False
 
     async def _ensure_item_in_hand(self, block_id: str):
-        """Switch hotbar to the required block type, restock if empty."""
+        """Switch hotbar to the required block type, restock if empty.
+
+        ⚠️ 必须检查 select_hotbar_item 返回值（success:false 不会抛异常——
+        WS handler 返回错误 dict，而非 reject）。原实现用 except 捕获失败
+        永远不触发补货（P0 修复）。
+        """
         if self._current_item == block_id:
             return
         clean_id = block_id.split("[")[0] if "[" in block_id else block_id
+
+        result = await self._try_select_item(clean_id, block_id)
+        if result:
+            return
+
+        # select 失败 → 检查背包存量
+        count = await self._check_inventory_level(block_id)
+        if count > 0:
+            # 有物品但装备失败（如背包满/equip 失败）→ 重试一次
+            logger.warning("[%s] Equip %s failed but %d in inventory, retrying...",
+                           self.bot_id, clean_id, count)
+            if await self._try_select_item(clean_id, block_id):
+                return
+            logger.warning("[%s] Equip %s retry failed, skipping this color",
+                           self.bot_id, clean_id)
+            return
+
+        # 背包中没有该物品 → 补货（优先分区补给箱，否则 EssentialsX 传送）
+        logger.info("[%s] %s 用完了，开始补货...", self.bot_id, clean_id)
+        if await self._do_restock(block_id):
+            await self._try_select_item(clean_id, block_id)
+
+    async def _try_select_item(self, clean_id: str, block_id: str) -> bool:
+        """Select/equip item; returns True only if the hand now holds it."""
         try:
-            await self.mcp.select_hotbar_item(clean_id)
-            self._current_item = block_id
-        except Exception:
-            # select_hotbar_item 失败 → 背包可能没这个物品了
-            logger.warning("[%s] Cannot switch to %s, checking inventory...", self.bot_id, clean_id)
-            count = await self._check_inventory_level(block_id)
-            if count == 0 and self._supply_box is None:
-                # 没有补给箱配置 → 用 EssentialsX 传送去仓库
-                logger.info("[%s] %s 用完了，传送去仓库取货...", self.bot_id, clean_id)
-                if await self._do_restock(block_id):
-                    await self.mcp.select_hotbar_item(clean_id)
-                    self._current_item = block_id
+            result = await self.mcp.select_hotbar_item(clean_id)
+            if result.get("success"):
+                self._current_item = block_id
+                return True
+            logger.warning("[%s] select_hotbar_item %s failed: %s",
+                           self.bot_id, clean_id, result.get("error", "?"))
+        except Exception as e:
+            logger.warning("[%s] select_hotbar_item %s error: %s",
+                           self.bot_id, clean_id, e)
+        return False
 
     # ── Restocking ────────────────────────────
 
@@ -313,22 +615,67 @@ class BotBuildLoop:
             return 0
 
     async def _do_restock(self, needed_block_id: str, needed_count: int = 64) -> bool:
-        """Teleport to warehouse, withdraw items, teleport back.
+        """Restock the required item.
 
-        Uses EssentialsX homes: /esethome gzqy → /ehomes mdssj → withdraw → /ehomes gzqy
+        Two strategies (per development doc §补给策略):
+          1. 分区补给箱（_supply_box 已配置）：寻路到补给箱附近 → 打开取货 → 返回建造位置
+          2. fallback EssentialsX 传送：/esethome gzqy → /ehomes mdssj → withdraw → /ehomes gzqy
         """
         self.progress.state = "restocking"
         clean_id = needed_block_id.split("[")[0] if "[" in needed_block_id else needed_block_id
 
+        # 记录建造位置（传送补货时回程用）
+        build_pos = self._last_pos
+
+        # ── 策略 1：分区补给箱（无传送依赖，适合多 bot 分区） ──
+        if self._supply_box is not None:
+            try:
+                sx, sy, sz = self._supply_box
+                logger.info("[%s] Restock from supply box at (%d,%d,%d)",
+                            self.bot_id, sx, sy, sz)
+                if await self._move_to(sx, sy, sz, max_offset=2, label="supply box",
+                                       timeout_ms=25000):
+                    # radius=8：实际箱子可能不在建议坐标附近（用户放置位置有偏差）
+                    scan = await self.mcp.scan_nearby_blocks(
+                        radius=8, max_count=20, material_filter="chest")
+                    blocks = (scan.get("data", scan)).get("blocks", [])
+                    if blocks:
+                        chest = blocks[0]
+                        open_result = await self.mcp.open_container_at(
+                            chest["x"], chest["y"], chest["z"], timeout_ms=5000)
+                        inv_id = (open_result.get("data", open_result)).get("inventoryId", 0)
+                        await self.mcp.withdraw_container_item(clean_id, needed_count, inv_id)
+                        await self.mcp.close_container(inv_id)
+                        logger.info("[%s] Supply-box restock done: %s ×%d",
+                                    self.bot_id, clean_id, needed_count)
+                        # 返回建造位置
+                        if build_pos:
+                            await self._move_to(*build_pos, max_offset=2,
+                                                label="back to build pos")
+                        self.progress.state = "placing"
+                        return True
+                logger.warning("[%s] Supply box unavailable, fallback to teleport",
+                               self.bot_id)
+            except Exception as e:
+                logger.warning("[%s] Supply-box restock failed: %s, fallback to teleport",
+                               self.bot_id, e)
+
+        # ── 策略 2：EssentialsX 传送仓库 ──
         try:
-            # 1. 保存当前位置
+            # 1. 保存当前位置（命令失败 → 立即中止，避免位置未知继续误操作）
             logger.info("[%s] Saving position → /esethome %s", self.bot_id, self.TEMP_HOME)
-            await self.mcp.send_chat(f"/esethome {self.TEMP_HOME}")
+            r1 = await self.mcp.send_chat(f"/esethome {self.TEMP_HOME}")
+            if isinstance(r1, dict) and r1.get("success") is False:
+                logger.warning("[%s] /esethome failed: %s", self.bot_id, r1.get("error", "?"))
+                return False
             await asyncio.sleep(1.5)
 
             # 2. 传到仓库
             logger.info("[%s] Teleporting to warehouse → /ehomes %s", self.bot_id, self.WAREHOUSE_HOME)
-            await self.mcp.send_chat(f"/ehomes {self.WAREHOUSE_HOME}")
+            r2 = await self.mcp.send_chat(f"/ehomes {self.WAREHOUSE_HOME}")
+            if isinstance(r2, dict) and r2.get("success") is False:
+                logger.warning("[%s] /ehomes warehouse failed: %s", self.bot_id, r2.get("error", "?"))
+                return False
             await asyncio.sleep(2.5)
 
             # 3. 扫描附近找容器
@@ -356,9 +703,13 @@ class BotBuildLoop:
             logger.error("[%s] Restock failed: %s", self.bot_id, e)
             return False
         finally:
-            # 5. 传回建造位置（无论成败都返回）
-            await self.mcp.send_chat(f"/ehomes {self.TEMP_HOME}")
-            await asyncio.sleep(1.5)
+            # 5. 传回建造位置（无论成败都返回）；try/except 防覆盖返回值
+            try:
+                await self.mcp.send_chat(f"/ehomes {self.TEMP_HOME}")
+                await asyncio.sleep(1.5)
+            except Exception:
+                pass
+            self._last_pos = None  # 传送后位置未知，强制下次寻路
             self.progress.state = "placing"
 
 
@@ -385,6 +736,10 @@ class MapArtCoordinator:
         self._started_at: float = 0.0
         self._progress_task: Optional[asyncio.Task] = None
         self._block_matrix: dict[tuple[int, int], str] = {}
+        self._done_loops: set[str] = set()  # P1-10：正常完成的任务判定
+        self._completion_notified: bool = False
+        # P2-27：待接管区域队列（remove_bot 释放的未完成区域 → add_bot 分配）
+        self._pending_regions: list[Region] = []
 
     # ── Build 2D matrix from projection layers ──
 
@@ -426,6 +781,23 @@ class MapArtCoordinator:
         # Partition
         regions = partition_rectangular(size_x, size_z, n_bots)
 
+        # 补给箱方案（开发文档 §补给策略）：每个区域北缘中点分配一个补给箱坐标
+        supply_boxes = assign_supply_boxes(
+            regions, self.origin[0], self.origin[1], self.origin[2],
+        )
+
+        # P2-15：建造开始前复位 bot 手动控制状态（移动控制台遗留的方向键/视角会与
+        # pathfinder 并发抢控制 → 放置位置错乱）。MCC 无 set_control_state，用 hasattr 兼容。
+        for bot_id, (_name, mcp) in bot_agents.items():
+            try:
+                if hasattr(mcp, "cancel_pathing"):
+                    await mcp.cancel_pathing()
+                if hasattr(mcp, "set_control_state"):
+                    for ctrl in ("forward", "back", "left", "right", "jump", "sneak", "sprint"):
+                        await mcp.set_control_state(ctrl, False)
+            except Exception as e:
+                logger.warning("[%s] Reset control state failed: %s", bot_id, e)
+
         # Spawn loops
         bot_ids = list(bot_agents.keys())
         for i, bot_id in enumerate(bot_ids):
@@ -440,6 +812,8 @@ class MapArtCoordinator:
                 origin_y=self.origin[1],
                 origin_z=self.origin[2],
                 mcp=mcp,
+                supply_box=supply_boxes[i] if i < len(supply_boxes) else None,
+                on_done=self._on_loop_done,
             )
             self._loops[bot_id] = loop
             asyncio.create_task(loop.run())
@@ -464,14 +838,117 @@ class MapArtCoordinator:
         if self._progress_task:
             self._progress_task.cancel()
 
+    # ── Dynamic bot assignment (P2-27) ─────────
+
+    async def add_bot(self, bot_id: str, bot_name: str,
+                      mcp: AbstractBotAgent) -> Optional[Region]:
+        """Assign a pending (released/unfinished) region to a new bot.
+
+        Returns the assigned Region on success, None if no region is pending
+        (all regions already assigned or finished).
+        """
+        if not self._pending_regions:
+            logger.warning("[%s] add_bot %s: no pending region to assign",
+                           self.task_id, bot_id)
+            return None
+        region = self._pending_regions.pop(0)
+
+        # 复位手动控制状态（同 start，防移动控制台遗留方向键与寻路抢控制）
+        try:
+            if hasattr(mcp, "cancel_pathing"):
+                await mcp.cancel_pathing()
+            if hasattr(mcp, "set_control_state"):
+                for ctrl in ("forward", "back", "left", "right", "jump", "sneak", "sprint"):
+                    await mcp.set_control_state(ctrl, False)
+        except Exception as e:
+            logger.warning("[%s] Reset control state for %s failed: %s",
+                           self.task_id, bot_id, e)
+
+        loop = BotBuildLoop(
+            bot_id=bot_id,
+            bot_name=bot_name,
+            task_id=self.task_id,
+            region=region,
+            block_matrix=self._block_matrix,
+            origin_x=self.origin[0],
+            origin_y=self.origin[1],
+            origin_z=self.origin[2],
+            mcp=mcp,
+            supply_box=None,  # 新 bot 走 EssentialsX 传送补货（补给箱已按原 bot 分配）
+            on_done=self._on_loop_done,
+        )
+        self._loops[bot_id] = loop
+        asyncio.create_task(loop.run())
+        logger.info("[%s] Bot %s took over region z[%d..%d]",
+                    self.task_id, bot_id, region.z_start, region.z_end)
+        return region
+
+    async def remove_bot(self, bot_id: str) -> bool:
+        """Stop a bot and release its unfinished region for reassignment.
+
+        Returns True on success, False if the bot is not running in this task.
+        """
+        loop = self._loops.pop(bot_id, None)
+        if not loop:
+            logger.warning("[%s] remove_bot %s: not running in this task",
+                           self.task_id, bot_id)
+            return False
+        await loop.stop()
+        self._done_loops.discard(bot_id)
+        # 已完成区域无需接管；未完成区域进入待接管队列
+        if loop.progress.state != "completed":
+            self._pending_regions.append(loop.region)
+            logger.info("[%s] Bot %s removed, region z[%d..%d] released for takeover",
+                        self.task_id, bot_id,
+                        loop.region.z_start, loop.region.z_end)
+        else:
+            logger.info("[%s] Bot %s removed (region already completed)",
+                        self.task_id, bot_id)
+        return True
+
     # ── Progress & Socket.IO ──────────────────
+
+    def _on_loop_done(self, bot_id: str) -> None:
+        """P1-10：单个 bot 区域正常完成 → 全部完成后任务置 completed（DB + 推送）。"""
+        self._done_loops.add(bot_id)
+        if self._completion_notified or not self._loops:
+            return
+        if len(self._done_loops) >= len(self._loops):
+            self._completion_notified = True
+            logger.info("[%s] All regions complete, marking task completed", self.task_id)
+            try:
+                from vmtools_next.data.db import get_session_factory, sio as _sio
+                from vmtools_next.data.models.build_map_art import MapArtTask
+                Session = get_session_factory()
+                db = Session()
+                try:
+                    from datetime import datetime, timezone
+                    task = db.query(MapArtTask).filter(
+                        MapArtTask.task_id == self.task_id).first()
+                    if task and task.status == "running":
+                        task.status = "completed"
+                        task.completed_at = datetime.now(timezone.utc)
+                        db.commit()
+                finally:
+                    db.close()
+                asyncio.create_task(_sio.emit(
+                    "build_progress",
+                    {"task_id": self.task_id, "status": "completed"},
+                    room=f"build_{self.task_id}",
+                ))
+            except Exception as e:
+                logger.warning("[%s] Completion persist failed: %s", self.task_id, e)
 
     async def _push_loop(self):
         """Every 2 seconds, aggregate progress and push via Socket.IO."""
         try:
             while True:
                 await asyncio.sleep(2)
-                await self._push_progress()
+                try:
+                    await self._push_progress()
+                except Exception as e:
+                    # 单次推送失败不退出循环（sio.emit 可能因无客户端/序列化失败）
+                    logger.warning("[%s] Push progress failed: %s", self.task_id, e)
         except asyncio.CancelledError:
             pass
 
@@ -480,13 +957,15 @@ class MapArtCoordinator:
         room = f"build_{self.task_id}"
         await sio.emit("build_progress", state.__dict__, room=room)
 
-        # Bot positions
+        # Bot positions（_last_pos = 最近寻路目标≈bot 当前站立点，供 3D 标记定位）
         bot_data = []
         for bid, loop in self._loops.items():
+            lp = loop._last_pos
             bot_data.append({
                 "bot_id": bid,
                 "bot_name": loop.bot_name,
                 "state": loop.progress.state,
+                "position": {"x": lp[0], "y": lp[1], "z": lp[2]} if lp else None,
                 "region": {
                     "x_start": loop.region.x_start,
                     "x_end": loop.region.x_end,
@@ -535,6 +1014,10 @@ class MapArtCoordinator:
         rate = placed / (elapsed / 60) if elapsed > 0 else 0
         remaining = total - placed
         eta = (remaining / rate) * 60 if rate > 0 else 0
+        # P1-10：全部区域完成 → 任务级 status=completed（不再硬编码 running）
+        status = ("completed" if self._done_loops
+                  and len(self._done_loops) >= len(self._loops) and self._loops
+                  else "running")
 
         bots = [{
             "bot_id": l.bot_id,
@@ -552,7 +1035,7 @@ class MapArtCoordinator:
 
         return MapArtBuildState(
             task_id=self.task_id,
-            status="running",
+            status=status,
             total_blocks=total,
             placed_blocks=placed,
             bots=bots,

@@ -17,6 +17,7 @@ from vmtools_next.api.schemas.mcc import (
 )
 from vmtools_next.data.models.logistics import MccBotModel
 from vmtools_next.adapters.mcc.mcc_mcp_client import MccMcpClient, MccMcpError
+from vmtools_next.adapters.mineflayer.mineflayer_client import MineflayerError
 
 router = APIRouter(prefix="/api/mcc-bots", tags=["mcc-bots"])
 
@@ -432,12 +433,21 @@ async def disconnect_bot(bot_id: str, db: Session = Depends(get_db),
 # ── MCP connection cache (shared session for inventory actions) ──
 
 import time as _time
-_mcp_conn_cache: dict[str, tuple[float, object]] = {}  # bot_id → (last_used_ts, client)
+# P2-14：cache key 带引擎——(engine, bot_id)，避免 MCC/MF 引擎错配
+#（旧实现只按 bot_id，MF bot 可能命中缓存的 MCC client）
+_mcp_conn_cache: dict[tuple[str, str], tuple[float, object]] = {}
 _MCP_CACHE_TTL = 120  # seconds
 
 
 async def _get_mcp_client(bot_id: str, mcp_port: int = 0):
-    """Get bot agent client from the engine-appropriate session pool, cache, or create new."""
+    """Get bot agent client from the engine-appropriate session pool, cache, or create new.
+
+    引擎隔离（P2-14）：
+    - 优先取该 bot 引擎对应会话池中的 client（MCC pool / MF pool）
+    - cache 按 (engine, bot_id) 区分，杜绝引擎错配
+    - 仅 MCC 允许按 MCP 端口新建连接；MF 必须通过会话池（process manager 管理），
+      无连接时直接报错（不能临时 new 一个 MCC client 冒充 MF）
+    """
     from vmtools_next.main import get_pool_for_engine
     from vmtools_next.core.bot_engine import resolve_bot_engine
     from vmtools_next.data.db import get_session_factory
@@ -451,19 +461,28 @@ async def _get_mcp_client(bot_id: str, mcp_port: int = 0):
         if client:
             return client, False
 
-    # 2. Try cache
-    cached = _mcp_conn_cache.get(bot_id)
+    # 2. Try cache（key 带 engine）
+    key = (engine, bot_id)
+    cached = _mcp_conn_cache.get(key)
     if cached:
         ts, client = cached
         if _time.time() - ts < _MCP_CACHE_TTL:
-            _mcp_conn_cache[bot_id] = (_time.time(), client)
+            _mcp_conn_cache[key] = (_time.time(), client)
             return client, True
         # Expired — clean up
-        try: await client.disconnect()
-        except: pass
-        del _mcp_conn_cache[bot_id]
+        try:
+            await client.disconnect()
+        except Exception:
+            pass
+        del _mcp_conn_cache[key]
 
-    # 3. Create new connection (MCC MCP fallback)
+    # 3. Create new connection —— 仅 MCC 支持；MF 必须通过会话池连接
+    if engine != "mcc":
+        raise HTTPException(
+            503,
+            f"Bot {bot_id}（{engine}）未连接：请先通过 connect 接口建立会话"
+            "（MF bot 由进程管理器管理，不支持临时新建连接）",
+        )
     port = mcp_port
     if not port:
         from vmtools_next.data.models.mcc_remote import MccInstanceModel
@@ -481,7 +500,7 @@ async def _get_mcp_client(bot_id: str, mcp_port: int = 0):
     ok = await client.connect()
     if not ok:
         raise HTTPException(503, f"无法连接 MCC MCP port={port}")
-    _mcp_conn_cache[bot_id] = (_time.time(), client)
+    _mcp_conn_cache[key] = (_time.time(), client)
     return client, True
 
 
@@ -537,7 +556,7 @@ async def get_inventory(bot_id: str, mcp_port: int = 0,
         data = snap.get("data", snap)
         if not isinstance(data, dict):
             data = {"items": []}
-    except MccMcpError as e:
+    except (MccMcpError, MineflayerError) as e:
         raise HTTPException(502, f"MCP error: {str(e) or repr(e)}")
     finally:
         pass  # keep connection alive in cache
@@ -599,7 +618,7 @@ async def inventory_action(bot_id: str, data: InventoryActionRequest,
         if isinstance(result, dict) and result.get("success") is False:
             raise HTTPException(400, result.get("error", "该引擎不支持此操作"))
         return {"success": True, "action": data.action, "slot": data.slot_id, "result": result}
-    except MccMcpError as e:
+    except (MccMcpError, MineflayerError) as e:
         raise HTTPException(502, f"MCP error: {str(e) or repr(e)}")
     finally:
         pass  # keep connection alive in cache
@@ -623,7 +642,7 @@ async def inventory_drop(bot_id: str, data: InventoryDropRequest,
             raise HTTPException(400, result.get("error", "丢弃失败"))
         return {"success": True, "dropped": data.item_type, "count": data.count,
                 "slot": data.slot_id, "result": result}
-    except MccMcpError as e:
+    except (MccMcpError, MineflayerError) as e:
         raise HTTPException(502, f"MCP error: {str(e) or repr(e)}")
     finally:
         pass  # keep connection alive in cache
@@ -638,7 +657,7 @@ async def inventory_select_hotbar(bot_id: str, data: InventorySelectHotbarReques
     try:
         result = await client.change_hotbar_slot(data.slot)
         return {"success": True, "slot": data.slot, "result": result}
-    except MccMcpError as e:
+    except (MccMcpError, MineflayerError) as e:
         raise HTTPException(502, f"MCP error: {str(e) or repr(e)}")
     finally:
         if owned: await client.disconnect()
@@ -658,7 +677,7 @@ async def inventory_move(bot_id: str, data: InventoryMoveRequest,
         if isinstance(result, dict) and result.get("success") is False:
             raise HTTPException(400, result.get("error", "移动失败"))
         return {"success": True, "from": data.slot_id, "to": data.dest_slot_id, "result": result}
-    except MccMcpError as e:
+    except (MccMcpError, MineflayerError) as e:
         raise HTTPException(502, f"MCP error: {str(e) or repr(e)}")
     finally:
         if owned: await client.disconnect()
@@ -679,7 +698,7 @@ async def inventory_use(bot_id: str, data: InventoryUseRequest,
         if isinstance(result, dict) and result.get("success") is False:
             raise HTTPException(400, result.get("error", "使用失败"))
         return {"success": True, "item": result.get("item"), "result": result}
-    except MccMcpError as e:
+    except (MccMcpError, MineflayerError) as e:
         raise HTTPException(502, f"MCP error: {str(e) or repr(e)}")
     finally:
         if owned: await client.disconnect()
@@ -698,7 +717,7 @@ async def bot_state(bot_id: str, db: Session = Depends(get_db), user=Depends(get
             raise HTTPException(400, "MCC 引擎请使用状态页（state 仅 mineflayer）")
         result = await client.get_player_state()
         return {"success": True, "result": result}
-    except MccMcpError as e:
+    except (MccMcpError, MineflayerError) as e:
         raise HTTPException(502, f"MCP error: {str(e) or repr(e)}")
     finally:
         if owned: await client.disconnect()
@@ -717,7 +736,7 @@ async def bot_control(bot_id: str, data: MoveControlRequest,
         if isinstance(result, dict) and result.get("success") is False:
             raise HTTPException(400, result.get("error", "控制失败"))
         return {"success": True, "direction": data.direction, "state": data.state, "result": result}
-    except MccMcpError as e:
+    except (MccMcpError, MineflayerError) as e:
         raise HTTPException(502, f"MCP error: {str(e) or repr(e)}")
     finally:
         if owned: await client.disconnect()
@@ -735,7 +754,7 @@ async def bot_jump(bot_id: str, db: Session = Depends(get_db), user=Depends(requ
         if isinstance(result, dict) and result.get("success") is False:
             raise HTTPException(400, result.get("error", "跳跃失败"))
         return {"success": True, "result": result}
-    except MccMcpError as e:
+    except (MccMcpError, MineflayerError) as e:
         raise HTTPException(502, f"MCP error: {str(e) or repr(e)}")
     finally:
         if owned: await client.disconnect()
@@ -754,7 +773,7 @@ async def bot_sneak(bot_id: str, data: SneakRequest,
         if isinstance(result, dict) and result.get("success") is False:
             raise HTTPException(400, result.get("error", "操作失败"))
         return {"success": True, "sneaking": result.get("sneaking"), "result": result}
-    except MccMcpError as e:
+    except (MccMcpError, MineflayerError) as e:
         raise HTTPException(502, f"MCP error: {str(e) or repr(e)}")
     finally:
         if owned: await client.disconnect()
@@ -773,7 +792,7 @@ async def bot_look(bot_id: str, data: LookRequest,
         if isinstance(result, dict) and result.get("success") is False:
             raise HTTPException(400, result.get("error", "视角控制失败"))
         return {"success": True, "yaw": data.yaw, "pitch": data.pitch, "result": result}
-    except MccMcpError as e:
+    except (MccMcpError, MineflayerError) as e:
         raise HTTPException(502, f"MCP error: {str(e) or repr(e)}")
     finally:
         if owned: await client.disconnect()

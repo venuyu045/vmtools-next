@@ -125,6 +125,10 @@ class MineflayerSessionPool:
                         # 移除失效 client（监听循环已退出），由 MineflayerProcessManager
                         # 处理重启；同时同步状态
                         self._clients.pop(bot_id, None)
+                        try:
+                            await client.disconnect()
+                        except Exception:
+                            pass
                         await self._sync_bot_status(bot_id, "offline")
             except asyncio.CancelledError:
                 break

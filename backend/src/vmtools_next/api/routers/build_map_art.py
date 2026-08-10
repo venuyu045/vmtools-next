@@ -78,6 +78,20 @@ async def create_task(
     user=Depends(require_admin),
 ):
     """Create a new map art build task from a Litematica projection file."""
+    # 地图画建造仅支持 mineflayer 引擎（投影解析/建造执行均为 MF 专属）
+    # 必须至少选 1 个 MF bot：空列表会创建 "unassigned" 分配 → 启动时被 MF-only
+    # 校验拒绝 → 任务永远无法启动（P1 修复：创建时即强校验）。
+    if not data.bot_ids:
+        raise HTTPException(status_code=400, detail="请至少选择 1 个 Mineflayer Bot")
+    from vmtools_next.core.bot_engine import resolve_bot_engine
+    for bid in data.bot_ids:
+        engine = resolve_bot_engine(bid, db)
+        if engine != "mineflayer":
+            raise HTTPException(
+                status_code=400,
+                detail=f"地图画建造仅支持 Mineflayer Bot：{bid} 的引擎为 {engine}",
+            )
+
     # 路径安全：只允许解析已上传目录内的投影文件（防任意路径文件读取）
     from pathlib import Path as _Path
     _upload_dir = (_Path(__file__).resolve().parent.parent.parent.parent.parent
@@ -97,6 +111,18 @@ async def create_task(
         reqs = await LitematicaParser.get_material_requirements(data.projection_file_path)
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Failed to parse projection: {e}")
+
+    # P2-12：坐标系一致性校验——map_art 后端用「相对坐标+origin」放置、前端用投影
+    # 坐标渲染，均假设投影 Position=(0,0,0)；带偏移投影会"什么都建不出"或坐标错位。
+    for rname, rinfo in (parsed.regions or {}).items():
+        pos = rinfo.get("position") or {}
+        if pos.get("x") != 0 or pos.get("y") != 0 or pos.get("z") != 0:
+            raise HTTPException(
+                status_code=400,
+                detail=(f"投影 region '{rname}' 原点偏移 "
+                        f"({pos.get('x')},{pos.get('y')},{pos.get('z')})："
+                        "请先在 Litematica 中把投影平移到原点 (0,0,0) 后重新导出"),
+            )
 
     # Create task
     task = MapArtTask(
@@ -144,16 +170,15 @@ async def create_task(
         )
         db.add(ba)
 
-    # Block states
-    layers = parsed.layers
-    for y_offset, blocks in layers.items():
-        for wx, wy, wz, block_id in blocks:
-            bs = MapArtBlockState(
-                task_id=task.task_id,
-                x=wx, y=wy, z=wz,
-                expected_block=block_id,
-            )
-            db.add(bs)
+    # Block states（P2-19：bulk insert 分批提交，避免 16384+ 条单 commit 过慢）
+    _payload = [
+        {"task_id": task.task_id, "x": wx, "y": wy, "z": wz,
+         "expected_block": block_id}
+        for y_offset, blocks in layers.items()
+        for wx, wy, wz, block_id in blocks
+    ]
+    for i in range(0, len(_payload), 1000):
+        db.execute(MapArtBlockState.__table__.insert(), _payload[i:i + 1000])
 
     db.commit()
 
@@ -285,20 +310,38 @@ async def control_task(
     if data.action == "start":
         if task.status not in ("draft", "pending"):
             raise HTTPException(status_code=400, detail=f"Cannot start task in '{task.status}' state")
+        # P2-28：多任务并发限制——开发文档假设单任务（bot 重复分配会冲突）。
+        # 有 running 任务时拒绝再启动，避免同一批 bot 被两个 coordinator 抢占。
+        running = db.query(MapArtTask).filter(
+            MapArtTask.status == "running",
+            MapArtTask.task_id != task_id,
+        ).first()
+        if running:
+            raise HTTPException(
+                status_code=400,
+                detail=f"已有运行中的任务（{running.name}），请先完成或停止后再启动新任务",
+            )
         # Spawn coordinator
-        # Parse projection
-        parsed = await LitematicaParser.parse_file(task.projection_file_path)
+        # P2-7：投影解析结果在 create_task 时已写入 MapArtBlockState（DB 即解析缓存），
+        # 启动时直接从 DB 重建 layers，避免对大投影重复 parse_file（512×512+ 耗时/IO）。
+        from vmtools_next.data.models.build_map_art import MapArtBlockState as _MABS
+        _rows = db.query(_MABS).filter(_MABS.task_id == task_id).all()
+        _layers: dict[int, list[tuple[int, int, int, str]]] = {}
+        for _r in _rows:
+            _layers.setdefault(_r.y, []).append((_r.x, _r.y, _r.z, _r.expected_block))
         coord = MapArtCoordinator(
             task_id=task_id,
             projection_data={
-                "layers": parsed.layers,
-                "regions": parsed.regions,
+                "layers": _layers,
+                "regions": {"Main": {
+                    "size": {"x": task.projection_size_x, "z": task.projection_size_z},
+                }},
             },
             origin_x=task.origin_x,
             origin_y=task.origin_y,
             origin_z=task.origin_z,
         )
-        # 按每个 bot 的引擎从对应 session pool 取 client（MCC MCP vs mineflayer WS）
+        # 地图画建造仅支持 mineflayer 引擎：所有 bot 必须为 MF，且只从 mineflayer pool 取 client
         from vmtools_next.main import get_pool_for_engine
         from vmtools_next.core.bot_engine import resolve_bot_engine
         bot_mcps = {}
@@ -306,7 +349,13 @@ async def control_task(
             MapArtBotAssignment.task_id == task_id
         ).all()
         for ba in assignments:
-            pool = get_pool_for_engine(resolve_bot_engine(ba.bot_id, db))
+            engine = resolve_bot_engine(ba.bot_id, db)
+            if engine != "mineflayer":
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"地图画建造仅支持 Mineflayer Bot：{ba.bot_id} 的引擎为 {engine}",
+                )
+            pool = get_pool_for_engine("mineflayer")
             client = pool.get_client(ba.bot_id) if pool else None
             if client:
                 bot_mcps[ba.bot_id] = (ba.bot_name or ba.bot_id, client)
@@ -341,6 +390,110 @@ async def control_task(
 
     db.commit()
     return {"task_id": task_id, "status": task.status, "message": f"Task {data.action}ed"}
+
+
+@router.post("/tasks/{task_id}/bots")
+async def manage_task_bot(
+    task_id: str,
+    data: BotManageRequest,
+    db: Session = Depends(get_db),
+    user=Depends(require_admin),
+):
+    """P2-27：动态 bot 分配——运行中任务 add/remove bot（区域接管）。
+
+    - add：把 remove_bot 释放的未完成区域分配给新 bot（从 MF pool 取 client）
+    - remove：停止 bot 并释放其未完成区域，等待后续 add 接管
+    """
+    task = db.query(MapArtTask).filter(MapArtTask.task_id == task_id).first()
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    coordinator = get_coordinator(task_id)
+    if not coordinator:
+        raise HTTPException(status_code=400, detail="任务未在运行，动态分配仅对 running 任务生效")
+
+    from vmtools_next.core.bot_engine import resolve_bot_engine
+    from vmtools_next.main import get_pool_for_engine
+
+    if data.action == "add":
+        engine = resolve_bot_engine(data.bot_id, db)
+        if engine != "mineflayer":
+            raise HTTPException(status_code=400,
+                                detail=f"地图画建造仅支持 Mineflayer Bot：{data.bot_id} 的引擎为 {engine}")
+        pool = get_pool_for_engine("mineflayer")
+        client = pool.get_client(data.bot_id) if pool else None
+        if not client:
+            raise HTTPException(status_code=400, detail=f"Bot {data.bot_id} 未连接")
+
+        region = await coordinator.add_bot(data.bot_id, data.bot_id, client)
+        if region is None:
+            raise HTTPException(status_code=400,
+                                detail="无待接管区域（所有区域均已分配或完成）")
+        # DB：新增 assignment 记录
+        ba = MapArtBotAssignment(
+            task_id=task_id,
+            bot_id=data.bot_id,
+            bot_name=data.bot_id,
+            region_x_start=region.x_start,
+            region_x_end=region.x_end,
+            region_z_start=region.z_start,
+            region_z_end=region.z_end,
+            blocks_total=region.block_count,
+            state="running",
+        )
+        db.add(ba)
+        db.commit()
+        return {"task_id": task_id, "bot_id": data.bot_id,
+                "action": "add", "region": {
+                    "x_start": region.x_start, "x_end": region.x_end,
+                    "z_start": region.z_start, "z_end": region.z_end,
+                }}
+
+    if data.action == "remove":
+        ok = await coordinator.remove_bot(data.bot_id)
+        if not ok:
+            raise HTTPException(status_code=400,
+                                detail=f"Bot {data.bot_id} 不在该运行任务中")
+        # DB：释放原 assignment（标记 released，保留历史）
+        ba = db.query(MapArtBotAssignment).filter(
+            MapArtBotAssignment.task_id == task_id,
+            MapArtBotAssignment.bot_id == data.bot_id,
+        ).first()
+        if ba:
+            ba.state = "released"
+        db.commit()
+        return {"task_id": task_id, "bot_id": data.bot_id, "action": "remove"}
+
+    raise HTTPException(status_code=400, detail=f"Unknown action: {data.action}")
+
+
+@router.get("/tasks/{task_id}/blocks/placed")
+def get_task_placed_blocks(task_id: str, db: Session = Depends(get_db),
+                           user=Depends(require_admin)):
+    """P1-5：轻量增量接口——只返回已放置方块，供前端 2D 画布轮询刷新。
+
+    相比全量 blocks（16384+ 条），placed 子集通常远小；前端每 5s 拉一次
+    增量涂色，避免画布停留在页面加载快照。
+    """
+    task = db.query(MapArtTask).filter(MapArtTask.task_id == task_id).first()
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    blocks = db.query(MapArtBlockState).filter(
+        MapArtBlockState.task_id == task_id,
+        MapArtBlockState.placed.is_(True),
+    ).all()
+
+    return {
+        "task_id": task_id,
+        "blocks": [
+            {"x": b.x, "y": b.y, "z": b.z,
+             "block": b.actual_block or b.expected_block}
+            for b in blocks
+        ],
+        "placed": len(blocks),
+        "total": task.total_blocks or 0,
+    }
 
 
 @router.delete("/tasks/{task_id}")

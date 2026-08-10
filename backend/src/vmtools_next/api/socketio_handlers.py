@@ -469,30 +469,16 @@ async def build_control(sid, data):
 
     try:
         if action == "start":
-            bot_id = data.get("bot_id")
-            projection_path = data.get("projection_file_path")
-            if not bot_id or not projection_path:
-                await sio.emit("build_alert", {"type": "error", "message": "bot_id and projection_file_path required"}, to=sid)
-                return
-            # 按 bot 的引擎选择对应 TaskEngine
-            from vmtools_next.main import get_task_engine_for_bot
-            from vmtools_next.data.db import get_session_factory as _gsf
-            db = _gsf()()
-            try:
-                engine = get_task_engine_for_bot(bot_id, db)
-            finally:
-                db.close()
-            if not engine:
-                await sio.emit("build_alert", {"type": "error", "message": "Task engine not initialized"}, to=sid)
-                return
-            task_id_result = await engine.start_build_task(
-                bot_id, projection_path,
-                data.get("origin_x", 0), data.get("origin_y", 0), data.get("origin_z", 0)
+            # 建造功能已统一迁移至地图画 API（/api/build/map-art/*，仅支持 Mineflayer Bot）。
+            # 旧 BuildStateMachine（MCC 投影建造，依赖 MccLitematicaAdapter）已废弃——
+            # 投影解析仅向 mineflayer 引擎提供，此处直接拒绝并引导。
+            await sio.emit(
+                "build_alert",
+                {"type": "error",
+                 "message": "建造功能请使用地图画 API（仅支持 Mineflayer Bot）：/api/build/map-art/tasks"},
+                to=sid,
             )
-            if task_id_result:
-                await sio.emit("build_alert", {"type": "info", "message": f"Build started: {task_id_result}"}, to=sid)
-            else:
-                await sio.emit("build_alert", {"type": "error", "message": "Failed to start build"}, to=sid)
+            return
         elif action == "stop" and task_id:
             await _task_control_all("stop", task_id)
         elif action == "pause" and task_id:
@@ -581,6 +567,9 @@ async def build_map_join(sid, data: dict):
     Frontend emits: { task_id: "xxx" }
     Backend: joins room "build_{task_id}", pushes build_map_init
     """
+    # 建造进度属管理数据：仅 admin / site_admin 可订阅（防任务进度泄露）
+    if not await _require_admin_socket(sid):
+        return
     task_id = data.get("task_id", "")
     if not task_id:
         return
@@ -606,6 +595,8 @@ async def build_map_request_blocks(sid, data: dict):
     Frontend emits: { task_id, chunk: { x_start, x_end, z_start, z_end } }
     Backend responds with build_map_chunk event.
     """
+    if not await _require_admin_socket(sid):
+        return
     from sqlalchemy.orm import Session
     task_id = data.get("task_id", "")
     chunk = data.get("chunk", {})
