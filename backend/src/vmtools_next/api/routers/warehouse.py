@@ -283,7 +283,15 @@ def search_item_details(q: str = "", limit: int = 50,
 
     like = f"%{q}%"
     zh_ids = search_zh_keywords(q)  # 中文关键词 → item_id 候选（不带命名空间）
-    conditions = [MaterialItemModel.item_id.like(like), MaterialItemModel.display_name.like(like)]
+    # 匹配优先级：①精确 item_id（走索引）②item_id 前缀（minecraft: 带/不带，走索引）
+    # ③中文关键词精确 in（走索引）④模糊 LIKE 兜底（'%q%' 无法走索引，仅兜底）
+    conditions = [
+        MaterialItemModel.item_id == q,
+        MaterialItemModel.item_id.like(f"{q}%"),
+        MaterialItemModel.item_id.like(f"minecraft:{q}%"),
+        MaterialItemModel.item_id.like(like),
+        MaterialItemModel.display_name.like(like),
+    ]
     if zh_ids:
         # 兼容带/不带 minecraft: 前缀（仓库数据为 minecraft:xxx）
         prefixed = [f"minecraft:{k}" for k in zh_ids]
@@ -311,13 +319,31 @@ def search_item_details(q: str = "", limit: int = 50,
     whs = {w.warehouse_id: w for w in db.query(WarehouseModel).all()}
 
     # 有明细数据的 item → 箱子定位（container_item_details）
+    # 性能优化：SQL 端按 (容器, 物品) 聚合 SUM(count)——detail 表历史高达 102 万行
+    # （潜影盒展开 slot 混淆导致），逐行取回再 Python 组装会返回几十万行；
+    # 聚合后每容器每物品仅一行，行数降到容器量级（全物品仓库 2 万容器 ≈ 2 万行）。
     detail_item_ids = list(wh_by_item.keys())
-    detail_rows = db.query(ContainerItemDetailModel).filter(
-        ContainerItemDetailModel.item_id.in_(detail_item_ids),
-    ).all() if detail_item_ids else []
-    detail_by_item: dict[str, list] = defaultdict(list)
-    for d in detail_rows:
-        detail_by_item[d.item_id].append(d)
+    detail_by_item: dict[str, list[tuple[str, int, int, int, int]]] = defaultdict(list)
+    if detail_item_ids:
+        from sqlalchemy import func as _f
+        detail_rows = db.query(
+            ContainerItemDetailModel.warehouse_fk,
+            ContainerItemDetailModel.container_x,
+            ContainerItemDetailModel.container_y,
+            ContainerItemDetailModel.container_z,
+            ContainerItemDetailModel.item_id,
+            _f.sum(ContainerItemDetailModel.count),
+        ).filter(
+            ContainerItemDetailModel.item_id.in_(detail_item_ids),
+        ).group_by(
+            ContainerItemDetailModel.warehouse_fk,
+            ContainerItemDetailModel.container_x,
+            ContainerItemDetailModel.container_y,
+            ContainerItemDetailModel.container_z,
+            ContainerItemDetailModel.item_id,
+        ).all()
+        for wh_fk, cx, cy, cz, ditem, dcount in detail_rows:
+            detail_by_item[ditem].append((wh_fk, cx, cy, cz, int(dcount or 0)))
 
     # 组装结果，按总储量降序
     results: list[ItemSearchResult] = []
@@ -327,12 +353,13 @@ def search_item_details(q: str = "", limit: int = 50,
         for wh_fk, count in sorted(wh_counts.items(), key=lambda kv: kv[1], reverse=True):
             w = whs.get(wh_fk)
             containers = []
+            # detail 聚合行：tuple (wh_fk, cx, cy, cz, count)；slot 聚合后无意义（-1）
             for d in sorted(detail_by_item.get(item_id, []),
-                            key=lambda d: (d.warehouse_fk != wh_fk, - (d.count or 0))):
-                if d.warehouse_fk == wh_fk:
+                            key=lambda d: (d[0] != wh_fk, -d[4])):
+                if d[0] == wh_fk:
                     containers.append(ItemSearchContainer(
-                        x=d.container_x, y=d.container_y, z=d.container_z,
-                        count=d.count or 0, slot=d.slot or -1,
+                        x=d[1], y=d[2], z=d[3],
+                        count=d[4], slot=-1,
                     ))
             warehouse_list.append(ItemSearchWarehouse(
                 warehouse_id=wh_fk,

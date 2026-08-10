@@ -184,8 +184,10 @@ function getListArray(listTag) {
  * @param {number} depth 当前递归深度（0=容器层）
  * @param {number} maxDepth 潜影盒最大展开深度（超出不再展开）
  * @param {Array} out 结果数组
+ * @param {number} containerSlot 潜影盒所在容器槽位（展开内部物品时用其标识，
+ *   避免多个潜影盒的内部 slot 0-26 互相混淆成"同一格反复计数"）
  */
-function collectListItems(listTag, depth, maxDepth, out) {
+function collectListItems(listTag, depth, maxDepth, out, containerSlot = -1) {
   const arr = getListArray(listTag);
   if (!arr) return;
   for (const entry of arr) {
@@ -199,11 +201,13 @@ function collectListItems(listTag, depth, maxDepth, out) {
       item_id: itemId,
       display_name: friendlyName(itemId),
       count: Number(count) || 0,
-      slot: Number(slot),
+      // 展开层（潜影盒内部）物品：slot 标记为潜影盒所在容器槽位，
+      // 表示"该容器的这个槽位（的潜影盒）里有此物品"；容器层用真实槽位。
+      slot: containerSlot >= 0 ? containerSlot : Number(slot),
     });
     // 潜影盒内容递归展开（深度限制，防嵌套潜影盒无限递归）
     if (isShulkerBoxItem(itemId) && depth < maxDepth) {
-      collectShulkerFromEntry(entry, depth + 1, maxDepth, out);
+      collectShulkerFromEntry(entry, depth + 1, maxDepth, out, slot);
     }
   }
 }
@@ -214,15 +218,16 @@ function collectListItems(listTag, depth, maxDepth, out) {
  * @param {number} depth 当前递归深度
  * @param {number} maxDepth 潜影盒最大展开深度
  * @param {Array} out 结果数组
+ * @param {number} containerSlot 潜影盒所在容器槽位
  */
-function collectShulkerContents(beValue, depth, maxDepth, out) {
+function collectShulkerContents(beValue, depth, maxDepth, out, containerSlot = -1) {
   let target = beValue;
   if (target.BlockEntityTag && target.BlockEntityTag.type === 'compound') {
     target = target.BlockEntityTag.value;
   }
   const listTag = target.Items || target.Inventory || target.Container;
   if (getListArray(listTag)) {
-    collectListItems(listTag, depth, maxDepth, out);
+    collectListItems(listTag, depth, maxDepth, out, containerSlot);
   }
 }
 
@@ -233,8 +238,9 @@ function collectShulkerContents(beValue, depth, maxDepth, out) {
  * @param {number} depth 当前递归深度
  * @param {number} maxDepth 潜影盒最大展开深度
  * @param {Array} out 结果数组
+ * @param {number} containerSlot 潜影盒所在容器槽位
  */
-function collectContainerComponent(listTag, depth, maxDepth, out) {
+function collectContainerComponent(listTag, depth, maxDepth, out, containerSlot = -1) {
   const arr = getListArray(listTag);
   if (!arr) return;
   for (const entry of arr) {
@@ -245,24 +251,23 @@ function collectContainerComponent(listTag, depth, maxDepth, out) {
     const id = iv.id?.value || iv.Id?.value || '';
     if (!id) continue;
     const count = iv.count?.value ?? iv.Count?.value ?? 1;
-    const slot = entry.slot?.value ?? entry.Slot?.value ?? -1;
     const itemId = String(id);
     out.push({
       item_id: itemId,
       display_name: friendlyName(itemId),
       count: Number(count) || 0,
-      slot: Number(slot),
+      slot: containerSlot >= 0 ? containerSlot : (entry.slot?.value ?? entry.Slot?.value ?? -1),
     });
     // 潜影盒内可能再嵌套潜影盒（深度限制）
     if (isShulkerBoxItem(itemId) && depth < maxDepth) {
       const be = findBlockEntityData(itemTag);
       if (be && be.value) {
-        collectShulkerContents(be.value, depth + 1, maxDepth, out);
+        collectShulkerContents(be.value, depth + 1, maxDepth, out, containerSlot);
       }
       const innerComp = itemTag.value.components && itemTag.value.components.value
         ? itemTag.value.components.value['minecraft:container'] : null;
       if (innerComp && innerComp.type === 'list') {
-        collectContainerComponent(innerComp, depth + 1, maxDepth, out);
+        collectContainerComponent(innerComp, depth + 1, maxDepth, out, containerSlot);
       }
     }
   }
@@ -274,21 +279,22 @@ function collectContainerComponent(listTag, depth, maxDepth, out) {
  * @param {number} depth 当前递归深度
  * @param {number} maxDepth 潜影盒最大展开深度
  * @param {Array} out 结果数组
+ * @param {number} containerSlot 潜影盒所在容器槽位（内部物品 slot 用此标识）
  */
-function collectShulkerFromEntry(entry, depth, maxDepth, out) {
+function collectShulkerFromEntry(entry, depth, maxDepth, out, containerSlot = -1) {
   // 1.21.x 潜影盒内容组件：components["minecraft:container"]
   try {
     const cc = entry.components && entry.components.value
       ? entry.components.value['minecraft:container'] : null;
     if (cc && cc.type === 'list') {
-      collectContainerComponent(cc, depth, maxDepth, out);
+      collectContainerComponent(cc, depth, maxDepth, out, containerSlot);
       return;
     }
   } catch (e) { /* ignore */ }
   // 旧格式：tag.BlockEntityTag
   const be = findBlockEntityData(entry);
   if (be && be.value) {
-    collectShulkerContents(be.value, depth + 1, maxDepth, out);
+    collectShulkerContents(be.value, depth + 1, maxDepth, out, containerSlot);
   }
 }
 

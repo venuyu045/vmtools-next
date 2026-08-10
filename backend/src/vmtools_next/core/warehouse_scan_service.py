@@ -151,18 +151,29 @@ def persist_scan_results(db: Session, warehouse_id: str,
             "item_name_zh": get_item_zh(primary.item_id, primary.display_name) if primary else "",
             "count": snap.total_items,
         })
+        # 明细聚合：同一容器同一槽位同一物品合并 count。
+        # 潜影盒展开后内部物品的 slot 统一标记为「潜影盒所在容器槽位」（servux.js），
+        # 同一潜影盒内同物品占多格时会落到同一 (slot, item) → 必须合并，
+        # 否则同一容器同一格会出现多行"反复计数"（历史数据 102 万行、重复率 87% 的根因）。
+        detail_map: dict[tuple[int, int, int, int, str], tuple[str, int]] = {}
         for item in snap.items:
             if not item.item_id:
                 continue
+            dkey = (snap.x, snap.y, snap.z,
+                    int(item.slot) if item.slot is not None else -1,
+                    item.item_id)
+            _prev_name, _prev_count = detail_map.get(dkey, (item.display_name or item.item_id, 0))
+            detail_map[dkey] = (_prev_name, _prev_count + int(item.count or 0))
+        for (dx, dy, dz, dslot, ditem), (dname, dcount) in detail_map.items():
             detail_rows.append({
                 "warehouse_fk": warehouse_id,
-                "container_x": snap.x,
-                "container_y": snap.y,
-                "container_z": snap.z,
-                "item_id": item.item_id,
-                "item_name_zh": get_item_zh(item.item_id, item.display_name),
-                "count": item.count,
-                "slot": item.slot,
+                "container_x": dx,
+                "container_y": dy,
+                "container_z": dz,
+                "item_id": ditem,
+                "item_name_zh": get_item_zh(ditem, dname),
+                "count": dcount,
+                "slot": dslot,
             })
             if len(detail_rows) >= _DETAIL_BATCH:
                 _bulk_insert(db, ContainerItemDetailModel, detail_rows, batch=_DETAIL_BATCH)
