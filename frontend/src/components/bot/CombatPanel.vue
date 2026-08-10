@@ -51,7 +51,8 @@
       </div>
       <div v-if="entities.length === 0" class="empty-text mono">范围内无实体</div>
       <div v-for="e in entities" :key="e.id" class="entity-row">
-        <span class="mono entity-name">{{ e.displayName }} <i class="entity-id">({{ e.name }})</i></span>
+        <span class="mono entity-name">{{ zhName(e.name) }}</span>
+        <span class="entity-id">({{ e.name }})</span>
         <span class="mono entity-dist">{{ e.distance }}m</span>
         <button class="pixel-btn mini" @click="attackOne(e.id)">攻击</button>
       </div>
@@ -71,6 +72,49 @@ interface EntityInfo {
   type: string
   distance: number
   position: { x: number; y: number; z: number }
+}
+
+// ── 实体名 → 中文（附近实体列表汉化，2026-08-10） ──
+const ENTITY_ZH: Record<string, string> = {
+  armor_stand: '盔甲架', item_frame: '物品展示框', painting: '画',
+  item: '掉落物', experience_orb: '经验球', experience_bottle: '附魔之瓶',
+  arrow: '箭', spectral_arrow: '光灵箭', trident: '三叉戟', snowball: '雪球',
+  egg: '鸡蛋', ender_pearl: '末影珍珠', ender_eye: '末影之眼',
+  fireball: '火球', small_fireball: '小火球', dragon_fireball: '末影龙火球',
+  wither_skull: '凋灵之首', shulker_bullet: '潜影贝导弹', llama_spit: '羊驼唾沫',
+  falling_block: '下落的方块', tnt: 'TNT', firework_rocket: '烟花火箭',
+  area_effect_cloud: '区域效果云', lightning_bolt: '闪电', fishing_bobber: '鱼钩',
+  minecart: '矿车', chest_minecart: '运输矿车', furnace_minecart: '动力矿车',
+  hopper_minecart: '漏斗矿车', command_block_minecart: '命令方块矿车',
+  tnt_minecart: 'TNT矿车', spawner_minecart: '刷怪笼矿车',
+  boat: '船', chest_boat: '箱子船',
+  zombie: '僵尸', husk: '尸壳', drowned: '溺尸', zombie_villager: '僵尸村民',
+  skeleton: '骷髅', stray: '流髅', bogged: '沼骸', wither_skeleton: '凋灵骷髅',
+  creeper: '苦力怕', spider: '蜘蛛', cave_spider: '洞穴蜘蛛',
+  enderman: '末影人', endermite: '末影螨', shulker: '潜影贝',
+  slime: '史莱姆', magma_cube: '岩浆怪', phantom: '幻翼',
+  blaze: '烈焰人', ghast: '恶魂', wither: '凋灵', witch: '女巫',
+  pillager: '掠夺者', vindicator: '卫道士', evoker: '唤魔者', ravager: '劫掠兽',
+  iron_golem: '铁傀儡', snow_golem: '雪傀儡', silverfish: '蠹虫',
+  guardian: '守卫者', elder_guardian: '远古守卫者', warden: '循声守卫',
+  piglin: '猪灵', piglin_brute: '猪灵蛮兵', zombified_piglin: '僵尸猪灵',
+  hoglin: '疣猪兽', zoglin: '僵尸疣猪兽', strider: '炽足兽',
+  villager: '村民', wandering_trader: '流浪商人', player: '玩家',
+  cow: '牛', pig: '猪', sheep: '羊', chicken: '鸡', rabbit: '兔子',
+  wolf: '狼', cat: '猫', horse: '马', donkey: '驴', mule: '骡',
+  skeleton_horse: '骷髅马', zombie_horse: '僵尸马', llama: '羊驼',
+  trader_llama: '行商羊驼', mooshroom: '哞菇', ocelot: '豹猫', parrot: '鹦鹉',
+  bat: '蝙蝠', bee: '蜜蜂', fox: '狐狸', panda: '熊猫', polar_bear: '北极熊',
+  turtle: '海龟', dolphin: '海豚', squid: '鱿鱼', glow_squid: '发光鱿鱼',
+  salmon: '鲑鱼', cod: '鳕鱼', pufferfish: '河豚', tropical_fish: '热带鱼',
+  allay: '悦灵', axolotl: '美西螈', goat: '山羊', frog: '青蛙', tadpole: '蝌蚪',
+  camel: '骆驼', sniffer: '嗅探兽', breeze: '旋风人', armadillo: '犰狳',
+  ender_dragon: '末影龙', mark: '标记', interaction: '交互实体',
+  item_display: '物品展示实体', block_display: '方块展示实体', text_display: '文字展示实体',
+}
+
+function zhName(name: string): string {
+  return ENTITY_ZH[name] || name
 }
 
 const props = defineProps<{ botId: string }>()

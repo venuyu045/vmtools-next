@@ -211,11 +211,6 @@
                     v-if="isMf && selectedInstance.bot_id"
                     :bot-id="selectedInstance.bot_id"
                   />
-                  <!-- MF 战斗面板：自动攻击/手动攻击/守护（仅 mineflayer） -->
-                  <CombatPanel
-                    v-if="isMf && selectedInstance.bot_id"
-                    :bot-id="selectedInstance.bot_id"
-                  />
                   <InventoryGrid
                     :bot-id="selectedInstance.bot_id || ''"
                     :inventory="inventoryData"
@@ -230,6 +225,13 @@
                   />
                 </div>
                 <div v-else class="empty-state">选择 Bot 实例查看背包</div>
+              </el-tab-pane>
+
+              <el-tab-pane v-if="isMf && selectedInstance?.bot_id" label="攻击" name="combat">
+                <div v-if="selectedInstance" class="inventory-tab">
+                  <CombatPanel :bot-id="selectedInstance.bot_id" />
+                </div>
+                <div v-else class="empty-state">选择 Bot 实例查看攻击</div>
               </el-tab-pane>
             </el-tabs>
           </div>
@@ -305,10 +307,6 @@
                   v-if="isMf && selectedInstance.bot_id"
                   :bot-id="selectedInstance.bot_id"
                 />
-                <CombatPanel
-                  v-if="isMf && selectedInstance.bot_id"
-                  :bot-id="selectedInstance.bot_id"
-                />
                 <InventoryGrid
                   :bot-id="selectedInstance.bot_id || ''"
                   :inventory="inventoryData"
@@ -323,6 +321,13 @@
                 />
               </div>
               <div v-else class="empty-state">选择 Bot 实例查看背包</div>
+            </el-tab-pane>
+
+            <el-tab-pane v-if="isMf && selectedInstance?.bot_id" label="攻击" name="combat">
+              <div v-if="selectedInstance" class="inventory-tab">
+                <CombatPanel :bot-id="selectedInstance.bot_id" />
+              </div>
+              <div v-else class="empty-state">选择 Bot 实例查看攻击</div>
             </el-tab-pane>
           </el-tabs>
         </template>
@@ -402,7 +407,7 @@ const engineTotalCount = computed(() => engineInstances.value.length)
 const showCreate = ref(false)
 const showProfileCreate = ref(false)
 const detailOpen = ref(false)
-const activeTab = ref<'terminal' | 'account' | 'files' | 'inventory'>('terminal')
+const activeTab = ref<'terminal' | 'account' | 'files' | 'inventory' | 'combat'>('terminal')
 
 // ── MF 实时预览 + 实时坐标（实例详情抽屉顶部） ──
 const isMf = computed(() => engine.value === 'mineflayer')
