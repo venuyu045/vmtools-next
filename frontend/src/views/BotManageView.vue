@@ -117,15 +117,13 @@
       <div v-if="selectedInstance" class="detail-panel" :class="{ split: isMf && showMfPreview }">
         <!-- MF 分栏布局：左=实时3D预览，右=信息+控制台+背包 -->
         <template v-if="isMf && showMfPreview">
-          <div class="detail-left">
+          <div v-if="!previewCollapsed" class="detail-left">
             <div class="preview-head">
-              <span class="preview-title">{{ previewCollapsed ? '▶ 3D 预览（已折叠）' : '▶ 实时 3D 预览' }}</span>
-              <span v-if="!previewCollapsed" class="preview-hint">坐标变化实时跟随</span>
-              <button class="pixel-btn mini outline preview-toggle" @click="togglePreview">
-                {{ previewCollapsed ? '展开' : '折叠' }}
-              </button>
+              <span class="preview-title">▶ 实时 3D 预览</span>
+              <span class="preview-hint">坐标变化实时跟随</span>
+              <button class="pixel-btn mini outline preview-toggle" @click="togglePreview">折叠</button>
               <a
-                v-if="viewerSrc && !previewCollapsed"
+                v-if="viewerSrc"
                 class="preview-new"
                 :href="viewerSrc.split('?')[0]"
                 target="_blank"
@@ -133,17 +131,18 @@
               >新窗口打开</a>
             </div>
             <iframe
-              v-if="viewerSrc && !previewCollapsed"
+              v-if="viewerSrc"
               :src="viewerSrc"
               class="preview-frame"
               allowfullscreen
               sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
             />
-            <div v-else-if="!previewCollapsed" class="preview-loading">预览加载中…</div>
+            <div v-else class="preview-loading">预览加载中…</div>
           </div>
 
           <div class="detail-right">
             <div class="terminal-meta mono">
+              <button v-if="previewCollapsed" class="pixel-btn mini outline preview-expand" @click="togglePreview">📺 展开3D预览</button>
               <span>{{ selectedInstance.display_name }}</span>
               <span>PID: {{ selectedInstance.pid || '--' }}</span>
               <span>PORT: {{ selectedInstance.mcp_port }}</span>
@@ -1036,6 +1035,7 @@ watch(
 .preview-title { font-size: 13px; color: var(--accent); font-weight: 600; }
 .preview-hint { font-size: 11px; color: var(--text-muted); }
 .preview-toggle { padding: 2px 10px; font-size: 12px; }
+.preview-expand { padding: 2px 10px; font-size: 12px; margin-right: 4px; }
 .preview-new {
   margin-left: auto;
   font-size: 12px;
