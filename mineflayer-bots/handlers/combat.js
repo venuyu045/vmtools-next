@@ -103,16 +103,10 @@ function createCombatHandlers(bot, ctx = {}) {
       if (!epos) return { success: false, error: 'target has no position' };
       // 挥手动画（攻击表现；不阻塞主流程）
       try { bot.swingArm('right'); } catch (e) { /* 忽略 */ }
-      // 26.1 协议 use_entity 结构：{target, hand, location(lpVec3), sneaking}
-      // ——没有 mouse 字段；位置字段名是 location（lpVec3，必填）。
-      // 旧协议（≤1.21.5）结构为 {target, mouse, x?,y?,z?,hand?,sneaking}，
-      // 我们只针对当前 26.1 服务器，按 26.1 结构发送。
-      bot._client.write('use_entity', {
-        target: entity.id,
-        hand: 0,   // 0 = 主手（main_hand）
-        location: { x: epos.x, y: epos.y, z: epos.z },
-        sneaking: bot.getControlState('sneak') || false,
-      });
+      // 1.21.6+/26.1 新协议：攻击是独立的 packet_attack 包（{entityId}），
+      // use_entity 仅用于交互（右键，不会造成伤害）。
+      // 此前误发 use_entity → 只有挥手动画没有实质伤害。
+      bot._client.write('attack', { entityId: entity.id });
       return { success: true, target: entity.name, id: entity.id };
     } catch (err) {
       return { success: false, error: err.message };
