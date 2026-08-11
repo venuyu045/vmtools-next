@@ -55,7 +55,7 @@ _LX_DIR = _STATIC_DIR / "lixiangxiang"
 _UPLOAD_DIR = _LX_DIR / "uploads"
 
 _ALLOWED_EXT = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg"}
-_MAX_SIZE = 10 * 1024 * 1024  # 10MB
+_MAX_SIZE = 20 * 1024 * 1024  # 20MB
 
 
 def _now() -> datetime:
@@ -468,7 +468,7 @@ async def upload_image(file: UploadFile = File(...), user=Depends(require_admin)
         raise HTTPException(status_code=400, detail=f"不支持的图片格式：{ext or '未知'}（仅 png/jpg/jpeg/gif/webp/svg）")
     content = await file.read()
     if len(content) > _MAX_SIZE:
-        raise HTTPException(status_code=400, detail="图片过大（上限 10MB）")
+        raise HTTPException(status_code=400, detail="图片过大（上限 20MB）")
     if len(content) == 0:
         raise HTTPException(status_code=400, detail="空文件")
     # 校验 PNG/JPEG magic（防伪装文件）

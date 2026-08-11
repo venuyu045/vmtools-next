@@ -161,6 +161,15 @@
             </el-upload>
             <el-button v-if="memberDialog.form.avatar_path" size="small" text type="danger" @click="memberDialog.form.avatar_path = ''">清除</el-button>
           </div>
+          <div v-if="uploadStates.avatar?.active" class="lx-upload-progress">
+            <el-progress :percentage="uploadStates.avatar.percent" :stroke-width="6" :show-text="false" />
+            <div class="lx-upload-meta">
+              <span>{{ fmtSize(uploadStates.avatar.loaded) }} / {{ fmtSize(uploadStates.avatar.total) }}</span>
+              <span v-if="uploadStates.avatar.speedKBps > 0">· {{ fmtSpeed(uploadStates.avatar.speedKBps) }}</span>
+              <span v-if="uploadStates.avatar.etaSec !== null">· 剩余 {{ fmtEta(uploadStates.avatar.etaSec) }}</span>
+            </div>
+          </div>
+          <p v-if="uploadStates.avatar?.error" class="lx-upload-error">{{ uploadStates.avatar.error }}</p>
         </el-form-item>
         <el-form-item label="游戏 ID" required>
           <el-input v-model="memberDialog.form.game_id" placeholder="MC 游戏 ID" />
@@ -205,6 +214,15 @@
             </el-upload>
             <el-button v-if="baseDialog.form.image_path" size="small" text type="danger" @click="baseDialog.form.image_path = ''">清除</el-button>
           </div>
+          <div v-if="uploadStates.base?.active" class="lx-upload-progress">
+            <el-progress :percentage="uploadStates.base.percent" :stroke-width="6" :show-text="false" />
+            <div class="lx-upload-meta">
+              <span>{{ fmtSize(uploadStates.base.loaded) }} / {{ fmtSize(uploadStates.base.total) }}</span>
+              <span v-if="uploadStates.base.speedKBps > 0">· {{ fmtSpeed(uploadStates.base.speedKBps) }}</span>
+              <span v-if="uploadStates.base.etaSec !== null">· 剩余 {{ fmtEta(uploadStates.base.etaSec) }}</span>
+            </div>
+          </div>
+          <p v-if="uploadStates.base?.error" class="lx-upload-error">{{ uploadStates.base.error }}</p>
         </el-form-item>
         <el-form-item label="基地名称" required>
           <el-input v-model="baseDialog.form.name" placeholder="如：建筑区 · 成员居住地" />
@@ -255,6 +273,15 @@
               <el-button size="small">{{ imageDialog.isEdit ? '更换图片' : '选择图片' }}</el-button>
             </el-upload>
           </div>
+          <div v-if="uploadStates.gallery?.active" class="lx-upload-progress">
+            <el-progress :percentage="uploadStates.gallery.percent" :stroke-width="6" :show-text="false" />
+            <div class="lx-upload-meta">
+              <span>{{ fmtSize(uploadStates.gallery.loaded) }} / {{ fmtSize(uploadStates.gallery.total) }}</span>
+              <span v-if="uploadStates.gallery.speedKBps > 0">· {{ fmtSpeed(uploadStates.gallery.speedKBps) }}</span>
+              <span v-if="uploadStates.gallery.etaSec !== null">· 剩余 {{ fmtEta(uploadStates.gallery.etaSec) }}</span>
+            </div>
+          </div>
+          <p v-if="uploadStates.gallery?.error" class="lx-upload-error">{{ uploadStates.gallery.error }}</p>
         </el-form-item>
         <el-form-item label="分类">
           <el-select v-model="imageDialog.form.category_id" clearable placeholder="未分类" style="width: 100%">
@@ -357,31 +384,84 @@ async function saveInfo() {
   }
 }
 
-// ────────────────────── 通用上传 ──────────────────────
-/** 上传文件并回调设置 URL */
-async function uploadAndSet(file: File, setUrl: (url: string) => void) {
+// ────────────────────── 通用上传（进度 / 网速 / 剩余时间） ──────────────────────
+interface UploadState {
+  active: boolean
+  percent: number
+  loaded: number
+  total: number
+  speedKBps: number
+  etaSec: number | null
+  error: string
+}
+
+/** 三个上传点的实时状态：avatar（成员头像）/ base（基地截图）/ gallery（相册图片） */
+const uploadStates = reactive<Record<string, UploadState>>({})
+
+function fmtSize(bytes: number): string {
+  if (bytes >= 1024 * 1024) return (bytes / 1024 / 1024).toFixed(1) + ' MB'
+  if (bytes >= 1024) return (bytes / 1024).toFixed(0) + ' KB'
+  return bytes + ' B'
+}
+
+function fmtSpeed(kb: number): string {
+  if (kb >= 1024) return (kb / 1024).toFixed(2) + ' MB/s'
+  return kb.toFixed(0) + ' KB/s'
+}
+
+function fmtEta(sec: number): string {
+  if (sec < 60) return Math.ceil(sec) + ' 秒'
+  const m = Math.floor(sec / 60)
+  const s = Math.ceil(sec % 60)
+  return `${m} 分 ${s} 秒`
+}
+
+/** 上传文件并回调设置 URL；显示进度条 + 已传/总大小 + 网速 + 剩余时间 + 失败原因 */
+async function uploadAndSet(key: string, file: File, setUrl: (url: string) => void) {
+  const st: UploadState = { active: true, percent: 0, loaded: 0, total: file.size || 0, speedKBps: 0, etaSec: null, error: '' }
+  uploadStates[key] = st
+  let lastLoaded = 0
+  let lastTime = performance.now()
   try {
-    const url = await lxAdminApi.upload(file)
+    const url = await lxAdminApi.upload(file, (e) => {
+      const now = performance.now()
+      const dt = (now - lastTime) / 1000
+      st.loaded = e.loaded
+      st.total = e.total || file.size || 0
+      if (dt > 0.15) {
+        const delta = e.loaded - lastLoaded
+        st.speedKBps = delta > 0 ? (delta / 1024) / dt : st.speedKBps * 0.9
+        lastLoaded = e.loaded
+        lastTime = now
+      }
+      st.percent = st.total > 0 ? Math.min(99, Math.round((st.loaded / st.total) * 100)) : 0
+      st.etaSec = st.speedKBps > 0.05 && st.total > st.loaded ? (st.total - st.loaded) / 1024 / st.speedKBps : null
+    })
+    st.percent = 100
+    st.active = false
     setUrl(url)
     ElMessage.success('上传成功')
   } catch (e: any) {
-    ElMessage.error(e?.response?.data?.detail || '上传失败')
+    st.active = false
+    st.error = e?.response?.data?.detail
+      || (e?.code === 'ECONNABORTED' ? '上传超时，请检查网络后重试' : (e?.message || '上传失败'))
+    ElMessage.error(st.error)
   }
 }
 
 /** 成员头像上传 */
 function uploadAvatar(opt: { file: File }) {
-  return uploadAndSet(opt.file, (url) => { memberDialog.form.avatar_path = url })
+  return uploadAndSet('avatar', opt.file, (url) => { memberDialog.form.avatar_path = url })
 }
 
 /** 基地截图上传 */
 function uploadBaseImage(opt: { file: File }) {
-  return uploadAndSet(opt.file, (url) => { baseDialog.form.image_path = url })
+  return uploadAndSet('base', opt.file, (url) => { baseDialog.form.image_path = url })
 }
 
 /** 相册图片上传 */
 function uploadGalleryImage(opt: { file: File }) {
-  return uploadAndSet(opt.file, (url) => { imageDialog.form.image_path = url })
+  return uploadAndSet('gallery', opt.file, (url) => { imageDialog.form.image_path = url })
 }
 
 // ────────────────────── 成员管理 ──────────────────────
@@ -948,6 +1028,39 @@ html[data-theme="dark"] .lx-admin {
   height: 72px;
   border-radius: 8px;
   border: 1px solid var(--border-subtle);
+}
+
+/* 上传进度条（进度 / 大小 / 网速 / 剩余时间） */
+.lx-upload-progress {
+  margin-top: 8px;
+  width: 100%;
+  max-width: 360px;
+}
+
+.lx-upload-progress :deep(.el-progress-bar__outer) {
+  background: var(--bg-hover);
+}
+
+.lx-upload-progress :deep(.el-progress-bar__inner) {
+  background: var(--accent);
+  transition: width 150ms linear;
+}
+
+.lx-upload-meta {
+  margin-top: 4px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--text-muted);
+}
+
+.lx-upload-error {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--danger);
+  line-height: 1.5;
 }
 
 /* ================= Responsive ================= */

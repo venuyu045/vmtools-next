@@ -106,13 +106,18 @@ export const lxAdminApi = {
   deleteImage(id: string) {
     return client.delete(`/lixiangxiang/images/${id}`)
   },
-  /** 通用图片上传（multipart），返回可访问的 URL */
-  async upload(file: File) {
+  /** 通用图片上传（multipart），返回可访问的 URL；onProgress 可获取上传进度（loaded/total） */
+  async upload(file: File, onProgress?: (e: { loaded: number; total: number }) => void) {
     const form = new FormData()
     form.append('file', file)
+    // 注意：不手动设置 Content-Type，让 axios 自动生成带 boundary 的 multipart 头
     const { data } = await client.post<{ url: string }>('/lixiangxiang/upload', form, {
-      headers: { 'Content-Type': 'multipart/form-data' },
-      timeout: 30000,
+      timeout: 120000,
+      onUploadProgress: (e) => {
+        if (onProgress && e.total) {
+          onProgress({ loaded: e.loaded, total: e.total })
+        }
+      },
     })
     return data.url
   },
