@@ -43,9 +43,17 @@ class CombatGuardRequest(BaseModel):
     attack_radius: float = Field(default=3.0, ge=0.5, le=8.0)
     target_types: list[str] = Field(default_factory=list)
     interval_ms: int = Field(default=1000, ge=100, le=60000)
+    interval_mode: str = Field(default="auto", pattern="^(auto|manual)$")
     stop_durability: float = Field(default=0.1, ge=0.0, le=1.0)
     # 2026-08-11：false=只打近身，true=追出扫描半径外攻击（绕点回防不变）
     move_to_target: bool = False
+
+    @model_validator(mode="after")
+    def _check_guard_radii(self):
+        scan = self.scan_radius if self.scan_radius is not None else self.radius
+        if scan < self.attack_radius:
+            raise ValueError("scan_radius 必须 >= attack_radius（扫描半径 ≥ 攻击半径）")
+        return self
 
 
 class CombatAttackRequest(BaseModel):

@@ -919,7 +919,8 @@ async def combat_guard(bot_id: str, data: CombatGuardRequest,
             radius=data.radius, scan_radius=data.scan_radius,
             attack_radius=data.attack_radius,
             target_types=data.target_types,
-            interval_ms=data.interval_ms, stop_durability=data.stop_durability,
+            interval_ms=data.interval_ms, interval_mode=data.interval_mode,
+            stop_durability=data.stop_durability,
             move_to_target=data.move_to_target,
         )
         if isinstance(result, dict) and result.get("success") is False:

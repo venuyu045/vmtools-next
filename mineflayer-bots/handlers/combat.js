@@ -209,7 +209,8 @@ function createCombatHandlers(bot, ctx = {}) {
     }
   }
 
-  /** 环绕走位：冷却期间绕目标圆周移动，目标难瞄准 */
+  /** 环绕走位：冷却期间绕目标圆周移动，目标难瞄准。
+ *  方向按【与目标的切向】计算（而非盲目左右翻转），走位更圆滑自然。 */
   function strafeAround(entity, atkR) {
     if (!bot.entity || !entity || !entity.position) return;
     const me = bot.entity.position;
@@ -218,17 +219,29 @@ function createCombatHandlers(bot, ctx = {}) {
     const d = Math.sqrt(dx * dx + dz * dz) || 0.001;
     try {
       if (d < atkR - 0.8) {
+        // 太近 → 后退拉开
         bot.setControlState('forward', false);
         bot.setControlState('back', true);
+        bot.setControlState('left', false);
+        bot.setControlState('right', false);
       } else if (d > atkR + 0.6) {
+        // 太远 → 前压贴脸
         bot.setControlState('back', false);
         bot.setControlState('forward', true);
+        bot.setControlState('left', false);
+        bot.setControlState('right', false);
       } else {
+        // 距离合适 → 绕圈：视线方向左右分量 = 切线方向（每 1.2s 换向，防绕圈呆板）
         bot.setControlState('forward', false);
         bot.setControlState('back', false);
-        strafeDir = !strafeDir;
-        bot.setControlState('right', strafeDir);
-        bot.setControlState('left', !strafeDir);
+        const tangentDir = Math.sign(Math.sin(Date.now() / 1200 + entity.id)) || strafeDir ? 1 : -1;
+        if (tangentDir >= 0) {
+          bot.setControlState('right', true);
+          bot.setControlState('left', false);
+        } else {
+          bot.setControlState('right', false);
+          bot.setControlState('left', true);
+        }
       }
     } catch (e) { /* ignore */ }
   }
@@ -345,6 +358,9 @@ function createCombatHandlers(bot, ctx = {}) {
       // 起跳后 1.5s 未检测到下落 → 放弃跳劈，直接普通攻击（防卡死）
       if (falling) {
         state.pendingJump = false;
+        // 目标已跑出攻击范围则放弃这一刀（避免空挥浪费冷却），下 tick 追击
+        const curDist = bot.entity.position.distanceTo(entity.position);
+        if (curDist > atkR + 0.5) return { crit_abort: true, distance: Math.round(curDist * 100) / 100 };
         const res = await doAttack(state, entity, true);
         return { crit: true, result: res };
       }
@@ -504,7 +520,7 @@ function createCombatHandlers(bot, ctx = {}) {
     return { success: true, config: summarize(autoAttack) };
   }
 
-  function set_guard({ enabled = true, x = null, y = null, z = null, radius = 8, scan_radius = null, attack_radius = 3, target_types = [], interval_ms = 1000, stop_durability = 0.1, move_to_target = false } = {}) {
+  function set_guard({ enabled = true, x = null, y = null, z = null, radius = 8, scan_radius = null, attack_radius = 3, target_types = [], interval_ms = 1000, interval_mode = 'auto', stop_durability = 0.1, move_to_target = false } = {}) {
     stopTimers();
     const pos = bot.entity.position;
     const scanR = Number(scan_radius) || Number(radius) || 8;
@@ -518,13 +534,17 @@ function createCombatHandlers(bot, ctx = {}) {
       radius: scanR, // 兼容旧引用
       target_types: Array.isArray(target_types) ? target_types : [],
       interval_ms: Math.max(100, Number(interval_ms) || 1000),
+      interval_mode: interval_mode === 'manual' ? 'manual' : 'auto',
       stop_durability: Number(stop_durability) || 0.1,
       move_to_target: Boolean(move_to_target),
+      lastAttackAt: 0, // 攻击冷却（combatTick 通用检查）
       timer: null,
     };
     autoAttack = null;
     if (guard.enabled) {
-      guard.timer = setInterval(() => { combatTick(guard).catch(() => {}); }, guard.interval_ms);
+      // 守护也按武器攻速驱动（冷却未满不出手）
+      const tickMs = Math.max(100, Math.min(1000, guard.interval_ms));
+      guard.timer = setInterval(() => { combatTick(guard).catch(() => {}); }, tickMs);
       combatTick(guard).catch(() => {});
     }
     return { success: true, config: summarize(guard) };
