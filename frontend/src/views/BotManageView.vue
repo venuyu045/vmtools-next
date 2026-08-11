@@ -420,10 +420,11 @@ function viewerBase(botId: string): string {
   return `${window.location.protocol}//${window.location.hostname}/viewer/${encodeURIComponent(botId)}/`
 }
 
-/** 打开抽屉时：MF 在线实例加载 viewer 预览 + 坐标轮询 */
+/** 打开抽屉时：MF 在线实例检测 viewer 可用性（预览保持默认折叠，需要时手动展开） */
 async function setupMfPreview(instance: MccInstance) {
   showMfPreview.value = false
-  previewCollapsed.value = false
+  // 预览默认折叠（2026-08-11 需求）：不在此强制展开，仅检测可用性；
+  // 用户点「展开 3D 预览」时才加载 iframe，省流量/省资源。
   viewerSrc.value = ''
   liveCoord.value = '—'
   if (!isMf.value || instance.status !== 'running' || !instance.bot_id) return
@@ -439,19 +440,21 @@ async function setupMfPreview(instance: MccInstance) {
     }
     if (!bot.viewer_port) return
     showMfPreview.value = true
-    await loadPreviewSrc(instance)
+    // 仅当用户展开过预览时预加载 src；默认折叠不加载 iframe
+    if (!previewCollapsed.value) await loadPreviewSrc(instance)
   } catch {
     /* 预览失败不阻塞抽屉 */
   }
-  // 坐标轮询（5s）——viewer iframe 内世界实时，这里只刷新顶部坐标文字
+  // 坐标轮询（5s）——viewer iframe 内世界实时，这里只刷新顶部坐标文字。
+  // 用轻量 /state 接口（单 bot），避免每 5s 拉全量 status/overview（含领地/工作计算）。
   if (coordTimer) window.clearInterval(coordTimer)
   coordTimer = window.setInterval(async () => {
     if (!selectedInstance.value?.bot_id || !isMf.value) return
     try {
-      const r = await api.get('/mcc-bots/status/overview?engine=mineflayer')
-      const b = (r.data?.items || []).find((x: any) => x.bot_id === selectedInstance.value!.bot_id)
-      if (b?.current_location) {
-        liveCoord.value = `x ${Math.round(b.current_location.x)} y ${Math.round(b.current_location.y)} z ${Math.round(b.current_location.z)}`
+      const r = await botApi.getState(selectedInstance.value.bot_id)
+      const loc = r.data?.result?.location
+      if (loc) {
+        liveCoord.value = `x ${Math.round(loc.x)} y ${Math.round(loc.y)} z ${Math.round(loc.z)}`
       }
     } catch { /* ignore */ }
   }, 5000)
@@ -688,7 +691,9 @@ async function handleConnect(instance: MccInstance) {
   if (newStatus === 'online') {
     ElMessage.success('Bot 已连接')
   } else if (newStatus === 'error') {
-    ElMessage.error('连接失败：MCC MCP 服务器未响应。请确认 MCC 已进入 MC 游戏且 MCP 已启用')
+    ElMessage.error(isMf.value
+      ? '连接失败：Bot 进程未响应（mineflayer 为自动连接，通常无需手动操作）'
+      : '连接失败：MCC MCP 服务器未响应。请确认 MCC 已进入 MC 游戏且 MCP 已启用')
   } else {
     ElMessage.warning('连接状态：' + newStatus)
   }
@@ -715,7 +720,10 @@ async function handleDelete(instance: MccInstance) {
   // Also delete associated bot if exists
   const bot = getBot(instance)
   if (bot) {
-    try { await botStore.deleteBot(bot.bot_id) } catch { /* ignore */ }
+    try { await botStore.deleteBot(bot.bot_id) }
+    catch {
+      ElMessage.warning(`实例已删除，但关联 Bot「${bot.bot_id}」删除失败（可能仍在运行），可稍后手动清理`)
+    }
   }
   await mccStore.deleteInstance(instance.instance_id)
   ElMessage.success('实例已删除')
