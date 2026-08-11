@@ -103,11 +103,14 @@ function createCombatHandlers(bot, ctx = {}) {
       if (!epos) return { success: false, error: 'target has no position' };
       // 挥手动画（攻击表现；不阻塞主流程）
       try { bot.swingArm('right'); } catch (e) { /* 忽略 */ }
+      // 26.1 协议 use_entity 结构：{target, hand, location(lpVec3), sneaking}
+      // ——没有 mouse 字段；位置字段名是 location（lpVec3，必填）。
+      // 旧协议（≤1.21.5）结构为 {target, mouse, x?,y?,z?,hand?,sneaking}，
+      // 我们只针对当前 26.1 服务器，按 26.1 结构发送。
       bot._client.write('use_entity', {
         target: entity.id,
-        mouse: 0,   // 0 = 左键攻击
-        x: epos.x, y: epos.y, z: epos.z, // 部分协议版本位置必填，带上兼容
-        hand: 0,    // 0 = 主手（1.21.6+ 协议 mouse=0 时必填）
+        hand: 0,   // 0 = 主手（main_hand）
+        location: { x: epos.x, y: epos.y, z: epos.z },
         sneaking: bot.getControlState('sneak') || false,
       });
       return { success: true, target: entity.name, id: entity.id };
