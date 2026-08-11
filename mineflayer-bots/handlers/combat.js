@@ -126,20 +126,20 @@ function createCombatHandlers(bot, ctx = {}) {
     return attackEntity(entity);
   }
 
-  /** 原地攻击（挂机模式）：不寻路，目标超出近战范围（≈3格）直接跳过 */
-  async function standAndAttack(entity) {
+  /** 原地攻击（挂机模式）：不寻路，目标超出攻击半径直接跳过 */
+  async function standAndAttack(entity, maxDist = 3) {
     if (!entity || !entity.position) return { success: false, error: 'no target' };
     const dist = bot.entity.position.distanceTo(entity.position);
-    if (dist > 3.2) {
+    if (dist > maxDist) {
       return { success: false, error: 'target too far', distance: Math.round(dist * 100) / 100 };
     }
     return attackEntity(entity);
   }
 
-  /** 按当前攻击模式执行（挂机不动 / 寻路追击） */
-  async function attackByMode(entity, moveToTarget) {
-    if (moveToTarget) return approachAndAttack(entity);
-    return standAndAttack(entity);
+  /** 按当前攻击模式执行（挂机不动 / 寻路追击）；attackRadius 为实际出手距离 */
+  async function attackByMode(entity, moveToTarget, attackRadius = 3) {
+    if (moveToTarget) return approachAndAttack(entity, attackRadius);
+    return standAndAttack(entity, attackRadius);
   }
 
   function notifyDurabilityLow(ratio) {
@@ -177,13 +177,15 @@ function createCombatHandlers(bot, ctx = {}) {
         } catch (err) { /* ignore */ }
       }
     }
-    // 索敌并攻击最近的匹配实体（target_types 含 player 时放行玩家）
-    const targets = getNearbyEntities(state.radius, state.target_types, !includesPlayer(state.target_types));
+    // 索敌并攻击最近的匹配实体（scan_radius 扫描；target_types 含 player 时放行玩家）
+    const scanR = state.scan_radius ?? state.radius ?? 8;
+    const atkR = state.attack_radius ?? 3;
+    const targets = getNearbyEntities(scanR, state.target_types, !includesPlayer(state.target_types));
     if (targets.length === 0) return { scanned: 0 };
     const entity = bot.entities[targets[0].id];
     if (!entity) return { scanned: targets.length };
-    // move_to_target=false（默认挂机）：原地攻击，够不到不追；true：寻路追击
-    const res = await attackByMode(entity, state.move_to_target);
+    // move_to_target=false（挂机）：只打攻击半径内目标；true（PVP）：追到攻击半径内打
+    const res = await attackByMode(entity, state.move_to_target, atkR);
     return { attacked: entity.name, distance: targets[0].distance, result: res };
   }
 
@@ -191,7 +193,9 @@ function createCombatHandlers(bot, ctx = {}) {
     return {
       enabled: state.enabled,
       mode: state.mode,
-      radius: state.radius,
+      radius: state.scan_radius ?? state.radius,       // 兼容旧字段 = 扫描半径
+      scan_radius: state.scan_radius ?? state.radius ?? 8,
+      attack_radius: state.attack_radius ?? 3,
       target_types: state.target_types,
       interval_ms: state.interval_ms,
       stop_durability: state.stop_durability,
@@ -206,7 +210,7 @@ function createCombatHandlers(bot, ctx = {}) {
     return { success: true, entities: getNearbyEntities(radius, target_types, !includesPlayer(target_types)) };
   }
 
-  async function attack({ target_id = null, target_type = null, move_to_target = false } = {}) {
+  async function attack({ target_id = null, target_type = null, move_to_target = false, scan_radius = 16, attack_radius = 3 } = {}) {
     let entity = null;
     if (target_id != null) entity = bot.entities[target_id];
     if (!entity && target_type) {
@@ -214,20 +218,22 @@ function createCombatHandlers(bot, ctx = {}) {
       if (list.length > 0) entity = bot.entities[list[0].id];
     }
     if (!entity) {
-      const list = getNearbyEntities(8, [], true);
+      const list = getNearbyEntities(scan_radius, [], true);
       if (list.length > 0) entity = bot.entities[list[0].id];
     }
     if (!entity) return { success: false, error: 'no target found' };
-    // 手动攻击也遵循移动开关：false=原地打（够不到报错），true=寻路追击
-    return attackByMode(entity, Boolean(move_to_target));
+    // 手动攻击也遵循模式：false=原地打（够不到报错），true=寻路追击；均按攻击半径判定
+    return attackByMode(entity, Boolean(move_to_target), Number(attack_radius) || 3);
   }
 
-  function set_auto_attack({ enabled = true, radius = 8, target_types = [], interval_ms = 1000, stop_durability = 0.1, move_to_target = false } = {}) {
+  function set_auto_attack({ enabled = true, radius = 8, scan_radius = null, attack_radius = 3, target_types = [], interval_ms = 1000, stop_durability = 0.1, move_to_target = false } = {}) {
     stopTimers();
     autoAttack = {
       enabled: Boolean(enabled),
       mode: 'auto',
-      radius: Number(radius) || 8,
+      scan_radius: Number(scan_radius) || Number(radius) || 8,
+      attack_radius: Number(attack_radius) || 3,
+      radius: Number(scan_radius) || Number(radius) || 8, // 兼容旧引用
       target_types: Array.isArray(target_types) ? target_types : [],
       interval_ms: Math.max(100, Number(interval_ms) || 1000),
       stop_durability: Number(stop_durability) || 0.1,
@@ -242,15 +248,18 @@ function createCombatHandlers(bot, ctx = {}) {
     return { success: true, config: summarize(autoAttack) };
   }
 
-  function set_guard({ enabled = true, x = null, y = null, z = null, radius = 8, target_types = [], interval_ms = 1000, stop_durability = 0.1, move_to_target = false } = {}) {
+  function set_guard({ enabled = true, x = null, y = null, z = null, radius = 8, scan_radius = null, attack_radius = 3, target_types = [], interval_ms = 1000, stop_durability = 0.1, move_to_target = false } = {}) {
     stopTimers();
     const pos = bot.entity.position;
+    const scanR = Number(scan_radius) || Number(radius) || 8;
     guard = {
       enabled: Boolean(enabled),
       mode: 'guard',
       guard_pos: { x: x ?? pos.x, y: y ?? pos.y, z: z ?? pos.z },
-      guard_radius: Number(radius) || 8,
-      radius: Number(radius) || 8,
+      guard_radius: scanR,
+      scan_radius: scanR,
+      attack_radius: Number(attack_radius) || 3,
+      radius: scanR, // 兼容旧引用
       target_types: Array.isArray(target_types) ? target_types : [],
       interval_ms: Math.max(100, Number(interval_ms) || 1000),
       stop_durability: Number(stop_durability) || 0.1,

@@ -865,6 +865,7 @@ async def combat_auto_attack(bot_id: str, data: CombatAutoAttackRequest,
     try:
         result = await client.set_auto_attack(
             enabled=data.enabled, radius=data.radius,
+            scan_radius=data.scan_radius, attack_radius=data.attack_radius,
             target_types=data.target_types, interval_ms=data.interval_ms,
             stop_durability=data.stop_durability,
             move_to_target=data.move_to_target,
@@ -888,7 +889,9 @@ async def combat_attack(bot_id: str, data: CombatAttackRequest,
     client, owned = await _get_combat_client(bot_id, db, user)
     try:
         result = await client.attack(target_id=data.target_id, target_type=data.target_type,
-                                     move_to_target=data.move_to_target)
+                                     move_to_target=data.move_to_target,
+                                     scan_radius=data.scan_radius,
+                                     attack_radius=data.attack_radius)
         if isinstance(result, dict) and result.get("success") is False:
             raise HTTPException(400, result.get("error", "攻击失败"))
         return {"success": True, "bot_id": bot_id, "result": result}
@@ -907,7 +910,9 @@ async def combat_guard(bot_id: str, data: CombatGuardRequest,
     try:
         result = await client.set_guard(
             enabled=data.enabled, x=data.x, y=data.y, z=data.z,
-            radius=data.radius, target_types=data.target_types,
+            radius=data.radius, scan_radius=data.scan_radius,
+            attack_radius=data.attack_radius,
+            target_types=data.target_types,
             interval_ms=data.interval_ms, stop_durability=data.stop_durability,
             move_to_target=data.move_to_target,
         )

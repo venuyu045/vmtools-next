@@ -8,11 +8,13 @@ from typing import Optional
 class CombatAutoAttackRequest(BaseModel):
     """自动攻击配置（mineflayer，2026-08-10）。"""
     enabled: bool = True
-    radius: int = Field(default=8, ge=1, le=64)
+    radius: int = Field(default=8, ge=1, le=64)   # 兼容旧字段 = 扫描半径
+    scan_radius: Optional[int] = Field(default=None, ge=1, le=64)  # 扫描（索敌）半径
+    attack_radius: float = Field(default=3.0, ge=0.5, le=8.0)      # 实际出手距离
     target_types: list[str] = Field(default_factory=list)
     interval_ms: int = Field(default=1000, ge=100, le=60000)
     stop_durability: float = Field(default=0.1, ge=0.0, le=1.0)
-    # 2026-08-11：默认挂机（假人不动、原地攻击）；true=寻路追击目标
+    # 2026-08-11：false=挂机（不动，只打攻击半径内）；true=PVP（寻路追击到攻击半径内）
     move_to_target: bool = False
 
 
@@ -23,10 +25,12 @@ class CombatGuardRequest(BaseModel):
     y: Optional[float] = None
     z: Optional[float] = None
     radius: int = Field(default=8, ge=1, le=64)
+    scan_radius: Optional[int] = Field(default=None, ge=1, le=64)
+    attack_radius: float = Field(default=3.0, ge=0.5, le=8.0)
     target_types: list[str] = Field(default_factory=list)
     interval_ms: int = Field(default=1000, ge=100, le=60000)
     stop_durability: float = Field(default=0.1, ge=0.0, le=1.0)
-    # 2026-08-11：false=挂机只打近身，true=追出守护半径外攻击（绕点回防不变）
+    # 2026-08-11：false=只打近身，true=追出扫描半径外攻击（绕点回防不变）
     move_to_target: bool = False
 
 
@@ -34,7 +38,9 @@ class CombatAttackRequest(BaseModel):
     """手动攻击一次（target_id 或 target_type，缺省攻击最近实体）。"""
     target_id: Optional[int] = None
     target_type: Optional[str] = None
-    # 2026-08-11：手动攻击也遵循移动开关（false=原地打，true=寻路追击）
+    scan_radius: int = Field(default=16, ge=1, le=64)
+    attack_radius: float = Field(default=3.0, ge=0.5, le=8.0)
+    # 2026-08-11：手动攻击也遵循模式（false=原地打，true=寻路追击）
     move_to_target: bool = False
 
 

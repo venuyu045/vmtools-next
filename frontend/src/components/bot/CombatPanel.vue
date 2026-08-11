@@ -1,38 +1,82 @@
 <template>
   <div class="combat-panel">
     <div class="combat-head">
-      <span class="combat-title">⚔ 自动攻击（MF 独有）</span>
-      <span v-if="activeMode" class="combat-badge">{{ activeMode === 'auto' ? '● 自动攻击中' : '● 守护中' }}</span>
+      <span class="combat-title">⚔ 战斗（MF 独有）</span>
+      <span class="combat-badge" :class="badgeClass">{{ badgeText }}</span>
     </div>
 
-    <el-form label-width="92px" size="small" class="combat-form">
-      <el-form-item label="启用">
-        <el-switch v-model="form.enabled" @change="saveAuto" />
-      </el-form-item>
-      <el-form-item label="移动攻击">
-        <el-switch v-model="form.move_to_target" />
-        <span class="form-hint">关 = 挂机原地攻击（假人不动）；开 = 寻路追击目标</span>
-      </el-form-item>
-      <el-form-item label="攻击半径">
-        <el-input-number v-model="form.radius" :min="1" :max="64" /> 格
-      </el-form-item>
-      <el-form-item label="目标类型">
-        <el-select v-model="form.target_types" multiple placeholder="空 = 全部实体" style="width: 100%">
-          <el-option label="盔甲架" value="armor_stand" />
-          <el-option label="玩家" value="player" />
-          <el-option label="敌对生物（生物类）" value="hostile" />
-          <el-option label="物件类（矿车/船等）" value="object" />
-          <el-option label="全部实体" value="all" />
-        </el-select>
-      </el-form-item>
-      <el-form-item label="攻击间隔">
-        <el-input-number v-model="form.interval_ms" :min="100" :max="60000" :step="100" /> ms
-      </el-form-item>
-      <el-form-item label="耐久阈值">
-        <el-input-number v-model="stopPct" :min="1" :max="100" /> %
-        <span class="form-hint">低于此值自动停止并 QQ @主人</span>
-      </el-form-item>
-    </el-form>
+    <div class="combat-cols">
+      <!-- 左：挂机（不移动） -->
+      <div class="combat-col" :class="{ active: idle.enabled }">
+        <div class="col-head">
+          <span class="col-title">🎣 挂机（不移动）</span>
+          <el-switch v-model="idle.enabled" @change="saveIdle" />
+        </div>
+        <div class="col-desc">站在原地，只打攻击半径内的目标</div>
+        <el-form label-width="76px" size="small" class="combat-form">
+          <el-form-item label="扫描半径">
+            <el-input-number v-model="idle.scan_radius" :min="1" :max="64" /> 格
+          </el-form-item>
+          <el-form-item label="攻击半径">
+            <el-input-number v-model="idle.attack_radius" :min="1" :max="8" :step="0.5" /> 格
+          </el-form-item>
+          <el-form-item label="目标类型">
+            <el-select v-model="idle.target_types" multiple placeholder="空 = 全部实体" style="width: 100%">
+              <el-option label="盔甲架" value="armor_stand" />
+              <el-option label="玩家" value="player" />
+              <el-option label="敌对生物（生物类）" value="hostile" />
+              <el-option label="物件类（矿车/船等）" value="object" />
+              <el-option label="全部实体" value="all" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="攻击间隔">
+            <el-input-number v-model="idle.interval_ms" :min="100" :max="60000" :step="100" /> ms
+          </el-form-item>
+          <el-form-item label="耐久阈值">
+            <el-input-number v-model="idle.stopPct" :min="1" :max="100" /> %
+          </el-form-item>
+        </el-form>
+        <div class="col-actions">
+          <button class="pixel-btn mini" @click="saveIdle">应用挂机配置</button>
+        </div>
+      </div>
+
+      <!-- 右：PVP（移动攻击） -->
+      <div class="combat-col" :class="{ active: pvp.enabled }">
+        <div class="col-head">
+          <span class="col-title">⚔ PVP（移动攻击）</span>
+          <el-switch v-model="pvp.enabled" @change="savePvp" />
+        </div>
+        <div class="col-desc">寻路追到攻击半径内攻击</div>
+        <el-form label-width="76px" size="small" class="combat-form">
+          <el-form-item label="扫描半径">
+            <el-input-number v-model="pvp.scan_radius" :min="1" :max="64" /> 格
+          </el-form-item>
+          <el-form-item label="攻击半径">
+            <el-input-number v-model="pvp.attack_radius" :min="1" :max="8" :step="0.5" /> 格
+          </el-form-item>
+          <el-form-item label="目标类型">
+            <el-select v-model="pvp.target_types" multiple placeholder="空 = 全部实体" style="width: 100%">
+              <el-option label="盔甲架" value="armor_stand" />
+              <el-option label="玩家" value="player" />
+              <el-option label="敌对生物（生物类）" value="hostile" />
+              <el-option label="物件类（矿车/船等）" value="object" />
+              <el-option label="全部实体" value="all" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="攻击间隔">
+            <el-input-number v-model="pvp.interval_ms" :min="100" :max="60000" :step="100" /> ms
+          </el-form-item>
+          <el-form-item label="耐久阈值">
+            <el-input-number v-model="pvp.stopPct" :min="1" :max="100" /> %
+          </el-form-item>
+        </el-form>
+        <div class="col-actions">
+          <button class="pixel-btn mini" @click="savePvp">应用PVP配置</button>
+          <button class="pixel-btn mini outline" @click="startGuard">守护当前位置</button>
+        </div>
+      </div>
+    </div>
 
     <div class="dur-row">
       <span class="dur-label">主手武器</span>
@@ -42,10 +86,8 @@
     </div>
 
     <div class="combat-actions">
-      <button class="pixel-btn" @click="saveAuto">应用配置</button>
       <button class="pixel-btn warning" @click="stopAll">停止攻击</button>
       <button class="pixel-btn outline" @click="manualAttack">攻击最近</button>
-      <button class="pixel-btn outline" @click="startGuard">守护当前位置</button>
       <button class="pixel-btn outline" @click="refreshAll">刷新</button>
     </div>
 
@@ -124,32 +166,64 @@ function zhName(name: string): string {
 
 const props = defineProps<{ botId: string }>()
 
-const form = reactive({
+// ── 左右两模式配置（2026-08-11 重构：挂机不移动 / PVP 移动攻击） ──
+const idle = reactive({
   enabled: false,
-  radius: 8,
+  scan_radius: 8,
+  attack_radius: 3,
   target_types: [] as string[],
   interval_ms: 1000,
-  stop_durability: 0.1,
-  move_to_target: false, // 2026-08-11：默认挂机（假人不动原地攻击）
+  stopPct: 10,
 })
-const stopPct = ref(10)
-const activeMode = ref<string | null>(null)
+const pvp = reactive({
+  enabled: false,
+  scan_radius: 16,
+  attack_radius: 3,
+  target_types: [] as string[],
+  interval_ms: 1000,
+  stopPct: 10,
+})
+const activeMode = ref<string | null>(null) // 'auto' | 'guard' | null（后端当前运行模式）
 const dur = ref<{ hasDurability: boolean; ratio: number; name: string | null; display_name?: string | null; zh_name?: string | null }>({ hasDurability: false, ratio: 1, name: null })
 const entities = ref<EntityInfo[]>([])
 
 const durPct = computed(() => Math.round((dur.value?.ratio ?? 1) * 100))
 const durColor = computed(() => (durPct.value < 10 ? '#e34d59' : durPct.value < 30 ? '#e6a23c' : '#67c23a'))
 
+const badgeText = computed(() => {
+  if (idle.enabled) return '● 挂机中'
+  if (pvp.enabled) return '● PVP 中'
+  return '○ 未启用'
+})
+const badgeClass = computed(() => (idle.enabled || pvp.enabled ? 'on' : ''))
+
+/** 后端 status/config → 两个框表单 */
 function syncFromStatus(data: any) {
   const cfg = data?.config
   if (cfg) {
-    form.enabled = !!cfg.enabled
-    form.radius = cfg.radius ?? 8
-    form.target_types = Array.isArray(cfg.target_types) ? [...cfg.target_types] : []
-    form.interval_ms = cfg.interval_ms ?? 1000
-    form.stop_durability = cfg.stop_durability ?? 0.1
-    form.move_to_target = !!cfg.move_to_target
-    stopPct.value = Math.round((form.stop_durability ?? 0.1) * 100)
+    const scanR = cfg.scan_radius ?? cfg.radius ?? 8
+    const atkR = cfg.attack_radius ?? 3
+    const tts = Array.isArray(cfg.target_types) ? [...cfg.target_types] : []
+    const iv = cfg.interval_ms ?? 1000
+    const stp = Math.round((cfg.stop_durability ?? 0.1) * 100)
+    const isMove = !!cfg.move_to_target
+    const en = !!cfg.enabled
+    // 当前配置属于哪个模式就同步到哪个框（挂机=不移动，PVP=移动）
+    if (isMove) {
+      pvp.enabled = en
+      pvp.scan_radius = scanR
+      pvp.attack_radius = atkR
+      pvp.target_types = tts
+      pvp.interval_ms = iv
+      pvp.stopPct = stp
+    } else {
+      idle.enabled = en
+      idle.scan_radius = scanR
+      idle.attack_radius = atkR
+      idle.target_types = tts
+      idle.interval_ms = iv
+      idle.stopPct = stp
+    }
   }
   activeMode.value = data?.active_mode ?? null
   if (data?.durability) {
@@ -157,14 +231,12 @@ function syncFromStatus(data: any) {
   }
 }
 
-// ── 配置本地兜底（后端持久化之外，防止后端无记录时表单被清空） ──
-const LS_KEY = (id: string) => `mf_combat_cfg_${id}`
+// ── 配置本地兜底（后端持久化之外） ──
+const LS_KEY = (id: string) => `mf_combat_cfg2_${id}`
 
 function saveLocal() {
   try {
-    localStorage.setItem(LS_KEY(props.botId), JSON.stringify({
-      ...form, stopPct: stopPct.value,
-    }))
+    localStorage.setItem(LS_KEY(props.botId), JSON.stringify({ idle: { ...idle }, pvp: { ...pvp } }))
   } catch { /* 忽略 */ }
 }
 
@@ -173,51 +245,81 @@ function loadLocal(): boolean {
     const raw = localStorage.getItem(LS_KEY(props.botId))
     if (!raw) return false
     const d = JSON.parse(raw)
-    form.enabled = !!d.enabled
-    form.radius = d.radius ?? 8
-    form.target_types = Array.isArray(d.target_types) ? [...d.target_types] : []
-    form.interval_ms = d.interval_ms ?? 1000
-    form.stop_durability = d.stop_durability ?? 0.1
-    form.move_to_target = !!d.move_to_target
-    stopPct.value = d.stopPct ?? Math.round((form.stop_durability ?? 0.1) * 100)
+    if (d?.idle) Object.assign(idle, d.idle)
+    if (d?.pvp) Object.assign(pvp, d.pvp)
     return true
   } catch { return false }
+}
+
+function validate(cfg: { scan_radius: number; attack_radius: number }): boolean {
+  if (cfg.scan_radius < cfg.attack_radius) {
+    ElMessage.warning('扫描半径必须 ≥ 攻击半径')
+    return false
+  }
+  return true
 }
 
 async function loadStatus() {
   try {
     const resp = await botApi.combatStatus(props.botId)
     syncFromStatus(resp.data)
-    // 后端有配置则以它为准并同步本地缓存；没有则从本地恢复
     if (!resp.data?.config) loadLocal()
   } catch (err: any) {
-    // 实例离线等场景静默；用本地缓存兜底
     loadLocal()
   }
 }
 
 async function loadEntities() {
+  // 实体列表用当前激活模式的扫描半径（无激活用挂机默认）
+  const scan = idle.enabled ? idle.scan_radius : (pvp.enabled ? pvp.scan_radius : 8)
+  const types = idle.enabled ? idle.target_types : (pvp.enabled ? pvp.target_types : [])
   try {
-    const resp = await botApi.combatEntities(props.botId, form.radius, form.target_types)
+    const resp = await botApi.combatEntities(props.botId, scan, types)
     entities.value = resp.data?.entities || []
   } catch (err: any) {
     ElMessage.warning(err?.response?.data?.detail || '获取实体列表失败')
   }
 }
 
-async function saveAuto() {
+async function saveIdle() {
+  if (!validate(idle)) return
   try {
     const resp = await botApi.combatAutoAttack(props.botId, {
-      enabled: form.enabled,
-      radius: form.radius,
-      target_types: form.target_types,
-      interval_ms: form.interval_ms,
-      stop_durability: stopPct.value / 100,
-      move_to_target: form.move_to_target,
+      enabled: idle.enabled,
+      scan_radius: idle.scan_radius,
+      attack_radius: idle.attack_radius,
+      target_types: idle.target_types,
+      interval_ms: idle.interval_ms,
+      stop_durability: idle.stopPct / 100,
+      move_to_target: false,
     })
-    syncFromStatus({ config: resp.data?.config, active_mode: form.enabled ? 'auto' : null })
+    syncFromStatus({ config: resp.data?.config, active_mode: idle.enabled ? 'auto' : null })
+    if (idle.enabled) pvp.enabled = false // 互斥
     saveLocal()
-    ElMessage.success(form.enabled ? '自动攻击已开启' : '自动攻击已关闭')
+    ElMessage.success(idle.enabled ? '挂机攻击已开启' : '挂机攻击已关闭')
+    loadEntities()
+  } catch (err: any) {
+    ElMessage.error(err?.response?.data?.detail || '配置失败')
+  }
+}
+
+async function savePvp() {
+  if (!validate(pvp)) return
+  try {
+    const resp = await botApi.combatAutoAttack(props.botId, {
+      enabled: pvp.enabled,
+      scan_radius: pvp.scan_radius,
+      attack_radius: pvp.attack_radius,
+      target_types: pvp.target_types,
+      interval_ms: pvp.interval_ms,
+      stop_durability: pvp.stopPct / 100,
+      move_to_target: true,
+    })
+    syncFromStatus({ config: resp.data?.config, active_mode: pvp.enabled ? 'auto' : null })
+    if (pvp.enabled) idle.enabled = false // 互斥
+    saveLocal()
+    ElMessage.success(pvp.enabled ? 'PVP 攻击已开启' : 'PVP 攻击已关闭')
+    loadEntities()
   } catch (err: any) {
     ElMessage.error(err?.response?.data?.detail || '配置失败')
   }
@@ -226,7 +328,8 @@ async function saveAuto() {
 async function stopAll() {
   try {
     await botApi.combatStop(props.botId)
-    form.enabled = false
+    idle.enabled = false
+    pvp.enabled = false
     activeMode.value = null
     ElMessage.success('已停止攻击')
   } catch (err: any) {
@@ -234,9 +337,17 @@ async function stopAll() {
   }
 }
 
+/** 当前激活模式的攻击参数（挂机/PVP） */
+function activeCombatParams() {
+  if (pvp.enabled) {
+    return { move_to_target: true, scan_radius: pvp.scan_radius, attack_radius: pvp.attack_radius }
+  }
+  return { move_to_target: false, scan_radius: idle.scan_radius, attack_radius: idle.attack_radius }
+}
+
 async function manualAttack() {
   try {
-    const resp = await botApi.combatAttack(props.botId, { move_to_target: form.move_to_target })
+    const resp = await botApi.combatAttack(props.botId, { ...activeCombatParams() })
     if (resp.data?.result?.success === false) {
       ElMessage.warning(resp.data.result.error || '未找到目标')
       return
@@ -250,7 +361,7 @@ async function manualAttack() {
 
 async function attackOne(id: number) {
   try {
-    const resp = await botApi.combatAttack(props.botId, { target_id: id, move_to_target: form.move_to_target })
+    const resp = await botApi.combatAttack(props.botId, { target_id: id, ...activeCombatParams() })
     ElMessage.success(`已攻击 ${resp.data?.result?.target || id}`)
     loadEntities()
   } catch (err: any) {
@@ -259,17 +370,21 @@ async function attackOne(id: number) {
 }
 
 async function startGuard() {
+  if (!validate(pvp)) return
   try {
     const resp = await botApi.combatGuard(props.botId, {
       enabled: true,
-      radius: form.radius,
-      target_types: form.target_types,
-      interval_ms: form.interval_ms,
-      stop_durability: stopPct.value / 100,
-      move_to_target: form.move_to_target,
+      scan_radius: pvp.scan_radius,
+      attack_radius: pvp.attack_radius,
+      target_types: pvp.target_types,
+      interval_ms: pvp.interval_ms,
+      stop_durability: pvp.stopPct / 100,
+      move_to_target: true,
     })
     syncFromStatus({ config: resp.data?.config, active_mode: 'guard' })
-    form.enabled = true // 守护进行中，「启用」开关同步为开（避免误以为没生效）
+    pvp.enabled = true
+    idle.enabled = false
+    saveLocal()
     ElMessage.success('守护模式已开启（守护当前位置）')
   } catch (err: any) {
     ElMessage.error(err?.response?.data?.detail || '守护配置失败')
@@ -305,8 +420,53 @@ onMounted(() => {
 }
 .combat-badge {
   font-size: 12px;
-  color: #67c23a;
+  color: var(--text-muted, #83807a);
   font-weight: 600;
+}
+.combat-badge.on {
+  color: #67c23a;
+}
+/* ── 左右分栏（2026-08-11 重构） ── */
+.combat-cols {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.combat-col {
+  border: 1px solid var(--border-color, rgba(217, 119, 87, 0.25));
+  border-radius: 8px;
+  padding: 10px;
+  background: var(--bg-card, #f5f3ec);
+}
+.combat-col.active {
+  border-color: #67c23a;
+  box-shadow: 0 0 0 1px rgba(103, 194, 58, 0.35);
+}
+.col-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+.col-title {
+  font-weight: 600;
+  font-size: 13px;
+}
+.col-desc {
+  font-size: 11px;
+  color: var(--text-muted, #83807a);
+  margin-bottom: 8px;
+}
+.col-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+@media (max-width: 720px) {
+  .combat-cols {
+    grid-template-columns: 1fr;
+  }
 }
 .combat-form {
   margin-bottom: 6px;

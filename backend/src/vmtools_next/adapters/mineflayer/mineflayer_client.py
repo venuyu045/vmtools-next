@@ -387,14 +387,20 @@ class MineflayerBridgeClient(AbstractBotAgent):
 
     async def attack(self, target_id: int | None = None,
                      target_type: str | None = None,
-                     move_to_target: bool = False) -> dict:
+                     move_to_target: bool = False,
+                     scan_radius: int = 16,
+                     attack_radius: float = 3.0) -> dict:
         return await self._send_request(METHOD_ATTACK, {
             "target_id": target_id,
             "target_type": target_type,
             "move_to_target": move_to_target,
+            "scan_radius": scan_radius,
+            "attack_radius": attack_radius,
         }, timeout=DEFAULT_CMD_TIMEOUT)
 
     async def set_auto_attack(self, enabled: bool = True, radius: int = 8,
+                              scan_radius: int | None = None,
+                              attack_radius: float = 3.0,
                               target_types: list[str] | None = None,
                               interval_ms: int = 1000,
                               stop_durability: float = 0.1,
@@ -402,6 +408,8 @@ class MineflayerBridgeClient(AbstractBotAgent):
         return await self._send_request(METHOD_SET_AUTO_ATTACK, {
             "enabled": enabled,
             "radius": radius,
+            "scan_radius": scan_radius,
+            "attack_radius": attack_radius,
             "target_types": target_types or [],
             "interval_ms": interval_ms,
             "stop_durability": stop_durability,
@@ -410,7 +418,9 @@ class MineflayerBridgeClient(AbstractBotAgent):
 
     async def set_guard(self, enabled: bool = True, x: float | None = None,
                         y: float | None = None, z: float | None = None,
-                        radius: int = 8, target_types: list[str] | None = None,
+                        radius: int = 8, scan_radius: int | None = None,
+                        attack_radius: float = 3.0,
+                        target_types: list[str] | None = None,
                         interval_ms: int = 1000,
                         stop_durability: float = 0.1,
                         move_to_target: bool = False) -> dict:
@@ -418,6 +428,8 @@ class MineflayerBridgeClient(AbstractBotAgent):
             "enabled": enabled,
             "x": x, "y": y, "z": z,
             "radius": radius,
+            "scan_radius": scan_radius,
+            "attack_radius": attack_radius,
             "target_types": target_types or [],
             "interval_ms": interval_ms,
             "stop_durability": stop_durability,
