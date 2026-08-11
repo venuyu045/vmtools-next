@@ -418,6 +418,9 @@ function setupTerminalTouch(): () => void {
   }
 
   let activePointerId: number | null = null
+  // 会话内是否发生过真实触摸（触屏设备特征）：Edge 电脑模式等场景下
+  // 浏览器可能把触摸报成 pointerType='mouse'，此时仅靠类型判断会漏接。
+  let touchSeen = false
 
   function handleDrag(clientY: number, e: Event) {
     if (!terminal || !viewportEl) return
@@ -450,7 +453,9 @@ function setupTerminalTouch(): () => void {
   // ── Pointer Events（Edge 电脑模式 / 现代浏览器主路径） ──
   function onPointerDown(e: PointerEvent) {
     if (!insideShell(e.target)) return
-    if (e.pointerType !== 'touch' && e.pointerType !== 'pen') return // 鼠标不接管
+    // 鼠标不接管（保留 xterm 文本选择/光标交互）；但触屏设备上若浏览器
+    // 把触摸模拟成 mouse（touchSeen 已置位），仍接管滚动。
+    if (e.pointerType !== 'touch' && e.pointerType !== 'pen' && !touchSeen) return
     activePointerId = e.pointerId
     touchStartY = e.clientY
     touchLastY = e.clientY
@@ -494,6 +499,8 @@ function setupTerminalTouch(): () => void {
   window.addEventListener('pointermove', onPointerMove, { capture: true })
   window.addEventListener('pointerup', onPointerUp, { capture: true })
   window.addEventListener('pointercancel', onPointerUp, { capture: true })
+  // 任何位置发生真实触摸 → 标记触屏设备（供 mouse 类型 pointer 接管判断）
+  window.addEventListener('touchstart', () => { touchSeen = true }, { passive: true, capture: true })
   window.addEventListener('touchstart', onTouchStart, { passive: true, capture: true })
   window.addEventListener('touchmove', onTouchMove, { passive: false, capture: true })
   window.addEventListener('touchend', onTouchEnd, { passive: true, capture: true })

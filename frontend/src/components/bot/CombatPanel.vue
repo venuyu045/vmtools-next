@@ -1,7 +1,7 @@
 <template>
   <div class="combat-panel">
     <div class="combat-head">
-      <span class="combat-title">⚔ 战斗（MF 独有）</span>
+      <span class="combat-title">战斗（MF 独有）</span>
       <span class="combat-badge" :class="badgeClass">{{ badgeText }}</span>
     </div>
 
@@ -9,7 +9,7 @@
       <!-- 左：挂机（不移动） -->
       <div class="combat-col" :class="{ active: idle.enabled }">
         <div class="col-head">
-          <span class="col-title">🎣 挂机（不移动）</span>
+          <span class="col-title">挂机（不移动）</span>
           <el-switch v-model="idle.enabled" @change="saveIdle" />
         </div>
         <div class="col-desc">站在原地，只打攻击半径内的目标</div>
@@ -52,7 +52,7 @@
       <!-- 右：PVP（移动攻击） -->
       <div class="combat-col" :class="{ active: pvp.enabled }">
         <div class="col-head">
-          <span class="col-title">⚔ PVP（移动攻击）</span>
+          <span class="col-title">PVP（移动攻击）</span>
           <el-switch v-model="pvp.enabled" @change="savePvp" />
         </div>
         <div class="col-desc">寻路追到攻击半径内攻击</div>

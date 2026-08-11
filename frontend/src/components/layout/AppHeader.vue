@@ -17,6 +17,10 @@
       </div>
     </div>
     <div class="header-right">
+      <!-- 网络延迟指示（前端→后端 RTT，每 5s 探测一次） -->
+      <span class="latency" :class="latencyClass" :title="'浏览器→后端延迟（RTT），5 秒刷新一次'">
+        {{ latencyMs === null ? '—' : latencyMs + 'ms' }}
+      </span>
       <!-- 主题切换（快速亮/暗） -->
       <button
         class="theme-btn"
@@ -85,7 +89,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { useAuthStore, roleLabel } from '@/stores/auth'
@@ -99,6 +103,37 @@ const emit = defineEmits<{
 const route = useRoute()
 const authStore = useAuthStore()
 const { mode: themeMode, resolved: themeResolved, setThemeMode, toggleTheme } = useTheme()
+
+// ── 浏览器→后端延迟指示（每 5s 探测 /api/ping） ──
+const latencyMs = ref<number | null>(null)
+let latencyTimer: ReturnType<typeof setInterval> | null = null
+const latencyClass = computed(() => {
+  if (latencyMs.value === null) return 'latency-off'
+  if (latencyMs.value < 80) return 'latency-good'
+  if (latencyMs.value < 200) return 'latency-mid'
+  return 'latency-bad'
+})
+
+async function probeLatency() {
+  const t0 = performance.now()
+  try {
+    // 直接 fetch 绕开 axios 拦截器（带 token 会触发刷新逻辑，干扰 RTT 测量）
+    const resp = await fetch('/api/ping', { cache: 'no-store' })
+    if (!resp.ok) throw new Error('bad status')
+    await resp.json()
+    latencyMs.value = Math.max(0, Math.round(performance.now() - t0))
+  } catch {
+    latencyMs.value = null
+  }
+}
+
+onMounted(() => {
+  probeLatency()
+  latencyTimer = setInterval(probeLatency, 5000)
+})
+onBeforeUnmount(() => {
+  if (latencyTimer) clearInterval(latencyTimer)
+})
 
 const shortName = computed(() => {
   const name = authStore.user?.display_name || authStore.user?.game_id || ''
@@ -203,6 +238,22 @@ async function submitChangePwd() {
   gap: 8px;
   flex-shrink: 0;
 }
+
+/* 延迟指示（前端→后端 RTT） */
+.latency {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  padding: 3px 8px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  white-space: nowrap;
+  user-select: none;
+  flex-shrink: 0;
+}
+.latency-good { color: var(--green-primary, #67c23a); }
+.latency-mid { color: #e6a23c; }
+.latency-bad { color: #e34d59; }
+.latency-off { color: var(--text-muted); }
 
 .user-dot {
   width: 8px;

@@ -20,6 +20,12 @@ logger = get_logger("api.health")
 _start_time = time.monotonic()
 
 
+@router.get("/ping")
+def ping():
+    """轻量延迟探测（无 DB 访问，用于前端 RTT 指示器）。"""
+    return {"ok": True, "server_time_ms": int(time.time() * 1000)}
+
+
 @router.get("/health")
 def health_check(db: Session = Depends(get_db)):
     """Health check: service status + DB ping + uptime."""

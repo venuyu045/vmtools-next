@@ -52,26 +52,18 @@
           </div>
         </div>
 
-        <div class="instance-dir mono" :title="instance.instance_dir">{{ instance.instance_dir }}</div>
-
         <div class="actions" @click.stop>
           <button class="pixel-btn" :disabled="instance.status === 'running' || isBusy(instance.instance_id)" @click="handleStart(instance)">启动</button>
           <button class="pixel-btn warning" :disabled="instance.status !== 'running' || isBusy(instance.instance_id)" @click="handleStop(instance)">停止</button>
 
-          <!-- Bot connect / disconnect -->
+          <!-- Bot 未在线时手动连接（MCP 连接自动，在线时无断开按钮） -->
           <button
             v-if="!getBot(instance) || getBot(instance)!.status !== 'online'"
             class="pixel-btn outline"
             @click="handleConnect(instance)"
           >连接</button>
-          <button
-            v-else
-            class="pixel-btn warning"
-            @click="handleDisconnect(instance)"
-          >断开</button>
 
-          <router-link :to="`${engineListPath}/${instance.instance_id}/terminal`" class="pixel-btn outline terminal-link" @click.stop>终端</router-link>
-<router-link :to="`${engineListPath}/${instance.instance_id}/files`" class="pixel-btn outline terminal-link" @click.stop>文件</router-link>
+          <button class="pixel-btn outline" @click="openInstance(instance, 'terminal')">详情</button>
           <button class="pixel-btn danger" :disabled="instance.status === 'running'" @click="handleDelete(instance)">删除</button>
           <label class="reconnect-toggle" :title="instance.auto_reconnect ? '已开启自动重连' : '开启自动重连'">
             <input type="checkbox" :checked="instance.auto_reconnect" @change="toggleReconnect(instance, $event)" />
@@ -119,7 +111,7 @@
         <template v-if="isMf && showMfPreview">
           <div v-if="!previewCollapsed" class="detail-left">
             <div class="preview-head">
-              <span class="preview-title">▶ 实时 3D 预览</span>
+              <span class="preview-title">实时 3D 预览</span>
               <span class="preview-hint">坐标变化实时跟随</span>
               <button class="pixel-btn mini outline preview-toggle" @click="togglePreview">折叠</button>
               <a
@@ -142,12 +134,11 @@
 
           <div class="detail-right">
             <div class="terminal-meta mono">
-              <button v-if="previewCollapsed" class="pixel-btn mini outline preview-expand" @click="togglePreview">📺 展开3D预览</button>
+              <button v-if="previewCollapsed" class="pixel-btn mini outline preview-expand" @click="togglePreview">展开 3D 预览</button>
               <span>{{ selectedInstance.display_name }}</span>
               <span>PID: {{ selectedInstance.pid || '--' }}</span>
               <span>PORT: {{ selectedInstance.mcp_port }}</span>
-              <span v-if="isMf" class="live-coord" :title="'实时坐标'">📍 {{ liveCoord }}</span>
-              <span class="meta-path">{{ selectedInstance.instance_dir }}</span>
+              <span v-if="isMf" class="live-coord" :title="'实时坐标'">{{ liveCoord }}</span>
             </div>
             <el-tabs v-model="activeTab" class="mcc-tabs" @tab-change="handleTabChange">
               <el-tab-pane label="终端" name="terminal">
@@ -243,8 +234,7 @@
             <span>{{ selectedInstance.display_name }}</span>
             <span>PID: {{ selectedInstance.pid || '--' }}</span>
             <span>PORT: {{ selectedInstance.mcp_port }}</span>
-            <span v-if="isMf" class="live-coord" :title="'实时坐标'">📍 {{ liveCoord }}</span>
-            <span class="meta-path">{{ selectedInstance.instance_dir }}</span>
+            <span v-if="isMf" class="live-coord" :title="'实时坐标'">{{ liveCoord }}</span>
           </div>
           <el-tabs v-model="activeTab" class="mcc-tabs" @tab-change="handleTabChange">
             <el-tab-pane label="终端" name="terminal">
@@ -389,8 +379,6 @@ const botStore = useBotStore()
 const engine = computed(() => (route.meta.engine as 'mcc' | 'mineflayer') || 'mcc')
 const engineName = computed(() => (engine.value === 'mcc' ? 'MCC' : 'MF'))
 const pageTitle = computed(() => (engine.value === 'mcc' ? 'MCC 管理' : 'MF 管理'))
-/** 本引擎的列表路由前缀（终端/文件链接用，保证 MF 实例跳 MF 管理路径） */
-const engineListPath = computed(() => (engine.value === 'mineflayer' ? '/mf-instances' : '/mcc-instances'))
 const emptyText = computed(() =>
   engine.value === 'mcc'
     ? '-- 暂无 MCC 实例，点击右上角新建 --'
@@ -412,7 +400,7 @@ const activeTab = ref<'terminal' | 'account' | 'files' | 'inventory' | 'combat'>
 // ── MF 实时预览 + 实时坐标（实例详情抽屉顶部） ──
 const isMf = computed(() => engine.value === 'mineflayer')
 const showMfPreview = ref(false)
-const previewCollapsed = ref(false)
+const previewCollapsed = ref(true) // 3D 预览默认折叠（需要时展开，省流量/省资源）
 const viewerSrc = ref('')
 const liveCoord = ref('—')
 let coordTimer: number | undefined
@@ -695,13 +683,6 @@ async function handleConnect(instance: MccInstance) {
   } else {
     ElMessage.warning('连接状态：' + newStatus)
   }
-}
-
-async function handleDisconnect(instance: MccInstance) {
-  const bot = getBot(instance)
-  if (!bot) return
-  await botStore.disconnectBot(bot.bot_id)
-  ElMessage.success('已断开')
 }
 
 async function toggleReconnect(instance: MccInstance, event: Event) {
