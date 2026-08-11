@@ -73,16 +73,16 @@ export const botApi = {
   },
   combatAutoAttack(botId: string, data: {
     enabled: boolean; radius: number; target_types: string[];
-    interval_ms: number; stop_durability: number
+    interval_ms: number; stop_durability: number; move_to_target: boolean
   }) {
     return client.post(`/mcc-bots/${botId}/combat/auto-attack`, data)
   },
-  combatAttack(botId: string, data: { target_id?: number | null; target_type?: string | null }) {
+  combatAttack(botId: string, data: { target_id?: number | null; target_type?: string | null; move_to_target?: boolean }) {
     return client.post(`/mcc-bots/${botId}/combat/attack`, data)
   },
   combatGuard(botId: string, data: {
     enabled: boolean; x?: number | null; y?: number | null; z?: number | null;
-    radius: number; target_types: string[]; interval_ms: number; stop_durability: number
+    radius: number; target_types: string[]; interval_ms: number; stop_durability: number; move_to_target: boolean
   }) {
     return client.post(`/mcc-bots/${botId}/combat/guard`, data)
   },

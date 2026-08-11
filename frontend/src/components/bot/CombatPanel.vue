@@ -9,6 +9,10 @@
       <el-form-item label="启用">
         <el-switch v-model="form.enabled" @change="saveAuto" />
       </el-form-item>
+      <el-form-item label="移动攻击">
+        <el-switch v-model="form.move_to_target" />
+        <span class="form-hint">关 = 挂机原地攻击（假人不动）；开 = 寻路追击目标</span>
+      </el-form-item>
       <el-form-item label="攻击半径">
         <el-input-number v-model="form.radius" :min="1" :max="64" /> 格
       </el-form-item>
@@ -126,6 +130,7 @@ const form = reactive({
   target_types: [] as string[],
   interval_ms: 1000,
   stop_durability: 0.1,
+  move_to_target: false, // 2026-08-11：默认挂机（假人不动原地攻击）
 })
 const stopPct = ref(10)
 const activeMode = ref<string | null>(null)
@@ -143,6 +148,7 @@ function syncFromStatus(data: any) {
     form.target_types = Array.isArray(cfg.target_types) ? [...cfg.target_types] : []
     form.interval_ms = cfg.interval_ms ?? 1000
     form.stop_durability = cfg.stop_durability ?? 0.1
+    form.move_to_target = !!cfg.move_to_target
     stopPct.value = Math.round((form.stop_durability ?? 0.1) * 100)
   }
   activeMode.value = data?.active_mode ?? null
@@ -177,6 +183,7 @@ async function saveAuto() {
       target_types: form.target_types,
       interval_ms: form.interval_ms,
       stop_durability: stopPct.value / 100,
+      move_to_target: form.move_to_target,
     })
     syncFromStatus({ config: resp.data?.config, active_mode: form.enabled ? 'auto' : null })
     ElMessage.success(form.enabled ? '自动攻击已开启' : '自动攻击已关闭')
@@ -198,12 +205,13 @@ async function stopAll() {
 
 async function manualAttack() {
   try {
-    const resp = await botApi.combatAttack(props.botId, {})
+    const resp = await botApi.combatAttack(props.botId, { move_to_target: form.move_to_target })
     if (resp.data?.result?.success === false) {
       ElMessage.warning(resp.data.result.error || '未找到目标')
       return
     }
     ElMessage.success(`已攻击 ${resp.data?.result?.target || '目标'}`)
+    loadEntities()
   } catch (err: any) {
     ElMessage.error(err?.response?.data?.detail || '攻击失败')
   }
@@ -211,8 +219,9 @@ async function manualAttack() {
 
 async function attackOne(id: number) {
   try {
-    const resp = await botApi.combatAttack(props.botId, { target_id: id })
+    const resp = await botApi.combatAttack(props.botId, { target_id: id, move_to_target: form.move_to_target })
     ElMessage.success(`已攻击 ${resp.data?.result?.target || id}`)
+    loadEntities()
   } catch (err: any) {
     ElMessage.error(err?.response?.data?.detail || '攻击失败')
   }
@@ -226,8 +235,10 @@ async function startGuard() {
       target_types: form.target_types,
       interval_ms: form.interval_ms,
       stop_durability: stopPct.value / 100,
+      move_to_target: form.move_to_target,
     })
     syncFromStatus({ config: resp.data?.config, active_mode: 'guard' })
+    form.enabled = true // 守护进行中，「启用」开关同步为开（避免误以为没生效）
     ElMessage.success('守护模式已开启（守护当前位置）')
   } catch (err: any) {
     ElMessage.error(err?.response?.data?.detail || '守护配置失败')

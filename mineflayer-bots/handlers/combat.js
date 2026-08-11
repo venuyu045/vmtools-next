@@ -113,6 +113,22 @@ function createCombatHandlers(bot, ctx = {}) {
     return attackEntity(entity);
   }
 
+  /** 原地攻击（挂机模式）：不寻路，目标超出近战范围（≈3格）直接跳过 */
+  async function standAndAttack(entity) {
+    if (!entity || !entity.position) return { success: false, error: 'no target' };
+    const dist = bot.entity.position.distanceTo(entity.position);
+    if (dist > 3.2) {
+      return { success: false, error: 'target too far', distance: Math.round(dist * 100) / 100 };
+    }
+    return attackEntity(entity);
+  }
+
+  /** 按当前攻击模式执行（挂机不动 / 寻路追击） */
+  async function attackByMode(entity, moveToTarget) {
+    if (moveToTarget) return approachAndAttack(entity);
+    return standAndAttack(entity);
+  }
+
   function notifyDurabilityLow(ratio) {
     if (broadcast && createEvent) {
       broadcast(createEvent('combat_durability_low', {
@@ -153,8 +169,9 @@ function createCombatHandlers(bot, ctx = {}) {
     if (targets.length === 0) return { scanned: 0 };
     const entity = bot.entities[targets[0].id];
     if (!entity) return { scanned: targets.length };
-    await approachAndAttack(entity);
-    return { attacked: entity.name, distance: targets[0].distance };
+    // move_to_target=false（默认挂机）：原地攻击，够不到不追；true：寻路追击
+    const res = await attackByMode(entity, state.move_to_target);
+    return { attacked: entity.name, distance: targets[0].distance, result: res };
   }
 
   function summarize(state) {
@@ -165,6 +182,7 @@ function createCombatHandlers(bot, ctx = {}) {
       target_types: state.target_types,
       interval_ms: state.interval_ms,
       stop_durability: state.stop_durability,
+      move_to_target: state.move_to_target,
       guard_pos: state.guard_pos || null,
     };
   }
@@ -175,7 +193,7 @@ function createCombatHandlers(bot, ctx = {}) {
     return { success: true, entities: getNearbyEntities(radius, target_types, !includesPlayer(target_types)) };
   }
 
-  async function attack({ target_id = null, target_type = null } = {}) {
+  async function attack({ target_id = null, target_type = null, move_to_target = false } = {}) {
     let entity = null;
     if (target_id != null) entity = bot.entities[target_id];
     if (!entity && target_type) {
@@ -187,10 +205,11 @@ function createCombatHandlers(bot, ctx = {}) {
       if (list.length > 0) entity = bot.entities[list[0].id];
     }
     if (!entity) return { success: false, error: 'no target found' };
-    return approachAndAttack(entity);
+    // 手动攻击也遵循移动开关：false=原地打（够不到报错），true=寻路追击
+    return attackByMode(entity, Boolean(move_to_target));
   }
 
-  function set_auto_attack({ enabled = true, radius = 8, target_types = [], interval_ms = 1000, stop_durability = 0.1 } = {}) {
+  function set_auto_attack({ enabled = true, radius = 8, target_types = [], interval_ms = 1000, stop_durability = 0.1, move_to_target = false } = {}) {
     stopTimers();
     autoAttack = {
       enabled: Boolean(enabled),
@@ -199,6 +218,7 @@ function createCombatHandlers(bot, ctx = {}) {
       target_types: Array.isArray(target_types) ? target_types : [],
       interval_ms: Math.max(100, Number(interval_ms) || 1000),
       stop_durability: Number(stop_durability) || 0.1,
+      move_to_target: Boolean(move_to_target),
       timer: null,
     };
     guard = null;
@@ -209,7 +229,7 @@ function createCombatHandlers(bot, ctx = {}) {
     return { success: true, config: summarize(autoAttack) };
   }
 
-  function set_guard({ enabled = true, x = null, y = null, z = null, radius = 8, target_types = [], interval_ms = 1000, stop_durability = 0.1 } = {}) {
+  function set_guard({ enabled = true, x = null, y = null, z = null, radius = 8, target_types = [], interval_ms = 1000, stop_durability = 0.1, move_to_target = false } = {}) {
     stopTimers();
     const pos = bot.entity.position;
     guard = {
@@ -221,6 +241,7 @@ function createCombatHandlers(bot, ctx = {}) {
       target_types: Array.isArray(target_types) ? target_types : [],
       interval_ms: Math.max(100, Number(interval_ms) || 1000),
       stop_durability: Number(stop_durability) || 0.1,
+      move_to_target: Boolean(move_to_target),
       timer: null,
     };
     autoAttack = null;

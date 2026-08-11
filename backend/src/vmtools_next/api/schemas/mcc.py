@@ -12,6 +12,8 @@ class CombatAutoAttackRequest(BaseModel):
     target_types: list[str] = Field(default_factory=list)
     interval_ms: int = Field(default=1000, ge=100, le=60000)
     stop_durability: float = Field(default=0.1, ge=0.0, le=1.0)
+    # 2026-08-11：默认挂机（假人不动、原地攻击）；true=寻路追击目标
+    move_to_target: bool = False
 
 
 class CombatGuardRequest(BaseModel):
@@ -24,12 +26,16 @@ class CombatGuardRequest(BaseModel):
     target_types: list[str] = Field(default_factory=list)
     interval_ms: int = Field(default=1000, ge=100, le=60000)
     stop_durability: float = Field(default=0.1, ge=0.0, le=1.0)
+    # 2026-08-11：false=挂机只打近身，true=追出守护半径外攻击（绕点回防不变）
+    move_to_target: bool = False
 
 
 class CombatAttackRequest(BaseModel):
     """手动攻击一次（target_id 或 target_type，缺省攻击最近实体）。"""
     target_id: Optional[int] = None
     target_type: Optional[str] = None
+    # 2026-08-11：手动攻击也遵循移动开关（false=原地打，true=寻路追击）
+    move_to_target: bool = False
 
 
 class MccBotCreate(BaseModel):

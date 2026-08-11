@@ -386,29 +386,34 @@ class MineflayerBridgeClient(AbstractBotAgent):
         }, timeout=DEFAULT_CMD_TIMEOUT)
 
     async def attack(self, target_id: int | None = None,
-                     target_type: str | None = None) -> dict:
+                     target_type: str | None = None,
+                     move_to_target: bool = False) -> dict:
         return await self._send_request(METHOD_ATTACK, {
             "target_id": target_id,
             "target_type": target_type,
+            "move_to_target": move_to_target,
         }, timeout=DEFAULT_CMD_TIMEOUT)
 
     async def set_auto_attack(self, enabled: bool = True, radius: int = 8,
                               target_types: list[str] | None = None,
                               interval_ms: int = 1000,
-                              stop_durability: float = 0.1) -> dict:
+                              stop_durability: float = 0.1,
+                              move_to_target: bool = False) -> dict:
         return await self._send_request(METHOD_SET_AUTO_ATTACK, {
             "enabled": enabled,
             "radius": radius,
             "target_types": target_types or [],
             "interval_ms": interval_ms,
             "stop_durability": stop_durability,
+            "move_to_target": move_to_target,
         }, timeout=DEFAULT_CMD_TIMEOUT)
 
     async def set_guard(self, enabled: bool = True, x: float | None = None,
                         y: float | None = None, z: float | None = None,
                         radius: int = 8, target_types: list[str] | None = None,
                         interval_ms: int = 1000,
-                        stop_durability: float = 0.1) -> dict:
+                        stop_durability: float = 0.1,
+                        move_to_target: bool = False) -> dict:
         return await self._send_request(METHOD_SET_GUARD, {
             "enabled": enabled,
             "x": x, "y": y, "z": z,
@@ -416,6 +421,7 @@ class MineflayerBridgeClient(AbstractBotAgent):
             "target_types": target_types or [],
             "interval_ms": interval_ms,
             "stop_durability": stop_durability,
+            "move_to_target": move_to_target,
         }, timeout=DEFAULT_CMD_TIMEOUT)
 
     async def get_combat_status(self) -> dict:
