@@ -368,13 +368,13 @@ async function savePvp() {
   }
 }
 
-/** 策略预设：激进=全技巧开；稳健=仅冲刺+冷却（关跳劈/W-tap/S-tap/环绕） */
+/** 策略预设：激进=冲刺+跳劈+环绕（每刀高伤害）；稳健=仅冲刺+冷却 */
 function applyPreset(preset: 'aggressive' | 'stable') {
   if (preset === 'aggressive') {
     pvp.sprint_attack = true
     pvp.jump_crit = true
-    pvp.wtap = true
-    pvp.stap = true
+    pvp.wtap = false   // 关连击技巧，保冲刺攻击伤害
+    pvp.stap = false
     pvp.strafe = true
   } else {
     pvp.sprint_attack = true

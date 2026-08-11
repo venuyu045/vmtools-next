@@ -205,15 +205,15 @@ function createCombatHandlers(bot, ctx = {}) {
 
   /** 执行一次攻击（含冲刺/跳劈/连击技巧），并记录冷却 */
   async function doAttack(state, entity, crit) {
-    // 冲刺状态：非跳劈时保持冲刺 → 冲刺攻击 +50% 伤害 + 强击退
-    if (!crit && state.tricks.sprint) {
+    // 激进策略：冲刺攻击为主（+50%伤害+强击退）——跳劈时同样保持冲刺（冲刺跳劈=最高伤害）
+    if (state.tricks.sprint) {
       try { bot.setControlState('sprint', true); } catch (e) { /* ignore */ }
     }
     const res = await attackEntity(entity);
     state.lastAttackAt = Date.now();
     state.targetId = entity ? entity.id : null;
     if (res && res.success) {
-      // W-tap / S-tap：重置冲刺 → 目标击退小 → 连续命中（combo）
+      // W-tap / S-tap：重置冲刺 → 目标击退小 → 连击（伤害略低但连续压制）
       if (state.tricks.wtap) wtapOnce();
       else if (state.tricks.stap) stapOnce();
     }
@@ -250,23 +250,41 @@ function createCombatHandlers(bot, ctx = {}) {
       : weaponAttackIntervalMs(bot.heldItem ? (bot.heldItem.name || '') : '');
     const dist = bot.entity.position.distanceTo(entity.position);
 
-    // ── 追击态：pathfinder 实时追踪目标 + 冲刺 ──
+    // ── 追击态：先冲刺直追（快、激进），2s 未接近（可能卡墙）切 pathfinder 绕路 ──
     if (dist > atkR) {
       state.pendingJump = false;
       if (state.tricks.sprint) {
         try { bot.setControlState('sprint', true); } catch (e) { /* ignore */ }
       }
-      try {
-        bot.pathfinder.setGoal(new GoalNear(
-          entity.position.x, entity.position.y, entity.position.z,
-          Math.max(0.5, atkR - 0.5),
-        ));
-      } catch (e) { /* ignore */ }
-      return { chasing: entity.name, distance: Math.round(dist * 100) / 100 };
+      if (!state.chaseStartAt) state.chaseStartAt = now;
+      const chaseMs = now - state.chaseStartAt;
+      if (chaseMs < 2000) {
+        // 冲刺直线追击：转向目标 + 前进
+        try {
+          bot.pathfinder.setGoal(null);
+          bot.lookAt(entity.position.offset(0, (entity.height || 1) / 2, 0));
+          bot.setControlState('forward', true);
+          bot.setControlState('sprint', true);
+        } catch (e) { /* ignore */ }
+        return { chasing: entity.name, distance: Math.round(dist * 100) / 100, mode: 'sprint' };
+      }
+      // 直追超时 → pathfinder 绕路（goal 节流 250ms）
+      if (!state.lastGoalAt || now - state.lastGoalAt > 250) {
+        state.lastGoalAt = now;
+        try {
+          bot.pathfinder.setGoal(new GoalNear(
+            entity.position.x, entity.position.y, entity.position.z,
+            Math.max(0.5, atkR - 1.0),
+          ));
+        } catch (e) { /* ignore */ }
+      }
+      return { chasing: entity.name, distance: Math.round(dist * 100) / 100, mode: 'pathfinder' };
     }
 
-    // ── 近战态：停寻路，手动控制 ──
+    // ── 近战态：停寻路，重置追击计时，手动控制 ──
+    state.chaseStartAt = 0;
     try { bot.pathfinder.setGoal(null); } catch (e) { /* ignore */ }
+    try { bot.setControlState('forward', false); } catch (e) { /* ignore */ }
 
     const cooldownOk = (now - (state.lastAttackAt || 0)) >= interval;
     if (!cooldownOk) {
@@ -275,24 +293,31 @@ function createCombatHandlers(bot, ctx = {}) {
       return { cooling: true };
     }
 
-    // 跳劈：贴脸时起跳，下落中攻击（1.5x 暴击）
-    if (state.tricks.jump_crit && !state.pendingJump
-        && bot.entity.velocity && Math.abs(bot.entity.velocity.y) < 0.01
-        && dist <= atkR + 0.5) {
+    // ── 跳劈：贴脸起跳，用 y 差分检测下落（velocity 在高版本协议不可靠） ──
+    if (state.tricks.jump_crit && !state.pendingJump && dist <= atkR + 0.5) {
       state.pendingJump = true;
+      state.jumpStartAt = now;
+      state.prevY = bot.entity.position.y;
       try { bot.setControlState('jump', true); } catch (e) { /* ignore */ }
       return { jump: true };
     }
     if (state.pendingJump) {
-      if (bot.entity.velocity && bot.entity.velocity.y < 0) {
+      const y = bot.entity.position.y;
+      const falling = y < (state.prevY ?? y) - 0.01;
+      state.prevY = y;
+      // 起跳后 1.5s 未检测到下落 → 放弃跳劈，直接普通攻击（防卡死）
+      if (falling) {
         state.pendingJump = false;
         const res = await doAttack(state, entity, true);
         return { crit: true, result: res };
       }
+      if (now - (state.jumpStartAt || now) > 1500) {
+        state.pendingJump = false;
+      }
       return { falling: true };
     }
 
-    // 普通攻击（冷却满）
+    // ── 普通攻击（冷却满；激进=冲刺攻击保持高伤害） ──
     const res = await doAttack(state, entity, false);
     return { attacked: entity.name, distance: Math.round(dist * 100) / 100, result: res };
   }
@@ -414,6 +439,10 @@ function createCombatHandlers(bot, ctx = {}) {
       lastAttackAt: 0,
       pendingJump: false,
       targetId: null,
+      chaseStartAt: 0,
+      lastGoalAt: 0,
+      prevY: null,
+      jumpStartAt: 0,
       timer: null,
     };
     guard = null;
