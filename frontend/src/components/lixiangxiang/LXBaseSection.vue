@@ -1,9 +1,9 @@
 <template>
   <section id="bases" ref="rootRef" class="lx-section lx-bases" :class="{ 'is-revealed': revealed }">
     <div class="lx-section-inner">
-      <p class="lx-eyebrow">Bases · 地图基地</p>
-      <h2 class="lx-section-title">四座家园 · 领地测绘</h2>
-      <p class="lx-section-desc">主城、望岳与星野——每一座基地都有精确的坐标与故事。</p>
+      <p class="lx-eyebrow">Bases · 领地</p>
+      <h2 class="lx-section-title">领地分区 · 家园布局</h2>
+      <p class="lx-section-desc">建筑区与工业区各司其职，生物收容园为家园添上生机。</p>
 
       <div v-if="bases.length === 0" class="lx-empty">基地资料整理中…</div>
 

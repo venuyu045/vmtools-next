@@ -207,7 +207,7 @@
           </div>
         </el-form-item>
         <el-form-item label="基地名称" required>
-          <el-input v-model="baseDialog.form.name" placeholder="如：主城 · 风起之地" />
+          <el-input v-model="baseDialog.form.name" placeholder="如：建筑区 · 成员居住地" />
         </el-form-item>
         <el-form-item label="介绍">
           <el-input v-model="baseDialog.form.description" type="textarea" :rows="3" />
