@@ -867,8 +867,14 @@ async def combat_auto_attack(bot_id: str, data: CombatAutoAttackRequest,
             enabled=data.enabled, radius=data.radius,
             scan_radius=data.scan_radius, attack_radius=data.attack_radius,
             target_types=data.target_types, interval_ms=data.interval_ms,
+            interval_mode=data.interval_mode,
             stop_durability=data.stop_durability,
             move_to_target=data.move_to_target,
+            enable_sprint_attack=data.enable_sprint_attack,
+            enable_jump_crit=data.enable_jump_crit,
+            enable_wtap=data.enable_wtap,
+            enable_stap=data.enable_stap,
+            enable_strafe=data.enable_strafe,
         )
         if isinstance(result, dict) and result.get("success") is False:
             raise HTTPException(400, result.get("error", "配置失败"))

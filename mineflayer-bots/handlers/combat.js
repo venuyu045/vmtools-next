@@ -142,6 +142,161 @@ function createCombatHandlers(bot, ctx = {}) {
     return standAndAttack(entity, attackRadius);
   }
 
+  // ── 高版本 PvP 攻击逻辑（1.21.6+/26.1，2026-08-11） ─────────────────
+  // 1.9+ 战斗更新：攻击冷却（满=100%伤害）、冲刺攻击（+50%伤害+强击退）、
+  // 跳劈（下落攻击1.5x）、W-tap/S-tap（重置冲刺→目标击退小→连击）、strafe 环绕。
+  // 假人自身不受击退，技巧核心 = 控制【目标】击退距离 + 连击 + 走位躲避瞄准。
+
+  /** 武器攻速 → 攻击冷却（毫秒）。攻速=每秒攻击次数，冷却 = 1000/攻速。 */
+  function weaponAttackIntervalMs(itemName) {
+    if (!itemName) return 250; // 空手 4.0 次/s
+    const n = String(itemName).toLowerCase();
+    if (n.includes('sword')) return 625;    // 剑 1.6 → 0.625s
+    if (n.includes('trident')) return 909;  // 三叉戟 1.1 → 0.91s
+    if (n.includes('pickaxe')) return 833;  // 镐 1.2 → 0.83s
+    if (n.includes('shovel')) return 1000;  // 锹 1.0
+    if (n.includes('hoe')) return 1000;     // 锄 1.0
+    if (n.includes('axe')) return 1000;     // 斧 0.8~1.0，简化 1.0s
+    return 1000;                            // 默认 1.0 次/s
+  }
+
+  let strafeDir = true;
+
+  /** W-tap：攻击后短暂松开前进 → 重置冲刺 → 目标击退变小（连击） */
+  function wtapOnce() {
+    try {
+      bot.setControlState('forward', false);
+      bot.setControlState('sprint', false);
+      setTimeout(() => { try { bot.setControlState('forward', true); } catch (e) { /* ignore */ } }, 90);
+    } catch (e) { /* ignore */ }
+  }
+
+  /** S-tap：攻击后短暂后退 → 取消冲刺击退（连击） */
+  function stapOnce() {
+    try {
+      bot.setControlState('back', true);
+      setTimeout(() => { try { bot.setControlState('back', false); } catch (e) { /* ignore */ } }, 80);
+    } catch (e) { /* ignore */ }
+  }
+
+  /** 环绕走位：冷却期间绕目标圆周移动，目标难瞄准 */
+  function strafeAround(entity, atkR) {
+    if (!bot.entity || !entity || !entity.position) return;
+    const me = bot.entity.position;
+    const dx = me.x - entity.position.x;
+    const dz = me.z - entity.position.z;
+    const d = Math.sqrt(dx * dx + dz * dz) || 0.001;
+    try {
+      if (d < atkR - 0.8) {
+        bot.setControlState('forward', false);
+        bot.setControlState('back', true);
+      } else if (d > atkR + 0.6) {
+        bot.setControlState('back', false);
+        bot.setControlState('forward', true);
+      } else {
+        bot.setControlState('forward', false);
+        bot.setControlState('back', false);
+        strafeDir = !strafeDir;
+        bot.setControlState('right', strafeDir);
+        bot.setControlState('left', !strafeDir);
+      }
+    } catch (e) { /* ignore */ }
+  }
+
+  /** 执行一次攻击（含冲刺/跳劈/连击技巧），并记录冷却 */
+  async function doAttack(state, entity, crit) {
+    // 冲刺状态：非跳劈时保持冲刺 → 冲刺攻击 +50% 伤害 + 强击退
+    if (!crit && state.tricks.sprint) {
+      try { bot.setControlState('sprint', true); } catch (e) { /* ignore */ }
+    }
+    const res = await attackEntity(entity);
+    state.lastAttackAt = Date.now();
+    state.targetId = entity ? entity.id : null;
+    if (res && res.success) {
+      // W-tap / S-tap：重置冲刺 → 目标击退小 → 连续命中（combo）
+      if (state.tricks.wtap) wtapOnce();
+      else if (state.tricks.stap) stapOnce();
+    }
+    return res;
+  }
+
+  /** PvP 战斗循环（10Hz 决策 + 攻击冷却驱动，move_to_target=true 时使用） */
+  async function pvpTick(state) {
+    if (!state || !state.enabled) return;
+    // 耐久检测
+    const dur = heldDurability();
+    if (dur.hasDurability && dur.ratio < state.stop_durability) {
+      state.enabled = false;
+      stopTimers();
+      notifyDurabilityLow(dur.ratio);
+      return { stopped: 'durability_low', ratio: dur.ratio };
+    }
+    const scanR = state.scan_radius ?? state.radius ?? 16;
+    const atkR = state.attack_radius ?? 3;
+    const targets = getNearbyEntities(scanR, state.target_types, !includesPlayer(state.target_types));
+    if (targets.length === 0) {
+      try { bot.pathfinder.setGoal(null); } catch (e) { /* ignore */ }
+      state.targetId = null;
+      state.pendingJump = false;
+      return { scanned: 0 };
+    }
+    const entity = bot.entities[targets[0].id];
+    if (!entity) return { scanned: targets.length };
+
+    const now = Date.now();
+    // 攻击冷却：auto=按武器攻速；manual=前端手动间隔
+    const interval = state.interval_mode === 'manual'
+      ? state.interval_ms
+      : weaponAttackIntervalMs(bot.heldItem ? (bot.heldItem.name || '') : '');
+    const dist = bot.entity.position.distanceTo(entity.position);
+
+    // ── 追击态：pathfinder 实时追踪目标 + 冲刺 ──
+    if (dist > atkR) {
+      state.pendingJump = false;
+      if (state.tricks.sprint) {
+        try { bot.setControlState('sprint', true); } catch (e) { /* ignore */ }
+      }
+      try {
+        bot.pathfinder.setGoal(new GoalNear(
+          entity.position.x, entity.position.y, entity.position.z,
+          Math.max(0.5, atkR - 0.5),
+        ));
+      } catch (e) { /* ignore */ }
+      return { chasing: entity.name, distance: Math.round(dist * 100) / 100 };
+    }
+
+    // ── 近战态：停寻路，手动控制 ──
+    try { bot.pathfinder.setGoal(null); } catch (e) { /* ignore */ }
+
+    const cooldownOk = (now - (state.lastAttackAt || 0)) >= interval;
+    if (!cooldownOk) {
+      // 冷却中 → 环绕走位（目标难瞄准）
+      if (state.tricks.strafe) strafeAround(entity, atkR);
+      return { cooling: true };
+    }
+
+    // 跳劈：贴脸时起跳，下落中攻击（1.5x 暴击）
+    if (state.tricks.jump_crit && !state.pendingJump
+        && bot.entity.velocity && Math.abs(bot.entity.velocity.y) < 0.01
+        && dist <= atkR + 0.5) {
+      state.pendingJump = true;
+      try { bot.setControlState('jump', true); } catch (e) { /* ignore */ }
+      return { jump: true };
+    }
+    if (state.pendingJump) {
+      if (bot.entity.velocity && bot.entity.velocity.y < 0) {
+        state.pendingJump = false;
+        const res = await doAttack(state, entity, true);
+        return { crit: true, result: res };
+      }
+      return { falling: true };
+    }
+
+    // 普通攻击（冷却满）
+    const res = await doAttack(state, entity, false);
+    return { attacked: entity.name, distance: Math.round(dist * 100) / 100, result: res };
+  }
+
   function notifyDurabilityLow(ratio) {
     if (broadcast && createEvent) {
       broadcast(createEvent('combat_durability_low', {
@@ -158,6 +313,8 @@ function createCombatHandlers(bot, ctx = {}) {
 
   async function combatTick(state) {
     if (!state || !state.enabled) return;
+    // PVP 模式（move_to_target=true，非守护）：走高版本攻击逻辑
+    if (state.move_to_target && state.mode !== 'guard') return pvpTick(state);
     // 主手武器耐久检测：低于阈值 → 自动停止 + 广播通知
     const dur = heldDurability();
     const stopRatio = state.stop_durability ?? 0.1;
@@ -198,8 +355,10 @@ function createCombatHandlers(bot, ctx = {}) {
       attack_radius: state.attack_radius ?? 3,
       target_types: state.target_types,
       interval_ms: state.interval_ms,
+      interval_mode: state.interval_mode || 'auto',
       stop_durability: state.stop_durability,
       move_to_target: state.move_to_target,
+      tricks: state.tricks || { sprint: true, jump_crit: true, wtap: true, stap: true, strafe: true },
       guard_pos: state.guard_pos || null,
     };
   }
@@ -226,7 +385,13 @@ function createCombatHandlers(bot, ctx = {}) {
     return attackByMode(entity, Boolean(move_to_target), Number(attack_radius) || 3);
   }
 
-  function set_auto_attack({ enabled = true, radius = 8, scan_radius = null, attack_radius = 3, target_types = [], interval_ms = 1000, stop_durability = 0.1, move_to_target = false } = {}) {
+  function set_auto_attack({
+    enabled = true, radius = 8, scan_radius = null, attack_radius = 3,
+    target_types = [], interval_ms = 1000, interval_mode = 'auto',
+    stop_durability = 0.1, move_to_target = false,
+    enable_sprint_attack = true, enable_jump_crit = true,
+    enable_wtap = true, enable_stap = true, enable_strafe = true,
+  } = {}) {
     stopTimers();
     autoAttack = {
       enabled: Boolean(enabled),
@@ -236,13 +401,26 @@ function createCombatHandlers(bot, ctx = {}) {
       radius: Number(scan_radius) || Number(radius) || 8, // 兼容旧引用
       target_types: Array.isArray(target_types) ? target_types : [],
       interval_ms: Math.max(100, Number(interval_ms) || 1000),
+      interval_mode: interval_mode === 'manual' ? 'manual' : 'auto',
       stop_durability: Number(stop_durability) || 0.1,
       move_to_target: Boolean(move_to_target),
+      tricks: {
+        sprint: Boolean(enable_sprint_attack),
+        jump_crit: Boolean(enable_jump_crit),
+        wtap: Boolean(enable_wtap),
+        stap: Boolean(enable_stap),
+        strafe: Boolean(enable_strafe),
+      },
+      lastAttackAt: 0,
+      pendingJump: false,
+      targetId: null,
       timer: null,
     };
     guard = null;
     if (autoAttack.enabled) {
-      autoAttack.timer = setInterval(() => { combatTick(autoAttack).catch(() => {}); }, autoAttack.interval_ms);
+      // PVP（移动攻击）：10Hz 决策循环；挂机：按配置间隔
+      const tickMs = autoAttack.move_to_target ? 100 : Math.max(100, autoAttack.interval_ms);
+      autoAttack.timer = setInterval(() => { combatTick(autoAttack).catch(() => {}); }, tickMs);
       combatTick(autoAttack).catch(() => {});
     }
     return { success: true, config: summarize(autoAttack) };
@@ -278,6 +456,11 @@ function createCombatHandlers(bot, ctx = {}) {
     stopTimers();
     if (autoAttack) autoAttack.enabled = false;
     if (guard) guard.enabled = false;
+    // 清理移动/冲刺/跳跃控制状态与寻路目标
+    try { bot.pathfinder.setGoal(null); } catch (e) { /* ignore */ }
+    ['forward', 'back', 'left', 'right', 'sprint', 'jump'].forEach((k) => {
+      try { bot.setControlState(k, false); } catch (e) { /* ignore */ }
+    });
     return { success: true };
   }
 

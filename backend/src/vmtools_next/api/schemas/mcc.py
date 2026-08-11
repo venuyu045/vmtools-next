@@ -13,9 +13,16 @@ class CombatAutoAttackRequest(BaseModel):
     attack_radius: float = Field(default=3.0, ge=0.5, le=8.0)      # 实际出手距离
     target_types: list[str] = Field(default_factory=list)
     interval_ms: int = Field(default=1000, ge=100, le=60000)
+    interval_mode: str = "auto"  # auto=按武器攻速 | manual=用 interval_ms
     stop_durability: float = Field(default=0.1, ge=0.0, le=1.0)
     # 2026-08-11：false=挂机（不动，只打攻击半径内）；true=PVP（寻路追击到攻击半径内）
     move_to_target: bool = False
+    # 高版本 PvP 技巧（1.21.6+，仅 move_to_target=true 生效）
+    enable_sprint_attack: bool = True   # 冲刺攻击（+50%伤害+强击退）
+    enable_jump_crit: bool = True       # 跳劈（下落攻击 1.5x 暴击）
+    enable_wtap: bool = True            # W-tap（重置冲刺→目标击退小→连击）
+    enable_stap: bool = True            # S-tap（同 W-tap，后退版）
+    enable_strafe: bool = True          # 环绕走位（目标难瞄准）
 
 
 class CombatGuardRequest(BaseModel):

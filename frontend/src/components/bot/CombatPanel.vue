@@ -67,11 +67,28 @@
           <el-form-item label="攻击间隔">
             <el-input-number v-model="pvp.interval_ms" :min="100" :max="60000" :step="100" /> ms
           </el-form-item>
+          <el-form-item label="攻击节奏">
+            <el-select v-model="pvp.interval_mode" style="width: 100%">
+              <el-option label="自动（按武器攻速）" value="auto" />
+              <el-option label="手动（用上面间隔）" value="manual" />
+            </el-select>
+          </el-form-item>
           <el-form-item label="耐久阈值">
             <el-input-number v-model="pvp.stopPct" :min="1" :max="100" /> %
           </el-form-item>
+          <el-form-item label="技巧">
+            <div class="trick-grid">
+              <el-checkbox v-model="pvp.sprint_attack">冲刺攻击</el-checkbox>
+              <el-checkbox v-model="pvp.jump_crit">跳劈</el-checkbox>
+              <el-checkbox v-model="pvp.wtap">W-tap</el-checkbox>
+              <el-checkbox v-model="pvp.stap">S-tap</el-checkbox>
+              <el-checkbox v-model="pvp.strafe">环绕走位</el-checkbox>
+            </div>
+          </el-form-item>
         </el-form>
         <div class="col-actions">
+          <button class="pixel-btn mini" @click="applyPreset('aggressive')">激进预设</button>
+          <button class="pixel-btn mini outline" @click="applyPreset('stable')">稳健预设</button>
           <button class="pixel-btn mini" @click="savePvp">应用PVP配置</button>
           <button class="pixel-btn mini outline" @click="startGuard">守护当前位置</button>
         </div>
@@ -181,7 +198,14 @@ const pvp = reactive({
   attack_radius: 3,
   target_types: [] as string[],
   interval_ms: 1000,
+  interval_mode: 'auto',   // auto=按武器攻速 | manual=interval_ms
   stopPct: 10,
+  // 高版本 PvP 技巧（2026-08-11，默认全开=激进）
+  sprint_attack: true,
+  jump_crit: true,
+  wtap: true,
+  stap: true,
+  strafe: true,
 })
 const activeMode = ref<string | null>(null) // 'auto' | 'guard' | null（后端当前运行模式）
 const dur = ref<{ hasDurability: boolean; ratio: number; name: string | null; display_name?: string | null; zh_name?: string | null }>({ hasDurability: false, ratio: 1, name: null })
@@ -215,7 +239,14 @@ function syncFromStatus(data: any) {
       pvp.attack_radius = atkR
       pvp.target_types = tts
       pvp.interval_ms = iv
+      pvp.interval_mode = cfg.interval_mode === 'manual' ? 'manual' : 'auto'
       pvp.stopPct = stp
+      const tk = cfg.tricks || {}
+      pvp.sprint_attack = tk.sprint ?? true
+      pvp.jump_crit = tk.jump_crit ?? true
+      pvp.wtap = tk.wtap ?? true
+      pvp.stap = tk.stap ?? true
+      pvp.strafe = tk.strafe ?? true
     } else {
       idle.enabled = en
       idle.scan_radius = scanR
@@ -290,8 +321,14 @@ async function saveIdle() {
       attack_radius: idle.attack_radius,
       target_types: idle.target_types,
       interval_ms: idle.interval_ms,
+      interval_mode: 'auto',
       stop_durability: idle.stopPct / 100,
       move_to_target: false,
+      enable_sprint_attack: true,
+      enable_jump_crit: true,
+      enable_wtap: true,
+      enable_stap: true,
+      enable_strafe: true,
     })
     syncFromStatus({ config: resp.data?.config, active_mode: idle.enabled ? 'auto' : null })
     if (idle.enabled) pvp.enabled = false // 互斥
@@ -312,8 +349,14 @@ async function savePvp() {
       attack_radius: pvp.attack_radius,
       target_types: pvp.target_types,
       interval_ms: pvp.interval_ms,
+      interval_mode: pvp.interval_mode,
       stop_durability: pvp.stopPct / 100,
       move_to_target: true,
+      enable_sprint_attack: pvp.sprint_attack,
+      enable_jump_crit: pvp.jump_crit,
+      enable_wtap: pvp.wtap,
+      enable_stap: pvp.stap,
+      enable_strafe: pvp.strafe,
     })
     syncFromStatus({ config: resp.data?.config, active_mode: pvp.enabled ? 'auto' : null })
     if (pvp.enabled) idle.enabled = false // 互斥
@@ -323,6 +366,24 @@ async function savePvp() {
   } catch (err: any) {
     ElMessage.error(err?.response?.data?.detail || '配置失败')
   }
+}
+
+/** 策略预设：激进=全技巧开；稳健=仅冲刺+冷却（关跳劈/W-tap/S-tap/环绕） */
+function applyPreset(preset: 'aggressive' | 'stable') {
+  if (preset === 'aggressive') {
+    pvp.sprint_attack = true
+    pvp.jump_crit = true
+    pvp.wtap = true
+    pvp.stap = true
+    pvp.strafe = true
+  } else {
+    pvp.sprint_attack = true
+    pvp.jump_crit = false
+    pvp.wtap = false
+    pvp.stap = false
+    pvp.strafe = false
+  }
+  savePvp()
 }
 
 async function stopAll() {
@@ -462,6 +523,12 @@ onMounted(() => {
   display: flex;
   gap: 6px;
   flex-wrap: wrap;
+}
+.trick-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 12px;
+  font-size: 12px;
 }
 @media (max-width: 720px) {
   .combat-cols {

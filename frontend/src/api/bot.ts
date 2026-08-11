@@ -73,7 +73,10 @@ export const botApi = {
   },
   combatAutoAttack(botId: string, data: {
     enabled: boolean; radius?: number; scan_radius: number; attack_radius: number;
-    target_types: string[]; interval_ms: number; stop_durability: number; move_to_target: boolean
+    target_types: string[]; interval_ms: number; interval_mode: string;
+    stop_durability: number; move_to_target: boolean;
+    enable_sprint_attack: boolean; enable_jump_crit: boolean;
+    enable_wtap: boolean; enable_stap: boolean; enable_strafe: boolean
   }) {
     return client.post(`/mcc-bots/${botId}/combat/auto-attack`, data)
   },
