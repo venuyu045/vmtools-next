@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import re
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from vmtools_next.api.deps import get_db, get_current_user, get_optional_user, require_admin
@@ -603,7 +603,8 @@ async def get_inventory(bot_id: str, mcp_port: int = 0,
 # ── 容器（大箱子 UI / 附加箱子，2026-08-11，仅 mineflayer） ──
 
 @router.get("/{bot_id}/inventory/containers")
-async def inventory_scan_containers(bot_id: str, max_count: int = 200,
+async def inventory_scan_containers(bot_id: str,
+                                    max_count: int = Query(200, ge=1, le=10000),
                                     db: Session = Depends(get_db),
                                     user=Depends(require_admin)):
     """扫描 bot 已加载区块内的全部容器方块（坐标列表，前端展示+前往）。"""

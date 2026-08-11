@@ -173,7 +173,10 @@ function createInventoryHandlers(bot) {
         }
       }
 
-      const container = await bot.openContainer(block);
+      const container = await Promise.race([
+        bot.openContainer(block),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('open container timeout (8s)')), 8000)),
+      ]);
       const containerId = uuidv4();
       openContainers.set(containerId, {
         window: container,
@@ -186,9 +189,11 @@ function createInventoryHandlers(bot) {
         success: true,
         container_id: containerId,
         block_name: block.name,
-        slot_count: container.containerItems
-          ? container.containerItems().length
-          : container.slots.length,
+        // 容器容量 = inventoryStart（容器槽位起点；小箱子27/大箱子54/末影箱27/潜影盒27）
+        // 不能用 containerItems().length——那是【非空物品数】，空箱子会返回 0
+        slot_count: typeof container.inventoryStart === 'number'
+          ? container.inventoryStart
+          : (container.slots ? container.slots.length : 27),
         position: { x, y, z },
       };
     } catch (err) {

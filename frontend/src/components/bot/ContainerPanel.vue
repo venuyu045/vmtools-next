@@ -48,7 +48,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch, onBeforeUnmount } from 'vue'
 import { ElMessage } from 'element-plus'
 import { botApi } from '@/api/bot'
 import ItemIcon from '@/components/ItemIcon.vue'
@@ -68,9 +68,11 @@ const detail = ref({ show: false, item: null as ChestSlot | null, idx: -1 })
 
 const slotCount = computed(() => active.value?.slot_count ?? 0)
 const isDouble = computed(() => slotCount.value > 27) // 大箱子 54 / 末影箱 27 / 潜影盒 27
+// 返回槽位索引数组 [0..n-1]（v-for 直接作为容器槽位索引；数字会被渲染为 1..n 造成槽位偏移）
 const visibleSlots = computed(() => {
   const total = Math.min(slotCount.value, 54)
-  return isDouble.value ? total : Math.min(total, 27)
+  const n = isDouble.value ? total : Math.min(total, 27)
+  return Array.from({ length: n }, (_, i) => i)
 })
 
 const BLOCK_ZH: Record<string, string> = {
@@ -90,6 +92,19 @@ function zhBlock(name: string): string {
 function isActive(c: ContainerBlock) {
   return active.value && active.value.position?.x === c.x && active.value.position?.y === c.y && active.value.position?.z === c.z
 }
+
+// 切换 bot / 组件卸载时重置状态（避免显示上一个 bot 的容器/列表）
+watch(() => props.botId, () => {
+  active.value = null
+  items.value = new Map()
+  containers.value = []
+  detail.value = { show: false, item: null, idx: -1 }
+})
+onBeforeUnmount(() => {
+  if (active.value) { botApi.closeContainer(props.botId, active.value.container_id).catch(() => {}) }
+  active.value = null
+  items.value = new Map()
+})
 
 function getSlot(idx: number) { return items.value.get(idx) || null }
 function slotTip(idx: number) {

@@ -218,6 +218,7 @@
                   <!-- 附加箱子：大箱子 UI + 扫描/前往（mineflayer only，2026-08-11） -->
                   <ContainerPanel
                     v-if="isMf && selectedInstance.bot_id"
+                    :key="selectedInstance.bot_id"
                     :bot-id="selectedInstance.bot_id"
                   />
                 </div>
