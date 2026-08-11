@@ -1,8 +1,8 @@
 <template>
-  <section id="intro" class="lx-section lx-intro">
+  <section id="intro" ref="rootRef" class="lx-section lx-intro" :class="{ 'is-revealed': revealed }">
     <div class="lx-section-inner">
-      <p class="lx-eyebrow">About</p>
-      <h2 class="lx-section-title">组织介绍</h2>
+      <p class="lx-eyebrow">About · 组织介绍</p>
+      <h2 class="lx-section-title">以土地为纸，以方块为墨</h2>
 
       <div class="lx-intro-grid">
         <div class="lx-intro-main">
@@ -10,17 +10,17 @@
         </div>
 
         <div class="lx-intro-side">
-          <div class="lx-stat-card">
-            <div class="lx-stat-num">{{ memberCount ?? 22 }}</div>
-            <div class="lx-stat-label">成员</div>
+          <div class="lx-stat">
+            <span class="lx-stat-num">{{ memberCount ?? 22 }}</span>
+            <span class="lx-stat-label">位成员</span>
           </div>
-          <div class="lx-stat-card">
-            <div class="lx-stat-num">{{ baseCount ?? 4 }}</div>
-            <div class="lx-stat-label">地图基地</div>
+          <div class="lx-stat">
+            <span class="lx-stat-num">{{ baseCount ?? 4 }}</span>
+            <span class="lx-stat-label">座地图基地</span>
           </div>
-          <div class="lx-stat-card">
-            <div class="lx-stat-num">{{ foundedYear }}</div>
-            <div class="lx-stat-label">建服年份</div>
+          <div class="lx-stat">
+            <span class="lx-stat-num">{{ foundedYear }}</span>
+            <span class="lx-stat-label">年建服</span>
           </div>
         </div>
       </div>
@@ -37,6 +37,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { lxPublicApi } from '@/api/lixiangxiang'
 import type { LxInfo } from '@/api/lixiangxiang'
+import { useReveal } from '@/composables/useReveal'
 
 const props = defineProps<{
   info: LxInfo | null
@@ -46,6 +47,12 @@ const props = defineProps<{
   baseCount?: number
 }>()
 
+const { rootRef, revealed } = useReveal()
+
+/** 组件独立使用时（未由 Home 预取传入）自动拉取 */
+const localInfo = ref<LxInfo | null>(null)
+const effectiveInfo = computed(() => props.info || localInfo.value)
+
 /** 建服年份：优先 settings.founded（YYYY-MM 取前 4 位），缺省 2023 */
 const foundedYear = computed(() => {
   const founded = effectiveInfo.value?.settings?.founded
@@ -53,7 +60,7 @@ const foundedYear = computed(() => {
   return '2023'
 })
 
-/** 简单渲染：**粗体** → <strong>，\n → <br/>（不引入 markdown 依赖） */
+/** 简单渲染：**粗体** → <strong>，\n → 段落（先转义 HTML，防 XSS） */
 function renderText(text: string): string {
   if (!text) return ''
   const escaped = text
@@ -68,10 +75,6 @@ function renderText(text: string): string {
     .map(line => `<p>${line}</p>`)
     .join('')
 }
-
-/** 组件独立使用时（未由 Home 预取传入）自动拉取 */
-const localInfo = ref<LxInfo | null>(null)
-const effectiveInfo = computed(() => props.info || localInfo.value)
 
 const renderedIntro = computed(() => renderText(effectiveInfo.value?.intro || ''))
 const renderedHistory = computed(() => renderText(effectiveInfo.value?.history || ''))
@@ -88,9 +91,16 @@ onMounted(async () => {
 
 <style scoped>
 .lx-section {
-  padding: 96px 24px;
+  padding: 110px 24px 96px;
   background: var(--bg-page);
-  border-top: 1px solid var(--border-subtle);
+  opacity: 0;
+  transform: translateY(24px);
+  transition: opacity 0.7s var(--ease-out), transform 0.7s var(--ease-out);
+}
+
+.lx-section.is-revealed {
+  opacity: 1;
+  transform: none;
 }
 
 .lx-section-inner {
@@ -102,34 +112,35 @@ onMounted(async () => {
   font-family: var(--font-sans);
   font-size: 12px;
   font-weight: 600;
-  letter-spacing: 3px;
+  letter-spacing: 4px;
   text-transform: uppercase;
   color: var(--accent);
-  margin: 0 0 10px;
+  margin: 0 0 14px;
 }
 
 .lx-section-title {
   font-family: var(--font-display);
-  font-size: clamp(30px, 4vw, 44px);
+  font-size: clamp(30px, 4.2vw, 46px);
   font-weight: 400;
   color: var(--text-primary);
-  margin: 0 0 48px;
-  letter-spacing: 1px;
+  margin: 0 0 56px;
+  letter-spacing: 2px;
+  line-height: 1.25;
 }
 
 .lx-intro-grid {
   display: grid;
-  grid-template-columns: 1fr 280px;
-  gap: 48px;
+  grid-template-columns: 1fr 300px;
+  gap: 72px;
   align-items: start;
 }
 
 .lx-prose :deep(p) {
   font-family: var(--font-body);
-  font-size: 16.5px;
-  line-height: 2;
+  font-size: 17px;
+  line-height: 2.15;
   color: var(--text-secondary);
-  margin: 0 0 20px;
+  margin: 0 0 24px;
 }
 
 .lx-prose :deep(strong) {
@@ -137,102 +148,136 @@ onMounted(async () => {
   font-weight: 600;
 }
 
+/* ---- 细线条数据（无盒感） ---- */
 .lx-intro-side {
+  padding-top: 6px;
+}
+
+.lx-stat {
   display: flex;
-  flex-direction: column;
-  gap: 16px;
-}
-
-.lx-stat-card {
-  background: var(--bg-card);
-  border: 1px solid var(--border-subtle);
-  border-radius: 16px;
-  padding: 28px 24px;
-  text-align: center;
-  transition: transform 150ms var(--ease-out), border-color 150ms var(--ease-out), box-shadow 150ms var(--ease-out);
-}
-
-.lx-stat-card:hover {
-  transform: translateY(-2px);
-  border-color: var(--accent);
-  box-shadow: var(--shadow-md);
+  align-items: baseline;
+  gap: 12px;
+  padding: 20px 0;
+  border-bottom: 1px solid var(--border-subtle);
 }
 
 .lx-stat-num {
   font-family: var(--font-display);
-  font-size: 40px;
-  color: var(--accent);
+  font-size: 42px;
   line-height: 1;
-  margin-bottom: 8px;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
 }
 
 .lx-stat-label {
   font-family: var(--font-sans);
-  font-size: 14px;
+  font-size: 13.5px;
   color: var(--text-muted);
+  letter-spacing: 1px;
 }
 
+/* ---- 时间线 ---- */
 .lx-history {
-  margin-top: 72px;
-  padding-top: 56px;
+  margin-top: 88px;
+  padding-top: 64px;
   border-top: 1px solid var(--border-subtle);
 }
 
 .lx-history-title {
   font-family: var(--font-display);
-  font-size: 26px;
+  font-size: 24px;
   font-weight: 400;
   color: var(--text-primary);
-  margin: 0 0 28px;
+  margin: 0 0 32px;
+  letter-spacing: 1.5px;
+}
+
+.lx-timeline {
+  position: relative;
+  padding-left: 28px;
+}
+
+.lx-timeline::before {
+  content: '';
+  position: absolute;
+  left: 5px;
+  top: 6px;
+  bottom: 6px;
+  width: 1px;
+  background: var(--border-default);
 }
 
 .lx-timeline :deep(p) {
   position: relative;
-  padding-left: 22px;
-  margin: 0 0 14px;
+  margin: 0 0 22px;
+  padding-left: 10px;
   font-family: var(--font-sans);
   font-size: 15px;
-  line-height: 1.8;
+  line-height: 1.9;
   color: var(--text-secondary);
 }
 
 .lx-timeline :deep(p)::before {
   content: '';
   position: absolute;
-  left: 2px;
-  top: 10px;
-  width: 8px;
-  height: 8px;
+  left: -26px;
+  top: 9px;
+  width: 9px;
+  height: 9px;
   border-radius: 50%;
+  background: var(--bg-page);
+  border: 1.5px solid var(--accent);
+  transition: background-color 200ms var(--ease-out), transform 200ms var(--ease-out);
+}
+
+.lx-timeline :deep(p):hover::before {
   background: var(--accent);
-  opacity: 0.6;
+  transform: scale(1.2);
 }
 
 /* ================= Responsive ================= */
 @media (max-width: 900px) {
   .lx-intro-grid {
     grid-template-columns: 1fr;
-    gap: 32px;
+    gap: 48px;
   }
 
   .lx-intro-side {
-    flex-direction: row;
-    flex-wrap: wrap;
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 0;
   }
 
-  .lx-stat-card {
-    flex: 1;
-    min-width: 120px;
+  .lx-stat {
+    display: block;
+    text-align: center;
+    padding: 16px 8px;
+  }
+
+  .lx-stat + .lx-stat {
+    border-left: 1px solid var(--border-subtle);
   }
 }
 
 @media (max-width: 768px) {
   .lx-section {
-    padding: 64px 16px;
+    padding: 72px 16px 64px;
   }
 
   .lx-section-title {
-    margin-bottom: 32px;
+    margin-bottom: 40px;
+  }
+
+  .lx-history {
+    margin-top: 64px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lx-section {
+    opacity: 1;
+    transform: none;
+    transition: none;
   }
 }
 </style>

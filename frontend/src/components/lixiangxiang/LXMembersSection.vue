@@ -1,11 +1,11 @@
 <template>
-  <section id="members" class="lx-section lx-members">
+  <section id="members" ref="rootRef" class="lx-section lx-members" :class="{ 'is-revealed': revealed }">
     <div class="lx-section-inner">
       <p class="lx-eyebrow">Members</p>
-      <h2 class="lx-section-title">成员 · 22 位</h2>
+      <h2 class="lx-section-title">理想乡的 {{ members.length }} 位住民</h2>
 
       <div class="lx-toolbar">
-        <div class="lx-filter">
+        <div class="lx-filter" role="tablist" aria-label="按职位筛选">
           <button
             class="lx-chip"
             :class="{ active: activeFilter === '全部' }"
@@ -26,19 +26,24 @@
             class="lx-sort-btn"
             :class="{ active: sortMode === 'join' }"
             @click="toggleSort('join')"
-          >加入时间{{ sortMode === 'join' ? (sortAsc ? ' ↑' : ' ↓') : '' }}</button>
+          >加入时间{{ sortMode === 'join' ? (sortAsc ? '↑' : '↓') : '' }}</button>
           <button
             class="lx-sort-btn"
             :class="{ active: sortMode === 'rank' }"
             @click="toggleSort('rank')"
-          >默认顺序{{ sortMode === 'rank' ? (sortAsc ? ' ↑' : ' ↓') : '' }}</button>
+          >默认顺序{{ sortMode === 'rank' ? (sortAsc ? '↑' : '↓') : '' }}</button>
         </div>
       </div>
 
       <div v-if="filteredMembers.length === 0" class="lx-empty">暂无成员</div>
 
-      <div class="lx-member-grid">
-        <article v-for="m in filteredMembers" :key="m.id" class="lx-member-card">
+      <div v-else class="lx-member-grid">
+        <article
+          v-for="(m, i) in filteredMembers"
+          :key="m.id"
+          class="lx-member-card"
+          :class="{ 'is-wide': (i % 6) === 0 }"
+        >
           <div class="lx-avatar">
             <img v-if="m.avatar_path" :src="m.avatar_path" :alt="m.nickname || m.game_id" loading="lazy" />
             <span v-else class="lx-avatar-fallback">{{ (m.nickname || m.game_id).slice(0, 1) }}</span>
@@ -50,10 +55,10 @@
             </div>
             <div class="lx-member-title">{{ m.title || '成员' }}</div>
             <div class="lx-member-meta">
-              <span v-if="m.joined_at" class="lx-meta-item"><i class="lx-meta-dot"></i>{{ m.joined_at }} 加入</span>
-              <span v-if="m.specialty" class="lx-meta-item"><i class="lx-meta-dot"></i>{{ m.specialty }}</span>
+              <span v-if="m.joined_at" class="lx-meta-item">{{ m.joined_at }} 加入</span>
+              <span v-if="m.specialty" class="lx-meta-item">{{ m.specialty }}</span>
             </div>
-            <p v-if="m.bio" class="lx-member-bio">{{ m.bio }}</p>
+            <p v-if="m.bio" class="lx-member-bio" :class="{ 'bio-full': (i % 6) === 0 }">{{ m.bio }}</p>
           </div>
         </article>
       </div>
@@ -64,22 +69,24 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import type { LxMember } from '@/api/lixiangxiang'
+import { useReveal } from '@/composables/useReveal'
 
 const props = defineProps<{ members: LxMember[] }>()
+
+const { rootRef, revealed } = useReveal()
 
 const activeFilter = ref('全部')
 const sortMode = ref<'join' | 'rank'>('rank')
 const sortAsc = ref(true)
 
-/** 职位/称号筛选项（前 8 个常见职位 + 其余归入「其他」） */
+/** 职位/称号筛选项（按出现次数取前 8 个常见职位） */
 const titleOptions = computed(() => {
   const counts = new Map<string, number>()
   for (const m of props.members) {
     const t = m.title || '成员'
     counts.set(t, (counts.get(t) || 0) + 1)
   }
-  const options = [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8).map(([t]) => t)
-  return options
+  return [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8).map(([t]) => t)
 })
 
 function setFilter(t: string) {
@@ -122,9 +129,17 @@ watch(() => props.members.length, () => {
 
 <style scoped>
 .lx-section {
-  padding: 96px 24px;
-  background: var(--bg-page);
+  padding: 110px 24px 96px;
+  background: var(--bg-card);
   border-top: 1px solid var(--border-subtle);
+  opacity: 0;
+  transform: translateY(24px);
+  transition: opacity 0.7s var(--ease-out), transform 0.7s var(--ease-out);
+}
+
+.lx-section.is-revealed {
+  opacity: 1;
+  transform: none;
 }
 
 .lx-section-inner {
@@ -136,82 +151,85 @@ watch(() => props.members.length, () => {
   font-family: var(--font-sans);
   font-size: 12px;
   font-weight: 600;
-  letter-spacing: 3px;
+  letter-spacing: 4px;
   text-transform: uppercase;
   color: var(--accent);
-  margin: 0 0 10px;
+  margin: 0 0 14px;
 }
 
 .lx-section-title {
   font-family: var(--font-display);
-  font-size: clamp(30px, 4vw, 44px);
+  font-size: clamp(30px, 4.2vw, 46px);
   font-weight: 400;
   color: var(--text-primary);
-  margin: 0 0 32px;
-  letter-spacing: 1px;
+  margin: 0 0 40px;
+  letter-spacing: 2px;
+  line-height: 1.25;
 }
 
-/* ================= Toolbar ================= */
+/* ================= Toolbar（去胶囊化） ================= */
 .lx-toolbar {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
   flex-wrap: wrap;
-  margin-bottom: 40px;
+  margin-bottom: 44px;
+  padding-bottom: 20px;
+  border-bottom: 1px solid var(--border-subtle);
 }
 
 .lx-filter {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 6px;
 }
 
 .lx-chip {
-  padding: 7px 16px;
-  border-radius: 999px;
-  border: 1px solid var(--border-default);
-  background: var(--bg-card);
-  color: var(--text-secondary);
+  padding: 6px 14px;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-muted);
   font-family: var(--font-sans);
   font-size: 13px;
   cursor: pointer;
-  transition: all 150ms var(--ease-out);
+  transition: all 200ms var(--ease-out);
 }
 
 .lx-chip:hover {
-  border-color: var(--accent);
   color: var(--accent);
 }
 
 .lx-chip.active {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: #FFF8F2;
+  background: var(--text-primary);
+  border-color: var(--text-primary);
+  color: var(--bg-page);
 }
 
 .lx-sort {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
 }
 
 .lx-sort-label {
   font-family: var(--font-sans);
-  font-size: 13px;
+  font-size: 12.5px;
   color: var(--text-muted);
+  letter-spacing: 0.5px;
 }
 
 .lx-sort-btn {
-  padding: 7px 14px;
-  border-radius: 8px;
+  padding: 6px 12px;
+  border-radius: 6px;
   border: 1px solid var(--border-default);
-  background: var(--bg-card);
+  background: transparent;
   color: var(--text-secondary);
   font-family: var(--font-sans);
   font-size: 13px;
   cursor: pointer;
-  transition: all 150ms var(--ease-out);
+  transition: all 200ms var(--ease-out);
 }
 
 .lx-sort-btn:hover {
@@ -232,37 +250,59 @@ watch(() => props.members.length, () => {
   font-family: var(--font-sans);
 }
 
-/* ================= Member Grid ================= */
+/* ================= 6 列错落杂志式网格 ================= */
 .lx-member-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
-  gap: 20px;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 16px;
 }
 
+/* 每 6 张中第 1 张为宽卡（跨 4 列），其余为 2 列窄卡 → 大卡+两窄卡 / 三窄卡交替 */
 .lx-member-card {
+  grid-column: span 2;
   display: flex;
-  gap: 18px;
-  padding: 24px;
-  background: var(--bg-card);
+  flex-direction: column;
+  gap: 14px;
+  padding: 22px;
+  background: var(--bg-elevated);
   border: 1px solid var(--border-subtle);
-  border-radius: 16px;
-  transition: transform 150ms var(--ease-out), border-color 150ms var(--ease-out), box-shadow 150ms var(--ease-out);
+  border-radius: 14px;
+  transition: transform 250ms var(--ease-out), box-shadow 250ms var(--ease-out), border-color 250ms var(--ease-out);
+}
+
+.lx-member-card.is-wide {
+  grid-column: span 4;
+  flex-direction: row;
+  align-items: center;
+  gap: 24px;
+  padding: 26px 28px;
 }
 
 .lx-member-card:hover {
-  transform: translateY(-3px);
-  border-color: var(--accent);
+  transform: translateY(-4px);
   box-shadow: var(--shadow-md);
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border-subtle));
 }
 
 .lx-avatar {
-  width: 64px;
-  height: 64px;
-  border-radius: 50%;
+  width: 56px;
+  height: 56px;
+  border-radius: 12px;
   overflow: hidden;
   flex-shrink: 0;
-  border: 2px solid var(--accent-soft);
-  background: var(--bg-elevated);
+  background: var(--bg-page);
+  border: 1px solid var(--border-subtle);
+  transition: transform 250ms var(--ease-out);
+}
+
+.lx-member-card:hover .lx-avatar {
+  transform: scale(1.04);
+}
+
+.lx-member-card.is-wide .lx-avatar {
+  width: 84px;
+  height: 84px;
+  border-radius: 16px;
 }
 
 .lx-avatar img {
@@ -279,7 +319,7 @@ watch(() => props.members.length, () => {
   align-items: center;
   justify-content: center;
   font-family: var(--font-display);
-  font-size: 24px;
+  font-size: 22px;
   color: var(--accent);
   background: var(--accent-soft);
 }
@@ -294,39 +334,41 @@ watch(() => props.members.length, () => {
   align-items: baseline;
   gap: 8px;
   flex-wrap: wrap;
-  margin-bottom: 4px;
+  margin-bottom: 6px;
 }
 
 .lx-nickname {
   font-family: var(--font-display);
-  font-size: 20px;
+  font-size: 19px;
   color: var(--text-primary);
+  letter-spacing: 0.5px;
 }
 
 .lx-gameid {
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: 11.5px;
   color: var(--text-muted);
 }
 
 .lx-member-title {
   display: inline-block;
-  padding: 3px 10px;
-  border-radius: 999px;
+  padding: 2px 9px;
+  border-radius: 5px;
   background: var(--accent-soft);
   color: var(--accent);
   font-family: var(--font-sans);
-  font-size: 12px;
+  font-size: 11.5px;
   font-weight: 600;
+  letter-spacing: 0.3px;
   margin-bottom: 10px;
 }
 
 .lx-member-meta {
   display: flex;
   flex-wrap: wrap;
-  gap: 12px;
+  gap: 10px;
   font-family: var(--font-sans);
-  font-size: 13px;
+  font-size: 12.5px;
   color: var(--text-muted);
   margin-bottom: 8px;
 }
@@ -334,22 +376,22 @@ watch(() => props.members.length, () => {
 .lx-meta-item {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 5px;
 }
 
-.lx-meta-dot {
-  width: 5px;
-  height: 5px;
+.lx-meta-item::before {
+  content: '';
+  width: 4px;
+  height: 4px;
   border-radius: 50%;
   background: var(--accent);
-  opacity: 0.5;
-  flex-shrink: 0;
+  opacity: 0.45;
 }
 
 .lx-member-bio {
   font-family: var(--font-sans);
-  font-size: 13.5px;
-  line-height: 1.7;
+  font-size: 13px;
+  line-height: 1.75;
   color: var(--text-secondary);
   margin: 0;
   display: -webkit-box;
@@ -358,10 +400,35 @@ watch(() => props.members.length, () => {
   overflow: hidden;
 }
 
+.lx-member-bio.bio-full {
+  -webkit-line-clamp: 3;
+  font-size: 13.5px;
+}
+
 /* ================= Responsive ================= */
+@media (max-width: 1024px) {
+  .lx-member-grid {
+    grid-template-columns: repeat(4, 1fr);
+  }
+
+  .lx-member-card,
+  .lx-member-card.is-wide {
+    grid-column: span 2;
+    flex-direction: column;
+    align-items: stretch;
+    padding: 20px;
+  }
+
+  .lx-member-card.is-wide .lx-avatar {
+    width: 56px;
+    height: 56px;
+    border-radius: 12px;
+  }
+}
+
 @media (max-width: 768px) {
   .lx-section {
-    padding: 64px 16px;
+    padding: 72px 16px 64px;
   }
 
   .lx-toolbar {
@@ -370,7 +437,38 @@ watch(() => props.members.length, () => {
   }
 
   .lx-member-grid {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 12px;
+  }
+
+  .lx-member-card,
+  .lx-member-card.is-wide {
+    grid-column: span 1;
+    padding: 16px;
+  }
+}
+
+@media (max-width: 480px) {
+  .lx-member-grid {
     grid-template-columns: 1fr;
   }
+
+  .lx-member-card,
+  .lx-member-card.is-wide {
+    flex-direction: row;
+    align-items: center;
+    grid-column: span 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lx-section {
+    opacity: 1;
+    transform: none;
+    transition: none;
+  }
+
+  .lx-member-card { transition: none; }
+  .lx-avatar { transition: none; }
 }
 </style>

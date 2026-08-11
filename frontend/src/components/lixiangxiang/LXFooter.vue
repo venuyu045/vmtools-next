@@ -3,19 +3,20 @@
     <div class="lx-footer-inner">
       <div class="lx-footer-brand">
         <span class="lx-footer-logo">理</span>
-        <span class="lx-footer-name">理想乡 · 组织官网</span>
+        <span class="lx-footer-name">理想乡</span>
+        <span class="lx-footer-sub">LIXIANGXIANG · EST. 2023</span>
       </div>
 
-      <div class="lx-footer-links">
+      <nav class="lx-footer-links">
         <a href="#intro">组织介绍</a>
         <a href="#members">成员</a>
         <a href="#bases">地图基地</a>
-        <a href="#gallery">相册</a>
+        <a href="#gallery">光影集</a>
         <router-link to="/dashboard">控制台</router-link>
-      </div>
+      </nav>
 
       <div class="lx-footer-meta">
-        <p>Minecraft 生存服务器 · 理想乡</p>
+        <span>Minecraft 生存服务器</span>
         <a href="https://beian.miit.gov.cn" target="_blank" rel="noopener noreferrer">渝ICP备2026011793号-1</a>
       </div>
     </div>
@@ -27,9 +28,9 @@
 
 <style scoped>
 .lx-footer {
-  background: var(--bg-deep);
   border-top: 1px solid var(--border-subtle);
-  padding: 48px 24px 56px;
+  background: var(--bg-page);
+  padding: 56px 24px 64px;
 }
 
 .lx-footer-inner {
@@ -38,22 +39,22 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 24px;
+  gap: 28px;
   text-align: center;
 }
 
 .lx-footer-brand {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
 }
 
 .lx-footer-logo {
-  width: 28px;
-  height: 28px;
-  border-radius: 8px;
-  background: linear-gradient(135deg, var(--accent), #B85C38);
-  color: #FFF8F2;
+  width: 30px;
+  height: 30px;
+  border-radius: 7px;
+  background: var(--text-primary);
+  color: var(--bg-page);
   font-family: var(--font-display);
   font-size: 15px;
   display: flex;
@@ -63,23 +64,33 @@
 
 .lx-footer-name {
   font-family: var(--font-display);
-  font-size: 17px;
-  color: var(--text-inverse);
+  font-size: 18px;
+  color: var(--text-primary);
+  letter-spacing: 2px;
+}
+
+.lx-footer-sub {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: 2.5px;
+  color: var(--text-muted);
+  padding-left: 12px;
+  border-left: 1px solid var(--border-default);
 }
 
 .lx-footer-links {
   display: flex;
   flex-wrap: wrap;
   justify-content: center;
-  gap: 8px 24px;
+  gap: 8px 28px;
 }
 
 .lx-footer-links a {
   color: var(--text-secondary);
   font-family: var(--font-sans);
-  font-size: 14px;
+  font-size: 13.5px;
   text-decoration: none;
-  transition: color 150ms var(--ease-out);
+  transition: color 200ms var(--ease-out);
 }
 
 .lx-footer-links a:hover {
@@ -88,15 +99,15 @@
 
 .lx-footer-meta {
   display: flex;
-  flex-direction: column;
-  gap: 6px;
   align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  justify-content: center;
 }
 
-.lx-footer-meta p {
-  margin: 0;
+.lx-footer-meta span {
   font-family: var(--font-sans);
-  font-size: 13px;
+  font-size: 12.5px;
   color: var(--text-muted);
 }
 

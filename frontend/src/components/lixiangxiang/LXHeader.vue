@@ -26,19 +26,33 @@
   </header>
 
   <section id="top" class="lx-hero">
-    <div class="lx-hero-inner">
-      <p class="lx-hero-eyebrow">Minecraft 生存服务器 · 2023 年至今</p>
-      <h1 class="lx-hero-title">理想乡</h1>
-      <p class="lx-hero-slogan">{{ slogan || '方块之间，是家与远方' }}</p>
-      <p class="lx-hero-sub">
-        一座由 22 位玩家共同筑造的生存之城 —— 共建、共居、共享。
-      </p>
-      <div class="lx-hero-cta">
-        <a class="lx-cta-primary" href="#intro">了解我们</a>
-        <a class="lx-cta-ghost" href="#gallery">浏览相册</a>
+    <div class="lx-hero-grid">
+      <div class="lx-hero-main">
+        <p class="lx-hero-eyebrow">Minecraft 生存服务器 · 二〇二三年至今</p>
+        <h1 class="lx-hero-title">理想乡</h1>
+        <p class="lx-hero-slogan">{{ slogan || '方块之间，是家与远方' }}</p>
+        <p class="lx-hero-sub">
+          一座由 22 位玩家共同筑造的生存之城。不追进度、不比装备，
+          只把每一块方块，砌成家的样子。
+        </p>
+        <div class="lx-hero-cta">
+          <a class="lx-cta-primary" href="#intro">了解我们</a>
+          <a class="lx-cta-ghost" href="#gallery">浏览相册</a>
+        </div>
+      </div>
+
+      <div class="lx-hero-side" aria-hidden="true">
+        <div class="lx-seal lx-seal-1">建</div>
+        <div class="lx-seal lx-seal-2">共</div>
+        <div class="lx-seal lx-seal-3">居</div>
+        <div class="lx-seal-caption">
+          <span class="lx-seal-caption-zh">共建 · 共居 · 共享</span>
+          <span class="lx-seal-caption-en">LIXIANGXIANG EST. 2023</span>
+        </div>
       </div>
     </div>
     <div class="lx-hero-glow" aria-hidden="true"></div>
+    <div class="lx-hero-rule" aria-hidden="true"></div>
   </section>
 </template>
 
@@ -69,7 +83,7 @@ onMounted(async () => {
     const { data } = await lxPublicApi.info()
     slogan.value = data.slogan
   } catch {
-    /* 加载失败时使用默认标语 */
+    /* 使用默认标语 */
   }
 })
 </script>
@@ -80,10 +94,9 @@ onMounted(async () => {
   position: sticky;
   top: 0;
   z-index: 100;
-  background: color-mix(in srgb, var(--bg-page) 88%, transparent);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
-  border-bottom: 1px solid var(--border-subtle);
+  background: color-mix(in srgb, var(--bg-page) 86%, transparent);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
 }
 
 .lx-header-inner {
@@ -95,6 +108,7 @@ onMounted(async () => {
   align-items: center;
   justify-content: space-between;
   gap: 16px;
+  border-bottom: 1px solid var(--border-subtle);
 }
 
 .lx-logo {
@@ -106,48 +120,64 @@ onMounted(async () => {
 }
 
 .lx-logo-mark {
-  width: 32px;
-  height: 32px;
-  border-radius: 9px;
-  background: linear-gradient(135deg, var(--accent), #B85C38);
-  color: #FFF8F2;
+  width: 30px;
+  height: 30px;
+  border-radius: 7px;
+  background: var(--text-primary);
+  color: var(--bg-page);
   font-family: var(--font-display);
-  font-size: 17px;
+  font-size: 16px;
   display: flex;
   align-items: center;
   justify-content: center;
-  box-shadow: 0 2px 8px var(--accent-ring);
+  letter-spacing: 0;
 }
 
 .lx-logo-text {
   font-family: var(--font-display);
-  font-size: 20px;
+  font-size: 19px;
   color: var(--text-primary);
-  letter-spacing: 0.5px;
+  letter-spacing: 2px;
 }
 
 .lx-nav {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 2px;
   flex: 1;
   justify-content: center;
 }
 
 .lx-nav-link {
-  padding: 8px 14px;
-  border-radius: 8px;
+  position: relative;
+  padding: 10px 14px;
   color: var(--text-secondary);
   font-family: var(--font-sans);
   font-size: 14px;
-  font-weight: 500;
+  letter-spacing: 0.4px;
   text-decoration: none;
-  transition: color 150ms var(--ease-out), background-color 150ms var(--ease-out);
+  transition: color 200ms var(--ease-out);
+}
+
+.lx-nav-link::after {
+  content: '';
+  position: absolute;
+  left: 14px;
+  right: 14px;
+  bottom: 4px;
+  height: 1px;
+  background: var(--accent);
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform 250ms var(--ease-out);
 }
 
 .lx-nav-link:hover {
-  color: var(--accent);
-  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.lx-nav-link:hover::after {
+  transform: scaleX(1);
 }
 
 .lx-header-actions {
@@ -162,23 +192,26 @@ onMounted(async () => {
   align-items: center;
   gap: 6px;
   padding: 8px 16px;
-  border-radius: 8px;
-  background: var(--accent);
-  color: #FFF8F2;
+  border-radius: 7px;
+  border: 1px solid var(--text-primary);
+  color: var(--text-primary);
   font-family: var(--font-sans);
-  font-size: 14px;
+  font-size: 13.5px;
   font-weight: 600;
+  letter-spacing: 0.3px;
   text-decoration: none;
-  transition: background-color 150ms var(--ease-out), transform 150ms var(--ease-out);
+  background: transparent;
+  transition: background-color 200ms var(--ease-out), color 200ms var(--ease-out), transform 200ms var(--ease-out);
 }
 
 .lx-console-btn:hover {
-  background: var(--accent-hover);
+  background: var(--text-primary);
+  color: var(--bg-page);
   transform: translateY(-1px);
 }
 
 .lx-arrow {
-  transition: transform 150ms var(--ease-out);
+  transition: transform 200ms var(--ease-out);
 }
 
 .lx-console-btn:hover .lx-arrow {
@@ -193,129 +226,201 @@ onMounted(async () => {
   border-radius: 8px;
   background: var(--bg-card);
   color: var(--text-primary);
-  font-size: 18px;
+  font-size: 17px;
   cursor: pointer;
   align-items: center;
   justify-content: center;
 }
 
-/* ================= Hero ================= */
+/* ================= Hero（杂志式左对齐） ================= */
 .lx-hero {
   position: relative;
   overflow: hidden;
   background: var(--bg-page);
 }
 
-.lx-hero-inner {
+.lx-hero-grid {
   position: relative;
   z-index: 1;
   max-width: 1120px;
   margin: 0 auto;
-  padding: 120px 24px 130px;
-  text-align: center;
+  padding: 110px 24px 120px;
+  display: grid;
+  grid-template-columns: 1.6fr 1fr;
+  gap: 64px;
+  align-items: center;
 }
 
 .lx-hero-eyebrow {
   font-family: var(--font-sans);
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 600;
-  letter-spacing: 2px;
-  text-transform: uppercase;
+  letter-spacing: 4px;
   color: var(--accent);
-  margin-bottom: 18px;
+  margin: 0 0 22px;
 }
 
 .lx-hero-title {
   font-family: var(--font-display);
-  font-size: clamp(56px, 9vw, 96px);
+  font-size: clamp(64px, 9vw, 108px);
   font-weight: 400;
-  line-height: 1.05;
+  line-height: 1;
   color: var(--text-primary);
-  margin: 0 0 16px;
-  letter-spacing: 4px;
+  margin: 0 0 14px;
+  letter-spacing: 6px;
+  text-indent: 6px; /* 视觉居中补偿字距 */
 }
 
 .lx-hero-slogan {
   font-family: var(--font-body);
-  font-size: clamp(18px, 2.6vw, 26px);
-  color: var(--text-secondary);
-  margin: 0 0 20px;
+  font-size: clamp(17px, 2.2vw, 22px);
   font-style: italic;
+  color: var(--text-secondary);
+  margin: 0 0 22px;
+  letter-spacing: 1px;
 }
 
 .lx-hero-sub {
+  max-width: 520px;
   font-family: var(--font-sans);
   font-size: 15px;
+  line-height: 2;
   color: var(--text-muted);
   margin: 0 0 40px;
-  max-width: 560px;
-  margin-left: auto;
-  margin-right: auto;
-  line-height: 1.7;
 }
 
 .lx-hero-cta {
   display: flex;
   gap: 12px;
-  justify-content: center;
   flex-wrap: wrap;
 }
 
 .lx-cta-primary {
   display: inline-flex;
   align-items: center;
-  padding: 12px 28px;
-  border-radius: 10px;
+  padding: 12px 26px;
+  border-radius: 7px;
   background: var(--accent);
   color: #FFF8F2;
   font-family: var(--font-sans);
-  font-size: 15px;
+  font-size: 14.5px;
   font-weight: 600;
+  letter-spacing: 0.4px;
   text-decoration: none;
-  transition: background-color 150ms var(--ease-out), transform 150ms var(--ease-out);
+  transition: background-color 200ms var(--ease-out), transform 200ms var(--ease-out), box-shadow 200ms var(--ease-out);
 }
 
 .lx-cta-primary:hover {
   background: var(--accent-hover);
   transform: translateY(-1px);
+  box-shadow: 0 4px 14px var(--accent-ring);
 }
 
 .lx-cta-ghost {
   display: inline-flex;
   align-items: center;
-  padding: 12px 28px;
-  border-radius: 10px;
-  border: 1px solid var(--border-default);
+  padding: 12px 26px;
+  border-radius: 7px;
+  border: 1px solid var(--border-strong);
   color: var(--text-primary);
   font-family: var(--font-sans);
-  font-size: 15px;
+  font-size: 14.5px;
   font-weight: 500;
   text-decoration: none;
-  transition: border-color 150ms var(--ease-out), background-color 150ms var(--ease-out);
+  transition: border-color 200ms var(--ease-out), color 200ms var(--ease-out);
 }
 
 .lx-cta-ghost:hover {
   border-color: var(--accent);
   color: var(--accent);
-  background: var(--accent-soft);
 }
 
-/* 暖橙渐变光晕装饰 */
+/* ---- 右侧印章装饰（手工感） ---- */
+.lx-hero-side {
+  position: relative;
+  min-height: 320px;
+}
+
+.lx-seal {
+  position: absolute;
+  width: 96px;
+  height: 96px;
+  border-radius: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-display);
+  font-size: 38px;
+  color: var(--bg-page);
+  box-shadow: var(--shadow-md);
+  transition: transform 300ms var(--ease-out);
+}
+
+.lx-seal-1 { background: var(--accent); top: 8px; left: 12px; }
+.lx-seal-2 { background: var(--text-primary); top: 116px; left: 120px; }
+.lx-seal-3 { background: var(--chart-3); top: 8px; left: 224px; }
+
+.lx-hero-side:hover .lx-seal-1 { transform: translateY(-6px) rotate(-2deg); }
+.lx-hero-side:hover .lx-seal-2 { transform: translateY(-4px) rotate(1.5deg); }
+.lx-hero-side:hover .lx-seal-3 { transform: translateY(-7px) rotate(-1deg); }
+
+.lx-seal-caption {
+  position: absolute;
+  bottom: 0;
+  left: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.lx-seal-caption-zh {
+  font-family: var(--font-body);
+  font-size: 15px;
+  letter-spacing: 3px;
+  color: var(--text-primary);
+}
+
+.lx-seal-caption-en {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: 2.5px;
+  color: var(--text-muted);
+}
+
+/* ---- 背景装饰 ---- */
 .lx-hero-glow {
   position: absolute;
-  top: -120px;
-  left: 50%;
-  transform: translateX(-50%);
-  width: 720px;
-  height: 420px;
-  background:
-    radial-gradient(ellipse at center, var(--accent-ring), transparent 65%),
-    radial-gradient(ellipse at 30% 40%, rgba(217, 119, 87, 0.08), transparent 60%);
-  filter: blur(30px);
+  top: -160px;
+  right: -120px;
+  width: 620px;
+  height: 520px;
+  background: radial-gradient(ellipse at center, var(--accent-ring), transparent 62%);
+  filter: blur(40px);
   pointer-events: none;
 }
 
+.lx-hero-rule {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--border-default) 20%, var(--border-default) 80%, transparent);
+}
+
 /* ================= Responsive ================= */
+@media (max-width: 900px) {
+  .lx-hero-grid {
+    grid-template-columns: 1fr;
+    gap: 40px;
+    padding: 88px 24px 96px;
+  }
+
+  .lx-hero-side {
+    display: none;
+  }
+}
+
 @media (max-width: 768px) {
   .lx-header-inner {
     height: 56px;
@@ -344,7 +449,10 @@ onMounted(async () => {
   .lx-nav-link {
     padding: 13px 14px;
     font-size: 15px;
-    border-radius: 8px;
+  }
+
+  .lx-nav-link::after {
+    display: none;
   }
 
   .lx-menu-btn {
@@ -356,8 +464,18 @@ onMounted(async () => {
     font-size: 13px;
   }
 
-  .lx-hero-inner {
-    padding: 88px 20px 96px;
+  .lx-hero-grid {
+    padding: 72px 20px 80px;
   }
+
+  .lx-hero-title {
+    letter-spacing: 4px;
+    text-indent: 4px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lx-seal { transition: none; }
+  .lx-arrow, .lx-console-btn, .lx-cta-primary, .lx-cta-ghost { transition: none; }
 }
 </style>

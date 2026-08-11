@@ -4,8 +4,8 @@
       <div class="lx-admin-header-inner">
         <router-link to="/lixiangxiang" class="lx-admin-back">← 返回官网</router-link>
         <div class="lx-admin-title-wrap">
-          <h1 class="lx-admin-title">理想乡 · 后台管理</h1>
-          <p class="lx-admin-sub">当前账号：{{ authStore.user?.game_id || '未知' }}（{{ roleLabel(authStore.user?.role) }}）</p>
+          <h1 class="lx-admin-title">理想乡 · 后台</h1>
+          <p class="lx-admin-sub">{{ authStore.user?.game_id || '未知' }} · {{ roleLabel(authStore.user?.role) }}</p>
         </div>
         <router-link to="/dashboard" class="lx-admin-console">控制台 →</router-link>
       </div>
@@ -31,7 +31,7 @@
                 <el-form-item label="组织介绍（支持 **加粗** 与换行）">
                   <el-input v-model="infoForm.intro" type="textarea" :rows="8" placeholder="组织设定、宗旨…" />
                 </el-form-item>
-                <el-form-item label="发展历程（每行一条，行首自动加时间点）">
+                <el-form-item label="发展历程（每行一条）">
                   <el-input v-model="infoForm.history" type="textarea" :rows="8" placeholder="2023 年 1 月 · 理想乡开服…" />
                 </el-form-item>
                 <el-form-item>
@@ -48,10 +48,12 @@
                 <span class="lx-pane-count">共 {{ members.length }} 位成员</span>
                 <el-button type="primary" @click="openMemberDialog()">新增成员</el-button>
               </div>
-              <el-table :data="members" size="small" stripe class="lx-table">
+              <el-table :data="members" size="small" class="lx-table" :header-cell-style="headerCellStyle" :cell-style="cellStyle">
                 <el-table-column label="头像" width="70">
                   <template #default="{ row }">
-                    <el-avatar :size="36" :src="row.avatar_path || undefined">{{ (row.nickname || row.game_id).slice(0, 1) }}</el-avatar>
+                    <el-avatar :size="34" :src="row.avatar_path || undefined" shape="square" :style="{ borderRadius: '8px' }">
+                      {{ (row.nickname || row.game_id).slice(0, 1) }}
+                    </el-avatar>
                   </template>
                 </el-table-column>
                 <el-table-column prop="nickname" label="昵称" min-width="90" />
@@ -76,7 +78,7 @@
                 <span class="lx-pane-count">共 {{ bases.length }} 个基地</span>
                 <el-button type="primary" @click="openBaseDialog()">新增基地</el-button>
               </div>
-              <el-table :data="bases" size="small" stripe class="lx-table">
+              <el-table :data="bases" size="small" class="lx-table" :header-cell-style="headerCellStyle" :cell-style="cellStyle">
                 <el-table-column label="截图" width="110">
                   <template #default="{ row }">
                     <el-image v-if="row.image_path" :src="row.image_path" fit="cover" class="lx-thumb" :preview-src-list="[row.image_path]" preview-teleported />
@@ -116,7 +118,7 @@
               </div>
 
               <!-- 图片列表 -->
-              <el-table :data="images" size="small" stripe class="lx-table">
+              <el-table :data="images" size="small" class="lx-table" :header-cell-style="headerCellStyle" :cell-style="cellStyle">
                 <el-table-column label="预览" width="110">
                   <template #default="{ row }">
                     <el-image v-if="row.image_path" :src="row.image_path" fit="cover" class="lx-thumb" :preview-src-list="[row.image_path]" preview-teleported />
@@ -143,11 +145,11 @@
     </main>
 
     <!-- ============ 成员弹窗 ============ -->
-    <el-dialog v-model="memberDialog.visible" :title="memberDialog.isEdit ? '编辑成员' : '新增成员'" width="560px" destroy-on-close>
+    <el-dialog v-model="memberDialog.visible" :title="memberDialog.isEdit ? '编辑成员' : '新增成员'" width="560px" destroy-on-close class="lx-dialog">
       <el-form :model="memberDialog.form" label-width="88px" class="lx-dialog-form">
         <el-form-item label="头像">
           <div class="lx-upload-row">
-            <el-avatar :size="56" :src="memberDialog.form.avatar_path || undefined">
+            <el-avatar :size="52" :src="memberDialog.form.avatar_path || undefined" shape="square" :style="{ borderRadius: '10px' }">
               {{ (memberDialog.form.nickname || memberDialog.form.game_id || '?').slice(0, 1) }}
             </el-avatar>
             <el-upload
@@ -189,7 +191,7 @@
     </el-dialog>
 
     <!-- ============ 基地弹窗 ============ -->
-    <el-dialog v-model="baseDialog.visible" :title="baseDialog.isEdit ? '编辑基地' : '新增基地'" width="560px" destroy-on-close>
+    <el-dialog v-model="baseDialog.visible" :title="baseDialog.isEdit ? '编辑基地' : '新增基地'" width="560px" destroy-on-close class="lx-dialog">
       <el-form :model="baseDialog.form" label-width="88px" class="lx-dialog-form">
         <el-form-item label="基地截图">
           <div class="lx-upload-row">
@@ -224,7 +226,7 @@
     </el-dialog>
 
     <!-- ============ 分类弹窗 ============ -->
-    <el-dialog v-model="categoryDialog.visible" :title="categoryDialog.isEdit ? '编辑分类' : '新增分类'" width="420px" destroy-on-close>
+    <el-dialog v-model="categoryDialog.visible" :title="categoryDialog.isEdit ? '编辑分类' : '新增分类'" width="420px" destroy-on-close class="lx-dialog">
       <el-form :model="categoryDialog.form" label-width="72px" class="lx-dialog-form">
         <el-form-item label="分类名" required>
           <el-input v-model="categoryDialog.form.name" placeholder="如：建筑风景" />
@@ -240,7 +242,7 @@
     </el-dialog>
 
     <!-- ============ 图片弹窗 ============ -->
-    <el-dialog v-model="imageDialog.visible" :title="imageDialog.isEdit ? '编辑图片' : '上传图片'" width="560px" destroy-on-close>
+    <el-dialog v-model="imageDialog.visible" :title="imageDialog.isEdit ? '编辑图片' : '上传图片'" width="560px" destroy-on-close class="lx-dialog">
       <el-form :model="imageDialog.form" label-width="72px" class="lx-dialog-form">
         <el-form-item label="图片">
           <div class="lx-upload-row">
@@ -285,6 +287,23 @@ const authStore = useAuthStore()
 const isAdmin = computed(() => authStore.isAdmin)
 
 const activeTab = ref('info')
+
+/** el-table 表头/单元格统一样式（去 EP 默认蓝） */
+function headerCellStyle() {
+  return {
+    background: 'var(--bg-card)',
+    color: 'var(--text-secondary)',
+    fontWeight: 600,
+    fontFamily: 'var(--font-sans)',
+    fontSize: '12.5px',
+    letterSpacing: '0.5px',
+    borderBottom: '1px solid var(--border-subtle)',
+  }
+}
+
+function cellStyle() {
+  return { borderBottom: '1px solid var(--border-subtle)', background: 'transparent' }
+}
 
 // ────────────────────── 数据 ──────────────────────
 const infoForm = reactive({ slogan: '', intro: '', history: '' })
@@ -564,18 +583,26 @@ function categoryName(id: string | null): string {
   min-height: 100vh;
   min-height: 100dvh;
   background: var(--bg-page);
+  color: var(--text-primary);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.035'/%3E%3C/svg%3E");
+  background-attachment: fixed;
 }
 
 /* ================= Header ================= */
 .lx-admin-header {
   border-bottom: 1px solid var(--border-subtle);
-  background: var(--bg-card);
+  background: color-mix(in srgb, var(--bg-card) 86%, transparent);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  position: sticky;
+  top: 0;
+  z-index: 50;
 }
 
 .lx-admin-header-inner {
   max-width: 1120px;
   margin: 0 auto;
-  padding: 20px 24px;
+  padding: 18px 24px;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -586,10 +613,12 @@ function categoryName(id: string | null): string {
 .lx-admin-back,
 .lx-admin-console {
   font-family: var(--font-sans);
-  font-size: 14px;
+  font-size: 13.5px;
+  letter-spacing: 0.3px;
   color: var(--accent);
   text-decoration: none;
   white-space: nowrap;
+  transition: color 200ms var(--ease-out);
 }
 
 .lx-admin-back:hover,
@@ -599,15 +628,16 @@ function categoryName(id: string | null): string {
 
 .lx-admin-title {
   font-family: var(--font-display);
-  font-size: 26px;
+  font-size: 24px;
   font-weight: 400;
   color: var(--text-primary);
-  margin: 0 0 4px;
+  margin: 0 0 3px;
+  letter-spacing: 2px;
 }
 
 .lx-admin-sub {
   font-family: var(--font-sans);
-  font-size: 13px;
+  font-size: 12.5px;
   color: var(--text-muted);
   margin: 0;
 }
@@ -619,11 +649,163 @@ function categoryName(id: string | null): string {
   padding: 28px 24px 80px;
 }
 
-.lx-admin-tabs :deep(.el-tabs__item) {
-  font-family: var(--font-sans);
-  font-size: 15px;
+/* ================= EP 深度定制（去默认蓝） ================= */
+/* ---- Tabs ---- */
+.lx-admin-tabs :deep(.el-tabs__nav-wrap::after) {
+  height: 1px;
+  background-color: var(--border-subtle);
 }
 
+.lx-admin-tabs :deep(.el-tabs__item) {
+  font-family: var(--font-sans);
+  font-size: 14.5px;
+  letter-spacing: 0.5px;
+  color: var(--text-muted);
+  height: 44px;
+  line-height: 44px;
+  transition: color 200ms var(--ease-out);
+}
+
+.lx-admin-tabs :deep(.el-tabs__item:hover) {
+  color: var(--accent);
+}
+
+.lx-admin-tabs :deep(.el-tabs__item.is-active) {
+  color: var(--text-primary);
+}
+
+.lx-admin-tabs :deep(.el-tabs__active-bar) {
+  background-color: var(--accent);
+  height: 2px;
+}
+
+/* ---- Table ---- */
+.lx-table {
+  --el-table-border-color: var(--border-subtle);
+  --el-table-header-bg-color: transparent;
+  --el-table-row-hover-bg-color: var(--bg-hover);
+  --el-table-bg-color: transparent;
+  --el-table-tr-bg-color: transparent;
+  --el-table-header-text-color: var(--text-secondary);
+  --el-table-text-color: var(--text-secondary);
+  border-radius: 10px;
+  overflow: hidden;
+  border: 1px solid var(--border-subtle);
+}
+
+.lx-table :deep(.el-table__inner-wrapper::before) {
+  display: none;
+}
+
+.lx-table :deep(.el-button.is-text) {
+  font-size: 13px;
+}
+
+/* ---- Buttons ---- */
+.lx-pane :deep(.el-button--primary),
+.lx-dialog-form :deep(.el-button--primary) {
+  --el-button-bg-color: var(--accent);
+  --el-button-border-color: var(--accent);
+  --el-button-hover-bg-color: var(--accent-hover);
+  --el-button-hover-border-color: var(--accent-hover);
+  --el-button-active-bg-color: var(--accent-active);
+  --el-button-active-border-color: var(--accent-active);
+  border-radius: 7px;
+  font-weight: 500;
+  letter-spacing: 0.3px;
+}
+
+.lx-pane :deep(.el-button:not(.is-text):not(.el-button--primary)),
+.lx-dialog-form :deep(.el-button:not(.is-text):not(.el-button--primary)) {
+  border-radius: 7px;
+  --el-button-border-color: var(--border-default);
+  --el-button-text-color: var(--text-secondary);
+  --el-button-hover-border-color: var(--accent);
+  --el-button-hover-text-color: var(--accent);
+  --el-button-hover-bg-color: var(--accent-soft);
+}
+
+/* ---- Dialog ---- */
+.lx-dialog :deep(.el-dialog) {
+  border-radius: 14px;
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-lg);
+  border: 1px solid var(--border-subtle);
+}
+
+.lx-dialog :deep(.el-dialog__header) {
+  padding: 22px 24px 12px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.lx-dialog :deep(.el-dialog__title) {
+  font-family: var(--font-display);
+  font-size: 18px;
+  letter-spacing: 0.5px;
+  color: var(--text-primary);
+}
+
+.lx-dialog :deep(.el-dialog__body) {
+  padding: 22px 24px;
+}
+
+.lx-dialog :deep(.el-dialog__footer) {
+  padding: 12px 24px 20px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+/* ---- Inputs / Selects / Textarea ---- */
+.lx-dialog-form :deep(.el-input__wrapper),
+.lx-dialog-form :deep(.el-textarea__inner),
+.lx-form :deep(.el-input__wrapper),
+.lx-form :deep(.el-textarea__inner) {
+  border-radius: 7px;
+  background: var(--bg-page);
+  box-shadow: 0 0 0 1px var(--border-default) inset;
+  transition: box-shadow 200ms var(--ease-out);
+}
+
+.lx-dialog-form :deep(.el-input__wrapper.is-focus),
+.lx-dialog-form :deep(.el-textarea__inner:focus),
+.lx-form :deep(.el-input__wrapper.is-focus),
+.lx-form :deep(.el-textarea__inner:focus) {
+  box-shadow: 0 0 0 1px var(--accent) inset;
+}
+
+.lx-dialog-form :deep(.el-input-number) {
+  border-radius: 7px;
+}
+
+.lx-dialog-form :deep(.el-input-number .el-input__wrapper) {
+  border-radius: 7px 0 0 7px;
+}
+
+/* ---- Upload ---- */
+.lx-dialog-form :deep(.el-upload) {
+  display: inline-flex;
+}
+
+.lx-dialog-form :deep(.el-upload .el-button) {
+  border-radius: 7px;
+}
+
+/* ---- Form label ---- */
+.lx-dialog-form :deep(.el-form-item__label) {
+  font-family: var(--font-sans);
+  font-size: 13px;
+  color: var(--text-secondary);
+  letter-spacing: 0.3px;
+}
+
+.lx-form :deep(.el-form-item__label) {
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  letter-spacing: 0.3px;
+}
+
+/* ================= Panes ================= */
 .lx-pane {
   padding: 20px 0;
 }
@@ -634,17 +816,16 @@ function categoryName(id: string | null): string {
   justify-content: space-between;
   gap: 12px;
   flex-wrap: wrap;
-  margin-bottom: 16px;
+  margin-bottom: 18px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--border-subtle);
 }
 
 .lx-pane-count {
   font-family: var(--font-sans);
   font-size: 13px;
   color: var(--text-muted);
-}
-
-.lx-table {
-  width: 100%;
+  letter-spacing: 0.3px;
 }
 
 .lx-thumb {
@@ -659,7 +840,7 @@ function categoryName(id: string | null): string {
   font-size: 12px;
 }
 
-/* 分类 chips */
+/* 分类 chips（去胶囊化） */
 .lx-cat-list {
   display: flex;
   flex-wrap: wrap;
@@ -671,10 +852,15 @@ function categoryName(id: string | null): string {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  padding: 6px 10px;
-  border-radius: 999px;
+  padding: 7px 12px;
+  border-radius: 7px;
   border: 1px solid var(--border-default);
-  background: var(--bg-card);
+  background: var(--bg-elevated);
+  transition: border-color 200ms var(--ease-out);
+}
+
+.lx-cat-chip:hover {
+  border-color: var(--accent);
 }
 
 .lx-cat-name {
@@ -682,15 +868,16 @@ function categoryName(id: string | null): string {
   font-size: 13px;
   font-weight: 600;
   color: var(--text-primary);
+  letter-spacing: 0.3px;
 }
 
 .lx-cat-count {
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: 11.5px;
   color: var(--text-muted);
   background: var(--bg-hover);
-  border-radius: 999px;
-  padding: 1px 8px;
+  border-radius: 5px;
+  padding: 1px 7px;
 }
 
 /* 弹窗内上传 */
@@ -708,19 +895,14 @@ function categoryName(id: string | null): string {
   border: 1px solid var(--border-subtle);
 }
 
-.lx-dialog-form :deep(.el-form-item__label) {
-  font-family: var(--font-sans);
-  font-size: 13px;
-  color: var(--text-secondary);
-}
-
+/* ================= Responsive ================= */
 @media (max-width: 768px) {
   .lx-admin-main {
     padding: 16px 12px 60px;
   }
 
   .lx-admin-header-inner {
-    padding: 16px;
+    padding: 14px 16px;
   }
 }
 </style>
