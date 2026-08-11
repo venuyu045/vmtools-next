@@ -139,6 +139,7 @@
               <span>PID: {{ selectedInstance.pid || '--' }}</span>
               <span>PORT: {{ selectedInstance.mcp_port }}</span>
               <span v-if="isMf" class="live-coord" :title="'实时坐标'">{{ liveCoord }}</span>
+              <span class="latency-badge" :class="latencyCls" :title="'浏览器→后端延迟（RTT），5 秒刷新一次'">{{ latencyMs === null ? '—' : latencyMs + 'ms' }}</span>
             </div>
             <el-tabs v-model="activeTab" class="mcc-tabs" @tab-change="handleTabChange">
               <el-tab-pane label="终端" name="terminal">
@@ -235,6 +236,7 @@
             <span>PID: {{ selectedInstance.pid || '--' }}</span>
             <span>PORT: {{ selectedInstance.mcp_port }}</span>
             <span v-if="isMf" class="live-coord" :title="'实时坐标'">{{ liveCoord }}</span>
+            <span class="latency-badge" :class="latencyCls" :title="'浏览器→后端延迟（RTT），5 秒刷新一次'">{{ latencyMs === null ? '—' : latencyMs + 'ms' }}</span>
           </div>
           <el-tabs v-model="activeTab" class="mcc-tabs" @tab-change="handleTabChange">
             <el-tab-pane label="终端" name="terminal">
@@ -354,7 +356,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import MccWebTerminal from '@/components/MccWebTerminal.vue'
@@ -866,6 +868,36 @@ watch(detailOpen, (open) => {
 
 onMounted(() => refreshAll())
 
+// ── 浏览器→后端延迟指示（详情抽屉坐标旁，每 5s 探测 /api/ping） ──
+const latencyMs = ref<number | null>(null)
+let latencyTimer: ReturnType<typeof setInterval> | null = null
+const latencyCls = computed(() => {
+  if (latencyMs.value === null) return 'latency-off'
+  if (latencyMs.value < 80) return 'latency-good'
+  if (latencyMs.value < 200) return 'latency-mid'
+  return 'latency-bad'
+})
+
+async function probeLatency() {
+  const t0 = performance.now()
+  try {
+    const resp = await fetch('/api/ping', { cache: 'no-store' })
+    if (!resp.ok) throw new Error('bad status')
+    await resp.json()
+    latencyMs.value = Math.max(0, Math.round(performance.now() - t0))
+  } catch {
+    latencyMs.value = null
+  }
+}
+
+onMounted(() => {
+  probeLatency()
+  latencyTimer = setInterval(probeLatency, 5000)
+})
+onBeforeUnmount(() => {
+  if (latencyTimer) clearInterval(latencyTimer)
+})
+
 // 同一组件在 /mcc-instances 与 /mf-instances 间切换时（组件复用、不重新挂载），
 // 重新拉取实例列表，确保切换到 MCC 管理时列表立即更新
 watch(
@@ -1010,6 +1042,19 @@ watch(
 .detail-right .mcc-tabs :deep(.el-tabs__content) { overflow: auto; }
 
 .live-coord { color: var(--success); font-size: 13px; }
+/* 延迟指示（详情坐标旁） */
+.latency-badge {
+  font-size: 12px;
+  padding: 1px 8px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  white-space: nowrap;
+  user-select: none;
+}
+.latency-good { color: var(--green-primary, #67c23a); }
+.latency-mid { color: #e6a23c; }
+.latency-bad { color: #e34d59; }
+.latency-off { color: var(--text-muted); }
 .preview-head {
   display: flex;
   align-items: center;
