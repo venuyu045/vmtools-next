@@ -157,12 +157,42 @@ function syncFromStatus(data: any) {
   }
 }
 
+// ── 配置本地兜底（后端持久化之外，防止后端无记录时表单被清空） ──
+const LS_KEY = (id: string) => `mf_combat_cfg_${id}`
+
+function saveLocal() {
+  try {
+    localStorage.setItem(LS_KEY(props.botId), JSON.stringify({
+      ...form, stopPct: stopPct.value,
+    }))
+  } catch { /* 忽略 */ }
+}
+
+function loadLocal(): boolean {
+  try {
+    const raw = localStorage.getItem(LS_KEY(props.botId))
+    if (!raw) return false
+    const d = JSON.parse(raw)
+    form.enabled = !!d.enabled
+    form.radius = d.radius ?? 8
+    form.target_types = Array.isArray(d.target_types) ? [...d.target_types] : []
+    form.interval_ms = d.interval_ms ?? 1000
+    form.stop_durability = d.stop_durability ?? 0.1
+    form.move_to_target = !!d.move_to_target
+    stopPct.value = d.stopPct ?? Math.round((form.stop_durability ?? 0.1) * 100)
+    return true
+  } catch { return false }
+}
+
 async function loadStatus() {
   try {
     const resp = await botApi.combatStatus(props.botId)
     syncFromStatus(resp.data)
+    // 后端有配置则以它为准并同步本地缓存；没有则从本地恢复
+    if (!resp.data?.config) loadLocal()
   } catch (err: any) {
-    // 实例离线等场景静默
+    // 实例离线等场景静默；用本地缓存兜底
+    loadLocal()
   }
 }
 
@@ -186,6 +216,7 @@ async function saveAuto() {
       move_to_target: form.move_to_target,
     })
     syncFromStatus({ config: resp.data?.config, active_mode: form.enabled ? 'auto' : null })
+    saveLocal()
     ElMessage.success(form.enabled ? '自动攻击已开启' : '自动攻击已关闭')
   } catch (err: any) {
     ElMessage.error(err?.response?.data?.detail || '配置失败')

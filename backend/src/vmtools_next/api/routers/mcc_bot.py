@@ -810,6 +810,35 @@ async def _get_combat_client(bot_id: str, db: Session, user) -> tuple:
     return await _get_mcp_client(bot_id)
 
 
+def _save_combat_config(db: Session, bot_id: str, cfg: dict | None) -> None:
+    """把战斗配置持久化到 mcc_bots.combat_config（bot 重启/面板重开可恢复）。"""
+    if not cfg:
+        return
+    try:
+        import json as _json
+        from vmtools_next.data.models.logistics import MccBotModel
+        bot = db.query(MccBotModel).filter(MccBotModel.bot_id == bot_id).first()
+        if bot:
+            bot.combat_config = _json.dumps(cfg, ensure_ascii=False)
+            db.commit()
+    except Exception as _e:
+        logger.warning("Save combat config failed for %s: %s", bot_id, _e)
+
+
+def _load_combat_config(db: Session, bot_id: str) -> dict | None:
+    """读取持久化的战斗配置（无则 None）。"""
+    try:
+        import json as _json
+        from vmtools_next.data.models.logistics import MccBotModel
+        bot = db.query(MccBotModel).filter(MccBotModel.bot_id == bot_id).first()
+        if bot and bot.combat_config:
+            data = _json.loads(bot.combat_config)
+            return data if isinstance(data, dict) else None
+    except Exception as _e:
+        logger.warning("Load combat config failed for %s: %s", bot_id, _e)
+    return None
+
+
 @router.get("/{bot_id}/combat/entities")
 async def combat_nearby_entities(bot_id: str, radius: int = 16,
                                  target_types: str = "",
@@ -842,6 +871,8 @@ async def combat_auto_attack(bot_id: str, data: CombatAutoAttackRequest,
         )
         if isinstance(result, dict) and result.get("success") is False:
             raise HTTPException(400, result.get("error", "配置失败"))
+        # 持久化配置（bot 重启/面板重开可恢复）
+        _save_combat_config(db, bot_id, result.get("config"))
         return {"success": True, "bot_id": bot_id, "config": result.get("config")}
     except (MccMcpError, MineflayerError) as e:
         raise HTTPException(502, f"MCP error: {str(e) or repr(e)}")
@@ -882,6 +913,8 @@ async def combat_guard(bot_id: str, data: CombatGuardRequest,
         )
         if isinstance(result, dict) and result.get("success") is False:
             raise HTTPException(400, result.get("error", "配置失败"))
+        # 持久化配置（bot 重启/面板重开可恢复）
+        _save_combat_config(db, bot_id, result.get("config"))
         return {"success": True, "bot_id": bot_id, "config": result.get("config")}
     except (MccMcpError, MineflayerError) as e:
         raise HTTPException(502, f"MCP error: {str(e) or repr(e)}")
@@ -892,10 +925,20 @@ async def combat_guard(bot_id: str, data: CombatGuardRequest,
 @router.get("/{bot_id}/combat/status")
 async def combat_status(bot_id: str, db: Session = Depends(get_db),
                         user=Depends(require_admin)):
-    """当前战斗状态（模式/配置/主手武器耐久/实体数）。"""
+    """当前战斗状态（模式/配置/主手武器耐久/实体数）。
+
+    bot 无活动配置（未启用/刚重启）时，返回 DB 持久化的上次配置
+    （enabled=false），前端据此恢复表单，无需重新填写参数。
+    """
     client, owned = await _get_combat_client(bot_id, db, user)
     try:
         data = await client.get_combat_status()
+        # 无活动配置 → 用持久化配置兜底（仅恢复参数，不自动启用）
+        if isinstance(data, dict) and not data.get("config"):
+            saved = _load_combat_config(db, bot_id)
+            if saved:
+                data["config"] = saved
+                data.setdefault("active_mode", None)
         # 主手武器名汉化（durability.name 为 item_id，如 cooked_porkchop）
         try:
             dur = data.get("durability") if isinstance(data, dict) else None

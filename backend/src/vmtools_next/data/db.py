@@ -211,6 +211,15 @@ def _run_lightweight_migrations(engine) -> None:
                         conn.execute(text("ALTER TABLE scan_status ADD COLUMN finished_at DATETIME"))
                 except Exception as _e:
                     logger.warning("scan_status migration check: {}", _e)
+                # mcc_bots 战斗配置持久化（combat_config JSON，2026-08-11）：
+                # {mode, enabled, radius, target_types, interval_ms, stop_durability, move_to_target}
+                # bot 重启/面板重开时恢复上次配置（不自动启用）。
+                try:
+                    b_columns = {row[1] for row in conn.execute(text("PRAGMA table_info(mcc_bots)")).fetchall()}
+                    if "combat_config" not in b_columns:
+                        conn.execute(text("ALTER TABLE mcc_bots ADD COLUMN combat_config TEXT"))
+                except Exception as _e:
+                    logger.warning("mcc_bots combat_config migration check: {}", _e)
             conn.commit()
     except Exception as e:
         logger.warning("Lightweight migration check: {}", e)
