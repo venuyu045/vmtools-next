@@ -97,11 +97,19 @@ async def exchange_code(code: str, state: str) -> tuple[str, str]:
 
         me = await client.get(ME_URL, params={"access_token": access_token})
         me_text = me.text
-        # 形如 callback( {"client_id":"...","openid":"..."} ); 提取 JSON
+        # QQ 的 /oauth2.0/me 返回 JSONP：callback( {"client_id":"...","openid":"..."} );
+        # 剥掉 callback(...) 外壳后是标准 JSON；老接口也可能直接返回 query 格式，统一兼容
         if "callback(" in me_text:
-            me_text = me_text[me_text.index("(") + 1: me_text.rindex(")")]
-        me_data = _parse_query_response(me_text.replace(" ", ""))
-        openid = me_data.get("openid") or me_data.get('"openid"')
+            inner = me_text[me_text.index("(") + 1: me_text.rindex(")")]
+        else:
+            inner = me_text
+        inner = inner.strip()
+        try:
+            import json as _json
+            me_data = _json.loads(inner)
+        except Exception:
+            me_data = _parse_query_response(inner.replace(" ", ""))
+        openid = me_data.get("openid")
         if not openid:
             raise QqOAuthError(f"QQ openid 获取失败: {me.text[:300]}")
         return access_token, openid
