@@ -152,11 +152,19 @@ def create_ticket(openid: str, nickname: str = "", avatar: str = "") -> str:
 
 
 def consume_ticket(ticket: str) -> Optional[dict]:
-    """消费 ticket 并返回 {openid, nickname, avatar}；无效/过期返回 None。"""
-    data = _TICKETS.pop(ticket, None)
+    """读取 ticket 并返回 {openid, nickname, avatar}；无效/过期返回 None。
+
+    注意：ticket 在 TTL 内**可重复消费**（不做 pop）——QQ 回调后流程要经过
+    登录页（ticket-login）→ 注册/绑定页（register / qq-bind）多步，每步都会
+    读取同一 ticket；一次性 pop 会导致第二步就报「认证已过期」。安全性由
+    各接口自身的唯一约束兜底（openid 唯一 → 不会重复注册/绑定）。
+    过期项惰性清理。
+    """
+    data = _TICKETS.get(ticket, None)
     if not data:
         return None
     if time.time() > data["expires_at"]:
+        _TICKETS.pop(ticket, None)
         return None
     return {
         "openid": data["openid"],
