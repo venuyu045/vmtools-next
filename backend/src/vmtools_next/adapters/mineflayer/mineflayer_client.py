@@ -410,7 +410,9 @@ class MineflayerBridgeClient(AbstractBotAgent):
                               enable_jump_crit: bool = True,
                               enable_wtap: bool = True,
                               enable_stap: bool = True,
-                              enable_strafe: bool = True) -> dict:
+                              enable_strafe: bool = True,
+                              anti_afk: bool = True,
+                              anti_afk_interval_ms: int = 60000) -> dict:
         return await self._send_request(METHOD_SET_AUTO_ATTACK, {
             "enabled": enabled,
             "radius": radius,
@@ -426,6 +428,8 @@ class MineflayerBridgeClient(AbstractBotAgent):
             "enable_wtap": enable_wtap,
             "enable_stap": enable_stap,
             "enable_strafe": enable_strafe,
+            "anti_afk": anti_afk,
+            "anti_afk_interval_ms": anti_afk_interval_ms,
         }, timeout=DEFAULT_CMD_TIMEOUT)
 
     async def set_guard(self, enabled: bool = True, x: float | None = None,

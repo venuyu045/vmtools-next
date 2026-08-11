@@ -23,7 +23,9 @@ class CombatAutoAttackRequest(BaseModel):
     enable_wtap: bool = True            # W-tap（重置冲刺→目标击退小→连击）
     enable_stap: bool = True            # S-tap（同 W-tap，后退版）
     enable_strafe: bool = True          # 环绕走位（目标难瞄准）
-
+    # 2026-08-11：防挂机心跳（挂机模式下周期性活跃动作，防服务器 AFK 判定导致扫不到实体）
+    anti_afk: bool = True
+    anti_afk_interval_ms: int = Field(default=60000, ge=10000, le=3600000)
     @model_validator(mode="after")
     def _check_radii(self):
         if self.scan_radius is not None and self.attack_radius is not None:

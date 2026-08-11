@@ -35,6 +35,14 @@
           <el-form-item label="耐久阈值">
             <el-input-number v-model="idle.stopPct" :min="1" :max="100" /> %
           </el-form-item>
+          <el-form-item label="防挂机心跳">
+            <el-switch v-model="idle.anti_afk" />
+            <span style="margin-left: 6px; font-size: 12px; color: #888">
+              每
+              <el-input-number v-model="idle.antiAfkMs" :min="10" :max="3600" :step="10" style="width: 90px" />
+              秒转头+挥手+小跳，防服务器 AFK 判定扫不到实体
+            </span>
+          </el-form-item>
         </el-form>
         <div class="col-actions">
           <button class="pixel-btn mini" @click="saveIdle">应用挂机配置</button>
@@ -191,6 +199,8 @@ const idle = reactive({
   target_types: [] as string[],
   interval_ms: 1000,
   stopPct: 10,
+  anti_afk: true,        // 防挂机心跳（防服务器 AFK 判定扫不到实体）
+  antiAfkMs: 60,         // 心跳间隔（秒）
 })
 const pvp = reactive({
   enabled: false,
@@ -256,6 +266,8 @@ function syncFromStatus(data: any) {
       idle.target_types = tts
       idle.interval_ms = iv
       idle.stopPct = stp
+      idle.anti_afk = cfg.anti_afk ?? true
+      idle.antiAfkMs = Math.round((cfg.anti_afk_interval_ms ?? 60000) / 1000)
     }
   }
   activeMode.value = data?.active_mode ?? null
@@ -323,6 +335,8 @@ async function saveIdle() {
       attack_radius: idle.attack_radius,
       target_types: idle.target_types,
       interval_ms: idle.interval_ms,
+      anti_afk: idle.anti_afk,
+      anti_afk_interval_ms: Math.round((idle.antiAfkMs || 60) * 1000),
       interval_mode: 'auto',
       stop_durability: idle.stopPct / 100,
       move_to_target: false,

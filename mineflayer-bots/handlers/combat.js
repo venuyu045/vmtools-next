@@ -209,6 +209,28 @@ function createCombatHandlers(bot, ctx = {}) {
     }
   }
 
+  /** 防挂机心跳：转头 + 挥手 + 原地小跳（位置不变，但服务器判定活跃，
+   *  避免 AFK 标记导致实体同步中断、扫不到附近实体/玩家）。 */
+  function antiAfkAction(state) {
+    if (!state || !state.anti_afk || state.move_to_target) return;
+    const now = Date.now();
+    if (state.lastAntiAfkAt && (now - state.lastAntiAfkAt) < state.anti_afk_interval_ms) return;
+    state.lastAntiAfkAt = now;
+    try {
+      // 转头（随机方向，触发位置/朝向更新同步）
+      const yaw = Math.random() * Math.PI * 2;
+      bot.look(yaw, 0);
+      // 挥手（交互动作，多数 AFK 插件判定为活跃）
+      bot.swingArm('right');
+      // 原地小跳：只改变 y 不改变 x/z（若转头+挥手不足以活跃，跳跃可兜底）
+      bot.setControlState('jump', true);
+      if (state.jumpTimer) clearTimeout(state.jumpTimer);
+      state.jumpTimer = setTimeout(() => {
+        try { bot.setControlState('jump', false); } catch (e) { /* ignore */ }
+      }, 80);
+    } catch (e) { /* ignore */ }
+  }
+
   /** 环绕走位：冷却期间绕目标圆周移动，目标难瞄准。
  *  方向按【与目标的切向】计算（而非盲目左右翻转），走位更圆滑自然。 */
   function strafeAround(entity, atkR) {
@@ -393,6 +415,8 @@ function createCombatHandlers(bot, ctx = {}) {
     if (!state || !state.enabled) return;
     // PVP 模式（move_to_target=true，非守护）：走高版本攻击逻辑
     if (state.move_to_target && state.mode !== 'guard') return pvpTick(state);
+    // 挂机模式：周期性防挂机心跳（转头+挥手+原地小跳，防服务器 AFK 判定）
+    if (state.mode !== 'guard') antiAfkAction(state);
     // 主手武器耐久检测：低于阈值 → 自动停止 + 广播通知
     const dur = heldDurability();
     const stopRatio = state.stop_durability ?? 0.1;
@@ -446,6 +470,8 @@ function createCombatHandlers(bot, ctx = {}) {
       stop_durability: state.stop_durability,
       move_to_target: state.move_to_target,
       tricks: state.tricks || { sprint: true, jump_crit: true, wtap: true, stap: true, strafe: true },
+      anti_afk: state.anti_afk ?? true,
+      anti_afk_interval_ms: state.anti_afk_interval_ms ?? 60000,
       guard_pos: state.guard_pos || null,
     };
   }
@@ -478,6 +504,7 @@ function createCombatHandlers(bot, ctx = {}) {
     stop_durability = 0.1, move_to_target = false,
     enable_sprint_attack = true, enable_jump_crit = true,
     enable_wtap = true, enable_stap = true, enable_strafe = true,
+    anti_afk = true, anti_afk_interval_ms = 60000,
   } = {}) {
     stopTimers();
     autoAttack = {
@@ -498,6 +525,11 @@ function createCombatHandlers(bot, ctx = {}) {
         stap: Boolean(enable_stap),
         strafe: Boolean(enable_strafe),
       },
+      // 防挂机心跳：周期性活跃动作（转头+挥手+原地小跳），
+      // 防止服务器 AFK 判定导致实体同步中断（扫不到附近实体/玩家）
+      anti_afk: Boolean(anti_afk),
+      anti_afk_interval_ms: Math.max(10000, Number(anti_afk_interval_ms) || 60000),
+      lastAntiAfkAt: 0,
       lastAttackAt: 0,
       pendingJump: false,
       targetId: null,

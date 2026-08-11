@@ -875,6 +875,8 @@ async def combat_auto_attack(bot_id: str, data: CombatAutoAttackRequest,
             enable_wtap=data.enable_wtap,
             enable_stap=data.enable_stap,
             enable_strafe=data.enable_strafe,
+            anti_afk=data.anti_afk,
+            anti_afk_interval_ms=data.anti_afk_interval_ms,
         )
         if isinstance(result, dict) and result.get("success") is False:
             raise HTTPException(400, result.get("error", "配置失败"))
