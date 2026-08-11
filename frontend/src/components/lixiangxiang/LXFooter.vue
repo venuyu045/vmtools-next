@@ -16,7 +16,7 @@
       </nav>
 
       <div class="lx-footer-meta">
-        <span>Minecraft 生存服务器</span>
+        <span>Minecraft 玩家组织</span>
         <a href="https://beian.miit.gov.cn" target="_blank" rel="noopener noreferrer">渝ICP备2026011793号-1</a>
       </div>
     </div>

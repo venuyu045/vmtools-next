@@ -28,13 +28,13 @@
   <section id="top" class="lx-hero">
     <div class="lx-hero-grid">
       <div class="lx-hero-main">
-        <p class="lx-hero-eyebrow">Minecraft 生存服务器 · 二〇二三年至今</p>
+        <p class="lx-hero-eyebrow">Minecraft 玩家组织 · 二〇二三年至今</p>
         <h1 class="lx-hero-title">理想乡</h1>
         <p class="lx-hero-slogan">{{ slogan || '方块之间，是家与远方' }}</p>
         <p class="lx-hero-sub">
-          一座由 22 位玩家共同筑造的生存之城。自 2023 年初春开垦至今，
-          四座基地、跨世界铁路与无数座亲手搭起的房子——这里的一切，
-          都由理想乡的住民一砖一瓦砌成。
+          一个由 22 位玩家共同经营的 Minecraft 玩家组织。自 2023 年初春成立至今，
+          成员们建起了四座基地、跨世界铁路与无数座亲手搭起的房子——
+          这里的一切，都来自每一位成员的付出。
         </p>
         <div class="lx-hero-cta">
           <a class="lx-cta-primary" href="#intro">了解我们</a>
@@ -51,7 +51,7 @@
         <div class="lx-pin-card lx-pin-2">
           <span class="lx-pin-dot"></span>
           <span class="lx-pin-value">{{ memberCount ?? 22 }}</span>
-          <span class="lx-pin-label">位住民</span>
+          <span class="lx-pin-label">位成员</span>
         </div>
         <div class="lx-pin-card lx-pin-3">
           <span class="lx-pin-dot"></span>

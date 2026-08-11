@@ -2,7 +2,7 @@
   <section id="intro" ref="rootRef" class="lx-section lx-intro" :class="{ 'is-revealed': revealed }">
     <div class="lx-section-inner">
       <p class="lx-eyebrow">About · 组织介绍</p>
-      <h2 class="lx-section-title">一座由 22 位玩家共同筑造的生存之城</h2>
+      <h2 class="lx-section-title">一个由 22 位玩家共同经营的玩家组织</h2>
 
       <div class="lx-intro-grid">
         <div class="lx-intro-main">
@@ -23,7 +23,7 @@
           <div class="lx-stat">
             <i class="lx-stat-pin pin-moss"></i>
             <span class="lx-stat-num">{{ foundedYear }}</span>
-            <span class="lx-stat-label">年建服</span>
+            <span class="lx-stat-label">年成立</span>
           </div>
         </div>
       </div>
