@@ -27,7 +27,6 @@
           v-for="img in filteredImages"
           :key="img.id"
           class="lx-photo"
-          @click="previewIndex = filteredImages.findIndex(x => x.id === img.id)"
         >
           <el-image
             class="lx-photo-img"
@@ -54,13 +53,12 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, ref } from 'vue'
 import type { LxCategory, LxImage } from '@/api/lixiangxiang'
 
 const props = defineProps<{ categories: LxCategory[]; images: LxImage[] }>()
 
 const activeCat = ref('all')
-const previewIndex = ref(-1)
 
 function setCategory(id: string) {
   activeCat.value = id
@@ -69,11 +67,6 @@ function setCategory(id: string) {
 const filteredImages = computed(() => {
   if (activeCat.value === 'all') return props.images
   return props.images.filter(img => img.category_id === activeCat.value)
-})
-
-// 分类变化时重置预览
-watch(activeCat, () => {
-  previewIndex.value = -1
 })
 </script>
 

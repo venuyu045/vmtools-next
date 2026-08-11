@@ -36,6 +36,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from pydantic import BaseModel
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from vmtools_next.api.deps import get_db, require_admin
@@ -205,15 +206,20 @@ def list_bases(db: Session = Depends(get_db)):
 def list_categories(db: Session = Depends(get_db)):
     """相册分类列表（按 sort_order 升序，附带每类图片数）。"""
     rows = db.query(GalleryCategoryModel).order_by(GalleryCategoryModel.sort_order.asc()).all()
+    # 按分类聚合图片数（原实现 dict(category_id, id) 每组只取一行 → 计数恒为 0/1）
     counts = dict(
-        db.query(GalleryImageModel.category_id, GalleryImageModel.id)
+        db.query(GalleryImageModel.category_id, func.count(GalleryImageModel.id))
         .group_by(GalleryImageModel.category_id)
         .all()
     )
     result = []
     for c in rows:
-        img_count = sum(1 for cid in counts if cid == c.id)
-        result.append({"id": c.id, "name": c.name, "sort_order": c.sort_order, "image_count": img_count})
+        result.append({
+            "id": c.id,
+            "name": c.name,
+            "sort_order": c.sort_order,
+            "image_count": counts.get(c.id, 0),
+        })
     return result
 
 
@@ -416,6 +422,9 @@ def update_image(image_id: str, body: ImageUpdate, db: Session = Depends(get_db)
     data = body.model_dump(exclude_none=True)
     for key, value in data.items():
         setattr(g, key, value.strip() if isinstance(value, str) else value)
+    # 显式传 category_id=null 时允许取消分类（exclude_none 会丢弃 None，需特判）
+    if body.category_id is None and "category_id" in body.model_dump(exclude_unset=True):
+        g.category_id = None
     db.commit()
     return {"id": g.id, "category_id": g.category_id, "image_path": g.image_path,
             "title": g.title, "description": g.description, "uploaded_at": _iso(g.uploaded_at)}

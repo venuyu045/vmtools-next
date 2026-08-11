@@ -404,7 +404,9 @@ async function saveMember() {
 }
 
 async function removeMember(row: LxMember) {
-  await ElMessageBox.confirm(`确认删除成员「${row.nickname || row.game_id}」？`, '删除确认', { type: 'warning' })
+  try {
+    await ElMessageBox.confirm(`确认删除成员「${row.nickname || row.game_id}」？`, '删除确认', { type: 'warning' })
+  } catch { return } // 用户取消
   await lxAdminApi.deleteMember(row.id)
   ElMessage.success('已删除')
   await loadAll()
@@ -449,7 +451,9 @@ async function saveBase() {
 }
 
 async function removeBase(row: LxBase) {
-  await ElMessageBox.confirm(`确认删除基地「${row.name}」？`, '删除确认', { type: 'warning' })
+  try {
+    await ElMessageBox.confirm(`确认删除基地「${row.name}」？`, '删除确认', { type: 'warning' })
+  } catch { return } // 用户取消
   await lxAdminApi.deleteBase(row.id)
   ElMessage.success('已删除')
   await loadAll()
@@ -494,7 +498,9 @@ async function saveCategory() {
 }
 
 async function removeCategory(row: LxCategory) {
-  await ElMessageBox.confirm(`确认删除分类「${row.name}」？其下图片将变为未分类（不删除图片）。`, '删除确认', { type: 'warning' })
+  try {
+    await ElMessageBox.confirm(`确认删除分类「${row.name}」？其下图片将变为未分类（不删除图片）。`, '删除确认', { type: 'warning' })
+  } catch { return } // 用户取消
   await lxAdminApi.deleteCategory(row.id)
   ElMessage.success('已删除')
   await loadAll()
@@ -539,7 +545,9 @@ async function saveImage() {
 }
 
 async function removeImage(row: LxImage) {
-  await ElMessageBox.confirm(`确认删除图片「${row.title || '未命名'}」？`, '删除确认', { type: 'warning' })
+  try {
+    await ElMessageBox.confirm(`确认删除图片「${row.title || '未命名'}」？`, '删除确认', { type: 'warning' })
+  } catch { return } // 用户取消
   await lxAdminApi.deleteImage(row.id)
   ElMessage.success('已删除')
   await loadAll()

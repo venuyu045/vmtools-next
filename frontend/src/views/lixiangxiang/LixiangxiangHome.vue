@@ -3,7 +3,10 @@
     <LXHeader />
 
     <main>
-      <LXIntroSection :info="info" />
+      <div v-if="loadError" class="lx-load-error" role="alert">
+        官网数据加载失败，请稍后刷新重试。
+      </div>
+      <LXIntroSection :info="info" :member-count="members.length" :base-count="bases.length" />
       <LXMembersSection :members="members" />
       <LXBaseSection :bases="bases" />
       <LXGallerySection :categories="categories" :images="images" />
@@ -38,6 +41,7 @@ const members = ref<LxMember[]>([])
 const bases = ref<LxBase[]>([])
 const categories = ref<LxCategory[]>([])
 const images = ref<LxImage[]>([])
+const loadError = ref(false)
 
 onMounted(async () => {
   try {
@@ -54,7 +58,7 @@ onMounted(async () => {
     categories.value = catsRes.data
     images.value = imgsRes.data
   } catch {
-    /* 官网数据加载失败保持空态 */
+    loadError.value = true
   }
 })
 </script>
@@ -65,6 +69,19 @@ onMounted(async () => {
   min-height: 100dvh;
   background: var(--bg-page);
   color: var(--text-primary);
+}
+
+.lx-load-error {
+  max-width: 1120px;
+  margin: 24px auto 0;
+  padding: 14px 20px;
+  border-radius: 10px;
+  background: var(--danger-bg);
+  border: 1px solid var(--danger);
+  color: var(--danger);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  text-align: center;
 }
 
 /* 管理员后台入口（固定右下角） */

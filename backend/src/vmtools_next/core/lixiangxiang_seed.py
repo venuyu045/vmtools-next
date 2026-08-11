@@ -162,15 +162,21 @@ AVATAR_COLORS: list[tuple[tuple[int, int, int], tuple[int, int, int]]] = [
 
 
 def _write_seed_assets(lx_dir: Path) -> None:
-    """生成成员头像 + 相册 + 基地占位图。"""
+    """生成成员头像 + 相册 + 基地占位图（文件已存在则跳过，避免每次启动重写）。"""
     seed_dir = lx_dir / "seed"
     for i, (c1, c2) in enumerate(AVATAR_COLORS, start=1):
-        write_gradient_png(seed_dir / f"avatar-{i}.png", 128, 128, c1, c2, diagonal=True)
+        p = seed_dir / f"avatar-{i}.png"
+        if not p.is_file():
+            write_gradient_png(p, 128, 128, c1, c2, diagonal=True)
     for _, _, _, filename, c1, c2 in GALLERY_IMAGES_SEED:
-        write_gradient_png(seed_dir / filename, 960, 540, c1, c2)
+        p = seed_dir / filename
+        if not p.is_file():
+            write_gradient_png(p, 960, 540, c1, c2)
     for i, (_, _, filename, _) in enumerate(BASES_SEED, start=1):
-        write_gradient_png(seed_dir / filename, 1200, 600, (217, 119, 87), (90, 74, 66))
-    logger.info("Lixiangxiang seed assets written ({} avatars, {} photos, {} bases)",
+        p = seed_dir / filename
+        if not p.is_file():
+            write_gradient_png(p, 1200, 600, (217, 119, 87), (90, 74, 66))
+    logger.info("Lixiangxiang seed assets ensured ({} avatars, {} photos, {} bases)",
                 len(AVATAR_COLORS), len(GALLERY_IMAGES_SEED), len(BASES_SEED))
 
 

@@ -11,15 +11,15 @@
 
         <div class="lx-intro-side">
           <div class="lx-stat-card">
-            <div class="lx-stat-num">22</div>
+            <div class="lx-stat-num">{{ memberCount ?? 22 }}</div>
             <div class="lx-stat-label">成员</div>
           </div>
           <div class="lx-stat-card">
-            <div class="lx-stat-num">4</div>
+            <div class="lx-stat-num">{{ baseCount ?? 4 }}</div>
             <div class="lx-stat-label">地图基地</div>
           </div>
           <div class="lx-stat-card">
-            <div class="lx-stat-num">2023</div>
+            <div class="lx-stat-num">{{ foundedYear }}</div>
             <div class="lx-stat-label">建服年份</div>
           </div>
         </div>
@@ -38,7 +38,20 @@ import { computed, onMounted, ref } from 'vue'
 import { lxPublicApi } from '@/api/lixiangxiang'
 import type { LxInfo } from '@/api/lixiangxiang'
 
-const props = defineProps<{ info: LxInfo | null }>()
+const props = defineProps<{
+  info: LxInfo | null
+  /** 成员数量（Home 传入；缺省回退 seed 值 22） */
+  memberCount?: number
+  /** 基地数量（Home 传入；缺省回退 seed 值 4） */
+  baseCount?: number
+}>()
+
+/** 建服年份：优先 settings.founded（YYYY-MM 取前 4 位），缺省 2023 */
+const foundedYear = computed(() => {
+  const founded = effectiveInfo.value?.settings?.founded
+  if (founded && /^\d{4}/.test(founded)) return founded.slice(0, 4)
+  return '2023'
+})
 
 /** 简单渲染：**粗体** → <strong>，\n → <br/>（不引入 markdown 依赖） */
 function renderText(text: string): string {

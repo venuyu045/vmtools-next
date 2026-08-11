@@ -14,7 +14,7 @@
             <div v-else class="lx-base-placeholder">基地建设中</div>
           </div>
           <div class="lx-base-body">
-            <span class="lx-base-index">0{{ i + 1 }}</span>
+            <span class="lx-base-index">{{ String(i + 1).padStart(2, '0') }}</span>
             <h3 class="lx-base-name">{{ b.name }}</h3>
             <p class="lx-base-desc">{{ b.description }}</p>
             <div v-if="b.coordinates" class="lx-base-coords">
