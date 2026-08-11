@@ -255,7 +255,12 @@ async function createBotProcess(options) {
     bot.on('end', (reason) => {
       console.log(`${ANSI.yellow}[bot] disconnected:${ANSI.reset}`, reason);
       broadcast(createEvent('bot_disconnected', { reason }));
-      // 不在这里 stop WS，让进程管理器处理重启
+      // 游戏连接已断开：进程不退出会导致 Python 端 _watch_exit_loop 永远等不到
+      // 退出码而无法自动重启（历史 bug：bot 卡在"假在线"状态）。这里延迟退出，
+      // 让 Python 端进程管理器检测到退出后按 desired_state 自动重启（含退避）。
+      if (!isStopping) {
+        setTimeout(() => process.exit(0), 1500);
+      }
     });
 
     bot.on('chat', (username, message) => {

@@ -140,6 +140,9 @@ class MineflayerProcessManager:
                 # start_instance 内部会自动连接 Session Pool（_auto_connect_ws），
                 # 无需在此重复连接
                 await self.start_instance(inst.instance_id)
+                # 错开启动：多个实例同时登录同一服务器会触发「登录过于频繁」
+                # 限流，逐个间隔 8s 恢复。
+                await asyncio.sleep(8)
             except Exception as exc:
                 logger.warning("Failed to restore mineflayer %s: %s", inst.instance_id[:8], exc)
 
@@ -635,6 +638,10 @@ class MineflayerProcessManager:
                         "Mineflayer bot %s crashed unexpectedly, auto-restarting (desired_state=running)",
                         instance_id[:8],
                     )
+                    # 重启退避：登录过于频繁/服务器限流时，立即重启会触发
+                    # 「踢→秒重启→登录频繁→再踢」死循环。统一等待 30s 让
+                    # 服务器限流窗口过去、多个实例错开重连。
+                    await asyncio.sleep(30)
                     await self.start_instance(instance_id)
         except Exception as exc:
             logger.warning("Auto-restart failed for %s: %s", instance_id[:8], exc)
