@@ -215,6 +215,11 @@
                     @move="handleInventoryMove"
                     @use="handleInventoryUse"
                   />
+                  <!-- 附加箱子：大箱子 UI + 扫描/前往（mineflayer only，2026-08-11） -->
+                  <ContainerPanel
+                    v-if="isMf && selectedInstance.bot_id"
+                    :bot-id="selectedInstance.bot_id"
+                  />
                 </div>
                 <div v-else class="empty-state">选择 Bot 实例查看背包</div>
               </el-tab-pane>
@@ -361,6 +366,7 @@ import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import MccWebTerminal from '@/components/MccWebTerminal.vue'
 import MccFileManagerPanel from '@/components/MccFileManagerPanel.vue'
+import ContainerPanel from '@/components/bot/ContainerPanel.vue'
 import InventoryGrid from '@/components/bot/InventoryGrid.vue'
 import MoveControlPad from '@/components/bot/MoveControlPad.vue'
 import CombatPanel from '@/components/bot/CombatPanel.vue'

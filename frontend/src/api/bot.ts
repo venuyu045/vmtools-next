@@ -100,4 +100,17 @@ export const botApi = {
   combatStop(botId: string) {
     return client.post(`/mcc-bots/${botId}/combat/stop`)
   },
+  // 容器（大箱子 UI / 附加箱子，mineflayer only，2026-08-11）
+  scanContainers(botId: string, maxCount = 200) {
+    return client.get(`/mcc-bots/${botId}/inventory/containers`, { params: { max_count: maxCount } })
+  },
+  openContainer(botId: string, x: number, y: number, z: number) {
+    return client.post(`/mcc-bots/${botId}/inventory/container/open`, { x, y, z })
+  },
+  containerSnapshot(botId: string, containerId: string) {
+    return client.get(`/mcc-bots/${botId}/inventory/container/${containerId}`)
+  },
+  closeContainer(botId: string, containerId: string) {
+    return client.post(`/mcc-bots/${botId}/inventory/container/${containerId}/close`)
+  },
 }

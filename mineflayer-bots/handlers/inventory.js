@@ -147,6 +147,7 @@ function createInventoryHandlers(bot) {
   }
 
   // ── 打开容器 ──
+  // 距离超过 3 格时自动寻路靠近（2 格）再打开——支持前端「前往打开」一键操作
   async function open_container_at({ x, y, z } = {}) {
     try {
       const pos = new Vec3(x, y, z);
@@ -154,6 +155,22 @@ function createInventoryHandlers(bot) {
 
       if (!block || block.type === 0) {
         return { success: false, error: `No block at (${x},${y},${z})` };
+      }
+
+      // 距离远 → pathfinder 先走到容器旁（2 格内），再右键打开
+      if (bot.entity && bot.entity.position) {
+        const dist = bot.entity.position.distanceTo(pos);
+        if (dist > 3) {
+          try {
+            const { GoalNear } = require('mineflayer-pathfinder').goals;
+            await Promise.race([
+              bot.pathfinder.goto(new GoalNear(x, y, z, 2)),
+              new Promise((resolve) => setTimeout(resolve, 15000)),
+            ]);
+          } catch (err) {
+            // 寻路失败/超时不阻塞，仍尝试直接打开（可能失败）
+          }
+        }
       }
 
       const container = await bot.openContainer(block);

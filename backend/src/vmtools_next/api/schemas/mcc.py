@@ -175,6 +175,13 @@ class InventoryActionRequest(BaseModel):
     action: str  # LeftClick | RightClick | ShiftClick | DropItemStack | DropSingleItem
 
 
+class OpenContainerRequest(BaseModel):
+    """打开（可先寻路前往）一个容器方块。"""
+    x: int
+    y: int
+    z: int
+
+
 class InventorySelectHotbarRequest(BaseModel):
     slot: int  # 0-8 hotbar index
 

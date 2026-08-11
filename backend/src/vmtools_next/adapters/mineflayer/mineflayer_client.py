@@ -349,6 +349,24 @@ class MineflayerBridgeClient(AbstractBotAgent):
             "max_count": max_count,
         }, timeout=30.0)
 
+    async def open_container_at(self, x: int, y: int, z: int) -> dict:
+        """前往（距离远自动寻路靠近）并打开容器，返回 container_id / slot_count / block_name。"""
+        return await self._send_request(METHOD_OPEN_CONTAINER_AT, {
+            "x": x, "y": y, "z": z,
+        }, timeout=CONTAINER_TIMEOUT)
+
+    async def get_container_snapshot(self, container_id: str) -> dict:
+        """获取已打开容器的内容快照。"""
+        return await self._send_request(METHOD_GET_CONTAINER_SNAPSHOT, {
+            "container_id": container_id,
+        }, timeout=DEFAULT_CMD_TIMEOUT)
+
+    async def close_container(self, container_id: str) -> dict:
+        """关闭指定容器。"""
+        return await self._send_request(METHOD_CLOSE_CONTAINER, {
+            "container_id": container_id,
+        }, timeout=DEFAULT_CMD_TIMEOUT)
+
     # ── 移动 ──
 
     async def move_to(self, x: int, y: int, z: int,

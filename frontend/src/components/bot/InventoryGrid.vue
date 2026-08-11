@@ -249,7 +249,7 @@ function toRoman(n: number): string {
 async function onSlotClick(slotIdx: number) {
   menu.value.show = false
 
-  // 移动模式：源 → 目标
+  // 移动模式：源 → 目标（连续移动，不移除 moveMode——再点按钮/ESC 才退出）
   if (moveMode.value) {
     if (moveFrom.value === -1) {
       if (!get(slotIdx)) return
@@ -259,7 +259,6 @@ async function onSlotClick(slotIdx: number) {
     if (moveFrom.value === slotIdx) { moveFrom.value = -1; return }
     const from = moveFrom.value
     moveFrom.value = -1
-    moveMode.value = false
     emit('move', { slot_id: from, dest_slot_id: slotIdx })
     return
   }

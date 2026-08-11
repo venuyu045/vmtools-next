@@ -15,6 +15,7 @@ from vmtools_next.api.schemas.mcc import (
     InventoryUseRequest, MoveControlRequest, LookRequest, SneakRequest,
     MccBotStatusList, MccBotStatusItem,
     CombatAutoAttackRequest, CombatGuardRequest, CombatAttackRequest,
+    OpenContainerRequest,
 )
 from vmtools_next.data.models.logistics import MccBotModel
 from vmtools_next.adapters.mcc.mcc_mcp_client import MccMcpClient, MccMcpError
@@ -597,6 +598,83 @@ async def get_inventory(bot_id: str, mcp_port: int = 0,
         empty_slots=slot_count - len(all_items),
         total_items=sum(s.get("count", s.get("amount", 0)) or 0 for s in all_items),
     )
+
+
+# ── 容器（大箱子 UI / 附加箱子，2026-08-11，仅 mineflayer） ──
+
+@router.get("/{bot_id}/inventory/containers")
+async def inventory_scan_containers(bot_id: str, max_count: int = 200,
+                                    db: Session = Depends(get_db),
+                                    user=Depends(require_admin)):
+    """扫描 bot 已加载区块内的全部容器方块（坐标列表，前端展示+前往）。"""
+    _get_scoped_bot(db, user, bot_id)
+    from vmtools_next.core.bot_engine import resolve_bot_engine
+    engine = resolve_bot_engine(bot_id, db)
+    if engine != "mineflayer":
+        raise HTTPException(400, "容器功能仅支持 mineflayer 引擎")
+    client, owned = await _get_mcp_client(bot_id)
+    try:
+        result = await client.scan_loaded_containers(max_count=max_count)
+        return result
+    finally:
+        if owned: await client.disconnect()
+
+
+@router.post("/{bot_id}/inventory/container/open")
+async def inventory_open_container(bot_id: str, data: OpenContainerRequest,
+                                   db: Session = Depends(get_db),
+                                   user=Depends(require_admin)):
+    """前往（距离远自动寻路）并打开容器，返回 container_id / slot_count / block_name。"""
+    _get_scoped_bot(db, user, bot_id)
+    client, owned = await _get_combat_client(bot_id, db, user)
+    try:
+        result = await client.open_container_at(data.x, data.y, data.z)
+        if isinstance(result, dict) and result.get("success") is False:
+            raise HTTPException(400, result.get("error", "打开容器失败"))
+        return result
+    except (MccMcpError, MineflayerError) as e:
+        raise HTTPException(502, f"MCP error: {str(e) or repr(e)}")
+    finally:
+        if owned: await client.disconnect()
+
+
+@router.get("/{bot_id}/inventory/container/{container_id}")
+async def inventory_container_snapshot(bot_id: str, container_id: str,
+                                       db: Session = Depends(get_db),
+                                       user=Depends(require_admin)):
+    """获取已打开容器的内容快照（物品名汉化）。"""
+    _get_scoped_bot(db, user, bot_id)
+    client, owned = await _get_combat_client(bot_id, db, user)
+    try:
+        data = await client.get_container_snapshot(container_id)
+        # 物品名汉化（items[].name 为 minecraft:id）
+        if isinstance(data, dict) and isinstance(data.get("items"), list):
+            from vmtools_next.core.item_names_zh import get_item_zh
+            for it in data["items"]:
+                raw = str(it.get("name") or "")
+                if raw:
+                    it["item_id"] = raw
+                    it["item_name_zh"] = get_item_zh(raw, fallback=it.get("display_name"))
+        return data
+    except (MccMcpError, MineflayerError) as e:
+        raise HTTPException(502, f"MCP error: {str(e) or repr(e)}")
+    finally:
+        if owned: await client.disconnect()
+
+
+@router.post("/{bot_id}/inventory/container/{container_id}/close")
+async def inventory_close_container(bot_id: str, container_id: str,
+                                    db: Session = Depends(get_db),
+                                    user=Depends(require_admin)):
+    """关闭容器。"""
+    _get_scoped_bot(db, user, bot_id)
+    client, owned = await _get_combat_client(bot_id, db, user)
+    try:
+        return await client.close_container(container_id)
+    except (MccMcpError, MineflayerError) as e:
+        raise HTTPException(502, f"MCP error: {str(e) or repr(e)}")
+    finally:
+        if owned: await client.disconnect()
 
 
 @router.post("/{bot_id}/inventory/action")
