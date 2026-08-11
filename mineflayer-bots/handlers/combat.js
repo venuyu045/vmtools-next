@@ -93,7 +93,23 @@ function createCombatHandlers(bot, ctx = {}) {
   async function attackEntity(entity) {
     if (!entity) return { success: false, error: 'no target' };
     try {
-      await bot.attack(entity);
+      // ⚠️ 不能用 bot.attack()：mineflayer 在 1.21.6+/26.1 新协议下构造的
+      // use_entity 包缺 hand 字段且位置字段结构变化，protodef 序列化报
+      // 「SizeOf error for undefined (reading 'x')」——攻击包根本没发出去。
+      // 这里直接用 bot._client.write 按协议原生发送攻击包（字段全带，兼容新旧协议）。
+      if (!bot._client) return { success: false, error: 'no client' };
+      if (!bot.entity || !bot.entity.position) return { success: false, error: 'bot not spawned' };
+      const epos = entity.position;
+      if (!epos) return { success: false, error: 'target has no position' };
+      // 挥手动画（攻击表现；不阻塞主流程）
+      try { bot.swingArm('right'); } catch (e) { /* 忽略 */ }
+      bot._client.write('use_entity', {
+        target: entity.id,
+        mouse: 0,   // 0 = 左键攻击
+        x: epos.x, y: epos.y, z: epos.z, // 部分协议版本位置必填，带上兼容
+        hand: 0,    // 0 = 主手（1.21.6+ 协议 mouse=0 时必填）
+        sneaking: bot.getControlState('sneak') || false,
+      });
       return { success: true, target: entity.name, id: entity.id };
     } catch (err) {
       return { success: false, error: err.message };
