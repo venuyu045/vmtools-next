@@ -118,9 +118,13 @@ function createCombatHandlers(bot, ctx = {}) {
     const dist = bot.entity.position.distanceTo(entity.position);
     if (dist > maxDist) {
       try {
-        await bot.pathfinder.goto(new GoalNear(entity.position.x, entity.position.y, entity.position.z, 2));
+        // 带 2.5s 超时：避免 pathfinder.goto 长时间阻塞 WS 请求
+        await Promise.race([
+          bot.pathfinder.goto(new GoalNear(entity.position.x, entity.position.y, entity.position.z, 2)),
+          new Promise((resolve) => setTimeout(resolve, 2500)),
+        ]);
       } catch (err) {
-        // 寻路失败不阻塞，仍尝试攻击
+        // 寻路失败/超时不阻塞，仍尝试攻击
       }
     }
     return attackEntity(entity);
@@ -162,21 +166,47 @@ function createCombatHandlers(bot, ctx = {}) {
 
   let strafeDir = true;
 
-  /** W-tap：攻击后短暂松开前进 → 重置冲刺 → 目标击退变小（连击） */
-  function wtapOnce() {
+  /** W-tap：攻击后短暂松开前进 → 重置冲刺 → 目标击退变小（连击）。
+ *  回调里检查 state 仍启用才恢复前进，防战斗停止后残留乱走。 */
+  function wtapOnce(state) {
     try {
       bot.setControlState('forward', false);
       bot.setControlState('sprint', false);
-      setTimeout(() => { try { bot.setControlState('forward', true); } catch (e) { /* ignore */ } }, 90);
+      if (state.wtapTimer) clearTimeout(state.wtapTimer);
+      state.wtapTimer = setTimeout(() => {
+        try {
+          if (state && state.enabled && state.targetId != null) {
+            bot.setControlState('forward', true);
+          }
+        } catch (e) { /* ignore */ }
+      }, 90);
     } catch (e) { /* ignore */ }
   }
 
   /** S-tap：攻击后短暂后退 → 取消冲刺击退（连击） */
-  function stapOnce() {
+  function stapOnce(state) {
     try {
       bot.setControlState('back', true);
-      setTimeout(() => { try { bot.setControlState('back', false); } catch (e) { /* ignore */ } }, 80);
+      if (state.stapTimer) clearTimeout(state.stapTimer);
+      state.stapTimer = setTimeout(() => {
+        try {
+          if (state && state.enabled) bot.setControlState('back', false);
+        } catch (e) { /* ignore */ }
+      }, 80);
     } catch (e) { /* ignore */ }
+  }
+
+  /** 清理所有移动/跳跃控制 + 待执行的一次性技巧定时器（停止/无目标时调用） */
+  function clearCombatControls(state) {
+    try { bot.pathfinder.setGoal(null); } catch (e) { /* ignore */ }
+    ['forward', 'back', 'left', 'right', 'sprint', 'jump'].forEach((k) => {
+      try { bot.setControlState(k, false); } catch (e) { /* ignore */ }
+    });
+    if (state) {
+      if (state.wtapTimer) { clearTimeout(state.wtapTimer); state.wtapTimer = null; }
+      if (state.stapTimer) { clearTimeout(state.stapTimer); state.stapTimer = null; }
+      if (state.jumpTimer) { clearTimeout(state.jumpTimer); state.jumpTimer = null; }
+    }
   }
 
   /** 环绕走位：冷却期间绕目标圆周移动，目标难瞄准 */
@@ -214,8 +244,8 @@ function createCombatHandlers(bot, ctx = {}) {
     state.targetId = entity ? entity.id : null;
     if (res && res.success) {
       // W-tap / S-tap：重置冲刺 → 目标击退小 → 连击（伤害略低但连续压制）
-      if (state.tricks.wtap) wtapOnce();
-      else if (state.tricks.stap) stapOnce();
+      if (state.tricks.wtap) wtapOnce(state);
+      else if (state.tricks.stap) stapOnce(state);
     }
     return res;
   }
@@ -235,9 +265,11 @@ function createCombatHandlers(bot, ctx = {}) {
     const atkR = state.attack_radius ?? 3;
     const targets = getNearbyEntities(scanR, state.target_types, !includesPlayer(state.target_types));
     if (targets.length === 0) {
-      try { bot.pathfinder.setGoal(null); } catch (e) { /* ignore */ }
+      // 无目标：清理移动/跳跃控制，防残留前进乱走
+      clearCombatControls(state);
       state.targetId = null;
       state.pendingJump = false;
+      state.chaseStartAt = 0;
       return { scanned: 0 };
     }
     const entity = bot.entities[targets[0].id];
@@ -299,6 +331,11 @@ function createCombatHandlers(bot, ctx = {}) {
       state.jumpStartAt = now;
       state.prevY = bot.entity.position.y;
       try { bot.setControlState('jump', true); } catch (e) { /* ignore */ }
+      // 按住=连续跳；60ms 后释放，只跳一次
+      if (state.jumpTimer) clearTimeout(state.jumpTimer);
+      state.jumpTimer = setTimeout(() => {
+        try { bot.setControlState('jump', false); } catch (e) { /* ignore */ }
+      }, 60);
       return { jump: true };
     }
     if (state.pendingJump) {
@@ -362,12 +399,21 @@ function createCombatHandlers(bot, ctx = {}) {
     // 索敌并攻击最近的匹配实体（scan_radius 扫描；target_types 含 player 时放行玩家）
     const scanR = state.scan_radius ?? state.radius ?? 8;
     const atkR = state.attack_radius ?? 3;
+    const now = Date.now();
+    // 挂机模式攻击冷却：auto=按武器攻速（防疯狂攻击伤害衰减）；manual=用配置间隔
+    const interval = state.interval_mode === 'manual'
+      ? state.interval_ms
+      : weaponAttackIntervalMs(bot.heldItem ? (bot.heldItem.name || '') : '');
+    if (state.lastAttackAt && (now - state.lastAttackAt) < interval) {
+      return { cooling: true };
+    }
     const targets = getNearbyEntities(scanR, state.target_types, !includesPlayer(state.target_types));
     if (targets.length === 0) return { scanned: 0 };
     const entity = bot.entities[targets[0].id];
     if (!entity) return { scanned: targets.length };
     // move_to_target=false（挂机）：只打攻击半径内目标；true（PVP）：追到攻击半径内打
     const res = await attackByMode(entity, state.move_to_target, atkR);
+    if (res && res.success) state.lastAttackAt = Date.now();
     return { attacked: entity.name, distance: targets[0].distance, result: res };
   }
 
@@ -443,6 +489,9 @@ function createCombatHandlers(bot, ctx = {}) {
       lastGoalAt: 0,
       prevY: null,
       jumpStartAt: 0,
+      wtapTimer: null,
+      stapTimer: null,
+      jumpTimer: null,
       timer: null,
     };
     guard = null;
@@ -483,13 +532,8 @@ function createCombatHandlers(bot, ctx = {}) {
 
   function stop_combat() {
     stopTimers();
-    if (autoAttack) autoAttack.enabled = false;
-    if (guard) guard.enabled = false;
-    // 清理移动/冲刺/跳跃控制状态与寻路目标
-    try { bot.pathfinder.setGoal(null); } catch (e) { /* ignore */ }
-    ['forward', 'back', 'left', 'right', 'sprint', 'jump'].forEach((k) => {
-      try { bot.setControlState(k, false); } catch (e) { /* ignore */ }
-    });
+    if (autoAttack) { autoAttack.enabled = false; clearCombatControls(autoAttack); }
+    if (guard) { guard.enabled = false; clearCombatControls(guard); }
     return { success: true };
   }
 

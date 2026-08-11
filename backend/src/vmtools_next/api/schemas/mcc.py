@@ -1,7 +1,7 @@
 """MCC Bot schemas."""
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from typing import Optional
 
 
@@ -23,6 +23,13 @@ class CombatAutoAttackRequest(BaseModel):
     enable_wtap: bool = True            # W-tap（重置冲刺→目标击退小→连击）
     enable_stap: bool = True            # S-tap（同 W-tap，后退版）
     enable_strafe: bool = True          # 环绕走位（目标难瞄准）
+
+    @model_validator(mode="after")
+    def _check_radii(self):
+        if self.scan_radius is not None and self.attack_radius is not None:
+            if self.scan_radius < self.attack_radius:
+                raise ValueError("scan_radius 必须 >= attack_radius（扫描半径 ≥ 攻击半径）")
+        return self
 
 
 class CombatGuardRequest(BaseModel):

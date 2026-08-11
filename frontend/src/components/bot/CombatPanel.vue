@@ -232,8 +232,9 @@ function syncFromStatus(data: any) {
     const stp = Math.round((cfg.stop_durability ?? 0.1) * 100)
     const isMove = !!cfg.move_to_target
     const en = !!cfg.enabled
-    // 当前配置属于哪个模式就同步到哪个框（挂机=不移动，PVP=移动）
+    // 当前配置属于哪个模式就同步到哪个框（挂机=不移动，PVP=移动），并互斥清另一框
     if (isMove) {
+      idle.enabled = false
       pvp.enabled = en
       pvp.scan_radius = scanR
       pvp.attack_radius = atkR
@@ -248,6 +249,7 @@ function syncFromStatus(data: any) {
       pvp.stap = tk.stap ?? true
       pvp.strafe = tk.strafe ?? true
     } else {
+      pvp.enabled = false
       idle.enabled = en
       idle.scan_radius = scanR
       idle.attack_radius = atkR
