@@ -281,7 +281,7 @@ const LS_KEY = (id: string) => `mf_combat_cfg2_${id}`
 
 function saveLocal() {
   try {
-    localStorage.setItem(LS_KEY(props.botId), JSON.stringify({ idle: { ...idle }, pvp: { ...pvp } }))
+    localStorage.setItem(LS_KEY(props.botId), JSON.stringify({ idle: { ...idle }, pvp: { ...pvp }, dur: { ...dur.value } }))
   } catch { /* 忽略 */ }
 }
 
@@ -292,6 +292,8 @@ function loadLocal(): boolean {
     const d = JSON.parse(raw)
     if (d?.idle) Object.assign(idle, d.idle)
     if (d?.pvp) Object.assign(pvp, d.pvp)
+    // 主手武器兜底：bot 瞬时离线/WS 未连上时也显示上次拿的武器
+    if (d?.dur && typeof d.dur === 'object' && d.dur.name) dur.value = d.dur
     return true
   } catch { return false }
 }
@@ -308,6 +310,8 @@ async function loadStatus() {
   try {
     const resp = await botApi.combatStatus(props.botId)
     syncFromStatus(resp.data)
+    // 成功获取到主手武器 → 存本地兜底（下次刷新 bot 瞬时离线也能显示）
+    saveLocal()
     if (!resp.data?.config) loadLocal()
   } catch (err: any) {
     loadLocal()
