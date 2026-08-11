@@ -28,13 +28,13 @@
   <section id="top" class="lx-hero">
     <div class="lx-hero-grid">
       <div class="lx-hero-main">
-        <p class="lx-hero-eyebrow">Minecraft 玩家组织 · 二〇二三年至今</p>
+        <p class="lx-hero-eyebrow">Minecraft 玩家组织 · 二〇二四年至今</p>
         <h1 class="lx-hero-title">理想乡</h1>
-        <p class="lx-hero-slogan">{{ slogan || '方块之间，是家与远方' }}</p>
+        <p class="lx-hero-slogan">{{ slogan || '愿思念伴随你进入理想乡' }}</p>
         <p class="lx-hero-sub">
-          一个由 22 位玩家共同经营的 Minecraft 玩家组织。自 2023 年初春成立至今，
-          成员们建起了四座基地、跨世界铁路与无数座亲手搭起的房子——
-          这里的一切，都来自每一位成员的付出。
+          自 2024 年 12 月成立至今，我们建起了完善的基础生产体系、收容了大部分游戏内生物，
+          划分建筑区与工业区，坚持以中世纪幻想风格打造每一座家园——
+          理想乡没有苛捐杂税，大家因为热爱而相聚。
         </p>
         <div class="lx-hero-cta">
           <a class="lx-cta-primary" href="#intro">了解我们</a>
