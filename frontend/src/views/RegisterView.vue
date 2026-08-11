@@ -21,8 +21,16 @@
           <span class="qq-icon">✓</span> QQ 已认证：{{ qqNickname || '已认证' }}
         </template>
       </el-button>
-      <el-divider style="margin: 16px 0"><span style="color: var(--text-muted)">或</span></el-divider>
-      <el-form @submit.prevent="handleRegister" class="login-form">
+      <el-divider v-if="qqVerified" style="margin: 16px 0"><span style="color: var(--text-muted)">或</span></el-divider>
+      <!-- QQ 已认证：选择注册新账号 / 绑定已有账号 -->
+      <div v-if="qqVerified" class="mode-switch">
+        <el-radio-group v-model="mode" size="large">
+          <el-radio-button value="register">注册新账号</el-radio-button>
+          <el-radio-button value="bind">绑定已有账号</el-radio-button>
+        </el-radio-group>
+      </div>
+      <!-- 注册新账号 -->
+      <el-form v-if="!qqVerified || mode === 'register'" @submit.prevent="handleRegister" class="login-form">
         <el-form-item>
           <el-input
             v-model="form.game_id"
@@ -64,6 +72,39 @@
           <el-link type="primary" @click="goBack">← 返回登录</el-link>
         </div>
       </el-form>
+      <!-- 绑定已有账号（QQ 已认证后可用） -->
+      <el-form v-else @submit.prevent="handleBind" class="login-form">
+        <el-form-item>
+          <el-input
+            v-model="bindForm.game_id"
+            placeholder="已有账号 Game ID"
+            size="large"
+            autocomplete="username"
+          />
+        </el-form-item>
+        <el-form-item>
+          <el-input
+            v-model="bindForm.password"
+            type="password"
+            placeholder="已有账号密码"
+            size="large"
+            show-password
+            autocomplete="current-password"
+          />
+        </el-form-item>
+        <el-button
+          type="primary"
+          size="large"
+          :loading="binding"
+          @click="handleBind"
+          style="width: 100%"
+        >
+          > 绑定并登录
+        </el-button>
+        <div class="back-login">
+          <el-link type="primary" @click="goBack">← 返回登录</el-link>
+        </div>
+      </el-form>
       <div class="login-footer mono">
         v3.0 · MCC Server · Build Automation
       </div>
@@ -87,6 +128,10 @@ const qqVerified = ref(false)
 const qqTicket = ref('')
 const qqNickname = ref('')
 const form = reactive({ game_id: '', password: '', confirm_password: '' })
+// QQ 认证后两种落地方式：注册新账号 / 绑定已有账号
+const mode = ref<'register' | 'bind'>('register')
+const binding = ref(false)
+const bindForm = reactive({ game_id: '', password: '' })
 
 async function handleQqAuth() {
   if (qqVerified.value) return
@@ -160,6 +205,34 @@ function goBack() {
   router.push('/login')
 }
 
+/** 绑定已有账号：QQ 已认证 + 已有账号的 Game ID/密码 → 绑定并登录 */
+async function handleBind() {
+  if (!qqVerified.value || !qqTicket.value) {
+    ElMessage.warning('请先完成 QQ 认证')
+    return
+  }
+  if (!bindForm.game_id.trim()) {
+    ElMessage.warning('请输入已有账号的 Game ID')
+    return
+  }
+  if (!bindForm.password) {
+    ElMessage.warning('请输入已有账号的密码')
+    return
+  }
+  binding.value = true
+  try {
+    const data = await authStore.qqBind(bindForm.game_id.trim(), bindForm.password, qqTicket.value)
+    if (data?.token) {
+      ElMessage.success('QQ 绑定成功，已自动登录')
+      router.push('/dashboard')
+    }
+  } catch (e: any) {
+    ElMessage.error(e.response?.data?.detail || '绑定失败')
+  } finally {
+    binding.value = false
+  }
+}
+
 onMounted(() => {
   const ticket = route.query.qq_ticket as string | undefined
   if (ticket) {
@@ -217,6 +290,12 @@ onMounted(() => {
 .back-login {
   text-align: center;
   margin-top: 16px;
+}
+
+.mode-switch {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 20px;
 }
 
 .qq-btn {

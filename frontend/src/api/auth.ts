@@ -19,4 +19,7 @@ export const authApi = {
   qqTicketLogin(qq_ticket: string) {
     return client.post('/auth/qq/ticket-login', { qq_ticket })
   },
+  qqBind(game_id: string, password: string, qq_ticket: string) {
+    return client.post('/auth/qq/bind', { game_id, password, qq_ticket })
+  },
 }

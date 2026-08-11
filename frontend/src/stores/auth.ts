@@ -84,6 +84,16 @@ export const useAuthStore = defineStore('auth', {
       }
       return { loggedIn: false, nickname: data?.nickname || '', avatar: data?.avatar || '' }
     },
+    /** QQ 绑定已有账号：绑定成功即登录（token 落地） */
+    async qqBind(game_id: string, password: string, qq_ticket: string) {
+      const { data } = await authApi.qqBind(game_id, password, qq_ticket)
+      if (data?.token) {
+        this.token = data.token
+        localStorage.setItem('token', data.token)
+        await this.getMe()
+      }
+      return data
+    },
     async getMe() {
       try {
         const { data } = await authApi.getMe()

@@ -69,6 +69,13 @@ class QqTicketLoginRequest(BaseModel):
     qq_ticket: str
 
 
+class QqBindRequest(BaseModel):
+    """QQ 绑定已有账号：凭 QQ ticket + 已有账号的 game_id/password。"""
+    game_id: str
+    password: str
+    qq_ticket: str
+
+
 def _make_token(user: UserModel) -> str:
     config = get_config()
     # P2-21：主 token 从 24h 延长到 7 天——管理后台低频使用，7 天免登录
@@ -238,6 +245,39 @@ def qq_ticket_login(data: QqTicketLoginRequest, db: Session = Depends(get_db)):
         "nickname": qq_info.get("nickname", ""),
         "avatar": qq_info.get("avatar", ""),
     }
+
+
+@router.post("/qq/bind")
+def qq_bind(data: QqBindRequest, db: Session = Depends(get_db)):
+    """把已认证的 QQ（openid）绑定到已有账号。
+
+    校验已有账号的 game_id/password 后写入 qq_openid（一 QQ 一账号，QQ 已绑定其他
+    账号或该账号已绑定其他 QQ 均拒绝），绑定成功即返回登录 token。
+    """
+    from vmtools_next.core.qq_oauth import consume_ticket
+    qq_info = consume_ticket(data.qq_ticket)
+    if not qq_info:
+        raise HTTPException(400, "QQ 认证已过期，请重新发起 QQ 登录")
+    openid = qq_info["openid"]
+
+    user = db.query(UserModel).filter(UserModel.game_id == data.game_id).first()
+    if not user or not bcrypt.checkpw(data.password.encode("utf-8"), user.password_hash.encode("utf-8")):
+        raise HTTPException(401, "Invalid credentials")
+    if user.status != "approved":
+        raise HTTPException(403, "User not approved")
+
+    # 该 QQ 是否已绑定其他账号（一 QQ 一账号）
+    existing = db.query(UserModel).filter(UserModel.qq_openid == openid).first()
+    if existing and existing.id != user.id:
+        raise HTTPException(400, "该 QQ 已绑定其他账号（一个 QQ 只能绑定一个账号），请直接用 QQ 登录")
+    if user.qq_openid and user.qq_openid != openid:
+        raise HTTPException(400, "该账号已绑定其他 QQ，如需换绑请联系管理员")
+
+    user.qq_openid = openid
+    user.qq_nickname = qq_info.get("nickname") or user.qq_nickname or ""
+    user.last_seen_at = datetime.now(timezone.utc)
+    db.commit()
+    return LoginResponse(token=_make_token(user), user_id=user.id, game_id=user.game_id, role=user.role)
 
 
 @router.get("/me")
