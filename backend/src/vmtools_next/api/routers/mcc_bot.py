@@ -892,7 +892,17 @@ async def combat_status(bot_id: str, db: Session = Depends(get_db),
     """当前战斗状态（模式/配置/主手武器耐久/实体数）。"""
     client, owned = await _get_combat_client(bot_id, db, user)
     try:
-        return await client.get_combat_status()
+        data = await client.get_combat_status()
+        # 主手武器名汉化（durability.name 为 item_id，如 cooked_porkchop）
+        try:
+            dur = data.get("durability") if isinstance(data, dict) else None
+            if isinstance(dur, dict) and dur.get("name"):
+                from vmtools_next.core.item_names_zh import get_item_zh
+                item_id = str(dur["name"])
+                dur["zh_name"] = get_item_zh(item_id, fallback=dur.get("display_name"))
+        except Exception:
+            pass
+        return data
     except (MccMcpError, MineflayerError) as e:
         raise HTTPException(502, f"MCP error: {str(e) or repr(e)}")
     finally:

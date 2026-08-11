@@ -15,6 +15,7 @@
       <el-form-item label="目标类型">
         <el-select v-model="form.target_types" multiple placeholder="空 = 全部实体" style="width: 100%">
           <el-option label="盔甲架" value="armor_stand" />
+          <el-option label="玩家" value="player" />
           <el-option label="敌对生物（生物类）" value="hostile" />
           <el-option label="物件类（矿车/船等）" value="object" />
           <el-option label="全部实体" value="all" />
@@ -31,7 +32,7 @@
 
     <div class="dur-row">
       <span class="dur-label">主手武器</span>
-      <span class="mono dur-name">{{ dur.name || '空手 / 无耐久' }}</span>
+      <span class="mono dur-name">{{ dur.zh_name || dur.display_name || dur.name || '空手 / 无耐久' }}</span>
       <span class="mono dur-pct">{{ durPct }}%</span>
       <el-progress :percentage="durPct" :stroke-width="8" :show-text="false" :color="durColor" class="dur-bar" />
     </div>
@@ -128,7 +129,7 @@ const form = reactive({
 })
 const stopPct = ref(10)
 const activeMode = ref<string | null>(null)
-const dur = ref<{ hasDurability: boolean; ratio: number; name: string | null }>({ hasDurability: false, ratio: 1, name: null })
+const dur = ref<{ hasDurability: boolean; ratio: number; name: string | null; display_name?: string | null; zh_name?: string | null }>({ hasDurability: false, ratio: 1, name: null })
 const entities = ref<EntityInfo[]>([])
 
 const durPct = computed(() => Math.round((dur.value?.ratio ?? 1) * 100))

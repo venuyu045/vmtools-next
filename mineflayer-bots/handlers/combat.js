@@ -43,6 +43,15 @@ function createCombatHandlers(bot, ctx = {}) {
     return false;
   }
 
+  /** 目标类型是否包含玩家（决定索敌/扫描是否放行 player 实体） */
+  function includesPlayer(targetTypes) {
+    if (!targetTypes || targetTypes.length === 0) return false;
+    return targetTypes.some((t) => {
+      const tt = String(t).toLowerCase();
+      return tt === 'player' || tt === 'all';
+    });
+  }
+
   function getNearbyEntities(radius, targetTypes, excludePlayers = true) {
     if (!bot.entity || !bot.entities) return [];
     const pos = bot.entity.position;
@@ -71,14 +80,14 @@ function createCombatHandlers(bot, ctx = {}) {
 
   function heldDurability() {
     const item = bot.heldItem;
-    if (!item) return { hasDurability: false, ratio: 1, name: null };
+    if (!item) return { hasDurability: false, ratio: 1, name: null, display_name: null };
     const max = item.maxDurability;
     const used = item.durabilityUsed;
     if (typeof max !== 'number' || !isFinite(max) || max <= 0) {
-      return { hasDurability: false, ratio: 1, name: item.displayName || item.name || null };
+      return { hasDurability: false, ratio: 1, name: item.name || null, display_name: item.displayName || item.name || null };
     }
     const ratio = 1 - ((used || 0) / max);
-    return { hasDurability: true, ratio, used, max, name: item.displayName || item.name || null };
+    return { hasDurability: true, ratio, used, max, name: item.name || null, display_name: item.displayName || item.name || null };
   }
 
   async function attackEntity(entity) {
@@ -139,8 +148,8 @@ function createCombatHandlers(bot, ctx = {}) {
         } catch (err) { /* ignore */ }
       }
     }
-    // 索敌并攻击最近的匹配实体
-    const targets = getNearbyEntities(state.radius, state.target_types);
+    // 索敌并攻击最近的匹配实体（target_types 含 player 时放行玩家）
+    const targets = getNearbyEntities(state.radius, state.target_types, !includesPlayer(state.target_types));
     if (targets.length === 0) return { scanned: 0 };
     const entity = bot.entities[targets[0].id];
     if (!entity) return { scanned: targets.length };
@@ -162,7 +171,8 @@ function createCombatHandlers(bot, ctx = {}) {
 
   // ── 方法 ──────────────────────────────────────────────
   function get_nearby_entities({ radius = 16, target_types = [] } = {}) {
-    return { success: true, entities: getNearbyEntities(radius, target_types, true) };
+    // 玩家过滤由 target_types 决定（含 player/all 时列出玩家）
+    return { success: true, entities: getNearbyEntities(radius, target_types, !includesPlayer(target_types)) };
   }
 
   async function attack({ target_id = null, target_type = null } = {}) {
