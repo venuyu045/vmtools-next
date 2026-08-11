@@ -822,7 +822,7 @@ def _save_combat_config(db: Session, bot_id: str, cfg: dict | None) -> None:
             bot.combat_config = _json.dumps(cfg, ensure_ascii=False)
             db.commit()
     except Exception as _e:
-        logger.warning("Save combat config failed for %s: %s", bot_id, _e)
+        logger.warning("Save combat config failed for {}: {}", bot_id, _e)
 
 
 def _load_combat_config(db: Session, bot_id: str) -> dict | None:
@@ -835,7 +835,7 @@ def _load_combat_config(db: Session, bot_id: str) -> dict | None:
             data = _json.loads(bot.combat_config)
             return data if isinstance(data, dict) else None
     except Exception as _e:
-        logger.warning("Load combat config failed for %s: %s", bot_id, _e)
+        logger.warning("Load combat config failed for {}: {}", bot_id, _e)
     return None
 
 

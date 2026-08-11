@@ -37,6 +37,7 @@ class MccBotModel(Base):
     current_food = Column(Integer, default=20, nullable=False)
     current_task_run_id = Column(String, nullable=True)
     current_build_task_id = Column(String, nullable=True)  # NEW: link to build_tasks
+    combat_config = Column(Text, nullable=True)  # 战斗配置持久化（JSON，2026-08-11）
     organization_id = Column(String, nullable=True, index=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
 
