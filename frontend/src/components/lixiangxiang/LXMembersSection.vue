@@ -131,7 +131,7 @@ watch(() => props.members.length, () => {
 .lx-section {
   padding: 110px 24px 96px;
   background: var(--bg-card);
-  border-top: 1px solid var(--border-subtle);
+  border-top: 1px dashed var(--border-default);
   opacity: 0;
   transform: translateY(24px);
   transition: opacity 0.7s var(--ease-out), transform 0.7s var(--ease-out);
@@ -176,7 +176,7 @@ watch(() => props.members.length, () => {
   flex-wrap: wrap;
   margin-bottom: 44px;
   padding-bottom: 20px;
-  border-bottom: 1px solid var(--border-subtle);
+  border-bottom: 1px dashed var(--border-default);
 }
 
 .lx-filter {

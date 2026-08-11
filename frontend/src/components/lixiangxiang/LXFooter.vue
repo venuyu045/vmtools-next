@@ -28,7 +28,7 @@
 
 <style scoped>
 .lx-footer {
-  border-top: 1px solid var(--border-subtle);
+  border-top: 1px dashed var(--border-default);
   background: var(--bg-page);
   padding: 56px 24px 64px;
 }

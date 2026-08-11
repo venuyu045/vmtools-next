@@ -32,8 +32,9 @@
         <h1 class="lx-hero-title">理想乡</h1>
         <p class="lx-hero-slogan">{{ slogan || '方块之间，是家与远方' }}</p>
         <p class="lx-hero-sub">
-          一座由 22 位玩家共同筑造的生存之城。不追进度、不比装备，
-          只把每一块方块，砌成家的样子。
+          一座由 22 位玩家共同筑造的生存之城。自 2023 年初春开垦至今，
+          四座基地、跨世界铁路与无数座亲手搭起的房子——这里的一切，
+          都由理想乡的住民一砖一瓦砌成。
         </p>
         <div class="lx-hero-cta">
           <a class="lx-cta-primary" href="#intro">了解我们</a>
@@ -42,12 +43,24 @@
       </div>
 
       <div class="lx-hero-side" aria-hidden="true">
-        <div class="lx-seal lx-seal-1">建</div>
-        <div class="lx-seal lx-seal-2">共</div>
-        <div class="lx-seal lx-seal-3">居</div>
+        <div class="lx-pin-card lx-pin-1">
+          <span class="lx-pin-dot"></span>
+          <span class="lx-pin-value">2023</span>
+          <span class="lx-pin-label">建服 · 初春</span>
+        </div>
+        <div class="lx-pin-card lx-pin-2">
+          <span class="lx-pin-dot"></span>
+          <span class="lx-pin-value">{{ memberCount ?? 22 }}</span>
+          <span class="lx-pin-label">位住民</span>
+        </div>
+        <div class="lx-pin-card lx-pin-3">
+          <span class="lx-pin-dot"></span>
+          <span class="lx-pin-value">4</span>
+          <span class="lx-pin-label">座基地</span>
+        </div>
         <div class="lx-seal-caption">
-          <span class="lx-seal-caption-zh">共建 · 共居 · 共享</span>
-          <span class="lx-seal-caption-en">LIXIANGXIANG EST. 2023</span>
+          <span class="lx-seal-caption-zh">理想乡 · 领地测绘</span>
+          <span class="lx-seal-caption-en">LIXIANGXIANG EST. 2023 · X:-2673 Z:9627</span>
         </div>
       </div>
     </div>
@@ -66,6 +79,9 @@ const navItems = [
   { href: '#bases', label: '地图基地' },
   { href: '#gallery', label: '相册' },
 ]
+
+/** 成员数（Home 传入，缺省 22）——用于 Hero 图钉数据牌 */
+defineProps<{ memberCount?: number }>()
 
 const menuOpen = ref(false)
 const slogan = ref('')
@@ -108,7 +124,7 @@ onMounted(async () => {
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  border-bottom: 1px solid var(--border-subtle);
+  border-bottom: 1px dashed var(--border-default);
 }
 
 .lx-logo {
@@ -335,39 +351,66 @@ onMounted(async () => {
   color: var(--accent);
 }
 
-/* ---- 右侧印章装饰（手工感） ---- */
+/* ---- 右侧图钉数据牌（领地测绘语言） ---- */
 .lx-hero-side {
   position: relative;
-  min-height: 320px;
+  min-height: 340px;
 }
 
-.lx-seal {
+.lx-pin-card {
   position: absolute;
-  width: 96px;
-  height: 96px;
-  border-radius: 20px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-family: var(--font-display);
-  font-size: 38px;
-  color: var(--bg-page);
+  width: 150px;
+  padding: 16px 18px 14px;
+  border-radius: 12px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-default);
   box-shadow: var(--shadow-md);
-  transition: transform 300ms var(--ease-out);
+  transition: transform 300ms var(--ease-out), border-color 300ms var(--ease-out);
 }
 
-.lx-seal-1 { background: var(--accent); top: 8px; left: 12px; }
-.lx-seal-2 { background: var(--text-primary); top: 116px; left: 120px; }
-.lx-seal-3 { background: var(--chart-3); top: 8px; left: 224px; }
+.lx-pin-1 { top: 6px; left: 0; }
+.lx-pin-2 { top: 128px; left: 118px; }
+.lx-pin-3 { top: 6px; left: 236px; }
 
-.lx-hero-side:hover .lx-seal-1 { transform: translateY(-6px) rotate(-2deg); }
-.lx-hero-side:hover .lx-seal-2 { transform: translateY(-4px) rotate(1.5deg); }
-.lx-hero-side:hover .lx-seal-3 { transform: translateY(-7px) rotate(-1deg); }
+.lx-pin-card:hover {
+  border-color: var(--lx-pin);
+}
+
+.lx-hero-side:hover .lx-pin-1 { transform: translateY(-6px) rotate(-1deg); }
+.lx-hero-side:hover .lx-pin-2 { transform: translateY(-4px) rotate(1deg); }
+.lx-hero-side:hover .lx-pin-3 { transform: translateY(-7px) rotate(-0.5deg); }
+
+.lx-pin-dot {
+  display: block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--lx-pin);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--lx-pin) 25%, transparent);
+  margin-bottom: 10px;
+}
+
+.lx-pin-value {
+  display: block;
+  font-family: var(--font-display);
+  font-size: 30px;
+  line-height: 1;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+  margin-bottom: 5px;
+}
+
+.lx-pin-label {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 1.5px;
+  color: var(--text-muted);
+}
 
 .lx-seal-caption {
   position: absolute;
-  bottom: 0;
-  left: 12px;
+  bottom: 4px;
+  left: 0;
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -375,7 +418,7 @@ onMounted(async () => {
 
 .lx-seal-caption-zh {
   font-family: var(--font-body);
-  font-size: 15px;
+  font-size: 14px;
   letter-spacing: 3px;
   color: var(--text-primary);
 }
@@ -383,7 +426,7 @@ onMounted(async () => {
 .lx-seal-caption-en {
   font-family: var(--font-mono);
   font-size: 10.5px;
-  letter-spacing: 2.5px;
+  letter-spacing: 2px;
   color: var(--text-muted);
 }
 
@@ -404,8 +447,7 @@ onMounted(async () => {
   left: 0;
   right: 0;
   bottom: 0;
-  height: 1px;
-  background: linear-gradient(90deg, transparent, var(--border-default) 20%, var(--border-default) 80%, transparent);
+  border-bottom: 1px dashed var(--border-default);
 }
 
 /* ================= Responsive ================= */
@@ -475,7 +517,7 @@ onMounted(async () => {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .lx-seal { transition: none; }
+  .lx-pin-card { transition: none; }
   .lx-arrow, .lx-console-btn, .lx-cta-primary, .lx-cta-ghost { transition: none; }
 }
 </style>

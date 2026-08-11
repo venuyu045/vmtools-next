@@ -2,8 +2,8 @@
   <section id="bases" ref="rootRef" class="lx-section lx-bases" :class="{ 'is-revealed': revealed }">
     <div class="lx-section-inner">
       <p class="lx-eyebrow">Bases · 地图基地</p>
-      <h2 class="lx-section-title">我们的四座家园</h2>
-      <p class="lx-section-desc">每一座基地，都是一段从零开始的故事。</p>
+      <h2 class="lx-section-title">四座家园 · 领地测绘</h2>
+      <p class="lx-section-desc">主城、望岳与星野——每一座基地都有精确的坐标与故事。</p>
 
       <div v-if="bases.length === 0" class="lx-empty">基地资料整理中…</div>
 
@@ -14,13 +14,14 @@
             <div v-else class="lx-base-placeholder">基地建设中</div>
           </div>
           <div class="lx-base-body">
-            <span class="lx-base-index">{{ String(i + 1).padStart(2, '0') }}</span>
+            <div class="lx-base-head">
+              <span class="lx-base-index">测绘记录 · {{ String(i + 1).padStart(2, '0') }}</span>
+              <span v-if="b.coordinates" class="lx-base-coords-badge">
+                <i class="lx-pin-mini"></i>{{ coordText(b.coordinates) }}
+              </span>
+            </div>
             <h3 class="lx-base-name">{{ b.name }}</h3>
             <p class="lx-base-desc">{{ b.description }}</p>
-            <div v-if="b.coordinates" class="lx-base-coords">
-              <span class="lx-coords-label">坐标</span>
-              <span class="lx-coords-value">{{ b.coordinates }}</span>
-            </div>
           </div>
         </article>
       </div>
@@ -35,6 +36,13 @@ import { useReveal } from '@/composables/useReveal'
 defineProps<{ bases: LxBase[] }>()
 
 const { rootRef, revealed } = useReveal()
+
+/** 坐标解析："-2673, 57, 9627" → "X: -2673 · Z: 9627"（测绘坐标牌） */
+function coordText(raw: string): string {
+  const parts = raw.split(',').map(s => s.trim()).filter(Boolean)
+  if (parts.length >= 3) return `X: ${parts[0]} · Z: ${parts[2]}`
+  return raw
+}
 </script>
 
 <style scoped>
@@ -161,21 +169,45 @@ const { rootRef, revealed } = useReveal()
   padding: 16px 4px;
 }
 
-/* 超大衬线序号（背景式） */
-.lx-base-index {
-  font-family: var(--font-display);
-  font-size: 64px;
-  line-height: 1;
-  color: transparent;
-  -webkit-text-stroke: 1px var(--border-strong);
-  display: block;
+.lx-base-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
   margin-bottom: 18px;
-  transition: color 300ms var(--ease-out), -webkit-text-stroke-color 300ms var(--ease-out);
 }
 
-.lx-base-card:hover .lx-base-index {
-  color: var(--accent-soft);
-  -webkit-text-stroke-color: var(--accent);
+/* 测绘记录标签（编号成为"记录序列"语义） */
+.lx-base-index {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  letter-spacing: 2px;
+  color: var(--lx-blue);
+  text-transform: uppercase;
+}
+
+/* 坐标徽章（图钉标记） */
+.lx-base-coords-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 12px;
+  border-radius: 6px;
+  background: var(--accent-soft);
+  border: 1px dashed var(--accent-ring);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-secondary);
+  letter-spacing: 0.5px;
+}
+
+.lx-pin-mini {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--lx-pin);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--lx-pin) 22%, transparent);
+  flex-shrink: 0;
 }
 
 .lx-base-name {
@@ -192,31 +224,7 @@ const { rootRef, revealed } = useReveal()
   font-size: 15.5px;
   line-height: 2;
   color: var(--text-secondary);
-  margin: 0 0 24px;
-}
-
-.lx-base-coords {
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-  padding: 7px 14px;
-  border-radius: 7px;
-  background: var(--accent-soft);
-  border: 1px solid var(--accent-ring);
-}
-
-.lx-coords-label {
-  font-family: var(--font-sans);
-  font-size: 11.5px;
-  font-weight: 600;
-  letter-spacing: 1px;
-  color: var(--accent);
-}
-
-.lx-coords-value {
-  font-family: var(--font-mono);
-  font-size: 13px;
-  color: var(--text-secondary);
+  margin: 0;
 }
 
 /* ================= Responsive ================= */

@@ -579,18 +579,73 @@ function categoryName(id: string | null): string {
 </script>
 
 <style scoped>
+/* ================= 拓荒测绘志 Token 层（后台页独立，与官网一致） ================= */
+.lx-admin {
+  --bg-page: #F1ECE1;
+  --bg-card: #F7F4EC;
+  --bg-elevated: #FBF8F1;
+  --bg-hover: rgba(43, 38, 32, 0.05);
+  --bg-active: rgba(43, 38, 32, 0.08);
+  --text-primary: #2B2620;
+  --text-secondary: #5E574D;
+  --text-muted: #8B8277;
+  --text-disabled: #B4AC9F;
+  --accent: #D97757;
+  --accent-hover: #C86645;
+  --accent-active: #B85C38;
+  --accent-soft: rgba(217, 119, 87, 0.10);
+  --accent-ring: rgba(217, 119, 87, 0.35);
+  --border-subtle: #DCD4C4;
+  --border-default: #CCC2AE;
+  --border-strong: #A99E89;
+  --lx-pin: #C0503C;
+  --lx-blue: #6A7A8C;
+  --lx-moss: #7C8B7E;
+}
+
+html[data-theme="dark"] .lx-admin {
+  --bg-page: #1B1915;
+  --bg-card: #232019;
+  --bg-elevated: #2C2820;
+  --bg-hover: rgba(237, 230, 217, 0.05);
+  --bg-active: rgba(237, 230, 217, 0.09);
+  --text-primary: #EDE6D9;
+  --text-secondary: #A49B8C;
+  --text-muted: #857C6E;
+  --text-disabled: #615A4E;
+  --accent: #E08A6C;
+  --accent-hover: #E69A7F;
+  --accent-active: #ECAB93;
+  --accent-soft: rgba(224, 138, 108, 0.14);
+  --accent-ring: rgba(224, 138, 108, 0.45);
+  --border-subtle: #302C24;
+  --border-default: #3D382E;
+  --border-strong: #514A3C;
+  --lx-pin: #D96A55;
+  --lx-blue: #7E90A2;
+  --lx-moss: #8FA08F;
+}
+
 .lx-admin {
   min-height: 100vh;
   min-height: 100dvh;
-  background: var(--bg-page);
+  background-color: var(--bg-page);
   color: var(--text-primary);
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.035'/%3E%3C/svg%3E");
+  background-image:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='48' height='48'%3E%3Cpath d='M48 0H0V48' fill='none' stroke='%232B2620' stroke-opacity='0.045'/%3E%3C/svg%3E"),
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.03'/%3E%3C/svg%3E");
   background-attachment: fixed;
+}
+
+html[data-theme="dark"] .lx-admin {
+  background-image:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='48' height='48'%3E%3Cpath d='M48 0H0V48' fill='none' stroke='%23EDE6D9' stroke-opacity='0.045'/%3E%3C/svg%3E"),
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.03'/%3E%3C/svg%3E");
 }
 
 /* ================= Header ================= */
 .lx-admin-header {
-  border-bottom: 1px solid var(--border-subtle);
+  border-bottom: 1px dashed var(--border-default);
   background: color-mix(in srgb, var(--bg-card) 86%, transparent);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
@@ -735,7 +790,7 @@ function categoryName(id: string | null): string {
 
 .lx-dialog :deep(.el-dialog__header) {
   padding: 22px 24px 12px;
-  border-bottom: 1px solid var(--border-subtle);
+  border-bottom: 1px dashed var(--border-default);
 }
 
 .lx-dialog :deep(.el-dialog__title) {
@@ -818,7 +873,7 @@ function categoryName(id: string | null): string {
   flex-wrap: wrap;
   margin-bottom: 18px;
   padding-bottom: 16px;
-  border-bottom: 1px solid var(--border-subtle);
+  border-bottom: 1px dashed var(--border-default);
 }
 
 .lx-pane-count {

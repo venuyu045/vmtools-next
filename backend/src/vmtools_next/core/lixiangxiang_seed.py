@@ -72,6 +72,74 @@ def write_gradient_png(
 
 
 # ──────────────────────────────────────────────
+# MC 像素风格头像生成（8×8 方块脸 → 128×128 最近邻放大，RGBA）
+# ──────────────────────────────────────────────
+
+# 8×8 经典 MC 头部模板：H=头发 S=肤色 E=眼睛 .=透明
+_MC_HEAD = [
+    "..HHHH..",
+    ".HHHHHH.",
+    ".HHHHHH.",
+    ".HSSSSH.",
+    ".HSSSSH.",
+    ".HSESESH",
+    ".HSSSSH.",
+    "..HHHH..",
+]
+
+# 22 组配色（肤色 / 发色 / 眼色）——每成员唯一组合
+AVATAR_MC_PALETTES: list[tuple[tuple[int, int, int], tuple[int, int, int], tuple[int, int, int]]] = [
+    ((217, 168, 140), (43, 38, 32), (58, 46, 36)),   # 浅肤 · 墨黑
+    ((176, 122, 90), (94, 59, 42), (58, 46, 36)),    # 棕肤 · 深棕
+    ((217, 168, 140), (122, 74, 46), (58, 46, 36)),  # 浅肤 · 栗棕
+    ((176, 122, 90), (176, 141, 62), (58, 46, 36)),  # 棕肤 · 金棕
+    ((217, 168, 140), (140, 59, 46), (58, 46, 36)),  # 浅肤 · 红棕
+    ((176, 122, 90), (106, 122, 140), (58, 46, 36)), # 棕肤 · 蓝灰
+    ((217, 168, 140), (164, 155, 140), (58, 46, 36)),# 浅肤 · 银灰
+    ((176, 122, 90), (43, 38, 32), (58, 46, 36)),    # 棕肤 · 墨黑
+    ((217, 168, 140), (150, 104, 58), (58, 46, 36)), # 浅肤 · 榛棕
+    ((176, 122, 90), (90, 122, 100), (58, 46, 36)),  # 棕肤 · 苔绿
+    ((217, 168, 140), (122, 58, 86), (58, 46, 36)),  # 浅肤 · 酒红
+    ((176, 122, 90), (72, 90, 120), (58, 46, 36)),   # 棕肤 · 海蓝
+    ((217, 168, 140), (43, 38, 32), (58, 46, 36)),   # 循环变体（隔 12 人不同发色）
+    ((176, 122, 90), (94, 59, 42), (58, 46, 36)),
+    ((217, 168, 140), (122, 74, 46), (58, 46, 36)),
+    ((176, 122, 90), (176, 141, 62), (58, 46, 36)),
+    ((217, 168, 140), (140, 59, 46), (58, 46, 36)),
+    ((176, 122, 90), (106, 122, 140), (58, 46, 36)),
+    ((217, 168, 140), (164, 155, 140), (58, 46, 36)),
+    ((176, 122, 90), (43, 38, 32), (58, 46, 36)),
+    ((217, 168, 140), (150, 104, 58), (58, 46, 36)),
+    ((176, 122, 90), (90, 122, 100), (58, 46, 36)),
+]
+
+
+def write_mc_avatar_png(path: Path, hair: tuple, skin: tuple, eye: tuple, scale: int = 16) -> None:
+    """生成一张 MC 像素风格头像（8×8 → 128×128 最近邻放大，RGBA）。"""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    size = 8 * scale
+    px: dict[str, tuple] = {"H": hair, "S": skin, "E": eye}
+    raw = bytearray()
+    for y in range(size):
+        raw.append(0)  # filter: none
+        for x in range(size):
+            ch = _MC_HEAD[y // scale][x // scale]
+            if ch == ".":
+                raw += bytes((0, 0, 0, 0))  # 透明
+            else:
+                r, g, b = px[ch]
+                raw += bytes((r, g, b, 255))
+    ihdr = struct.pack(">IIBBBBB", size, size, 8, 6, 0, 0, 0)  # 8-bit RGBA
+    png = (
+        b"\x89PNG\r\n\x1a\n"
+        + _chunk(b"IHDR", ihdr)
+        + _chunk(b"IDAT", zlib.compress(bytes(raw), 6))
+        + _chunk(b"IEND", b"")
+    )
+    path.write_bytes(png)
+
+
+# ──────────────────────────────────────────────
 # 占位内容
 # ──────────────────────────────────────────────
 
@@ -162,12 +230,12 @@ AVATAR_COLORS: list[tuple[tuple[int, int, int], tuple[int, int, int]]] = [
 
 
 def _write_seed_assets(lx_dir: Path) -> None:
-    """生成成员头像 + 相册 + 基地占位图（文件已存在则跳过，避免每次启动重写）。"""
+    """生成 MC 头像 + 相册 + 基地占位图（文件已存在则跳过，避免每次启动重写）。"""
     seed_dir = lx_dir / "seed"
-    for i, (c1, c2) in enumerate(AVATAR_COLORS, start=1):
-        p = seed_dir / f"avatar-{i}.png"
+    for i, (skin, hair, eye) in enumerate(AVATAR_MC_PALETTES, start=1):
+        p = seed_dir / f"avatar-mc-{i}.png"
         if not p.is_file():
-            write_gradient_png(p, 128, 128, c1, c2, diagonal=True)
+            write_mc_avatar_png(p, hair, skin, eye)
     for _, _, _, filename, c1, c2 in GALLERY_IMAGES_SEED:
         p = seed_dir / filename
         if not p.is_file():
@@ -176,8 +244,8 @@ def _write_seed_assets(lx_dir: Path) -> None:
         p = seed_dir / filename
         if not p.is_file():
             write_gradient_png(p, 1200, 600, (217, 119, 87), (90, 74, 66))
-    logger.info("Lixiangxiang seed assets ensured ({} avatars, {} photos, {} bases)",
-                len(AVATAR_COLORS), len(GALLERY_IMAGES_SEED), len(BASES_SEED))
+    logger.info("Lixiangxiang seed assets ensured ({} MC avatars, {} photos, {} bases)",
+                len(AVATAR_MC_PALETTES), len(GALLERY_IMAGES_SEED), len(BASES_SEED))
 
 
 def seed_lixiangxiang(Session, static_dir: Path) -> None:
@@ -201,7 +269,7 @@ def seed_lixiangxiang(Session, static_dir: Path) -> None:
             if db.query(MemberModel).count() == 0:
                 now = datetime.now(timezone.utc)
                 for i, (game_id, nickname, title, joined_at, specialty, bio) in enumerate(MEMBERS_SEED):
-                    avatar = f"seed/avatar-{(i % len(AVATAR_COLORS)) + 1}.png"
+                    avatar = f"seed/avatar-mc-{(i % len(AVATAR_MC_PALETTES)) + 1}.png"
                     db.add(MemberModel(
                         id=uuid.uuid4().hex,
                         game_id=game_id,
@@ -216,6 +284,17 @@ def seed_lixiangxiang(Session, static_dir: Path) -> None:
                         updated_at=now,
                     ))
                 logger.info("Lixiangxiang: seeded {} members", len(MEMBERS_SEED))
+            else:
+                # 幂等迁移：旧渐变头像（seed/avatar-N.png）→ MC 像素头像
+                migrated = 0
+                for m in db.query(MemberModel).all():
+                    if m.avatar_path and m.avatar_path.startswith("/static/lixiangxiang/seed/avatar-") and "-mc-" not in m.avatar_path:
+                        idx = (m.sort_order or 0) % len(AVATAR_MC_PALETTES)
+                        m.avatar_path = f"/static/lixiangxiang/seed/avatar-mc-{idx + 1}.png"
+                        migrated += 1
+                if migrated:
+                    db.commit()
+                    logger.info("Lixiangxiang: migrated {} member avatars to MC style", migrated)
 
             # ── 基地 ──
             if db.query(LxBaseModel).count() == 0:

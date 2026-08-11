@@ -2,7 +2,7 @@
   <section id="intro" ref="rootRef" class="lx-section lx-intro" :class="{ 'is-revealed': revealed }">
     <div class="lx-section-inner">
       <p class="lx-eyebrow">About · 组织介绍</p>
-      <h2 class="lx-section-title">以土地为纸，以方块为墨</h2>
+      <h2 class="lx-section-title">一座由 22 位玩家共同筑造的生存之城</h2>
 
       <div class="lx-intro-grid">
         <div class="lx-intro-main">
@@ -11,14 +11,17 @@
 
         <div class="lx-intro-side">
           <div class="lx-stat">
+            <i class="lx-stat-pin"></i>
             <span class="lx-stat-num">{{ memberCount ?? 22 }}</span>
             <span class="lx-stat-label">位成员</span>
           </div>
           <div class="lx-stat">
+            <i class="lx-stat-pin pin-blue"></i>
             <span class="lx-stat-num">{{ baseCount ?? 4 }}</span>
             <span class="lx-stat-label">座地图基地</span>
           </div>
           <div class="lx-stat">
+            <i class="lx-stat-pin pin-moss"></i>
             <span class="lx-stat-num">{{ foundedYear }}</span>
             <span class="lx-stat-label">年建服</span>
           </div>
@@ -148,17 +151,36 @@ onMounted(async () => {
   font-weight: 600;
 }
 
-/* ---- 细线条数据（无盒感） ---- */
+/* ---- 细线条数据（无盒感，图钉标记） ---- */
 .lx-intro-side {
   padding-top: 6px;
 }
 
 .lx-stat {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 12px;
   padding: 20px 0;
-  border-bottom: 1px solid var(--border-subtle);
+  border-bottom: 1px dashed var(--border-default);
+}
+
+.lx-stat-pin {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--lx-pin);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--lx-pin) 25%, transparent);
+  flex-shrink: 0;
+}
+
+.lx-stat-pin.pin-blue {
+  background: var(--lx-blue);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--lx-blue) 25%, transparent);
+}
+
+.lx-stat-pin.pin-moss {
+  background: var(--lx-moss);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--lx-moss) 25%, transparent);
 }
 
 .lx-stat-num {
@@ -180,7 +202,7 @@ onMounted(async () => {
 .lx-history {
   margin-top: 88px;
   padding-top: 64px;
-  border-top: 1px solid var(--border-subtle);
+  border-top: 1px dashed var(--border-default);
 }
 
 .lx-history-title {
@@ -255,7 +277,7 @@ onMounted(async () => {
   }
 
   .lx-stat + .lx-stat {
-    border-left: 1px solid var(--border-subtle);
+    border-left: 1px dashed var(--border-default);
   }
 }
 

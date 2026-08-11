@@ -134,7 +134,7 @@ window.addEventListener('keydown', onKeydown)
 .lx-section {
   padding: 110px 24px 120px;
   background: var(--bg-card);
-  border-top: 1px solid var(--border-subtle);
+  border-top: 1px dashed var(--border-default);
   opacity: 0;
   transform: translateY(24px);
   transition: opacity 0.7s var(--ease-out), transform 0.7s var(--ease-out);
@@ -185,7 +185,7 @@ window.addEventListener('keydown', onKeydown)
   gap: 6px;
   margin-bottom: 40px;
   padding-bottom: 20px;
-  border-bottom: 1px solid var(--border-subtle);
+  border-bottom: 1px dashed var(--border-default);
 }
 
 .lx-tab {
