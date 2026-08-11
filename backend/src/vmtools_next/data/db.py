@@ -120,7 +120,7 @@ def init_db() -> None:
 
     # Import all model modules so Base.metadata knows about every table
     from vmtools_next.data.models import (  # noqa: F401
-        warehouse, auth, logistics, build, mcc_session, mcc_remote, plugin, monitor, player_tracking,
+        warehouse, auth, logistics, build, mcc_session, mcc_remote, plugin, monitor, player_tracking, lixiangxiang,
     )
 
     Base.metadata.create_all(bind=engine)
@@ -128,7 +128,22 @@ def init_db() -> None:
     _create_indexes(engine)
     _ensure_site_admin(Session)
     _sync_player_tracking(Session)
+    _seed_lixiangxiang(Session)
     logger.info("Database initialized: {}", _DATABASE_URL)
+
+
+def _seed_lixiangxiang(Session) -> None:
+    """幂等写入「理想乡」官网种子数据（组织介绍/22 位成员/基地/相册占位）。
+
+    仅当对应表为空时写入；占位渐变 PNG 由标准库生成到 backend/static/lixiangxiang/seed/。
+    """
+    try:
+        from vmtools_next.core.lixiangxiang_seed import seed_lixiangxiang
+
+        static_dir = pathlib.Path(__file__).resolve().parent.parent.parent.parent / "static"
+        seed_lixiangxiang(Session, static_dir)
+    except Exception as e:
+        logger.warning("Lixiangxiang seed failed: {}", e)
 
 
 def _sync_player_tracking(Session) -> None:

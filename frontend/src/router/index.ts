@@ -24,6 +24,20 @@ const routes = [
     component: () => import('@/views/RegisterView.vue'),
     meta: { public: true },
   },
+  // ── 理想乡组织官网（访客完全开放，无需登录）──
+  {
+    path: '/lixiangxiang',
+    name: 'Lixiangxiang',
+    component: () => import('@/views/lixiangxiang/LixiangxiangHome.vue'),
+    meta: { public: true, title: '理想乡' },
+  },
+  // ── 理想乡后台管理（仅管理员 admin / site_admin）──
+  {
+    path: '/lixiangxiang/admin',
+    name: 'LixiangxiangAdmin',
+    component: () => import('@/views/lixiangxiang/LixiangxiangAdmin.vue'),
+    meta: { roles: [...ROLES.admin, ...ROLES.siteAdmin], title: '理想乡管理' },
+  },
   {
     path: '/',
     component: () => import('@/components/layout/AppLayout.vue'),

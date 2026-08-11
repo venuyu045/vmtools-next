@@ -23,6 +23,10 @@ from vmtools_next.data.models.monitor import (  # noqa: F401
     AlertRuleModel, AlertHistoryModel, MetricsSnapshotModel,
 )
 from vmtools_next.data.models.player_tracking import PlayerTrackingOwnerModel  # noqa: F401
+from vmtools_next.data.models.lixiangxiang import (  # noqa: F401
+    OrganizationInfoModel, MemberModel, LxBaseModel,
+    GalleryCategoryModel, GalleryImageModel,
+)
 
 __all__ = [
     # warehouse
@@ -42,4 +46,9 @@ __all__ = [
     "PluginStateModel",
     # monitor
     "AlertRuleModel", "AlertHistoryModel", "MetricsSnapshotModel",
+    # player tracking
+    "PlayerTrackingOwnerModel",
+    # lixiangxiang
+    "OrganizationInfoModel", "MemberModel", "LxBaseModel",
+    "GalleryCategoryModel", "GalleryImageModel",
 ]

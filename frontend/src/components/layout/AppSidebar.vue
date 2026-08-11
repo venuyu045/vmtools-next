@@ -132,6 +132,7 @@ const navGroups: NavGroup[] = [
     title: '总览',
     items: [
       { path: '/dashboard', label: '仪表盘', minRole: 1 },
+      { path: '/lixiangxiang', label: '理想乡官网', minRole: 1 },
     ],
   },
   {
