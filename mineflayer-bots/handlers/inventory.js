@@ -580,6 +580,17 @@ function createInventoryHandlers(bot, opts = {}) {
     }
   }
 
+  /** 当前打开的窗口信息（调试：判断服务器弹了什么窗口类型） */
+  function getCurrentWindowInfo() {
+    const w = bot.currentWindow;
+    if (!w) return null;
+    return {
+      type: w.type || '',
+      title: w.title || '',
+      slot_count: typeof w.inventoryStart === 'number' ? w.inventoryStart : null,
+    };
+  }
+
   // ── 右键使用手持物品（快捷潜影盒/末影珍珠等，2026-08-12） ──
   // 需先由前端设为手持（select_hotbar）；若服务器弹出新容器窗口则自动注册返回
   async function activate_item({} = {}) {
@@ -589,11 +600,13 @@ function createInventoryHandlers(bot, opts = {}) {
       // 等待服务器处理（GUI 打开/右键效果），再检查是否有新容器窗口
       await new Promise(r => setTimeout(r, 800));
       const newCid = await registerOpenedWindowIfNew();
+      console.log(`[activate_item] held=${bot.heldItem.name} opened=${!!newCid} window=${getCurrentWindowInfo() ? getCurrentWindowInfo().type : 'none'}`);
       return {
         success: true,
         item: bot.heldItem.name,
         opened: !!newCid,
         new_container_id: newCid || null,
+        current_window: getCurrentWindowInfo(),
       };
     } catch (err) {
       return { success: false, error: err.message };
@@ -629,11 +642,13 @@ function createInventoryHandlers(bot, opts = {}) {
       // 等待服务器处理（GUI 打开），再检查是否有新容器窗口
       await new Promise(r => setTimeout(r, 1000));
       const newCid = await registerOpenedWindowIfNew();
+      console.log(`[activate_block] block=${block.name} opened=${!!newCid} window=${getCurrentWindowInfo() ? getCurrentWindowInfo().type : 'none'}`);
       return {
         success: true,
         block: block.name,
         opened: !!newCid,
         new_container_id: newCid || null,
+        current_window: getCurrentWindowInfo(),
       };
     } catch (err) {
       return { success: false, error: err.message };

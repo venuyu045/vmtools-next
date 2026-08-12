@@ -348,7 +348,10 @@ async function doActivateHeld() {
     } else if (r.opened) {
       ElMessage.success('已打开新容器窗口，正在读取…')
     } else {
-      ElMessage.warning('已右键使用手持物品，但未检测到新窗口；若为箱子 UI，请用下方「附加箱子」列表的「右键」按钮触发')
+      const cw = r.current_window
+      ElMessage.warning(cw
+        ? `当前打开窗口：${cw.type}（${cw.title || '无标题'}）——若面板未显示，请用下方「附加箱子」列表的「右键」按钮触发`
+        : '未检测到打开的窗口；若为箱子 UI，请用下方「附加箱子」列表的「右键」按钮触发')
     }
     emit('refresh')
   } catch (err: any) {

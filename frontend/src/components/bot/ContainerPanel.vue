@@ -305,7 +305,10 @@ async function goActivate(c: ContainerBlock) {
         await refreshSnapshot()
       }
     } else {
-      ElMessage.warning('右键已发送，但未检测到打开的新窗口（该方块可能不触发 GUI，或服务器插件无响应）')
+      const cw = r.current_window
+      ElMessage.warning(cw
+        ? `当前打开窗口：${cw.type}（${cw.title || '无标题'}）——若该窗口在面板未显示，请用下方「附加箱子」列表的「右键」按钮`
+        : '未检测到打开的窗口（该方块/物品未触发 GUI，或服务器插件无响应）')
     }
   } catch (e: any) {
     ElMessage.error(e?.response?.data?.detail || '右键方块失败')
