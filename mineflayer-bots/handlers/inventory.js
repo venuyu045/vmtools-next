@@ -204,23 +204,22 @@ function parseItemDisplay(item) {
 /** 诊断：物品原始数据结构（确认 item 字段/components/nbt，便于排查解析路径） */
 function itemDebug(item) {
   const dbg = {};
-  if (item) {
-    dbg.item_keys = Object.keys(item).slice(0, 30);
-    dbg.displayName = String(item.displayName || '').slice(0, 60);
-    dbg.name = String(item.name || '');
-  if (item && item.components && typeof item.components === 'object') {
+  if (!item) return dbg;
+  dbg.item_keys = Object.keys(item).slice(0, 30);
+  dbg.displayName = String(item.displayName || '').slice(0, 60);
+  dbg.name = String(item.name || '');
+  if (item.components && typeof item.components === 'object') {
     dbg.component_keys = Object.keys(item.components).slice(0, 20);
-    dbg.components_raw = JSON.stringify(item.components).slice(0, 200);
+    dbg.components_raw = JSON.stringify(item.components).slice(0, 800);
   }
-  if (item && item.componentMap && typeof item.componentMap === 'object') {
+  if (item.componentMap && typeof item.componentMap === 'object') {
     dbg.componentMap_keys = Object.keys(item.componentMap).slice(0, 20);
-    dbg.componentMap_raw = JSON.stringify(item.componentMap).slice(0, 300);
+    dbg.componentMap_raw = JSON.stringify(item.componentMap).slice(0, 800);
   }
-  if (item && item.nbt && item.nbt.value && typeof item.nbt.value === 'object') {
-    dbg.nbt_keys = Object.keys(item.nbt.value).slice(0, 20);
+  if (item.nbt) {
+    dbg.nbt_raw = JSON.stringify(item.nbt).slice(0, 800);
   }
-  }
-  if (item && item.customName != null) dbg.customName = String(item.customName).slice(0, 60);
+  if (item.customName != null) dbg.customName = String(item.customName).slice(0, 60);
   return dbg;
 }
 
@@ -433,10 +432,10 @@ function createInventoryHandlers(bot, opts = {}) {
           custom_name: detail.custom_name,
           lore: detail.lore,
         };
-        if (items.length < 3) {
+        if (items.length < 3 || String(item.name).includes('book')) {
           const dbg = itemDebug(item);
-          console.log(`[inv-debug] ${item.name} ${JSON.stringify(dbg).slice(0, 400)}`);
-          entry.debug = dbg; // 仅前3个物品带诊断
+          console.log(`[inv-debug] ${item.name} ${JSON.stringify(dbg).slice(0, 900)}`);
+          entry.debug = dbg; // 仅前3个物品 + book 带诊断
         }
         items.push(entry);
       }
