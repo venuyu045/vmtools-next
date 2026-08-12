@@ -27,7 +27,7 @@ const openContainers = new Map();
 // 主动打开（open_container_at）产生的预期容器 id 集合：windowOpen 时命中则跳过自动注册
 const expectedContainers = new Set();
 
-// 容器类窗口类型（对齐 mineflayer chest.js allowedWindowTypes）
+// 容器类窗口类型（对齐 mineflayer chest.js allowedWindowTypes + 服务器 GUI 常用类型）
 const CONTAINER_WINDOW_TYPES = new Set([
   'minecraft:generic', 'minecraft:chest', 'minecraft:dispenser', 'minecraft:ender_chest',
   'minecraft:shulker_box', 'minecraft:hopper', 'minecraft:container', 'minecraft:dropper',
@@ -38,7 +38,22 @@ const CONTAINER_WINDOW_TYPES = new Set([
   'minecraft:cyan_shulker_box', 'minecraft:purple_shulker_box', 'minecraft:blue_shulker_box',
   'minecraft:brown_shulker_box', 'minecraft:green_shulker_box', 'minecraft:red_shulker_box',
   'minecraft:black_shulker_box',
+  // 服务器 GUI / 箱子 UI 插件常用类型（Chest Commands / DeluxeMenus 等）：
+  // generic_9xN = 9 列 × N 行（9x1=9格 … 9x6=54格），右键书本等触发的箱子 UI 即此类
+  'minecraft:generic_9x1', 'minecraft:generic_9x2', 'minecraft:generic_9x3',
+  'minecraft:generic_9x4', 'minecraft:generic_9x5', 'minecraft:generic_9x6',
+  'minecraft:generic_3x3',
 ]);
+
+/** 是否容器类窗口（白名单 + generic_9xN 等服务器 GUI 类型） */
+function isContainerWindow(type) {
+  if (!type) return false;
+  if (CONTAINER_WINDOW_TYPES.has(type)) return true;
+  // 兜底：generic_9xN / generic_3x3 前缀变体（未来插件可能用 generic_9x7 等）
+  if (typeof type === 'string' && type.startsWith('minecraft:generic_9x')) return true;
+  if (typeof type === 'string' && type.startsWith('minecraft:generic_3x3')) return true;
+  return false;
+}
 
 /**
  * @param {import('mineflayer').Bot} bot
@@ -59,14 +74,15 @@ function createInventoryHandlers(bot, opts = {}) {
     }
   }
 
-  /** 检查 bot.currentWindow 是否为新打开的容器窗口；是则自动注册并返回 container_id */
+  /** 检查 bot.currentWindow 是否为新打开的容器窗口；是则自动注册并返回 container_id。
+   *  已注册（windowOpen listener 已抢先注册）→ 返回已有 container_id，前端据此切换面板。 */
   async function registerOpenedWindowIfNew() {
     const w = bot.currentWindow;
     if (!w) return null;
-    for (const entry of openContainers.values()) {
-      if (entry.window === w) return null; // 已注册
+    for (const [cid, entry] of openContainers.entries()) {
+      if (entry.window === w) return cid; // 已注册：返回已有容器 id（视为已打开）
     }
-    if (!CONTAINER_WINDOW_TYPES.has(w.type)) return null; // 非容器类（如合成/附魔/村民交易）
+    if (!isContainerWindow(w.type)) return null; // 非容器类（如合成/附魔/村民交易）
     const cid = uuidv4();
     openContainers.set(cid, {
       window: w,
@@ -94,8 +110,8 @@ function createInventoryHandlers(bot, opts = {}) {
         expectedContainers.clear();
         return;
       }
-      // 自动注册（点击/激活触发的服务器 GUI，如快捷潜影盒）
-      if (CONTAINER_WINDOW_TYPES.has(window.type)) {
+      // 自动注册（点击/激活触发的服务器 GUI，如快捷潜影盒/箱子 UI）
+      if (isContainerWindow(window.type)) {
         const cid = registerOpenedWindowIfNewSync(window);
         if (cid) {
           emitEvent('container_opened', {
