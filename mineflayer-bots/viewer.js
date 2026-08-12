@@ -30,7 +30,11 @@ function verifyViewerToken (token) {
   if (!VIEWER_SECRET || !token) return false;
   try {
     const jwt = require('jsonwebtoken');
-    jwt.verify(token, VIEWER_SECRET, { audience: 'viewer' });
+    const payload = jwt.verify(token, VIEWER_SECRET, { audience: 'viewer' });
+    // 显式校验 aud（审查 M3）：jsonwebtoken 在 payload 无 aud 字段时
+    // verifyAudience 返回 true（不报错）——不校验会导致 7 天主登录 token
+    // 也能打开 viewer（设计意图：viewer 仅接受 10 分钟短时效 aud=viewer token）。
+    if (!payload || payload.aud !== 'viewer') return false;
     return true;
   } catch (e) {
     return false;

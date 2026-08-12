@@ -54,7 +54,9 @@ _STATIC_DIR = Path(__file__).resolve().parent.parent.parent.parent.parent / "sta
 _LX_DIR = _STATIC_DIR / "lixiangxiang"
 _UPLOAD_DIR = _LX_DIR / "uploads"
 
-_ALLOWED_EXT = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg"}
+# 仅允许位图/WebP。不含 SVG：SVG 可内嵌脚本，上传目录经 /static 直接访问时
+# 浏览器将其作为同源文档渲染 → 存储型 XSS 风险（审查 M1）。官网图片均可用位图。
+_ALLOWED_EXT = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
 _MAX_SIZE = 20 * 1024 * 1024  # 20MB
 
 
@@ -72,72 +74,72 @@ def _iso(dt: Optional[datetime]) -> Optional[str]:
 
 class InfoUpdate(BaseModel):
     """组织介绍更新：部分键更新（如 {"intro": "...", "slogan": "..."}）。"""
-    intro: Optional[str] = None
-    history: Optional[str] = None
-    slogan: Optional[str] = None
-    settings: Optional[str] = None
+    intro: Optional[str] = Field(None, max_length=20000)
+    history: Optional[str] = Field(None, max_length=20000)
+    slogan: Optional[str] = Field(None, max_length=500)
+    settings: Optional[str] = Field(None, max_length=5000)
 
 
 class MemberCreate(BaseModel):
-    game_id: str
-    nickname: str = ""
-    title: str = ""
-    joined_at: str = ""
-    specialty: str = ""
-    avatar_path: str = ""
-    bio: str = ""
+    game_id: str = Field(..., max_length=32)
+    nickname: str = Field("", max_length=60)
+    title: str = Field("", max_length=60)
+    joined_at: str = Field("", max_length=40)
+    specialty: str = Field("", max_length=100)
+    avatar_path: str = Field("", max_length=500)
+    bio: str = Field("", max_length=2000)
     sort_order: int = 0
 
 
 class MemberUpdate(BaseModel):
-    game_id: Optional[str] = None
-    nickname: Optional[str] = None
-    title: Optional[str] = None
-    joined_at: Optional[str] = None
-    specialty: Optional[str] = None
-    avatar_path: Optional[str] = None
-    bio: Optional[str] = None
+    game_id: Optional[str] = Field(None, max_length=32)
+    nickname: Optional[str] = Field(None, max_length=60)
+    title: Optional[str] = Field(None, max_length=60)
+    joined_at: Optional[str] = Field(None, max_length=40)
+    specialty: Optional[str] = Field(None, max_length=100)
+    avatar_path: Optional[str] = Field(None, max_length=500)
+    bio: Optional[str] = Field(None, max_length=2000)
     sort_order: Optional[int] = None
 
 
 class BaseCreate(BaseModel):
-    name: str
-    description: str = ""
-    image_path: str = ""
-    coordinates: str = ""
+    name: str = Field(..., max_length=100)
+    description: str = Field("", max_length=2000)
+    image_path: str = Field("", max_length=500)
+    coordinates: str = Field("", max_length=100)
     sort_order: int = 0
 
 
 class BaseUpdate(BaseModel):
-    name: Optional[str] = None
-    description: Optional[str] = None
-    image_path: Optional[str] = None
-    coordinates: Optional[str] = None
+    name: Optional[str] = Field(None, max_length=100)
+    description: Optional[str] = Field(None, max_length=2000)
+    image_path: Optional[str] = Field(None, max_length=500)
+    coordinates: Optional[str] = Field(None, max_length=100)
     sort_order: Optional[int] = None
 
 
 class CategoryCreate(BaseModel):
-    name: str
+    name: str = Field(..., max_length=60)
     sort_order: int = 0
 
 
 class CategoryUpdate(BaseModel):
-    name: Optional[str] = None
+    name: Optional[str] = Field(None, max_length=60)
     sort_order: Optional[int] = None
 
 
 class ImageCreate(BaseModel):
-    image_path: str
-    category_id: Optional[str] = None
-    title: str = ""
-    description: str = ""
+    image_path: str = Field(..., max_length=500)
+    category_id: Optional[str] = Field(None, max_length=64)
+    title: str = Field("", max_length=100)
+    description: str = Field("", max_length=2000)
 
 
 class ImageUpdate(BaseModel):
-    image_path: Optional[str] = None
-    category_id: Optional[str] = None
-    title: Optional[str] = None
-    description: Optional[str] = None
+    image_path: Optional[str] = Field(None, max_length=500)
+    category_id: Optional[str] = Field(None, max_length=64)
+    title: Optional[str] = Field(None, max_length=100)
+    description: Optional[str] = Field(None, max_length=2000)
 
 
 # ──────────────────────────────────────────────

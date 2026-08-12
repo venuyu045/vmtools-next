@@ -27,6 +27,9 @@ _LOGIN_WINDOW = 60.0      # 窗口秒数
 def _check_login_rate_limit(key: str) -> None:
     import time as _time
     now = _time.monotonic()
+    # 防内存膨胀（审查 L2）：字典超过上限时整体重置（限流状态短暂归零可接受）
+    if len(_LOGIN_ATTEMPTS) > 10000:
+        _LOGIN_ATTEMPTS.clear()
     ts, cnt = _LOGIN_ATTEMPTS.get(key, (0.0, 0))
     if now - ts > _LOGIN_WINDOW:
         ts, cnt = now, 0
@@ -157,19 +160,19 @@ def register(data: RegisterRequest, db: Session = Depends(get_db)):
     gid = (data.game_id or "").strip()
     if not gid or len(gid) > 32 or any(c in gid for c in " \t\r\n"):
         raise HTTPException(400, "Game ID 格式不合法")
-    # 2) 唯一性校验
-    if db.query(UserModel).filter(UserModel.game_id == data.game_id).first():
+    # 2) 唯一性校验（用 strip 后的 gid，避免「带空格/不带空格」两个账号并存，审查 M2）
+    if db.query(UserModel).filter(UserModel.game_id == gid).first():
         raise HTTPException(400, "Game ID already registered")
     if db.query(UserModel).filter(UserModel.qq_openid == openid).first():
         raise HTTPException(400, "该 QQ 已注册过账号（一个 QQ 只能注册一个账号）")
 
-    # 3) 创建账号：approved + user
+    # 3) 创建账号：approved + user（game_id 存 strip 后的规范值）
     password_hash = bcrypt.hashpw(data.password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
     user = UserModel(
         id=str(uuid.uuid4()),
-        game_id=data.game_id,
+        game_id=gid,
         password_hash=password_hash,
-        display_name=data.display_name or qq_info.get("nickname") or data.game_id,
+        display_name=data.display_name or qq_info.get("nickname") or gid,
         role="user",
         status="approved",
         approved_at=datetime.now(timezone.utc),

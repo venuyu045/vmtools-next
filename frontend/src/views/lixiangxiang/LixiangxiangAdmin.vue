@@ -154,7 +154,7 @@
             </el-avatar>
             <el-upload
               :show-file-list="false"
-              accept="image/*"
+              accept=".png,.jpg,.jpeg,.gif,.webp"
               :http-request="(opt: any) => uploadAvatar(opt)"
             >
               <el-button size="small">上传头像</el-button>
@@ -207,7 +207,7 @@
             <el-image v-if="baseDialog.form.image_path" :src="baseDialog.form.image_path" fit="cover" class="lx-upload-preview" />
             <el-upload
               :show-file-list="false"
-              accept="image/*"
+              accept=".png,.jpg,.jpeg,.gif,.webp"
               :http-request="(opt: any) => uploadBaseImage(opt)"
             >
               <el-button size="small">上传截图</el-button>
@@ -267,7 +267,7 @@
             <el-image v-if="imageDialog.form.image_path" :src="imageDialog.form.image_path" fit="cover" class="lx-upload-preview" />
             <el-upload
               :show-file-list="false"
-              accept="image/*"
+              accept=".png,.jpg,.jpeg,.gif,.webp"
               :http-request="(opt: any) => uploadGalleryImage(opt)"
             >
               <el-button size="small">{{ imageDialog.isEdit ? '更换图片' : '选择图片' }}</el-button>

@@ -77,6 +77,9 @@ async def _check_mcc_permission(sid: str, instance_id: str) -> bool:
 
     Delegates to ``MccInstanceService.get_instance`` so Socket.IO and REST share
     exactly the same scoping rules (site_admin → all, otherwise same org).
+    权限收紧（审查 S2）：终端读写属管理/控制操作——与 REST `terminal_input` 的
+    `require_admin` 对齐，仅 admin / site_admin（或实例创建者本人）可访问；
+    普通 user 不得查看/输入任意实例终端（防越权控制 bot 与读取日志）。
     """
     session = await sio.get_session(sid)
     user_info = session.get("user")
@@ -91,6 +94,12 @@ async def _check_mcc_permission(sid: str, instance_id: str) -> bool:
             user = db.query(UserModel).filter(UserModel.id == user_info.get("user_id")).first()
             if not user:
                 return False
+            # 角色校验：admin / site_admin，或实例创建者本人（与 REST 文件接口口径一致）
+            if user.role not in ("admin", "site_admin"):
+                instance = MccInstanceService().get_instance(db, user, instance_id)
+                if instance.created_by != user.id:
+                    return False
+                return True
             MccInstanceService().get_instance(db, user, instance_id)
             return True
         except Exception:

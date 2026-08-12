@@ -196,7 +196,7 @@ def update_instance(
     instance_id: str,
     data: MccInstanceUpdate,
     db: Session = Depends(get_db),
-    user: UserModel = Depends(get_current_user),
+    user: UserModel = Depends(require_admin),
 ):
     instance = service.update_instance(db, user, instance_id, data)
     audit.log(db, user=user, action="instance.update", instance_id=instance_id, after=data.model_dump(exclude_unset=True))
@@ -209,7 +209,7 @@ def update_instance(
 def delete_instance(
     instance_id: str,
     db: Session = Depends(get_db),
-    user: UserModel = Depends(get_current_user),
+    user: UserModel = Depends(require_admin),
 ):
     instance = service.get_instance(db, user, instance_id)
     if instance.status == "running":
@@ -441,7 +441,7 @@ def terminal_history(
     tail: int = Query(default=500, ge=1, le=5000),
     after_seq: int | None = Query(default=None),
     db: Session = Depends(get_db),
-    user: UserModel = Depends(get_current_user),
+    user: UserModel = Depends(require_admin),
 ):
     service.get_instance(db, user, instance_id)
     lines = _process_manager(_resolve_engine(db, instance_id)).tail_logs(instance_id, tail=tail, after_seq=after_seq)
@@ -483,7 +483,7 @@ async def terminal_input(
 def terminal_log_export(
     instance_id: str,
     db: Session = Depends(get_db),
-    user: UserModel = Depends(get_current_user),
+    user: UserModel = Depends(require_admin),
 ):
     """Export the full terminal log for an instance as plain text.
 
@@ -511,7 +511,7 @@ def process_events(
     instance_id: str,
     limit: int = Query(default=50, ge=1, le=500),
     db: Session = Depends(get_db),
-    user: UserModel = Depends(get_current_user),
+    user: UserModel = Depends(require_admin),
 ):
     service.get_instance(db, user, instance_id)
     rows = db.query(MccProcessEventModel).filter(
