@@ -21,8 +21,10 @@
           <span class="chest-title">{{ zhBlock(active.block_name) }} <span class="mono chest-pos">{{ active.position?.x }}, {{ active.position?.y }}, {{ active.position?.z }}</span></span>
           <span class="mono chest-rows">{{ isDouble ? '大箱子' : '小箱子' }} · {{ slotCount }} 格</span>
           <button class="pixel-btn mini outline" @click="refreshSnapshot" :disabled="loading">刷新</button>
+          <button class="pixel-btn mini" @click="goBack" :disabled="stack.length <= 1" title="关闭当前窗口，由服务器返回上一层容器">返回上一层</button>
           <button class="pixel-btn mini warning" @click="close">关闭</button>
         </div>
+        <div v-if="stack.length > 1" class="window-chain mono">窗口链：已打开 {{ stack.length }} 层（关闭子窗口后自动返回上层）</div>
         <!-- 窗口点击提示：左键=拿起/放下整组 · 右键=拿/放半组（快捷潜影盒右键物品可开新窗） -->
         <div class="click-hint" v-if="active">
           <span :class="{ holding }">左键=拿/放整组</span>
@@ -82,6 +84,7 @@ const detail = ref({ show: false, item: null as ChestSlot | null, idx: -1 })
 const holding = ref(false)          // 是否手持物品（左键拿起后为 true）
 const holdingSlot = ref(-1)         // 拿起来源槽位（高亮）
 const clicking = ref(false)         // 点击请求进行中（防连点）
+const stack = ref<string[]>([])     // 窗口链（container_id 打开顺序，嵌套窗口返回用）
 
 const slotCount = computed(() => active.value?.slot_count ?? 0)
 const isDouble = computed(() => slotCount.value > 27) // 大箱子 54 / 末影箱 27 / 潜影盒 27
@@ -118,6 +121,7 @@ watch(() => props.botId, () => {
   detail.value = { show: false, item: null, idx: -1 }
   holding.value = false
   holdingSlot.value = -1
+  stack.value = []
 })
 onMounted(() => {
   sockOn('mf_container_opened', onContainerOpened)
@@ -220,6 +224,7 @@ async function doDropToVoid() {
 // ── socket：服务器自动打开/关闭容器窗口（快捷潜影盒等） → 切换面板 ──
 function onContainerOpened(payload: any) {
   if (!payload || payload.bot_id !== props.botId || !payload.container_id) return
+  pushStack(payload.container_id)
   active.value = {
     container_id: payload.container_id,
     block_name: payload.block_name || '容器',
@@ -232,8 +237,9 @@ function onContainerOpened(payload: any) {
   refreshSnapshot()
 }
 function onContainerClosed(payload: any) {
-  if (!payload || !active.value) return
-  if (active.value.container_id === payload.container_id) {
+  if (!payload) return
+  popStack(payload.container_id)
+  if (active.value && active.value.container_id === payload.container_id) {
     active.value = null
     items.value = new Map()
     holding.value = false
@@ -263,6 +269,7 @@ async function goOpen(c: ContainerBlock) {
     const d = resp.data
     if (!d?.container_id) { ElMessage.error(d?.error || '打开失败'); return }
     active.value = { container_id: d.container_id, block_name: d.block_name || c.name, slot_count: d.slot_count || 0, position: { x: c.x, y: c.y, z: c.z } }
+    pushStack(d.container_id)
     items.value = new Map()
     await refreshSnapshot()
   } catch (err: any) {
@@ -270,6 +277,28 @@ async function goOpen(c: ContainerBlock) {
   } finally {
     busy.value = false
   }
+}
+
+function pushStack(cid: string) {
+  if (!stack.value.includes(cid)) stack.value.push(cid)
+}
+function popStack(cid: string) {
+  stack.value = stack.value.filter(x => x !== cid)
+}
+
+/** 返回上一层：关闭当前窗口，服务器会重开父窗口（windowOpen → mf_container_opened 自动切换） */
+async function goBack() {
+  if (!active.value || clicking.value) return
+  const cur = active.value.container_id
+  popStack(cur)
+  try {
+    await botApi.closeContainer(props.botId, cur)
+  } catch { /* 忽略 */ }
+  active.value = null
+  items.value = new Map()
+  holding.value = false
+  holdingSlot.value = -1
+  ElMessage.info('已关闭当前窗口，等待返回上一层容器…')
 }
 
 async function refreshSnapshot() {
@@ -306,6 +335,9 @@ async function close() {
   } catch { /* 忽略 */ }
   active.value = null
   items.value = new Map()
+  holding.value = false
+  holdingSlot.value = -1
+  stack.value = []
 }
 </script>
 
@@ -355,4 +387,5 @@ async function close() {
 .click-hint span.holding { color: var(--accent); font-weight: 600; }
 .click-hint .holding-text { color: #e6a23c; font-weight: 600; }
 .slot.holding { border-color: #e6a23c; box-shadow: 0 0 4px rgba(230, 162, 60, 0.5); }
+.window-chain { font-size: 11px; color: var(--text-muted); margin-bottom: 6px; }
 </style>
