@@ -159,6 +159,7 @@ class InventorySlot(BaseModel):
     enchantments: Optional[list] = None  # [{name, lvl}, ...]（mineflayer 端解析）
     custom_name: Optional[str] = None    # 自定义名（去格式码纯文本，2026-08-12）
     lore: Optional[list] = None          # 描述行列表（去格式码纯文本，2026-08-12）
+    debug: Optional[dict] = None         # 诊断（components/nbt keys，确认后可移除）
 
 
 class InventorySnapshot(BaseModel):
