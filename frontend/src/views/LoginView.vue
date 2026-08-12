@@ -18,10 +18,6 @@
       <div class="form-inner">
         <h2 class="form-title">欢迎回来</h2>
         <p class="form-sub">登录以继续管理你的 Minecraft 服务器</p>
-        <!-- 访客点击受限区域/受限操作被引导登录时的提示 -->
-        <Transition name="locked-fade">
-          <div v-if="lockedReason" class="locked-hint">前面的区域以后再来探索吧</div>
-        </Transition>
         <el-form @submit.prevent="handleLogin" class="login-form">
           <el-form-item>
             <el-input
@@ -84,7 +80,7 @@ const loading = ref(false)
 const qqLoading = ref(false)
 const form = reactive({ game_id: '', password: '' })
 
-/** 访客被引导登录（点击受限区域/受限操作）：登录页显示「前面的区域以后再来探索吧」 */
+/** 访客被引导登录（点击受限区域/受限操作）：以通知形式提示「前面的区域以后再来探索吧」 */
 const lockedReason = computed(() => route.query.reason === 'locked')
 
 async function handleLogin() {
@@ -139,6 +135,10 @@ onMounted(() => {
   const ticket = route.query.qq_ticket as string | undefined
   if (ticket) {
     handleQqTicket(ticket)
+  }
+  // 访客被引导登录（点击受限区域/受限操作）：以通知形式提示
+  if (lockedReason.value) {
+    ElMessage.warning('前面的区域以后再来探索吧')
   }
 })
 </script>
@@ -249,31 +249,6 @@ onMounted(() => {
   font-size: 14px;
   color: var(--text-secondary);
   margin-bottom: 32px;
-}
-
-/* 访客被引导登录时的提示条（「前面的区域以后再来探索吧」） */
-.locked-hint {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin: -12px 0 20px;
-  padding: 10px 14px;
-  border: 1px solid var(--border-default);
-  border-left: 3px solid var(--accent);
-  border-radius: var(--radius-md);
-  background: var(--bg-hover);
-  color: var(--text-secondary);
-  font-size: 13px;
-}
-
-.locked-fade-enter-active,
-.locked-fade-leave-active {
-  transition: opacity 0.25s ease, transform 0.25s ease;
-}
-.locked-fade-enter-from,
-.locked-fade-leave-to {
-  opacity: 0;
-  transform: translateY(-4px);
 }
 
 .login-register {
