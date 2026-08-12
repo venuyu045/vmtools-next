@@ -407,7 +407,7 @@ function createInventoryHandlers(bot, opts = {}) {
     } catch (e) { enchantments = []; }
     const display = parseItemDisplay(item);
     if (item && String(item.name).includes('book')) {
-      console.log(`[parse-book] custom=${JSON.stringify(display.custom_name)} lore=${JSON.stringify(display.lore)} compsIsArray=${Array.isArray(item.components)} compsLen=${item.components && item.components.length} keys=${JSON.stringify(Object.keys(item.components || {}))}`);
+      console.log(`[parse-book] custom=${JSON.stringify(display.custom_name)} lore=${JSON.stringify(display.lore)} comps=${JSON.stringify(item.components)} customNameField=${JSON.stringify(item.customName)}`);
     }
     return { durability, max_durability: maxDur, enchantments, custom_name: display.custom_name, lore: display.lore };
   }
