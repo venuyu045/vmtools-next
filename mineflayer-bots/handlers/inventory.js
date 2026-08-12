@@ -205,28 +205,6 @@ function parseItemDisplay(item) {
   return { custom_name, lore };
 }
 
-/** 诊断：物品原始数据结构（确认 item 字段/components/nbt，便于排查解析路径） */
-function itemDebug(item) {
-  const dbg = {};
-  if (!item) return dbg;
-  dbg.item_keys = Object.keys(item).slice(0, 30);
-  dbg.displayName = String(item.displayName || '').slice(0, 60);
-  dbg.name = String(item.name || '');
-  if (item.components && typeof item.components === 'object') {
-    dbg.component_keys = Object.keys(item.components).slice(0, 20);
-    dbg.components_raw = JSON.stringify(item.components).slice(0, 800);
-  }
-  if (item.componentMap && typeof item.componentMap === 'object') {
-    dbg.componentMap_keys = Object.keys(item.componentMap).slice(0, 20);
-    dbg.componentMap_raw = JSON.stringify(item.componentMap).slice(0, 800);
-  }
-  if (item.nbt) {
-    dbg.nbt_raw = JSON.stringify(item.nbt).slice(0, 800);
-  }
-  if (item.customName != null) dbg.customName = String(item.customName).slice(0, 60);
-  return dbg;
-}
-
 /**
  * @param {import('mineflayer').Bot} bot
  * @param {{broadcast?: Function, createEvent?: Function}} opts 事件推送闭包（mineflayer_bot.js 传入）
@@ -409,9 +387,6 @@ function createInventoryHandlers(bot, opts = {}) {
       }
     } catch (e) { enchantments = []; }
     const display = parseItemDisplay(item);
-    if (item && String(item.name).includes('book')) {
-      console.log(`[parse-book] custom=${JSON.stringify(display.custom_name)} lore=${JSON.stringify(display.lore)} comps=${JSON.stringify(item.components)} customNameField=${JSON.stringify(item.customName)}`);
-    }
     return { durability, max_durability: maxDur, enchantments, custom_name: display.custom_name, lore: display.lore };
   }
 
@@ -439,11 +414,6 @@ function createInventoryHandlers(bot, opts = {}) {
           custom_name: detail.custom_name,
           lore: detail.lore,
         };
-        if (items.length < 3 || String(item.name).includes('book')) {
-          const dbg = itemDebug(item);
-          console.log(`[inv-debug] ${item.name} ${JSON.stringify(dbg).slice(0, 900)}`);
-          entry.debug = dbg; // 仅前3个物品 + book 带诊断
-        }
         items.push(entry);
       }
       return {
@@ -822,7 +792,6 @@ function createInventoryHandlers(bot, opts = {}) {
             display_name: it.displayName,
             custom_name: d.custom_name,
             lore: d.lore,
-            debug: itemDebug(it), // 诊断（结构确认后可移除）
           };
         });
       } catch (e) { items = []; }

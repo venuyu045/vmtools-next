@@ -568,6 +568,10 @@ class MineflayerBridgeClient(AbstractBotAgent):
                     "durability": s.get("durability"),
                     "maxDurability": s.get("max_durability", s.get("maxDurability")),
                     "enchantments": s.get("enchantments") or [],
+                    # 自定义名 / Lore（2026-08-12）：Node 端解析后透传，勿删！
+                    "custom_name": s.get("custom_name"),
+                    "lore": s.get("lore"),
+                    "debug": s.get("debug"),  # 诊断（结构确认后可移除）
                 })
             result["items"] = items
         return result
