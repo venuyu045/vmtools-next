@@ -64,7 +64,7 @@ function stripColor(s) {
   return String(s == null ? '' : s).replace(/§[0-9a-fk-or]/gi, '');
 }
 
-/** JSON 文本组件 → 纯文本（支持字符串/对象/数组/{type,value} NBT 包装/translate/extra） */
+/** JSON 文本组件 → 纯文本（支持字符串/对象/数组/{type,value} NBT 包装/translate/extra；text+extra 拼接） */
 function textComponentToPlain(v) {
   if (v == null) return '';
   if (typeof v === 'string') {
@@ -76,11 +76,14 @@ function textComponentToPlain(v) {
   }
   if (Array.isArray(v)) return v.map(textComponentToPlain).join('');
   if (typeof v === 'object') {
-    // NBT 包装 {type, value}：先解包（text/translate 的值也可能是这种包装）
+    // NBT 包装 {type, value}：先解包（text/translate/extra 的值也可能是这种包装）
     if (v.value != null && v.type != null) return textComponentToPlain(v.value);
-    if (v.text != null) return textComponentToPlain(v.text);
-    if (v.translate != null) return textComponentToPlain(v.translate);
-    if (v.extra != null) return textComponentToPlain(v.extra);
+    // text/translate/extra 可能同时存在（如 extra 是内容、text 为空占位）→ 全部拼接非空部分
+    let out = '';
+    if (v.text != null) out += textComponentToPlain(v.text);
+    if (v.translate != null) out += textComponentToPlain(v.translate);
+    if (v.extra != null) out += textComponentToPlain(v.extra);
+    if (out) return out;
     if (v.value != null) return textComponentToPlain(v.value);
   }
   return '';
