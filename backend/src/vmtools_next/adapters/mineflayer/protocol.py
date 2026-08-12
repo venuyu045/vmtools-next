@@ -40,6 +40,9 @@ METHOD_DEPOSIT_CONTAINER_ITEM = "deposit_container_item"
 METHOD_DROP_ITEM = "drop_item"
 METHOD_MOVE_ITEM = "move_item"
 METHOD_USE_ITEM = "use_item"
+# 窗口内点击/右键使用（2026-08-12，快捷潜影盒等）
+METHOD_CLICK_WINDOW = "click_window"
+METHOD_ACTIVATE_ITEM = "activate_item"
 
 # Servux 容器预览（不打开容器，直接请求方块实体 NBT）
 METHOD_SERVUX_HANDSHAKE = "servux_handshake"
@@ -72,6 +75,9 @@ EVENT_BOT_CHAT = "bot_chat"
 EVENT_PLAYER_JOINED = "player_joined"
 EVENT_PLAYER_LEFT = "player_left"
 EVENT_COMBAT_DURABILITY_LOW = "combat_durability_low"
+# 容器窗口自动打开/关闭（2026-08-12：快捷潜影盒等服务器 GUI）
+EVENT_CONTAINER_OPENED = "container_opened"
+EVENT_CONTAINER_CLOSED = "container_closed"
 
 # ── Default timeout ──
 

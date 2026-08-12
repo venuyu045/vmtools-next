@@ -205,6 +205,25 @@ class InventoryUseRequest(BaseModel):
     slot_id: Optional[int] = None
 
 
+class InventoryClickRequest(BaseModel):
+    """窗口内点击物品（mineflayer：bot.clickWindow，2026-08-12）。
+
+    target="inventory"：玩家背包，slot 为前端标准槽位（后端映射为原始槽位）；
+    target="container"：已打开容器，slot 为窗口内槽位（0..n-1，原样透传）。
+    mouse_button：0=左键（拿/放整组） 1=右键（拿/放半组）。
+    """
+    target: str = "inventory"      # inventory | container
+    slot: int
+    mouse_button: int = 0          # 0=左键 1=右键
+    mode: int = 0                  # 0=普通点击
+    container_id: Optional[str] = None
+
+
+class ActivateItemRequest(BaseModel):
+    """右键使用手持物品（mineflayer：bot.activateItem，2026-08-12）。"""
+    pass
+
+
 # ── 玩家操控（移动控制台） ──
 
 class MoveControlRequest(BaseModel):

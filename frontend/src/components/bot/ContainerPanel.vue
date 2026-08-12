@@ -16,24 +16,31 @@
     </div>
 
     <!-- 大箱子 UI（6 行 × 9 列；小箱子只显示上半 3 行） -->
-    <div v-if="active" class="chest-area">
-      <div class="chest-head">
-        <span class="chest-title">{{ zhBlock(active.block_name) }} <span class="mono chest-pos">{{ active.position?.x }}, {{ active.position?.y }}, {{ active.position?.z }}</span></span>
-        <span class="mono chest-rows">{{ isDouble ? '大箱子' : '小箱子' }} · {{ slotCount }} 格</span>
-        <button class="pixel-btn mini outline" @click="refreshSnapshot" :disabled="loading">刷新</button>
-        <button class="pixel-btn mini warning" @click="close">关闭</button>
-      </div>
-      <div class="chest-grid" :class="{ half: !isDouble }">
-        <div v-for="idx in visibleSlots" :key="'cs'+idx"
-          class="slot" :class="{ filled: !!getSlot(idx) }"
-          :title="slotTip(idx)"
-          @click="showDetail(idx)"
-        >
-          <ItemIcon v-if="getSlot(idx)" :item-id="getSlot(idx)!.item_id" :name="getSlot(idx)!.item_name_zh || getSlot(idx)!.name || getSlot(idx)!.item_id" :size="30" class="icon" />
-          <span v-if="getSlot(idx)" class="count">{{ getSlot(idx)!.count }}</span>
+      <div v-if="active" class="chest-area">
+        <div class="chest-head">
+          <span class="chest-title">{{ zhBlock(active.block_name) }} <span class="mono chest-pos">{{ active.position?.x }}, {{ active.position?.y }}, {{ active.position?.z }}</span></span>
+          <span class="mono chest-rows">{{ isDouble ? '大箱子' : '小箱子' }} · {{ slotCount }} 格</span>
+          <button class="pixel-btn mini outline" @click="refreshSnapshot" :disabled="loading">刷新</button>
+          <button class="pixel-btn mini warning" @click="close">关闭</button>
+        </div>
+        <!-- 窗口点击提示：左键=拿起/放下整组 · 右键=拿/放半组（快捷潜影盒右键物品可开新窗） -->
+        <div class="click-hint" v-if="active">
+          <span :class="{ holding }">左键=拿/放整组</span>
+          <span>右键=拿/放半组</span>
+          <span v-if="holding" class="holding-text">已拿起，点目标槽放下 / 点虚空丢弃</span>
+        </div>
+        <div class="chest-grid" :class="{ half: !isDouble }">
+          <div v-for="idx in visibleSlots" :key="'cs'+idx"
+            class="slot" :class="{ filled: !!getSlot(idx), holding: holdingSlot === idx }"
+            :title="slotTip(idx)"
+            @click="onSlotClick(idx)"
+            @click.right.prevent="onSlotRight(idx)"
+          >
+            <ItemIcon v-if="getSlot(idx)" :item-id="getSlot(idx)!.item_id" :name="getSlot(idx)!.item_name_zh || getSlot(idx)!.name || getSlot(idx)!.item_id" :size="30" class="icon" />
+            <span v-if="getSlot(idx)" class="count">{{ getSlot(idx)!.count }}</span>
+          </div>
         </div>
       </div>
-    </div>
     <div v-else class="chest-empty mono">未打开容器 · 从上方列表「前往」打开</div>
 
     <!-- 物品详情 -->
@@ -42,18 +49,24 @@
         <div class="detail-row"><b>物品</b><span>{{ detail.item.item_name_zh || detail.item.name || detail.item.item_id }}</span></div>
         <div class="detail-row"><b>数量</b><span>{{ detail.item.count }}</span></div>
         <div class="detail-row"><b>槽位</b><span class="mono">{{ detail.idx + 1 }} / {{ slotCount }}</span></div>
+        <div class="detail-actions">
+          <el-button size="small" type="primary" @click="doPickup">拿起（左键）</el-button>
+          <el-button size="small" @click="detail.show = false">取消</el-button>
+        </div>
       </div>
     </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch, onBeforeUnmount } from 'vue'
+import { computed, ref, watch, onBeforeUnmount, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { botApi } from '@/api/bot'
+import { useSocketIO } from '@/composables/useSocketIO'
 import ItemIcon from '@/components/ItemIcon.vue'
 
 const props = defineProps<{ botId: string }>()
+const { on: sockOn, off: sockOff } = useSocketIO()
 
 interface ContainerBlock { x: number; y: number; z: number; name: string; type?: string; distance?: number }
 interface ChestSlot { item_id: string; name?: string; item_name_zh?: string; count: number }
@@ -65,6 +78,10 @@ const containers = ref<ContainerBlock[]>([])
 const active = ref<{ container_id: string; block_name: string; slot_count: number; position: { x: number; y: number; z: number } } | null>(null)
 const items = ref<Map<number, ChestSlot>>(new Map())
 const detail = ref({ show: false, item: null as ChestSlot | null, idx: -1 })
+// 窗口点击状态（2026-08-12）
+const holding = ref(false)          // 是否手持物品（左键拿起后为 true）
+const holdingSlot = ref(-1)         // 拿起来源槽位（高亮）
+const clicking = ref(false)         // 点击请求进行中（防连点）
 
 const slotCount = computed(() => active.value?.slot_count ?? 0)
 const isDouble = computed(() => slotCount.value > 27) // 大箱子 54 / 末影箱 27 / 潜影盒 27
@@ -99,8 +116,16 @@ watch(() => props.botId, () => {
   items.value = new Map()
   containers.value = []
   detail.value = { show: false, item: null, idx: -1 }
+  holding.value = false
+  holdingSlot.value = -1
+})
+onMounted(() => {
+  sockOn('mf_container_opened', onContainerOpened)
+  sockOn('mf_container_closed', onContainerClosed)
 })
 onBeforeUnmount(() => {
+  sockOff('mf_container_opened', onContainerOpened)
+  sockOff('mf_container_closed', onContainerClosed)
   if (active.value) { botApi.closeContainer(props.botId, active.value.container_id).catch(() => {}) }
   active.value = null
   items.value = new Map()
@@ -115,6 +140,105 @@ function showDetail(idx: number) {
   const s = getSlot(idx)
   if (!s) return
   detail.value = { show: true, item: s, idx }
+}
+
+// ── 窗口点击（2026-08-12）：左键=拿/放整组 右键=拿/放半组 ──
+async function doClick(idx: number, mouseButton: 0 | 1) {
+  if (!active.value || clicking.value) return
+  clicking.value = true
+  try {
+    const { data } = await botApi.inventoryClick(props.botId, {
+      target: 'container',
+      slot: idx,
+      mouse_button: mouseButton,
+      container_id: active.value.container_id,
+    })
+    const r = data?.result || {}
+    holding.value = !!r.holding
+    holdingSlot.value = r.holding ? idx : -1
+    // 服务器打开了新容器窗口（快捷潜影盒 GUI）→ 自动切换
+    if (r.new_container_id) {
+      active.value = {
+        container_id: r.new_container_id,
+        block_name: r.block_name || '潜影盒',
+        slot_count: r.slot_count || 27,
+        position: { x: 0, y: 0, z: 0 },
+      }
+      items.value = new Map()
+      ElMessage.success('已打开新容器窗口')
+    }
+    await refreshSnapshot()
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.detail || '窗口点击失败')
+  } finally {
+    clicking.value = false
+  }
+}
+
+/** 左键：空手持且槽位有物品 → 详情（弹窗内可拿起）；手持 → 放下 */
+async function onSlotClick(idx: number) {
+  if (clicking.value) return
+  if (holding.value) {
+    await doClick(idx, 0)
+    return
+  }
+  showDetail(idx)
+}
+
+/** 右键：拿/放半组（快捷潜影盒：右键容器内潜影盒物品可触发服务器开新窗） */
+async function onSlotRight(idx: number) {
+  await doClick(idx, 1)
+}
+
+/** 详情弹窗内「拿起」（左键窗口点击） */
+async function doPickup() {
+  if (detail.value.idx < 0) return
+  const idx = detail.value.idx
+  detail.value.show = false
+  await doClick(idx, 0)
+}
+
+/** 丢弃到虚空（手持时）：点击 -999 槽（窗口外） */
+async function doDropToVoid() {
+  if (!active.value || clicking.value) return
+  clicking.value = true
+  try {
+    await botApi.inventoryClick(props.botId, {
+      target: 'container', slot: -999, mouse_button: 0, container_id: active.value.container_id,
+    })
+    holding.value = false
+    holdingSlot.value = -1
+    ElMessage.success('已丢弃到虚空')
+    await refreshSnapshot()
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.detail || '丢弃失败')
+  } finally {
+    clicking.value = false
+  }
+}
+
+// ── socket：服务器自动打开/关闭容器窗口（快捷潜影盒等） → 切换面板 ──
+function onContainerOpened(payload: any) {
+  if (!payload || payload.bot_id !== props.botId || !payload.container_id) return
+  active.value = {
+    container_id: payload.container_id,
+    block_name: payload.block_name || '容器',
+    slot_count: payload.slot_count || 27,
+    position: { x: 0, y: 0, z: 0 },
+  }
+  items.value = new Map()
+  holding.value = false
+  holdingSlot.value = -1
+  refreshSnapshot()
+}
+function onContainerClosed(payload: any) {
+  if (!payload || !active.value) return
+  if (active.value.container_id === payload.container_id) {
+    active.value = null
+    items.value = new Map()
+    holding.value = false
+    holdingSlot.value = -1
+  }
 }
 
 async function scan() {
@@ -224,4 +348,11 @@ async function close() {
 .chest-empty { color: var(--text-muted); font-size: 12px; padding: 12px 0; text-align: center; border: 1px dashed var(--border-default); border-radius: var(--radius-md); }
 .detail-row { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px dashed var(--border-default); }
 .detail-row:last-child { border-bottom: none; }
+.detail-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
+
+/* 窗口点击提示 + 手持高亮（2026-08-12） */
+.click-hint { display: flex; align-items: center; gap: 10px; font-size: 11px; color: var(--text-muted); margin-bottom: 6px; flex-wrap: wrap; }
+.click-hint span.holding { color: var(--accent); font-weight: 600; }
+.click-hint .holding-text { color: #e6a23c; font-weight: 600; }
+.slot.holding { border-color: #e6a23c; box-shadow: 0 0 4px rgba(230, 162, 60, 0.5); }
 </style>

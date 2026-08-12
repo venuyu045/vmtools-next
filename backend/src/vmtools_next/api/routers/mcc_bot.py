@@ -12,7 +12,8 @@ from vmtools_next.api.schemas.mcc import (
     MccBotCreate, MccBotResponse, MccBotConnectRequest,
     InventorySnapshot, InventorySlot, InventoryActionRequest,
     InventorySelectHotbarRequest, InventoryDropRequest, InventoryMoveRequest,
-    InventoryUseRequest, MoveControlRequest, LookRequest, SneakRequest,
+    InventoryUseRequest, InventoryClickRequest, ActivateItemRequest,
+    MoveControlRequest, LookRequest, SneakRequest,
     MccBotStatusList, MccBotStatusItem,
     CombatAutoAttackRequest, CombatGuardRequest, CombatAttackRequest,
     OpenContainerRequest,
@@ -778,6 +779,65 @@ async def inventory_use(bot_id: str, data: InventoryUseRequest,
         if isinstance(result, dict) and result.get("success") is False:
             raise HTTPException(400, result.get("error", "使用失败"))
         return {"success": True, "item": result.get("item"), "result": result}
+    except (MccMcpError, MineflayerError) as e:
+        raise HTTPException(502, f"MCP error: {str(e) or repr(e)}")
+    finally:
+        if owned: await client.disconnect()
+
+
+@router.post("/{bot_id}/inventory/click")
+async def inventory_click(bot_id: str, data: InventoryClickRequest,
+                          db: Session = Depends(get_db), user=Depends(require_admin)):
+    """窗口内左键/右键物品（mineflayer only，2026-08-12）。
+
+    target=inventory：玩家背包（slot 为前端标准槽位，后端映射原始槽位）；
+    target=container：已打开容器（slot 为窗口内槽位）。
+    若服务器因点击打开新容器窗口（快捷潜影盒）→ 返回 new_container_id。
+    """
+    _get_scoped_bot(db, user, bot_id)
+    client, owned = await _get_mcp_client(bot_id)
+    try:
+        if isinstance(client, MccMcpClient):
+            raise HTTPException(400, "窗口点击仅支持 mineflayer 引擎（MCC 请使用 inventory/action）")
+        if data.target not in ("inventory", "container"):
+            raise HTTPException(400, "target 仅支持 inventory / container")
+        if data.mouse_button not in (0, 1):
+            raise HTTPException(400, "mouse_button 仅支持 0（左键）/ 1（右键）")
+        if data.target == "container" and not data.container_id:
+            raise HTTPException(400, "target=container 时必须传 container_id")
+        result = await client.click_window(
+            target=data.target,
+            slot=data.slot,
+            mouse_button=data.mouse_button,
+            mode=data.mode,
+            container_id=data.container_id,
+        )
+        if isinstance(result, dict) and result.get("success") is False:
+            raise HTTPException(400, result.get("error", "窗口点击失败"))
+        return {"success": True, "result": result}
+    except (MccMcpError, MineflayerError) as e:
+        raise HTTPException(502, f"MCP error: {str(e) or repr(e)}")
+    finally:
+        if owned: await client.disconnect()
+
+
+@router.post("/{bot_id}/inventory/activate-item")
+async def inventory_activate_item(bot_id: str, data: ActivateItemRequest,
+                                  db: Session = Depends(get_db), user=Depends(require_admin)):
+    """右键使用手持物品（mineflayer only，2026-08-12）。
+
+    快捷潜影盒/末影珍珠等：先设为手持（select-hotbar）再激活；
+    若服务器弹出新容器窗口 → 返回 new_container_id。
+    """
+    _get_scoped_bot(db, user, bot_id)
+    client, owned = await _get_mcp_client(bot_id)
+    try:
+        if isinstance(client, MccMcpClient):
+            raise HTTPException(400, "激活手持物品仅支持 mineflayer 引擎")
+        result = await client.activate_item()
+        if isinstance(result, dict) and result.get("success") is False:
+            raise HTTPException(400, result.get("error", "激活失败"))
+        return {"success": True, "result": result}
     except (MccMcpError, MineflayerError) as e:
         raise HTTPException(502, f"MCP error: {str(e) or repr(e)}")
     finally:

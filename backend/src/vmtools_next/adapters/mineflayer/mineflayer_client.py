@@ -42,6 +42,8 @@ from .protocol import (
     METHOD_DROP_ITEM,
     METHOD_MOVE_ITEM,
     METHOD_USE_ITEM,
+    METHOD_CLICK_WINDOW,
+    METHOD_ACTIVATE_ITEM,
     METHOD_SERVUX_HANDSHAKE,
     METHOD_PREVIEW_CONTAINER_AT,
     METHOD_SEND_CHAT,
@@ -671,6 +673,38 @@ class MineflayerBridgeClient(AbstractBotAgent):
         if slot_id is not None:
             params["slot"] = self._frontend_to_node_slot(slot_id)
         return await self._send_request(METHOD_USE_ITEM, params,
+                                        timeout=DEFAULT_CMD_TIMEOUT)
+
+    # ── 窗口内点击 / 右键使用（2026-08-12，快捷潜影盒等） ──
+
+    async def click_window(self, target: str = "inventory", slot: int = 0,
+                           mouse_button: int = 0, mode: int = 0,
+                           container_id: str | None = None) -> dict:
+        """窗口内左键/右键物品（mineflayer 原生 clickWindow）。
+
+        target="inventory"：玩家背包（slot 为前端标准槽位，此处映射为原始槽位）；
+        target="container"：已打开容器（slot 为窗口内槽位，原样透传）。
+        mouse_button：0=左键（拿/放整组） 1=右键（拿/放半组）。
+        若服务器因点击打开新容器窗口（快捷潜影盒）→ 返回 new_container_id。
+        """
+        params: dict[str, Any] = {
+            "target": target,
+            "slot": (self._frontend_to_node_slot(slot)
+                     if target == "inventory" else slot),
+            "mouse_button": int(mouse_button),
+            "mode": int(mode),
+        }
+        if container_id:
+            params["container_id"] = container_id
+        return await self._send_request(METHOD_CLICK_WINDOW, params,
+                                        timeout=DEFAULT_CMD_TIMEOUT)
+
+    async def activate_item(self) -> dict:
+        """右键使用手持物品（快捷潜影盒/末影珍珠等；需先设为手持）。
+
+        若服务器弹出新容器窗口 → 返回 new_container_id。
+        """
+        return await self._send_request(METHOD_ACTIVATE_ITEM, {},
                                         timeout=DEFAULT_CMD_TIMEOUT)
 
     # ── Servux 容器预览（不打开容器） ──

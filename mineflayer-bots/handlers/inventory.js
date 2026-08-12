@@ -10,19 +10,129 @@
  *   get_container_snapshot(container_id)             → 获取容器内容快照
  *   withdraw_container_item(item_type, count, container_id)  → 从容器取物品
  *   deposit_container_item(item_type, count, container_id)   → 向容器存物品
+ *   click_window(target, container_id, slot, mouse_button, mode) → 窗口内左键/右键物品（2026-08-12）
+ *   activate_item()                                  → 右键使用手持物品（快捷潜影盒等，2026-08-12）
+ *
+ * 窗口自动注册（2026-08-12）：服务器因点击/激活打开的新容器窗口（如快捷潜影盒 GUI）
+ * 自动注册进 openContainers 并推送 container_opened 事件，前端据此切换容器面板。
  */
 
 const { Vec3 } = require('vec3');
 const { v4: uuidv4 } = require('uuid');
 
 // ── 全局容器映射（进程级别） ──
-// { containerId: { window, openedAt, position } }
+// { containerId: { window, openedAt, position, blockName, auto } }
 const openContainers = new Map();
+
+// 主动打开（open_container_at）产生的预期容器 id 集合：windowOpen 时命中则跳过自动注册
+const expectedContainers = new Set();
+
+// 容器类窗口类型（对齐 mineflayer chest.js allowedWindowTypes）
+const CONTAINER_WINDOW_TYPES = new Set([
+  'minecraft:generic', 'minecraft:chest', 'minecraft:dispenser', 'minecraft:ender_chest',
+  'minecraft:shulker_box', 'minecraft:hopper', 'minecraft:container', 'minecraft:dropper',
+  'minecraft:trapped_chest', 'minecraft:barrel',
+  'minecraft:white_shulker_box', 'minecraft:orange_shulker_box', 'minecraft:magenta_shulker_box',
+  'minecraft:light_blue_shulker_box', 'minecraft:yellow_shulker_box', 'minecraft:lime_shulker_box',
+  'minecraft:pink_shulker_box', 'minecraft:gray_shulker_box', 'minecraft:light_gray_shulker_box',
+  'minecraft:cyan_shulker_box', 'minecraft:purple_shulker_box', 'minecraft:blue_shulker_box',
+  'minecraft:brown_shulker_box', 'minecraft:green_shulker_box', 'minecraft:red_shulker_box',
+  'minecraft:black_shulker_box',
+]);
 
 /**
  * @param {import('mineflayer').Bot} bot
+ * @param {{broadcast?: Function, createEvent?: Function}} opts 事件推送闭包（mineflayer_bot.js 传入）
  */
-function createInventoryHandlers(bot) {
+function createInventoryHandlers(bot, opts = {}) {
+
+  const broadcast = opts.broadcast || null;
+  const createEvent = opts.createEvent || null;
+
+  // 挂载 windowOpen/windowClose 自动注册（防重复）
+  setupWindowListeners();
+
+  /** 推事件（无广播闭包时静默跳过，如本地测试） */
+  function emitEvent(name, data) {
+    if (broadcast && createEvent) {
+      try { broadcast(createEvent(name, data)); } catch (e) { /* 忽略 */ }
+    }
+  }
+
+  /** 检查 bot.currentWindow 是否为新打开的容器窗口；是则自动注册并返回 container_id */
+  async function registerOpenedWindowIfNew() {
+    const w = bot.currentWindow;
+    if (!w) return null;
+    for (const entry of openContainers.values()) {
+      if (entry.window === w) return null; // 已注册
+    }
+    if (!CONTAINER_WINDOW_TYPES.has(w.type)) return null; // 非容器类（如合成/附魔/村民交易）
+    const cid = uuidv4();
+    openContainers.set(cid, {
+      window: w,
+      openedAt: Date.now(),
+      position: null,
+      blockName: w.title || 'container',
+      auto: true,
+    });
+    emitEvent('container_opened', {
+      container_id: cid,
+      block_name: w.title || 'container',
+      slot_count: typeof w.inventoryStart === 'number' ? w.inventoryStart : 27,
+    });
+    return cid;
+  }
+
+  /** 注册 windowOpen / windowClose 监听（防重复） */
+  function setupWindowListeners() {
+    if (bot.__inventoryWindowListeners) return;
+    bot.__inventoryWindowListeners = true;
+
+    bot.on('windowOpen', (window) => {
+      // 主动打开（expectedContainers 非空）→ 由 open_container_at 注册，跳过
+      if (expectedContainers.size > 0) {
+        expectedContainers.clear();
+        return;
+      }
+      // 自动注册（点击/激活触发的服务器 GUI，如快捷潜影盒）
+      if (CONTAINER_WINDOW_TYPES.has(window.type)) {
+        const cid = registerOpenedWindowIfNewSync(window);
+        if (cid) {
+          emitEvent('container_opened', {
+            container_id: cid,
+            block_name: window.title || 'container',
+            slot_count: typeof window.inventoryStart === 'number' ? window.inventoryStart : 27,
+          });
+        }
+      }
+    });
+
+    bot.on('windowClose', (window) => {
+      for (const [cid, entry] of openContainers.entries()) {
+        if (entry.window === window) {
+          openContainers.delete(cid);
+          emitEvent('container_closed', { container_id: cid });
+          break;
+        }
+      }
+    });
+  }
+
+  /** 同步版自动注册（供 windowOpen listener 使用） */
+  function registerOpenedWindowIfNewSync(window) {
+    for (const entry of openContainers.values()) {
+      if (entry.window === window) return null;
+    }
+    const cid = uuidv4();
+    openContainers.set(cid, {
+      window,
+      openedAt: Date.now(),
+      position: null,
+      blockName: window.title || 'container',
+      auto: true,
+    });
+    return cid;
+  }
 
   // ── 在快捷栏中选择物品（或从背包装备到主手） ──
   // 对齐 litematica-printer InventoryUtils.switchToItems：物品在背包任意位置
@@ -173,16 +283,19 @@ function createInventoryHandlers(bot) {
         }
       }
 
+      const containerId = uuidv4();
+      expectedContainers.add(containerId); // 标记主动打开，windowOpen 时跳过自动注册
+
       const container = await Promise.race([
         bot.openContainer(block),
         new Promise((_, reject) => setTimeout(() => reject(new Error('open container timeout (8s)')), 8000)),
       ]);
-      const containerId = uuidv4();
       openContainers.set(containerId, {
         window: container,
         openedAt: Date.now(),
         position: { x, y, z },
         blockName: block.name,
+        auto: false,
       });
 
       return {
@@ -423,6 +536,63 @@ function createInventoryHandlers(bot) {
     }
   }
 
+  // ── 窗口内点击（左键/右键物品，2026-08-12） ──
+  // target="inventory"：玩家背包（slot 为原始槽位 0-45，Python 端已映射）
+  // target="container"：已打开容器（slot 为窗口内槽位 0..n-1）
+  // mouse_button：0=左键（拿/放整组） 1=右键（拿/放半组）；mode：0=普通点击
+  // 若服务器因点击打开了新窗口（快捷潜影盒 GUI）→ 自动注册并返回 new_container_id
+  async function click_window({ target = 'inventory', container_id = null, slot, mouse_button = 0, mode = 0 } = {}) {
+    try {
+      let window;
+      if (target === 'container') {
+        const entry = openContainers.get(container_id);
+        if (!entry) return { success: false, error: `Container ${container_id} not found` };
+        window = entry.window;
+      } else {
+        window = bot.inventory;
+      }
+      if (slot == null || typeof slot !== 'number' || (slot < 0 && slot !== -999)) {
+        return { success: false, error: 'slot is required (>=0, or -999 for void drop)' };
+      }
+      if (![0, 1].includes(Number(mouse_button))) {
+        return { success: false, error: 'mouse_button must be 0 (left) or 1 (right)' };
+      }
+      await bot.clickWindow(slot, Number(mouse_button), Number(mode) || 0);
+      const holding = !!(window.selectedItem && window.selectedItem.count > 0);
+      // 点击可能触发服务器打开新窗口（快捷潜影盒）→ 自动注册并返回新 container_id
+      const newCid = await registerOpenedWindowIfNew();
+      return {
+        success: true,
+        target,
+        slot,
+        mouse_button: Number(mouse_button),
+        holding,
+        new_container_id: newCid || null,
+      };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  }
+
+  // ── 右键使用手持物品（快捷潜影盒/末影珍珠等，2026-08-12） ──
+  // 需先由前端设为手持（select_hotbar）；若服务器弹出新容器窗口则自动注册返回
+  async function activate_item({} = {}) {
+    try {
+      if (!bot.heldItem) return { success: false, error: 'No item in hand' };
+      bot.activateItem();
+      // 等待服务器处理（GUI 打开/右键效果），再检查是否有新容器窗口
+      await new Promise(r => setTimeout(r, 800));
+      const newCid = await registerOpenedWindowIfNew();
+      return {
+        success: true,
+        item: bot.heldItem.name,
+        new_container_id: newCid || null,
+      };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  }
+
   return {
     select_hotbar_item,
     set_quick_bar_slot,
@@ -435,6 +605,8 @@ function createInventoryHandlers(bot) {
     drop_item,
     move_item,
     use_item,
+    click_window,
+    activate_item,
   };
 }
 

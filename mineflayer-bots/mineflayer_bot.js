@@ -316,7 +316,8 @@ async function createBotProcess(options) {
       handlers = {
         ...createMovementHandlers(bot),
         ...createBlockHandlers(bot),
-        ...createInventoryHandlers(bot),
+        // 传入 broadcast/createEvent：容器 windowOpen/Close 自动注册事件推给 Python 端
+        ...createInventoryHandlers(bot, { broadcast, createEvent }),
         ...createWorldHandlers(bot),
         ...createChatHandlers(bot),
         ...servuxHandlers,

@@ -49,6 +49,16 @@ export const botApi = {
   inventoryUse(botId: string, data: { item_type?: string; slot_id?: number }) {
     return client.post(`/mcc-bots/${botId}/inventory/use`, data)
   },
+  // 窗口内点击（左键/右键物品，mineflayer only，2026-08-12）
+  inventoryClick(botId: string, data: {
+    target: 'inventory' | 'container'; slot: number; mouse_button?: 0 | 1; mode?: number; container_id?: string
+  }) {
+    return client.post(`/mcc-bots/${botId}/inventory/click`, data)
+  },
+  // 右键使用手持物品（快捷潜影盒等，mineflayer only，2026-08-12）
+  inventoryActivateItem(botId: string) {
+    return client.post(`/mcc-bots/${botId}/inventory/activate-item`, {})
+  },
   // 移动控制（mineflayer only）
   control(botId: string, data: { direction: string; state: boolean }) {
     return client.post(`/mcc-bots/${botId}/control`, data)

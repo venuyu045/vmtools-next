@@ -2,7 +2,7 @@
   <div class="inv-container">
     <div v-if="moveMode" class="cursor-bar move">📦 移动模式：点击要移动的物品（高亮），再点击目标槽位完成移动/交换 · 点击原槽位/ESC 取消</div>
     <div v-else-if="cursorMsg" class="cursor-bar">{{ cursorMsg }}</div>
-    <div class="help">{{ p.clickable ? '左键=拿/放/交换 · 右键=丢弃 · 🔄刷新看结果' : '点击物品=详情（手持/移动/丢弃）· 手持物品在详情中「设为手持」' }}</div>
+    <div class="help">{{ p.clickable ? '左键=拿/放/交换 · 右键=丢弃 · 🔄刷新看结果' : '点击物品=详情（左键拿/放·右键半组·手持·移动·丢弃·使用）· 右键槽位=半组' }}</div>
 
     <div class="layout">
       <!-- Main inventory: slots 9-35 (3 rows), with armor/offhand on right -->
@@ -99,6 +99,9 @@
 
         <div class="detail-actions">
           <el-button v-if="isHotbarSlot(detail.item.slot)" size="small" type="primary" @click="doHold">✋ 设为手持</el-button>
+          <el-button size="small" type="primary" plain @click="doInvPickup">左键拿起/放下</el-button>
+          <el-button size="small" plain @click="doInvHalf">右键半组</el-button>
+          <el-button size="small" @click="doActivateHeld">右键激活（手持）</el-button>
           <el-button size="small" @click="doMoveFromDetail">📦 移动</el-button>
           <el-button size="small" type="warning" @click="doUse">🍖 使用</el-button>
           <el-button size="small" @click="doDropOne">丢 1 个</el-button>
@@ -140,6 +143,7 @@ import { ref, computed } from 'vue'
 import { onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import ItemIcon from '@/components/ItemIcon.vue'
+import { botApi } from '@/api/bot'
 
 interface Slot {
   slot: number
@@ -285,12 +289,69 @@ async function onSlotClick(slotIdx: number) {
   }
 }
 
-/** 右键：仅 MCC 模式弹丢弃菜单（MF 改为按钮丢弃） */
+/** 右键：MF 模式=窗口点击右键（拿/放半组）；MCC 模式弹丢弃菜单 */
 function onSlotRight(slotIdx: number, e: MouseEvent) {
-  if (p.clickable === false) return
+  if (p.clickable === false) {
+    doInvClick(slotIdx, 1)  // MF：窗口点击右键（拿/放半组）
+    return
+  }
   const s = get(slotIdx)
   if (!s) return
   menu.value = { show: true, x: Math.min(e.clientX, innerWidth - 140), y: Math.min(e.clientY, innerHeight - 160), item: s, slot_id: slotIdx }
+}
+
+// ── 窗口点击（2026-08-12）：左键=拿/放整组 右键=拿/放半组（快捷潜影盒等） ──
+async function doInvClick(slotIdx: number, mouseButton: 0 | 1) {
+  try {
+    const { data } = await botApi.inventoryClick(p.botId, {
+      target: 'inventory',
+      slot: slotIdx,
+      mouse_button: mouseButton,
+    })
+    const r = data?.result || {}
+    if (r.holding) {
+      ElMessage.info('已拿起物品：点击目标槽放下 / 再右键半组 / 弹窗内操作')
+    }
+    if (r.new_container_id) {
+      ElMessage.success('已打开新容器窗口，请到下方「附加箱子」面板查看')
+    }
+    emit('refresh')
+  } catch (err: any) {
+    ElMessage.error(err?.response?.data?.detail || '窗口点击失败')
+  }
+}
+
+/** 详情弹窗：左键拿起/放下 */
+async function doInvPickup() {
+  if (!detail.value.item) return
+  const slot = detail.value.item.slot
+  detail.value.show = false
+  await doInvClick(slot, 0)
+}
+
+/** 详情弹窗：右键半组 */
+async function doInvHalf() {
+  if (!detail.value.item) return
+  const slot = detail.value.item.slot
+  detail.value.show = false
+  await doInvClick(slot, 1)
+}
+
+/** 右键激活手持物品（快捷潜影盒等）：先「设为手持」再激活 */
+async function doActivateHeld() {
+  detail.value.show = false
+  try {
+    const { data } = await botApi.inventoryActivateItem(p.botId)
+    const r = data?.result || {}
+    if (r.new_container_id) {
+      ElMessage.success('已打开新容器窗口，请到下方「附加箱子」面板查看')
+    } else {
+      ElMessage.success(`已右键使用手持物品${r.item ? `（${r.item}）` : ''}`)
+    }
+    emit('refresh')
+  } catch (err: any) {
+    ElMessage.error(err?.response?.data?.detail || '激活失败')
+  }
 }
 
 // ── 移动模式 ──

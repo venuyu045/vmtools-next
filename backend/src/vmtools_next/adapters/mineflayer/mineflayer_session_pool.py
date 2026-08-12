@@ -258,6 +258,12 @@ class MineflayerSessionPool:
             elif event in ("bot_kicked", "bot_disconnected", "bot_error"):
                 logger.info("Bot %s event %s: %s", bot_id, event, data)
                 await self._sync_bot_status(bot_id, "error" if event == "bot_error" else "offline")
+            elif event in ("container_opened", "container_closed"):
+                # 容器窗口自动打开/关闭（快捷潜影盒等服务器 GUI，2026-08-12）→ 前端切换容器面板
+                try:
+                    await sio.emit(f"mf_{event}", {"bot_id": bot_id, **data})
+                except Exception as e:
+                    logger.warning("Emit mf_%s failed for %s: %s", event, bot_id, e)
             elif event == "combat_durability_low":
                 # 自动攻击因主手武器耐久过低自动停止 → QQ 群 @bot 主人通知
                 ratio = data.get("durability_ratio", 0) or 0
