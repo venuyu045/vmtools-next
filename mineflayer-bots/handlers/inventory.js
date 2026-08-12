@@ -116,27 +116,68 @@ function nbtGet(nbt, path) {
   } catch (e) { return undefined; }
 }
 
-/** 物品自定义名 + Lore（1.13+ NBT display / 1.21 components 兼容解析） */
+/** 物品自定义名 + Lore（1.13+ NBT display / 1.21+ components 组件 / prismarine-item 字段全兼容） */
 function parseItemDisplay(item) {
   let custom_name = null;
   let lore = [];
+  if (!item) return { custom_name, lore };
   try {
-    const rawName = nbtGet(item && item.nbt, ['display', 'Name']);
-    if (rawName != null) {
-      const t = textComponentToPlain(rawName);
-      if (t) custom_name = t;
-    }
-    const rawLore = nbtGet(item && item.nbt, ['display', 'Lore']);
-    if (Array.isArray(rawLore)) {
-      lore = rawLore.map(textComponentToPlain).map(s => s.trim()).filter(Boolean);
+    // 1.21+ components 数据组件格式（minecraft:custom_name / minecraft:lore）
+    const comps = item.components;
+    if (comps && typeof comps === 'object') {
+      const cn = comps['minecraft:custom_name'] != null ? comps['minecraft:custom_name'] : comps.custom_name;
+      if (cn != null) {
+        const t = textComponentToPlain(cn);
+        if (t) custom_name = t;
+      }
+      const lr = comps['minecraft:lore'] != null ? comps['minecraft:lore'] : comps.lore;
+      if (Array.isArray(lr)) {
+        lore = lr.map(textComponentToPlain).map(s => s.trim()).filter(Boolean);
+      }
     }
   } catch (e) { /* 忽略 */ }
-  // prismarine-item 兜底字段
-  if (!custom_name && item && item.customName) {
+  try {
+    // 1.13-1.20 NBT 格式（display.Name / display.Lore）
+    if (!custom_name) {
+      const rawName = nbtGet(item.nbt, ['display', 'Name']);
+      if (rawName != null) {
+        const t = textComponentToPlain(rawName);
+        if (t) custom_name = t;
+      }
+    }
+    if (!lore.length) {
+      const rawLore = nbtGet(item.nbt, ['display', 'Lore']);
+      if (Array.isArray(rawLore)) {
+        lore = rawLore.map(textComponentToPlain).map(s => s.trim()).filter(Boolean);
+      }
+    }
+  } catch (e) { /* 忽略 */ }
+  // prismarine-item 已解析字段（customName / lore）
+  if (!custom_name && item.customName) {
     const t = stripColor(String(item.customName));
     if (t) custom_name = t;
   }
+  if (!lore.length && Array.isArray(item.lore)) {
+    lore = item.lore.map(s => stripColor(String(s))).map(s => s.trim()).filter(Boolean);
+  }
+  // 组件可能是 prismarine-chat ChatMessage 数组（含 toString）
+  if (!lore.length && Array.isArray(item.loreLines)) {
+    lore = item.loreLines.map(s => stripColor(String(s && s.toString ? s.toString() : s))).filter(Boolean);
+  }
   return { custom_name, lore };
+}
+
+/** 诊断：物品原始数据结构（确认 components/nbt 的 keys，便于排查解析路径） */
+function itemDebug(item) {
+  const dbg = {};
+  if (item && item.components && typeof item.components === 'object') {
+    dbg.component_keys = Object.keys(item.components).slice(0, 20);
+  }
+  if (item && item.nbt && item.nbt.value && typeof item.nbt.value === 'object') {
+    dbg.nbt_keys = Object.keys(item.nbt.value).slice(0, 20);
+  }
+  if (item && item.customName != null) dbg.customName = String(item.customName).slice(0, 60);
+  return dbg;
 }
 
 /**
@@ -334,7 +375,7 @@ function createInventoryHandlers(bot, opts = {}) {
         const item = bot.inventory.slots[i];
         if (!item) continue;
         const detail = itemDetail(item);
-        items.push({
+        const entry = {
           slot: item.slot,
           name: item.name,
           type: item.type,
@@ -347,7 +388,9 @@ function createInventoryHandlers(bot, opts = {}) {
           enchantments: detail.enchantments,
           custom_name: detail.custom_name,
           lore: detail.lore,
-        });
+        };
+        if (items.length < 3) entry.debug = itemDebug(item); // 仅前3个物品带诊断
+        items.push(entry);
       }
       return {
         success: true,
@@ -725,6 +768,7 @@ function createInventoryHandlers(bot, opts = {}) {
             display_name: it.displayName,
             custom_name: d.custom_name,
             lore: d.lore,
+            debug: itemDebug(it), // 诊断（结构确认后可移除）
           };
         });
       } catch (e) { items = []; }
