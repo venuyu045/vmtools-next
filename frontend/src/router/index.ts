@@ -106,9 +106,10 @@ const router = createRouter({
 
 router.beforeEach((to) => {
   const authStore = useAuthStore()
-  // 未登录（访客）：public 与 guestReadable（总览/工具只读页）放行，其余跳登录页
+  // 未登录（访客）：public 与 guestReadable（总览/工具只读页）放行，
+  // 其余受限区域跳登录页并提示「前面的区域以后再来探索吧」
   if (!to.meta.public && !to.meta.guestReadable && !authStore.isLoggedIn) {
-    return '/login'
+    return { path: '/login', query: { reason: 'locked' } }
   }
 
   // 角色路由守卫：登录用户无权访问时，回落到其有权限的首页

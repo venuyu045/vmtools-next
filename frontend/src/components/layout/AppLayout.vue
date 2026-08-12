@@ -62,13 +62,13 @@ const isGuestMode = computed(() => !authStore.isLoggedIn && route.path !== '/log
 /** 内容区容器（用于访客交互拦截；侧边栏/头部不在此容器内，导航与登录不受影响） */
 const mainRef = ref<HTMLElement | null>(null)
 
-/** 访客模式拦截：内容区任何交互（点击/输入/回车/提交）→ 跳登录页 */
+/** 访客模式拦截：内容区任何交互（点击/输入/回车/提交）→ 跳登录页并提示「前面的区域以后再来探索吧」 */
 function onGuestInteract(e: Event) {
   if (authStore.isLoggedIn) return
   if (route.path === '/login' || route.path === '/register') return
   e.preventDefault()
   e.stopPropagation()
-  router.push('/login')
+  router.push({ path: '/login', query: { reason: 'locked' } })
 }
 
 const GUEST_INTERACT_EVENTS = ['click', 'change', 'input', 'keydown', 'submit'] as const
