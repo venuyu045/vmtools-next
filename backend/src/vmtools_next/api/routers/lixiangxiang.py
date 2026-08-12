@@ -467,7 +467,7 @@ async def upload_image(file: UploadFile = File(...), user=Depends(require_admin)
     _UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
     ext = Path(file.filename or "").suffix.lower()
     if ext not in _ALLOWED_EXT:
-        raise HTTPException(status_code=400, detail=f"不支持的图片格式：{ext or '未知'}（仅 png/jpg/jpeg/gif/webp/svg）")
+        raise HTTPException(status_code=400, detail=f"不支持的图片格式：{ext or '未知'}（仅 png/jpg/jpeg/gif/webp）")
     content = await file.read()
     if len(content) > _MAX_SIZE:
         raise HTTPException(status_code=400, detail="图片过大（上限 20MB）")
