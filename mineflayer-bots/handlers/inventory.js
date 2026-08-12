@@ -116,32 +116,62 @@ function nbtGet(nbt, path) {
   } catch (e) { return undefined; }
 }
 
-/** 物品自定义名 + Lore（1.13+ NBT display / 1.21+ components 组件 / prismarine-item 字段全兼容） */
+/** 物品自定义名 + Lore（1.13+ NBT display / 1.21+ components 数组·对象·componentMap / prismarine-item 字段全兼容） */
 function parseItemDisplay(item) {
   let custom_name = null;
   let lore = [];
   if (!item) return { custom_name, lore };
+
+  // ── 1.21+ 数据组件（components 可能是数组 [{id,data}]、对象 {id:data}、NBT {type,value} 包装）──
   try {
-    // 1.21+ components 数据组件格式：components 可能是 {type:'compound',value:{}} 包装，
-    // componentMap 为 prismarine-item 解析后的组件映射（1.21.4+）
     const comps = item.components;
-    const compsVal = (comps && comps.value && typeof comps.value === 'object') ? comps.value : comps;
-    const cm = item.componentMap && typeof item.componentMap === 'object' ? item.componentMap : null;
-    const src = cm || compsVal || comps || null;
-    if (src && typeof src === 'object') {
-      const cn = src['minecraft:custom_name'] != null ? src['minecraft:custom_name'] : src.custom_name;
-      if (cn != null) {
+    // 1) components 数组格式（协议组件列表）
+    if (Array.isArray(comps) && comps.length) {
+      for (const c of comps) {
+        if (!c || typeof c !== 'object') continue;
+        const id = String(c.id || c.type || c.name || '');
+        const data = c.data !== undefined ? c.data : c;
+        if (id.includes('custom_name')) {
+          const t = textComponentToPlain(data);
+          if (t) custom_name = t;
+        } else if (id.includes('lore')) {
+          const arr = Array.isArray(data) ? data : (data && Array.isArray(data.value) ? data.value : null);
+          if (arr && !lore.length) {
+            lore = arr.map(textComponentToPlain).map(s => s.trim()).filter(Boolean);
+          }
+        }
+      }
+    }
+    // 2) componentMap（prismarine-item 解析后的组件映射）
+    const cm = item.componentMap;
+    if (cm && typeof cm === 'object' && Object.keys(cm).length) {
+      const cn = cm['minecraft:custom_name'] != null ? cm['minecraft:custom_name'] : cm.custom_name;
+      if (cn != null && !custom_name) {
         const t = textComponentToPlain(cn);
         if (t) custom_name = t;
       }
-      const lr = src['minecraft:lore'] != null ? src['minecraft:lore'] : src.lore;
-      if (Array.isArray(lr)) {
+      const lr = cm['minecraft:lore'] != null ? cm['minecraft:lore'] : cm.lore;
+      if (Array.isArray(lr) && !lore.length) {
+        lore = lr.map(textComponentToPlain).map(s => s.trim()).filter(Boolean);
+      }
+    }
+    // 3) components 对象形式（{id: data} 或 {type:'compound', value:{}}）
+    if (comps && typeof comps === 'object' && !Array.isArray(comps)) {
+      const compsVal = (comps.value && typeof comps.value === 'object') ? comps.value : comps;
+      const cn = compsVal['minecraft:custom_name'] != null ? compsVal['minecraft:custom_name'] : compsVal.custom_name;
+      if (cn != null && !custom_name) {
+        const t = textComponentToPlain(cn);
+        if (t) custom_name = t;
+      }
+      const lr = compsVal['minecraft:lore'] != null ? compsVal['minecraft:lore'] : compsVal.lore;
+      if (Array.isArray(lr) && !lore.length) {
         lore = lr.map(textComponentToPlain).map(s => s.trim()).filter(Boolean);
       }
     }
   } catch (e) { /* 忽略 */ }
+
+  // ── 1.13-1.20 NBT 格式（display.Name / display.Lore）──
   try {
-    // 1.13-1.20 NBT 格式（display.Name / display.Lore）
     if (!custom_name) {
       const rawName = nbtGet(item.nbt, ['display', 'Name']);
       if (rawName != null) {
@@ -156,7 +186,8 @@ function parseItemDisplay(item) {
       }
     }
   } catch (e) { /* 忽略 */ }
-  // prismarine-item 已解析字段（customName / lore）
+
+  // ── prismarine-item 已解析字段（customName / lore / loreLines）──
   if (!custom_name && item.customName) {
     const t = stripColor(String(item.customName));
     if (t) custom_name = t;
@@ -164,7 +195,6 @@ function parseItemDisplay(item) {
   if (!lore.length && Array.isArray(item.lore)) {
     lore = item.lore.map(s => stripColor(String(s))).map(s => s.trim()).filter(Boolean);
   }
-  // 组件可能是 prismarine-chat ChatMessage 数组（含 toString）
   if (!lore.length && Array.isArray(item.loreLines)) {
     lore = item.loreLines.map(s => stripColor(String(s && s.toString ? s.toString() : s))).filter(Boolean);
   }
