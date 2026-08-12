@@ -169,6 +169,7 @@ const navGroups: NavGroup[] = [
     guestExpandable: true,
     items: [
       { path: '/player-tracking', label: '玩家列表', minRole: 1 },
+      { path: '/tasks', label: '任务中心', minRole: 1 },
       { path: '/miaomiao', label: '妙妙工具', minRole: 1 },
       { path: '/mcc-status', label: 'MCC 状态', minRole: 1 },
       { path: '/mf-status', label: 'MF 状态', minRole: 1 },

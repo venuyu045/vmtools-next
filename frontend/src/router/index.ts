@@ -55,6 +55,8 @@ const routes = [
       { path: 'player-alerts', name: 'PlayerAlerts', component: () => import('@/views/PlayerAlertsView.vue'), meta: { title: '上下线提醒', roles: [...ROLES.admin, ...ROLES.siteAdmin] } },
       { path: 'warehouse-status', name: 'WarehouseStatus', component: () => import('@/views/WarehouseStatusView.vue'), meta: { title: '仓库状态', roles: ALL_LOGGED_IN, guestReadable: true } },
       { path: 'warehouse-status/:id', name: 'WarehouseItems', component: () => import('@/views/WarehouseItemsView.vue'), meta: { title: '仓库物品', roles: ALL_LOGGED_IN, guestReadable: true } },
+      // 任务中心（工具组）：地图画+物流统一任务列表与 Bot 执行/排队视角；访客只读可浏览
+      { path: 'tasks', name: 'TaskCenter', component: () => import('@/views/TaskCenterView.vue'), meta: { title: '任务中心', roles: ALL_LOGGED_IN, guestReadable: true } },
 
       // --- 管理员及以上可见 ---
       { path: 'mcc-instances', name: 'MccInstances', component: () => import('@/views/BotManageView.vue'), meta: { title: 'MCC 管理', engine: 'mcc', roles: [...ROLES.admin, ...ROLES.siteAdmin] } },
