@@ -122,15 +122,19 @@ function parseItemDisplay(item) {
   let lore = [];
   if (!item) return { custom_name, lore };
   try {
-    // 1.21+ components 数据组件格式（minecraft:custom_name / minecraft:lore）
+    // 1.21+ components 数据组件格式：components 可能是 {type:'compound',value:{}} 包装，
+    // componentMap 为 prismarine-item 解析后的组件映射（1.21.4+）
     const comps = item.components;
-    if (comps && typeof comps === 'object') {
-      const cn = comps['minecraft:custom_name'] != null ? comps['minecraft:custom_name'] : comps.custom_name;
+    const compsVal = (comps && comps.value && typeof comps.value === 'object') ? comps.value : comps;
+    const cm = item.componentMap && typeof item.componentMap === 'object' ? item.componentMap : null;
+    const src = cm || compsVal || comps || null;
+    if (src && typeof src === 'object') {
+      const cn = src['minecraft:custom_name'] != null ? src['minecraft:custom_name'] : src.custom_name;
       if (cn != null) {
         const t = textComponentToPlain(cn);
         if (t) custom_name = t;
       }
-      const lr = comps['minecraft:lore'] != null ? comps['minecraft:lore'] : comps.lore;
+      const lr = src['minecraft:lore'] != null ? src['minecraft:lore'] : src.lore;
       if (Array.isArray(lr)) {
         lore = lr.map(textComponentToPlain).map(s => s.trim()).filter(Boolean);
       }
@@ -174,12 +178,17 @@ function itemDebug(item) {
     dbg.item_keys = Object.keys(item).slice(0, 30);
     dbg.displayName = String(item.displayName || '').slice(0, 60);
     dbg.name = String(item.name || '');
-  }
   if (item && item.components && typeof item.components === 'object') {
     dbg.component_keys = Object.keys(item.components).slice(0, 20);
+    dbg.components_raw = JSON.stringify(item.components).slice(0, 200);
+  }
+  if (item && item.componentMap && typeof item.componentMap === 'object') {
+    dbg.componentMap_keys = Object.keys(item.componentMap).slice(0, 20);
+    dbg.componentMap_raw = JSON.stringify(item.componentMap).slice(0, 300);
   }
   if (item && item.nbt && item.nbt.value && typeof item.nbt.value === 'object') {
     dbg.nbt_keys = Object.keys(item.nbt.value).slice(0, 20);
+  }
   }
   if (item && item.customName != null) dbg.customName = String(item.customName).slice(0, 60);
   return dbg;
