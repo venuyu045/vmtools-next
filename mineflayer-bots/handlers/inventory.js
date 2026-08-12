@@ -394,7 +394,11 @@ function createInventoryHandlers(bot, opts = {}) {
           custom_name: detail.custom_name,
           lore: detail.lore,
         };
-        if (items.length < 3) entry.debug = itemDebug(item); // 仅前3个物品带诊断
+        if (items.length < 3) {
+          const dbg = itemDebug(item);
+          console.log(`[inv-debug] ${item.name} ${JSON.stringify(dbg).slice(0, 400)}`);
+          entry.debug = dbg; // 仅前3个物品带诊断
+        }
         items.push(entry);
       }
       return {
