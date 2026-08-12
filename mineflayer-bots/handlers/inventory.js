@@ -167,9 +167,14 @@ function parseItemDisplay(item) {
   return { custom_name, lore };
 }
 
-/** 诊断：物品原始数据结构（确认 components/nbt 的 keys，便于排查解析路径） */
+/** 诊断：物品原始数据结构（确认 item 字段/components/nbt，便于排查解析路径） */
 function itemDebug(item) {
   const dbg = {};
+  if (item) {
+    dbg.item_keys = Object.keys(item).slice(0, 30);
+    dbg.displayName = String(item.displayName || '').slice(0, 60);
+    dbg.name = String(item.name || '');
+  }
   if (item && item.components && typeof item.components === 'object') {
     dbg.component_keys = Object.keys(item.components).slice(0, 20);
   }
