@@ -63,6 +63,10 @@ export const botApi = {
   inventoryActivateBlock(botId: string, data: { x: number; y: number; z: number }) {
     return client.post(`/mcc-bots/${botId}/inventory/activate-block`, data)
   },
+  // 当前打开的容器窗口（常驻面板查询，mineflayer only，2026-08-12）
+  currentWindow(botId: string) {
+    return client.get(`/mcc-bots/${botId}/inventory/current-window`)
+  },
   // 移动控制（mineflayer only）
   control(botId: string, data: { direction: string; state: boolean }) {
     return client.post(`/mcc-bots/${botId}/control`, data)

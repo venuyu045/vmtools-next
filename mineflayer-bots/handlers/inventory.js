@@ -55,6 +55,90 @@ function isContainerWindow(type) {
   return false;
 }
 
+// ── 文本组件解析（2026-08-12）────────────────────────────
+// 窗口标题/物品自定义名/Lore 在 1.13+ 是 JSON 文本组件，mineflayer 传给
+// 后端的可能是：JSON 字符串 / 已解析对象 / prismarine-nbt {type,value} 包装。
+// 统一解析成去掉 § 格式码的纯文本。
+
+function stripColor(s) {
+  return String(s == null ? '' : s).replace(/§[0-9a-fk-or]/gi, '');
+}
+
+/** JSON 文本组件 → 纯文本（支持字符串/对象/数组/{type,value} 包装/translate） */
+function textComponentToPlain(v) {
+  if (v == null) return '';
+  if (typeof v === 'string') {
+    const s = v.trim();
+    if (s.startsWith('{') || s.startsWith('[')) {
+      try { return textComponentToPlain(JSON.parse(s)); } catch (e) { /* 非JSON */ }
+    }
+    return stripColor(v);
+  }
+  if (Array.isArray(v)) return v.map(textComponentToPlain).join('');
+  if (typeof v === 'object') {
+    if (v.text != null) return stripColor(String(v.text));
+    if (v.translate != null) return stripColor(String(v.translate || ''));
+    if (v.extra != null) return textComponentToPlain(v.extra);
+    if (v.value != null) return textComponentToPlain(v.value); // {type,value} NBT包装
+    if (v.value != null && v.type != null) return textComponentToPlain(v.value);
+  }
+  return '';
+}
+
+/** 窗口标题（prismarine-chat ChatMessage / NBT / 字符串）→ 纯文本 */
+function windowTitleText(title) {
+  if (title == null) return '';
+  if (typeof title === 'string') return textComponentToPlain(title);
+  if (typeof title === 'object') {
+    // prismarine-chat ChatMessage：toString() 返回去除格式码的纯文本
+    if (typeof title.toString === 'function' && title.toString !== Object.prototype.toString) {
+      try {
+        const s = stripColor(title.toString());
+        if (s) return s;
+      } catch (e) { /* 忽略 */ }
+    }
+    return textComponentToPlain(title);
+  }
+  return String(title);
+}
+
+/** 从 prismarine-nbt {type,value} 包装结构中取指定路径字段值 */
+function nbtGet(nbt, path) {
+  try {
+    let cur = nbt;
+    for (const key of path) {
+      if (!cur || typeof cur !== 'object') return undefined;
+      const v = cur.value;
+      if (v && typeof v === 'object' && key in v) cur = v[key];
+      else return undefined;
+    }
+    return cur && 'value' in cur ? cur.value : undefined;
+  } catch (e) { return undefined; }
+}
+
+/** 物品自定义名 + Lore（1.13+ NBT display / 1.21 components 兼容解析） */
+function parseItemDisplay(item) {
+  let custom_name = null;
+  let lore = [];
+  try {
+    const rawName = nbtGet(item && item.nbt, ['display', 'Name']);
+    if (rawName != null) {
+      const t = textComponentToPlain(rawName);
+      if (t) custom_name = t;
+    }
+    const rawLore = nbtGet(item && item.nbt, ['display', 'Lore']);
+    if (Array.isArray(rawLore)) {
+      lore = rawLore.map(textComponentToPlain).map(s => s.trim()).filter(Boolean);
+    }
+  } catch (e) { /* 忽略 */ }
+  // prismarine-item 兜底字段
+  if (!custom_name && item && item.customName) {
+    const t = stripColor(String(item.customName));
+    if (t) custom_name = t;
+  }
+  return { custom_name, lore };
+}
+
 /**
  * @param {import('mineflayer').Bot} bot
  * @param {{broadcast?: Function, createEvent?: Function}} opts 事件推送闭包（mineflayer_bot.js 传入）
@@ -91,12 +175,12 @@ function createInventoryHandlers(bot, opts = {}) {
       window: w,
       openedAt: Date.now(),
       position: null,
-      blockName: w.title || 'container',
+      blockName: windowTitleText(w.title) || 'container',
       auto: true,
     });
     emitEvent('container_opened', {
       container_id: cid,
-      block_name: w.title || 'container',
+      block_name: windowTitleText(w.title) || 'container',
       slot_count: typeof w.inventoryStart === 'number' ? w.inventoryStart : 27,
     });
     return cid;
@@ -119,7 +203,7 @@ function createInventoryHandlers(bot, opts = {}) {
         if (cid) {
           emitEvent('container_opened', {
             container_id: cid,
-            block_name: window.title || 'container',
+            block_name: windowTitleText(window.title) || 'container',
             slot_count: typeof window.inventoryStart === 'number' ? window.inventoryStart : 27,
           });
         }
@@ -147,7 +231,7 @@ function createInventoryHandlers(bot, opts = {}) {
       window,
       openedAt: Date.now(),
       position: null,
-      blockName: window.title || 'container',
+      blockName: windowTitleText(window.title) || 'container',
       auto: true,
     });
     return cid;
@@ -236,7 +320,8 @@ function createInventoryHandlers(bot, opts = {}) {
           .map(e => ({ name: e.name || '', lvl: e.lvl || 1 }));
       }
     } catch (e) { enchantments = []; }
-    return { durability, max_durability: maxDur, enchantments };
+    const display = parseItemDisplay(item);
+    return { durability, max_durability: maxDur, enchantments, custom_name: display.custom_name, lore: display.lore };
   }
 
   function get_inventory_snapshot({} = {}) {
@@ -260,6 +345,8 @@ function createInventoryHandlers(bot, opts = {}) {
           durability: detail.durability,
           max_durability: detail.max_durability,
           enchantments: detail.enchantments,
+          custom_name: detail.custom_name,
+          lore: detail.lore,
         });
       }
       return {
@@ -363,15 +450,20 @@ function createInventoryHandlers(bot, opts = {}) {
       if (!entry) {
         return { success: false, error: `Container ${container_id} not found` };
       }
-      const items = (entry.window.containerItems?.() || []).map(item => ({
-        slot: item.slot,
-        name: item.name,
-        type: item.type,
-        count: item.count,
-        display_name: item.displayName,
-        // 完整物品 NBT（1.21.x 组件化数据，潜影盒内容在此）——仅用于诊断/展开
-        nbt: item.nbt ? JSON.stringify(item.nbt) : null,
-      }));
+      const items = (entry.window.containerItems?.() || []).map(item => {
+        const d = parseItemDisplay(item);
+        return {
+          slot: item.slot,
+          name: item.name,
+          type: item.type,
+          count: item.count,
+          display_name: item.displayName,
+          custom_name: d.custom_name,
+          lore: d.lore,
+          // 完整物品 NBT（1.21.x 组件化数据，潜影盒内容在此）——仅用于诊断/展开
+          nbt: item.nbt ? JSON.stringify(item.nbt) : null,
+        };
+      });
       return { success: true, items, container_id };
     } catch (err) {
       return { success: false, error: err.message };
@@ -605,8 +697,47 @@ function createInventoryHandlers(bot, opts = {}) {
     if (!w) return null;
     return {
       type: w.type || '',
-      title: w.title || '',
+      title: windowTitleText(w.title),
       slot_count: typeof w.inventoryStart === 'number' ? w.inventoryStart : null,
+    };
+  }
+
+  /** 当前窗口查询（2026-08-12）：前端挂载时调用 → 常驻显示已打开的 GUI 窗口 */
+  function get_current_window({} = {}) {
+    const w = bot.currentWindow;
+    if (!w) {
+      return { success: true, opened: false, container_id: null, items: [] };
+    }
+    let cid = null;
+    for (const [id, entry] of openContainers.entries()) {
+      if (entry.window === w) { cid = id; break; }
+    }
+    let items = [];
+    if (cid) {
+      try {
+        items = (w.containerItems?.() || []).map(it => {
+          const d = parseItemDisplay(it);
+          return {
+            slot: it.slot,
+            name: it.name,
+            type: it.type,
+            count: it.count,
+            display_name: it.displayName,
+            custom_name: d.custom_name,
+            lore: d.lore,
+          };
+        });
+      } catch (e) { items = []; }
+    }
+    const entry = cid ? openContainers.get(cid) : null;
+    return {
+      success: true,
+      opened: !!cid,
+      container_id: cid,
+      block_name: entry ? (entry.blockName || windowTitleText(w.title) || 'container') : (windowTitleText(w.title) || null),
+      slot_count: typeof w.inventoryStart === 'number' ? w.inventoryStart : 27,
+      type: w.type || '',
+      items,
     };
   }
 
@@ -689,6 +820,7 @@ function createInventoryHandlers(bot, opts = {}) {
     click_window,
     activate_item,
     activate_block,
+    get_current_window,
   };
 }
 

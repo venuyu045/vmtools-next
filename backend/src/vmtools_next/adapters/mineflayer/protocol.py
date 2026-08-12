@@ -44,6 +44,7 @@ METHOD_USE_ITEM = "use_item"
 METHOD_CLICK_WINDOW = "click_window"
 METHOD_ACTIVATE_ITEM = "activate_item"
 METHOD_ACTIVATE_BLOCK = "activate_block"
+METHOD_GET_CURRENT_WINDOW = "get_current_window"
 
 # Servux 容器预览（不打开容器，直接请求方块实体 NBT）
 METHOD_SERVUX_HANDSHAKE = "servux_handshake"

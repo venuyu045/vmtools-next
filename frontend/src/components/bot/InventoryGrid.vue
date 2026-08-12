@@ -77,15 +77,20 @@
     <!-- 物品详情弹窗（MF 模式） -->
     <el-dialog v-model="detail.show" :title="'物品详情'" width="420px" append-to-body>
       <div v-if="detail.item" class="detail-body">
-        <div class="detail-head">
+          <div class="detail-head">
           <ItemIcon :item-id="detail.item.item_id" :name="detail.item.item_name_zh || label(detail.item.item_id)" :size="52" class="detail-icon" />
           <div class="detail-titles">
             <div class="detail-name">{{ detail.item.item_name_zh || label(detail.item.item_id) }}</div>
+            <div v-if="detail.item.custom_name" class="detail-custom">{{ detail.item.custom_name }}</div>
             <div class="detail-id mono">{{ detail.item.item_id }}</div>
           </div>
         </div>
 
         <el-descriptions :column="1" size="small" border class="detail-desc">
+          <el-descriptions-item v-if="detail.item.custom_name" label="命名"><span class="ench-name">{{ detail.item.custom_name }}</span></el-descriptions-item>
+          <el-descriptions-item v-if="detail.item.lore && detail.item.lore.length" label="描述">
+            <div v-for="(l, i) in detail.item.lore" :key="i" class="lore-line">{{ l }}</div>
+          </el-descriptions-item>
           <el-descriptions-item label="数量">{{ detail.item.count }}</el-descriptions-item>
           <el-descriptions-item label="槽位">{{ slotLabel(detail.item.slot) }}</el-descriptions-item>
           <el-descriptions-item label="堆叠上限">{{ detail.item.max_stack }}</el-descriptions-item>
@@ -155,6 +160,8 @@ interface Slot {
   durability?: number | null
   max_durability?: number | null
   enchantments?: Array<{ name: string; lvl: number }>
+  custom_name?: string | null
+  lore?: string[]
 }
 interface Data { bot_id: string; inventory_id: number; slots: Slot[]; hotbar: number[]; selected_hotbar: number; empty_slots: number; total_items: number }
 
@@ -492,7 +499,10 @@ onMounted(() => {
 .detail-head { display: flex; align-items: center; gap: 14px; }
 .detail-icon { image-rendering: pixelated; }
 .detail-name { font-size: 17px; font-weight: 600; color: var(--text-primary, #fff); }
+.detail-custom { font-size: 14px; color: #e6a23c; font-weight: 600; margin-top: 2px; }
 .detail-id { font-size: 12px; color: var(--text-muted, #888); margin-top: 2px; }
+.ench-name { color: #e6a23c; font-weight: 600; }
+.lore-line { color: #b48cff; font-size: 12px; font-style: italic; line-height: 1.5; }
 .detail-actions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; }
 .ench { font-size: 13px; color: #b48cff; }
 </style>

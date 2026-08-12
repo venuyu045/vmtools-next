@@ -262,7 +262,8 @@ class MineflayerSessionPool:
                 # 容器窗口自动打开/关闭（快捷潜影盒等服务器 GUI，2026-08-12）→ 前端切换容器面板
                 logger.info("MF %s event %s payload=%s", bot_id, event, data)
                 try:
-                    await sio.emit(f"mf_{event}", {"bot_id": bot_id, **data})
+                    from vmtools_next.data.db import sio as _sio
+                    await _sio.emit(f"mf_{event}", {"bot_id": bot_id, **data})
                 except Exception as e:
                     logger.warning("Emit mf_%s failed for %s: %s", event, bot_id, e)
             elif event == "combat_durability_low":

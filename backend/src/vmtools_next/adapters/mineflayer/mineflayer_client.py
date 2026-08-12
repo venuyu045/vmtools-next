@@ -717,6 +717,15 @@ class MineflayerBridgeClient(AbstractBotAgent):
             "x": x, "y": y, "z": z,
         }, timeout=DEFAULT_CMD_TIMEOUT)
 
+    async def get_current_window(self) -> dict:
+        """查询当前打开的窗口（2026-08-12）。
+
+        已注册容器 → 返回 container_id / slot_count / items 快照（含自定义名/Lore）；
+        未打开 → opened=false。前端挂载时轮询实现「常驻容器面板」。
+        """
+        return await self._send_request(METHOD_GET_CURRENT_WINDOW, {},
+                                        timeout=DEFAULT_CMD_TIMEOUT)
+
     # ── Servux 容器预览（不打开容器） ──
 
     async def servux_handshake(self, timeout_ms: int = 4000) -> dict:

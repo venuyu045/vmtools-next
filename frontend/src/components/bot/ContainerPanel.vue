@@ -50,6 +50,8 @@
     <el-dialog v-model="detail.show" :title="'容器物品'" width="360px" append-to-body>
       <div v-if="detail.item">
         <div class="detail-row"><b>物品</b><span>{{ detail.item.item_name_zh || detail.item.name || detail.item.item_id }}</span></div>
+        <div v-if="detail.item.custom_name" class="detail-row"><b>命名</b><span class="custom-name">{{ detail.item.custom_name }}</span></div>
+        <div v-if="detail.item.lore && detail.item.lore.length" class="detail-row lore-row"><b>描述</b><span class="lore-list"><div v-for="(l, i) in detail.item.lore" :key="i" class="lore-line">{{ l }}</div></span></div>
         <div class="detail-row"><b>数量</b><span>{{ detail.item.count }}</span></div>
         <div class="detail-row"><b>槽位</b><span class="mono">{{ detail.idx + 1 }} / {{ slotCount }}</span></div>
         <div class="detail-actions">
@@ -72,7 +74,7 @@ const props = defineProps<{ botId: string }>()
 const { on: sockOn, off: sockOff } = useSocketIO()
 
 interface ContainerBlock { x: number; y: number; z: number; name: string; type?: string; distance?: number }
-interface ChestSlot { item_id: string; name?: string; item_name_zh?: string; count: number }
+interface ChestSlot { item_id: string; name?: string; item_name_zh?: string; count: number; custom_name?: string | null; lore?: string[] }
 
 const scanning = ref(false)
 const busy = ref(false)
@@ -129,6 +131,8 @@ onMounted(() => {
   sockOn('mf_container_opened', onContainerOpened)
   sockOn('mf_container_closed', onContainerClosed)
   window.addEventListener('vmt:gui-opened', onGuiOpened)
+  // 常驻面板：挂载时查询当前已打开的窗口（GUI / 容器），有则直接显示
+  syncCurrentWindow()
 })
 onBeforeUnmount(() => {
   sockOff('mf_container_opened', onContainerOpened)
@@ -138,6 +142,35 @@ onBeforeUnmount(() => {
   active.value = null
   items.value = new Map()
 })
+
+/** 常驻面板查询：当前是否有已打开的容器窗口（GUI / 附加箱子） */
+async function syncCurrentWindow() {
+  try {
+    const { data } = await botApi.currentWindow(props.botId)
+    if (!data?.opened || !data.container_id) return
+    pushStack(data.container_id)
+    active.value = {
+      container_id: data.container_id,
+      block_name: data.block_name || '容器',
+      slot_count: data.slot_count || 27,
+      position: { x: 0, y: 0, z: 0 },
+    }
+    const m = new Map<number, ChestSlot>()
+    for (const it of (data.items || [])) {
+      const slot = typeof it.slot === 'number' ? it.slot : it.slot_index
+      if (slot == null) continue
+      m.set(slot, {
+        item_id: it.item_id || it.name || '',
+        name: it.name || it.display_name || '',
+        item_name_zh: it.item_name_zh || it.display_name_zh || '',
+        count: it.count || 0,
+        custom_name: it.custom_name || null,
+        lore: it.lore || [],
+      })
+    }
+    items.value = m
+  } catch { /* 忽略：无窗口/未连接时静默 */ }
+}
 
 /** 全局事件兜底：InventoryGrid 激活手持物品成功后通知切换（不依赖 socket 时序） */
 function onGuiOpened(e: Event) {
@@ -159,7 +192,9 @@ function onGuiOpened(e: Event) {
 function getSlot(idx: number) { return items.value.get(idx) || null }
 function slotTip(idx: number) {
   const s = getSlot(idx)
-  return s ? `${s.item_name_zh || s.name || s.item_id} ×${s.count}` : '空'
+  if (!s) return '空'
+  const nm = s.custom_name || s.item_name_zh || s.name || s.item_id
+  return `${nm} ×${s.count}`
 }
 function showDetail(idx: number) {
   const s = getSlot(idx)
@@ -366,6 +401,8 @@ async function refreshSnapshot() {
         name: it.name || it.display_name || '',
         item_name_zh: it.item_name_zh || it.display_name_zh || '',
         count: it.count || 0,
+        custom_name: it.custom_name || null,
+        lore: it.lore || [],
       })
     }
     items.value = m
@@ -430,6 +467,10 @@ async function close() {
 .chest-empty { color: var(--text-muted); font-size: 12px; padding: 12px 0; text-align: center; border: 1px dashed var(--border-default); border-radius: var(--radius-md); }
 .detail-row { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px dashed var(--border-default); }
 .detail-row:last-child { border-bottom: none; }
+.custom-name { color: #e6a23c; font-weight: 600; }
+.lore-row { align-items: flex-start; }
+.lore-list { display: flex; flex-direction: column; gap: 2px; text-align: right; }
+.lore-line { color: #b48cff; font-size: 12px; font-style: italic; }
 .detail-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
 
 /* 窗口点击提示 + 手持高亮（2026-08-12） */

@@ -588,6 +588,8 @@ async def get_inventory(bot_id: str, mcp_port: int = 0,
                 durability=s.get("durability"),
                 max_durability=s.get("maxDurability", s.get("max_durability")),
                 enchantments=s.get("enchantments") or None,
+                custom_name=s.get("custom_name") or None,
+                lore=s.get("lore") or None,
             ))
 
     return InventorySnapshot(
@@ -861,6 +863,38 @@ async def inventory_activate_block(bot_id: str, data: ActivateBlockRequest,
         if isinstance(result, dict) and result.get("success") is False:
             raise HTTPException(400, result.get("error", "右键方块失败"))
         return {"success": True, "result": result}
+    except (MccMcpError, MineflayerError) as e:
+        raise HTTPException(502, f"MCP error: {str(e) or repr(e)}")
+    finally:
+        if owned: await client.disconnect()
+
+
+@router.get("/{bot_id}/inventory/current-window")
+async def inventory_current_window(bot_id: str,
+                                   db: Session = Depends(get_db),
+                                   user=Depends(require_admin)):
+    """查询当前打开的容器窗口（mineflayer only，2026-08-12）。
+
+    已注册容器 → 返回 container_id / block_name / slot_count / items（含自定义名/Lore）；
+    未打开 → opened=false。前端挂载时轮询实现「常驻容器面板」。
+    """
+    _get_scoped_bot(db, user, bot_id)
+    client, owned = await _get_mcp_client(bot_id)
+    try:
+        if isinstance(client, MccMcpClient):
+            raise HTTPException(400, "当前窗口查询仅支持 mineflayer 引擎")
+        result = await client.get_current_window()
+        if isinstance(result, dict) and result.get("success") is False:
+            raise HTTPException(400, result.get("error", "查询当前窗口失败"))
+        # 物品名汉化（items[].name 为 minecraft:id）
+        if isinstance(result, dict) and isinstance(result.get("items"), list):
+            from vmtools_next.core.item_names_zh import get_item_zh
+            for it in result["items"]:
+                raw = str(it.get("name") or "")
+                if raw:
+                    it["item_id"] = raw
+                    it["item_name_zh"] = get_item_zh(raw, fallback=it.get("display_name"))
+        return result
     except (MccMcpError, MineflayerError) as e:
         raise HTTPException(502, f"MCP error: {str(e) or repr(e)}")
     finally:
