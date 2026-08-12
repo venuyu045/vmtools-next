@@ -256,26 +256,62 @@ def get_run_logs(
 
 
 @router.post("/tasks/start", response_model=TaskRunResponse)
-def start_task(data: TaskStartRequest, db: Session = Depends(get_db), user=Depends(require_admin)):
-    # Verify template exists and is enabled
+async def start_task(data: TaskStartRequest, db: Session = Depends(get_db), user=Depends(require_admin)):
+    """启动一个物流任务（2026-08-12 阶段 3：执行引擎已切换为 Mineflayer）。
+
+    - 引擎校验：仅 mineflayer（MCC 物流已废弃，与地图画一致）
+    - 创建 run（status=pending 入队）→ 由 TaskScheduler 自动调度执行（MF 执行器）
+    """
+    import asyncio as _asyncio
+    from vmtools_next.core.bot_engine import resolve_bot_engine
+
     t = db.query(LogisticsTaskTemplateModel).filter(LogisticsTaskTemplateModel.template_id == data.template_id).first()
     if not t:
         raise HTTPException(404, "Template not found")
     if not t.enabled:
         raise HTTPException(400, "Template is disabled")
 
+    # 物流已转 MF：仅支持 mineflayer 引擎（MCC 挂机废弃）
+    engine = resolve_bot_engine(data.bot_id, db)
+    if engine != "mineflayer":
+        raise HTTPException(
+            status_code=400,
+            detail=f"物流任务仅支持 Mineflayer Bot：{data.bot_id} 的引擎为 {engine}",
+        )
+
+    # 同一 bot 不允许重复进行中的物流任务
+    active = db.query(LogisticsTaskRunModel).filter(
+        LogisticsTaskRunModel.bot_id == data.bot_id,
+        LogisticsTaskRunModel.status.in_(["pending", "running", "paused"]),
+    ).first()
+    if active:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Bot {data.bot_id} 已有进行中的物流任务",
+        )
+
     run = LogisticsTaskRunModel(
         run_id=str(uuid.uuid4()),
         template_id=data.template_id,
         bot_id=data.bot_id,
-        status="running",
+        status="pending",  # 入队，由调度器自动启动
         current_state="IDLE",
         progress=0.0,
     )
     db.add(run)
     db.commit()
     db.refresh(run)
-    logger.info("Started task run: {} (template={}, bot={})", run.run_id, data.template_id, data.bot_id)
+    logger.info("Logistics task queued: {} (template={}, bot={})", run.run_id, data.template_id, data.bot_id)
+
+    # 触发调度器立即尝试启动
+    try:
+        from vmtools_next.core.task_scheduler import get_task_scheduler
+        sched = get_task_scheduler()
+        if sched:
+            _asyncio.create_task(sched.schedule_once())
+    except Exception as e:
+        logger.warning("Failed to trigger scheduler: {}", e)
+
     return _run_to_response(run)
 
 

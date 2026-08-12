@@ -101,12 +101,11 @@ class TaskEngine:
         return None
 
     async def start_logistics_task(self, bot_id: str, template_id: str) -> Optional[str]:
-        """Start a logistics task for a bot.
+        """【已废弃】MCC 引擎物流启动（2026-08-12 阶段 3：物流已切换为 Mineflayer）。
 
-        Looks up the template, waypoint, and drop point from the DB,
-        creates a LogisticsRunner, and starts it.
-
-        Returns task_id (run_id) on success, None on failure.
+        物流任务现由 TaskScheduler + MfLogisticsRunner（core/mf_logistics_runner.py）
+        执行，仅支持 mineflayer 引擎。本方法（MCC Baritone 版本，且参数接线有误
+        从未真正跑通）保留仅防 import 断链，不要再调用。
         """
         from vmtools_next.core.logistics_runner import LogisticsRunner
 
