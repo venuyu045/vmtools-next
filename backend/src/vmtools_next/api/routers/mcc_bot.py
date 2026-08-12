@@ -590,6 +590,7 @@ async def get_inventory(bot_id: str, mcp_port: int = 0,
                 enchantments=s.get("enchantments") or None,
                 custom_name=s.get("custom_name") or None,
                 lore=s.get("lore") or None,
+                debug=s.get("debug") or None,
             ))
 
     return InventorySnapshot(
