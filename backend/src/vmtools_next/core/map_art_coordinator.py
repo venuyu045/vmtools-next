@@ -936,6 +936,17 @@ class MapArtCoordinator:
                     {"task_id": self.task_id, "status": "completed"},
                     room=f"build_{self.task_id}",
                 ))
+                # 2026-08-12（实施计划阶段 2）：任务完成 → 广播队列变化 +
+                # 触发调度器立即启动下一个排队任务（不等 2s 轮询）
+                try:
+                    from vmtools_next.core.task_scheduler import get_task_scheduler
+                    _sched = get_task_scheduler()
+                    if _sched:
+                        asyncio.create_task(_sched.broadcast_queue())
+                        asyncio.create_task(_sched.schedule_once())
+                except Exception as _sched_err:
+                    logger.warning("[%s] Scheduler notify failed: %s",
+                                   self.task_id, _sched_err)
             except Exception as e:
                 logger.warning("[%s] Completion persist failed: %s", self.task_id, e)
 

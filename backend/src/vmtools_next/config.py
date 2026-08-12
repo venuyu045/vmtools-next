@@ -134,6 +134,11 @@ class MineflayerConfig(BaseModel):
     map_art_temp_home: str = "gzqy"         # 临时回家点（建造位置）
     # 分区补给箱建议位置的 y 偏移（相对建造层 origin_y；默认 -1 = 地面层，P2-8 防悬空）
     map_art_supply_box_y_offset: int = -1
+    # ── 任务调度（2026-08-12，实施计划阶段 2） ──
+    # 地图画任务并发上限（同时运行的任务数；排队任务完成后自动启动下一个）
+    task_max_concurrent_build: int = 1
+    # 调度器轮询间隔（秒）
+    task_poll_interval: float = 2.0
 
 
 class MonitorConfig(BaseModel):

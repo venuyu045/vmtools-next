@@ -261,6 +261,15 @@ async def lifespan(app: FastAPI):
     await _scan_queue_manager.start()
     logger.info("Scan Queue Manager started")
 
+    # 7.6 任务调度器（地图画自动排队执行，2026-08-12 实施计划阶段 2）
+    from vmtools_next.core.task_scheduler import TaskScheduler, set_task_scheduler, get_task_scheduler
+    set_task_scheduler(TaskScheduler(
+        max_concurrent_build=getattr(config.mineflayer, "task_max_concurrent_build", 1),
+        poll_interval=getattr(config.mineflayer, "task_poll_interval", 2.0),
+    ))
+    await get_task_scheduler().start()
+    logger.info("Task Scheduler started")
+
     # 8. QQ Bot notification service
     from vmtools_next.core.qqbot_notify import start as qqbot_start
     await qqbot_start()
@@ -298,6 +307,10 @@ async def lifespan(app: FastAPI):
         await _mineflayer_process_manager.stop_all()
     if _scan_queue_manager:
         await _scan_queue_manager.stop()
+    from vmtools_next.core.task_scheduler import get_task_scheduler
+    _ts = get_task_scheduler()
+    if _ts:
+        await _ts.stop()
     if _pool:
         await _pool.stop()
     if _mcc_pool:

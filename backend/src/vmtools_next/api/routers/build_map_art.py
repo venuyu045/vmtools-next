@@ -32,6 +32,76 @@ router = APIRouter(prefix="/api/build/map-art", tags=["map-art"])
 
 
 # ──────────────────────────────────────────────
+# 公共启动函数（2026-08-12，实施计划阶段 2）
+# API 手动启动与任务调度器共用；调用方负责状态管理（置 running/pending/failed）
+# ──────────────────────────────────────────────
+
+async def execute_map_art_start(task_id: str, db: Session) -> tuple[bool, str]:
+    """实际启动一个地图画任务（重建 layers → 建 coordinator → 收集 MF bots → start）。
+
+    不检查/不修改 task.status（由调用方管理状态，调度器防竞态需要先置 running）。
+    返回 (success, message)。
+    """
+    task = db.query(MapArtTask).filter(MapArtTask.task_id == task_id).first()
+    if not task:
+        return False, "Task not found"
+
+    # P2-7：投影解析结果在 create_task 时已写入 MapArtBlockState（DB 即解析缓存），
+    # 启动时直接从 DB 重建 layers，避免对大投影重复 parse_file（512×512+ 耗时/IO）。
+    from vmtools_next.data.models.build_map_art import MapArtBlockState as _MABS
+    _rows = db.query(_MABS).filter(_MABS.task_id == task_id).all()
+    _layers: dict[int, list[tuple[int, int, int, str]]] = {}
+    for _r in _rows:
+        _layers.setdefault(_r.y, []).append((_r.x, _r.y, _r.z, _r.expected_block))
+    if not _layers:
+        return False, "任务无方块数据（投影解析结果缺失），无法启动"
+
+    coord = MapArtCoordinator(
+        task_id=task_id,
+        projection_data={
+            "layers": _layers,
+            "regions": {"Main": {
+                "size": {"x": task.projection_size_x, "z": task.projection_size_z},
+            }},
+        },
+        origin_x=task.origin_x,
+        origin_y=task.origin_y,
+        origin_z=task.origin_z,
+    )
+    # 地图画建造仅支持 mineflayer 引擎：所有 bot 必须为 MF，且只从 mineflayer pool 取 client
+    from vmtools_next.main import get_pool_for_engine
+    from vmtools_next.core.bot_engine import resolve_bot_engine
+    bot_mcps = {}
+    assignments = db.query(MapArtBotAssignment).filter(
+        MapArtBotAssignment.task_id == task_id
+    ).all()
+    for ba in assignments:
+        engine = resolve_bot_engine(ba.bot_id, db)
+        if engine != "mineflayer":
+            return False, f"地图画建造仅支持 Mineflayer Bot：{ba.bot_id} 的引擎为 {engine}"
+        pool = get_pool_for_engine("mineflayer")
+        client = pool.get_client(ba.bot_id) if pool else None
+        if client:
+            bot_mcps[ba.bot_id] = (ba.bot_name or ba.bot_id, client)
+
+    if not bot_mcps:
+        return False, "没有可用的 Mineflayer Bot（未连接）"
+
+    await coord.start(bot_mcps)
+    register_coordinator(task_id, coord)
+    return True, "started"
+
+
+async def _broadcast_task_queue() -> None:
+    """广播任务队列变化（任务中心实时刷新）。"""
+    try:
+        from vmtools_next.data.db import sio
+        await sio.emit("task_queue_update", {"ts": datetime.now(timezone.utc).isoformat()})
+    except Exception:
+        pass
+
+
+# ──────────────────────────────────────────────
 # Pydantic schemas
 # ──────────────────────────────────────────────
 
@@ -310,73 +380,45 @@ async def control_task(
     if data.action == "start":
         if task.status not in ("draft", "pending"):
             raise HTTPException(status_code=400, detail=f"Cannot start task in '{task.status}' state")
-        # P2-28：多任务并发限制——开发文档假设单任务（bot 重复分配会冲突）。
-        # 有 running 任务时拒绝再启动，避免同一批 bot 被两个 coordinator 抢占。
+        # 2026-08-12（实施计划阶段 2）：多任务并发由 TaskScheduler 统一调度——
+        # 有 running 任务时不再 400 拒绝，而是置 pending 入队，当前任务完成后自动开始。
         running = db.query(MapArtTask).filter(
             MapArtTask.status == "running",
             MapArtTask.task_id != task_id,
         ).first()
         if running:
-            raise HTTPException(
-                status_code=400,
-                detail=f"已有运行中的任务（{running.name}），请先完成或停止后再启动新任务",
-            )
-        # Spawn coordinator
-        # P2-7：投影解析结果在 create_task 时已写入 MapArtBlockState（DB 即解析缓存），
-        # 启动时直接从 DB 重建 layers，避免对大投影重复 parse_file（512×512+ 耗时/IO）。
-        from vmtools_next.data.models.build_map_art import MapArtBlockState as _MABS
-        _rows = db.query(_MABS).filter(_MABS.task_id == task_id).all()
-        _layers: dict[int, list[tuple[int, int, int, str]]] = {}
-        for _r in _rows:
-            _layers.setdefault(_r.y, []).append((_r.x, _r.y, _r.z, _r.expected_block))
-        coord = MapArtCoordinator(
-            task_id=task_id,
-            projection_data={
-                "layers": _layers,
-                "regions": {"Main": {
-                    "size": {"x": task.projection_size_x, "z": task.projection_size_z},
-                }},
-            },
-            origin_x=task.origin_x,
-            origin_y=task.origin_y,
-            origin_z=task.origin_z,
-        )
-        # 地图画建造仅支持 mineflayer 引擎：所有 bot 必须为 MF，且只从 mineflayer pool 取 client
-        from vmtools_next.main import get_pool_for_engine
-        from vmtools_next.core.bot_engine import resolve_bot_engine
-        bot_mcps = {}
-        assignments = db.query(MapArtBotAssignment).filter(
-            MapArtBotAssignment.task_id == task_id
-        ).all()
-        for ba in assignments:
-            engine = resolve_bot_engine(ba.bot_id, db)
-            if engine != "mineflayer":
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"地图画建造仅支持 Mineflayer Bot：{ba.bot_id} 的引擎为 {engine}",
-                )
-            pool = get_pool_for_engine("mineflayer")
-            client = pool.get_client(ba.bot_id) if pool else None
-            if client:
-                bot_mcps[ba.bot_id] = (ba.bot_name or ba.bot_id, client)
+            task.status = "pending"
+            db.commit()
+            await _broadcast_task_queue()
+            return {"task_id": task_id, "status": "pending",
+                    "message": f"已有运行中的任务（{running.name}），已加入队列，完成后自动开始"}
 
-        if not bot_mcps:
-            raise HTTPException(status_code=400, detail="No bots available to start task")
-
-        await coord.start(bot_mcps)
-        register_coordinator(task_id, coord)
+        # 无 running：直接启动（先置 running 落库，防调度器/并发重复启动）
         task.status = "running"
         task.started_at = datetime.now(timezone.utc)
+        db.commit()
+        ok, msg = await execute_map_art_start(task_id, db)
+        if not ok:
+            task.status = "failed"
+            task.error_message = msg
+            db.commit()
+            await _broadcast_task_queue()
+            raise HTTPException(status_code=400, detail=msg)
+        await _broadcast_task_queue()
 
     elif data.action == "pause":
         if coordinator:
             await coordinator.pause()
         task.status = "paused"
+        db.commit()
+        await _broadcast_task_queue()
 
     elif data.action == "resume":
         if coordinator:
             await coordinator.resume()
         task.status = "running"
+        db.commit()
+        await _broadcast_task_queue()
 
     elif data.action == "stop":
         if coordinator:
@@ -384,6 +426,13 @@ async def control_task(
             unregister_coordinator(task_id)
         task.status = "cancelled"
         task.completed_at = datetime.now(timezone.utc)
+        db.commit()
+        await _broadcast_task_queue()
+        # 停止后立即尝试启动下一个排队任务（调度器联动）
+        from vmtools_next.core.task_scheduler import get_task_scheduler
+        _sched = get_task_scheduler()
+        if _sched:
+            await _sched.schedule_once()
 
     else:
         raise HTTPException(status_code=400, detail=f"Unknown action: {data.action}")
