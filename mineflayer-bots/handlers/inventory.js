@@ -69,6 +69,9 @@ function createInventoryHandlers(bot, opts = {}) {
 
   /** 推事件（无广播闭包时静默跳过，如本地测试） */
   function emitEvent(name, data) {
+    if (name === 'container_opened' || name === 'container_closed') {
+      console.log(`[event:${name}] ${JSON.stringify(data)}`);
+    }
     if (broadcast && createEvent) {
       try { broadcast(createEvent(name, data)); } catch (e) { /* 忽略 */ }
     }

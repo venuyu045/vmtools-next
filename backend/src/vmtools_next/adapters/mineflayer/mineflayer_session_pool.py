@@ -260,6 +260,7 @@ class MineflayerSessionPool:
                 await self._sync_bot_status(bot_id, "error" if event == "bot_error" else "offline")
             elif event in ("container_opened", "container_closed"):
                 # 容器窗口自动打开/关闭（快捷潜影盒等服务器 GUI，2026-08-12）→ 前端切换容器面板
+                logger.info("MF %s event %s payload=%s", bot_id, event, data)
                 try:
                     await sio.emit(f"mf_{event}", {"bot_id": bot_id, **data})
                 except Exception as e:

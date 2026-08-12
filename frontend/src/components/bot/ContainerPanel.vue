@@ -128,14 +128,33 @@ watch(() => props.botId, () => {
 onMounted(() => {
   sockOn('mf_container_opened', onContainerOpened)
   sockOn('mf_container_closed', onContainerClosed)
+  window.addEventListener('vmt:gui-opened', onGuiOpened)
 })
 onBeforeUnmount(() => {
   sockOff('mf_container_opened', onContainerOpened)
   sockOff('mf_container_closed', onContainerClosed)
+  window.removeEventListener('vmt:gui-opened', onGuiOpened)
   if (active.value) { botApi.closeContainer(props.botId, active.value.container_id).catch(() => {}) }
   active.value = null
   items.value = new Map()
 })
+
+/** 全局事件兜底：InventoryGrid 激活手持物品成功后通知切换（不依赖 socket 时序） */
+function onGuiOpened(e: Event) {
+  const d = (e as CustomEvent).detail
+  if (!d || d.bot_id !== props.botId || !d.container_id) return
+  pushStack(d.container_id)
+  active.value = {
+    container_id: d.container_id,
+    block_name: d.block_name || '容器',
+    slot_count: d.slot_count || 27,
+    position: { x: 0, y: 0, z: 0 },
+  }
+  items.value = new Map()
+  holding.value = false
+  holdingSlot.value = -1
+  refreshSnapshot()
+}
 
 function getSlot(idx: number) { return items.value.get(idx) || null }
 function slotTip(idx: number) {

@@ -343,10 +343,17 @@ async function doActivateHeld() {
   try {
     const { data } = await botApi.inventoryActivateItem(p.botId)
     const r = data?.result || {}
-    if (r.new_container_id) {
-      ElMessage.success('已打开新容器窗口，请到下方「附加箱子」面板查看')
-    } else if (r.opened) {
+    if (r.opened || r.new_container_id) {
       ElMessage.success('已打开新容器窗口，正在读取…')
+      // 全局事件兜底：直接通知下方 ContainerPanel 切换（不依赖 socket 时序）
+      window.dispatchEvent(new CustomEvent('vmt:gui-opened', {
+        detail: {
+          bot_id: p.botId,
+          container_id: r.new_container_id || null,
+          block_name: r.current_window?.title || '箱子 UI',
+          slot_count: r.current_window?.slot_count || 27,
+        },
+      }))
     } else {
       const cw = r.current_window
       ElMessage.warning(cw
