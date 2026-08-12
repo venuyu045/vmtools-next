@@ -44,6 +44,7 @@ from .protocol import (
     METHOD_USE_ITEM,
     METHOD_CLICK_WINDOW,
     METHOD_ACTIVATE_ITEM,
+    METHOD_ACTIVATE_BLOCK,
     METHOD_SERVUX_HANDSHAKE,
     METHOD_PREVIEW_CONTAINER_AT,
     METHOD_SEND_CHAT,
@@ -706,6 +707,15 @@ class MineflayerBridgeClient(AbstractBotAgent):
         """
         return await self._send_request(METHOD_ACTIVATE_ITEM, {},
                                         timeout=DEFAULT_CMD_TIMEOUT)
+
+    async def activate_block(self, x: int, y: int, z: int) -> dict:
+        """右键方块（箱子 UI / 快捷潜影盒方块触发等，2026-08-12）。
+
+        距离远自动寻路靠近后右键；服务器插件弹出 GUI → 返回 new_container_id。
+        """
+        return await self._send_request(METHOD_ACTIVATE_BLOCK, {
+            "x": x, "y": y, "z": z,
+        }, timeout=DEFAULT_CMD_TIMEOUT)
 
     # ── Servux 容器预览（不打开容器） ──
 

@@ -43,6 +43,7 @@ METHOD_USE_ITEM = "use_item"
 # 窗口内点击/右键使用（2026-08-12，快捷潜影盒等）
 METHOD_CLICK_WINDOW = "click_window"
 METHOD_ACTIVATE_ITEM = "activate_item"
+METHOD_ACTIVATE_BLOCK = "activate_block"
 
 # Servux 容器预览（不打开容器，直接请求方块实体 NBT）
 METHOD_SERVUX_HANDSHAKE = "servux_handshake"

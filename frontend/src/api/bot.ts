@@ -59,6 +59,10 @@ export const botApi = {
   inventoryActivateItem(botId: string) {
     return client.post(`/mcc-bots/${botId}/inventory/activate-item`, {})
   },
+  // 右键方块（箱子 UI / 快捷潜影盒方块触发，mineflayer only，2026-08-12）
+  inventoryActivateBlock(botId: string, data: { x: number; y: number; z: number }) {
+    return client.post(`/mcc-bots/${botId}/inventory/activate-block`, data)
+  },
   // 移动控制（mineflayer only）
   control(botId: string, data: { direction: string; state: boolean }) {
     return client.post(`/mcc-bots/${botId}/control`, data)

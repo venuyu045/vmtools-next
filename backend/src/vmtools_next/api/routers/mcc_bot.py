@@ -12,7 +12,7 @@ from vmtools_next.api.schemas.mcc import (
     MccBotCreate, MccBotResponse, MccBotConnectRequest,
     InventorySnapshot, InventorySlot, InventoryActionRequest,
     InventorySelectHotbarRequest, InventoryDropRequest, InventoryMoveRequest,
-    InventoryUseRequest, InventoryClickRequest, ActivateItemRequest,
+    InventoryUseRequest, InventoryClickRequest, ActivateItemRequest, ActivateBlockRequest,
     MoveControlRequest, LookRequest, SneakRequest,
     MccBotStatusList, MccBotStatusItem,
     CombatAutoAttackRequest, CombatGuardRequest, CombatAttackRequest,
@@ -837,6 +837,29 @@ async def inventory_activate_item(bot_id: str, data: ActivateItemRequest,
         result = await client.activate_item()
         if isinstance(result, dict) and result.get("success") is False:
             raise HTTPException(400, result.get("error", "激活失败"))
+        return {"success": True, "result": result}
+    except (MccMcpError, MineflayerError) as e:
+        raise HTTPException(502, f"MCP error: {str(e) or repr(e)}")
+    finally:
+        if owned: await client.disconnect()
+
+
+@router.post("/{bot_id}/inventory/activate-block")
+async def inventory_activate_block(bot_id: str, data: ActivateBlockRequest,
+                                   db: Session = Depends(get_db), user=Depends(require_admin)):
+    """右键方块（mineflayer only，2026-08-12）。
+
+    箱子 UI / 快捷潜影盒（右键方块触发）：先扫描容器拿到坐标，再右键该方块；
+    服务器插件弹出 GUI → 返回 new_container_id（或 mf_container_opened 事件）。
+    """
+    _get_scoped_bot(db, user, bot_id)
+    client, owned = await _get_mcp_client(bot_id)
+    try:
+        if isinstance(client, MccMcpClient):
+            raise HTTPException(400, "右键方块仅支持 mineflayer 引擎")
+        result = await client.activate_block(data.x, data.y, data.z)
+        if isinstance(result, dict) and result.get("success") is False:
+            raise HTTPException(400, result.get("error", "右键方块失败"))
         return {"success": True, "result": result}
     except (MccMcpError, MineflayerError) as e:
         raise HTTPException(502, f"MCP error: {str(e) or repr(e)}")

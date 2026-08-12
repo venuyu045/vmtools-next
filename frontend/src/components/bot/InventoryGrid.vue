@@ -345,8 +345,10 @@ async function doActivateHeld() {
     const r = data?.result || {}
     if (r.new_container_id) {
       ElMessage.success('已打开新容器窗口，请到下方「附加箱子」面板查看')
+    } else if (r.opened) {
+      ElMessage.success('已打开新容器窗口，正在读取…')
     } else {
-      ElMessage.success(`已右键使用手持物品${r.item ? `（${r.item}）` : ''}`)
+      ElMessage.warning('已右键使用手持物品，但未检测到新窗口；若为箱子 UI，请用下方「附加箱子」列表的「右键」按钮触发')
     }
     emit('refresh')
   } catch (err: any) {

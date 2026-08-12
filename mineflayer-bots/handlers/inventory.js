@@ -286,10 +286,16 @@ function createInventoryHandlers(bot, opts = {}) {
       const containerId = uuidv4();
       expectedContainers.add(containerId); // 标记主动打开，windowOpen 时跳过自动注册
 
-      const container = await Promise.race([
-        bot.openContainer(block),
-        new Promise((_, reject) => setTimeout(() => reject(new Error('open container timeout (8s)')), 8000)),
-      ]);
+      let container;
+      try {
+        container = await Promise.race([
+          bot.openContainer(block),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('open container timeout (8s)')), 8000)),
+        ]);
+      } finally {
+        // 无论成败都清掉预期标记，防止残留导致后续 windowOpen 自动注册被跳过
+        expectedContainers.delete(containerId);
+      }
       openContainers.set(containerId, {
         window: container,
         openedAt: Date.now(),
@@ -586,6 +592,47 @@ function createInventoryHandlers(bot, opts = {}) {
       return {
         success: true,
         item: bot.heldItem.name,
+        opened: !!newCid,
+        new_container_id: newCid || null,
+      };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  }
+
+  // ── 右键方块（2026-08-12）：箱子 UI / 快捷潜影盒（右键方块触发）等 ──
+  // 距离 >3 格自动寻路靠近（2 格）再右键；服务器插件响应后弹出 GUI →
+  // windowOpen 自动注册 → 返回 new_container_id
+  async function activate_block({ x, y, z } = {}) {
+    try {
+      const pos = new Vec3(x, y, z);
+      const block = bot.blockAt(pos);
+      if (!block || block.type === 0) {
+        return { success: false, error: `No block at (${x},${y},${z})` };
+      }
+      // 距离远 → pathfinder 先走到方块旁（2 格内），再右键
+      if (bot.entity && bot.entity.position) {
+        const dist = bot.entity.position.distanceTo(pos);
+        if (dist > 3) {
+          try {
+            const { GoalNear } = require('mineflayer-pathfinder').goals;
+            await Promise.race([
+              bot.pathfinder.goto(new GoalNear(x, y, z, 2)),
+              new Promise((resolve) => setTimeout(resolve, 15000)),
+            ]);
+          } catch (err) {
+            // 寻路失败/超时不阻塞，仍尝试直接右键（可能失败）
+          }
+        }
+      }
+      bot.activateBlock(block);
+      // 等待服务器处理（GUI 打开），再检查是否有新容器窗口
+      await new Promise(r => setTimeout(r, 1000));
+      const newCid = await registerOpenedWindowIfNew();
+      return {
+        success: true,
+        block: block.name,
+        opened: !!newCid,
         new_container_id: newCid || null,
       };
     } catch (err) {
@@ -607,6 +654,7 @@ function createInventoryHandlers(bot, opts = {}) {
     use_item,
     click_window,
     activate_item,
+    activate_block,
   };
 }
 

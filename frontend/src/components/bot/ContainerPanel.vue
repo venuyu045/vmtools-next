@@ -11,7 +11,8 @@
         <span class="mono cname">{{ zhBlock(c.name) }}</span>
         <span class="mono cpos">{{ c.x }}, {{ c.y }}, {{ c.z }}</span>
         <span class="mono cdist">{{ c.distance != null ? c.distance.toFixed(1) + 'm' : '' }}</span>
-        <button class="pixel-btn mini" :disabled="busy" @click="goOpen(c)">{{ isActive(c) ? '已打开' : '前往' }}</button>
+        <button class="pixel-btn mini" :disabled="busy || activating" @click="goOpen(c)">{{ isActive(c) ? '已打开' : '前往' }}</button>
+        <button class="pixel-btn mini outline" :disabled="busy || activating" title="右键该方块（箱子 UI / 快捷潜影盒触发）" @click="goActivate(c)">右键</button>
       </div>
     </div>
 
@@ -75,6 +76,7 @@ interface ChestSlot { item_id: string; name?: string; item_name_zh?: string; cou
 
 const scanning = ref(false)
 const busy = ref(false)
+const activating = ref(false)  // 右键方块进行中
 const loading = ref(false)
 const containers = ref<ContainerBlock[]>([])
 const active = ref<{ container_id: string; block_name: string; slot_count: number; position: { x: number; y: number; z: number } } | null>(null)
@@ -284,6 +286,32 @@ function pushStack(cid: string) {
 }
 function popStack(cid: string) {
   stack.value = stack.value.filter(x => x !== cid)
+}
+
+/** 右键方块（箱子 UI / 快捷潜影盒触发）：服务器插件弹出 GUI → 自动切换容器面板 */
+async function goActivate(c: ContainerBlock) {
+  if (activating.value) return
+  activating.value = true
+  try {
+    const { data } = await botApi.inventoryActivateBlock(props.botId, { x: c.x, y: c.y, z: c.z })
+    const r = data?.result || {}
+    if (r.opened || r.new_container_id) {
+      ElMessage.success('已打开新窗口，正在读取容器…')
+      // 若响应已带新容器 id（事件可能稍晚），直接切换兜底
+      if (r.new_container_id) {
+        pushStack(r.new_container_id)
+        active.value = { container_id: r.new_container_id, block_name: r.block_name || zhBlock(c.name), slot_count: r.slot_count || 27, position: { x: c.x, y: c.y, z: c.z } }
+        items.value = new Map()
+        await refreshSnapshot()
+      }
+    } else {
+      ElMessage.warning('右键已发送，但未检测到打开的新窗口（该方块可能不触发 GUI，或服务器插件无响应）')
+    }
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.detail || '右键方块失败')
+  } finally {
+    activating.value = false
+  }
 }
 
 /** 返回上一层：关闭当前窗口，服务器会重开父窗口（windowOpen → mf_container_opened 自动切换） */

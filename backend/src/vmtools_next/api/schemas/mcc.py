@@ -224,6 +224,13 @@ class ActivateItemRequest(BaseModel):
     pass
 
 
+class ActivateBlockRequest(BaseModel):
+    """右键方块（mineflayer：bot.activateBlock，2026-08-12；箱子 UI/快捷潜影盒方块触发）。"""
+    x: int
+    y: int
+    z: int
+
+
 # ── 玩家操控（移动控制台） ──
 
 class MoveControlRequest(BaseModel):
