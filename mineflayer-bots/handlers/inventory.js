@@ -64,7 +64,7 @@ function stripColor(s) {
   return String(s == null ? '' : s).replace(/§[0-9a-fk-or]/gi, '');
 }
 
-/** JSON 文本组件 → 纯文本（支持字符串/对象/数组/{type,value} 包装/translate） */
+/** JSON 文本组件 → 纯文本（支持字符串/对象/数组/{type,value} NBT 包装/translate/extra） */
 function textComponentToPlain(v) {
   if (v == null) return '';
   if (typeof v === 'string') {
@@ -76,11 +76,12 @@ function textComponentToPlain(v) {
   }
   if (Array.isArray(v)) return v.map(textComponentToPlain).join('');
   if (typeof v === 'object') {
-    if (v.text != null) return stripColor(String(v.text));
-    if (v.translate != null) return stripColor(String(v.translate || ''));
-    if (v.extra != null) return textComponentToPlain(v.extra);
-    if (v.value != null) return textComponentToPlain(v.value); // {type,value} NBT包装
+    // NBT 包装 {type, value}：先解包（text/translate 的值也可能是这种包装）
     if (v.value != null && v.type != null) return textComponentToPlain(v.value);
+    if (v.text != null) return textComponentToPlain(v.text);
+    if (v.translate != null) return textComponentToPlain(v.translate);
+    if (v.extra != null) return textComponentToPlain(v.extra);
+    if (v.value != null) return textComponentToPlain(v.value);
   }
   return '';
 }
