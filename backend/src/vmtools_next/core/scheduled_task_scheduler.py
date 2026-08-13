@@ -30,6 +30,8 @@ class ScheduledTaskScheduler:
         self._scheduler_task: asyncio.Task | None = None
         self._running = False
         self._last_cleanup_day: str | None = None
+        # auto_manage 定时任务自动拉起的 bot（任务完成且空闲时自动下线）
+        self._auto_managed: set[str] = set()
 
     # ── 生命周期 ──
 
@@ -90,6 +92,8 @@ class ScheduledTaskScheduler:
             await self._execute(task)
         if fired_any:
             await self._broadcast()
+        # auto_manage：任务全部完成且 bot 空闲 → 自动下线
+        await self._maybe_shutdown_idle()
 
     @staticmethod
     def _is_due(task, now: datetime) -> bool:
@@ -111,7 +115,11 @@ class ScheduledTaskScheduler:
     # ── 执行 ──
 
     async def _execute(self, task) -> None:
-        """执行单个定时任务（对每个 bot 逐个发起）。执行后更新 last_run_at，once 自动停用。"""
+        """执行单个定时任务（对每个 bot 逐个发起）。
+
+        auto_manage=True 时：bot 离线先自动上线（start_instance + 等待 online），
+        任务派活完成后由 tick 的 _maybe_shutdown_idle 在 bot 空闲时自动下线。
+        """
         import uuid as _uuid
         from vmtools_next.core.bot_work import ensure_available_for_work
 
@@ -120,12 +128,24 @@ class ScheduledTaskScheduler:
         try:
             task = db.merge(task)  # 重新绑定到本 session
             bot_ids = json.loads(task.bot_ids or "[]")
+            auto = bool(getattr(task, "auto_manage", True))
             results: list[str] = []
 
+            # 1) 自动上线（auto_manage 且离线 → start_instance + 等待 online）
+            ready: list[str] = []
+            for bid in bot_ids:
+                if auto:
+                    ok = await self._ensure_bot_online(bid)
+                    if not ok:
+                        results.append(f"{bid}: 自动上线失败/超时，跳过")
+                        continue
+                ready.append(bid)
+
+            # 2) 派活（仅对可用的 bot）
             if task.task_type == "scan":
                 from vmtools_next.main import get_scan_queue_manager
                 mgr = get_scan_queue_manager()
-                for bid in bot_ids:
+                for bid in ready:
                     err = ensure_available_for_work(db, bid, "定时任务·仓库扫描")
                     if err:
                         results.append(f"{bid}: 跳过（{err}）")
@@ -147,7 +167,7 @@ class ScheduledTaskScheduler:
                 if not tpl or not tpl.enabled:
                     results.append("模板不存在或已停用")
                 else:
-                    for bid in bot_ids:
+                    for bid in ready:
                         err = ensure_available_for_work(db, bid, "定时任务·物流")
                         if err:
                             results.append(f"{bid}: 跳过（{err}）")
@@ -220,6 +240,120 @@ class ScheduledTaskScheduler:
             logger.warning("Scheduled task {} execute error: {}", getattr(task, "id", "?"), e)
         finally:
             db.close()
+
+    # ── 自动上线 / 下线（2026-08-13 定时任务生命周期管理） ──
+
+    async def _ensure_bot_online(self, bot_id: str) -> bool:
+        """确保 bot 在线：离线则启动对应 mineflayer 实例并等待上线（最多 ~90s）。
+
+        只对 auto_manage 定时任务调用；成功上线的 bot 记入 _auto_managed，
+        由 _maybe_shutdown_idle 在任务全部完成后自动下线。
+        """
+        from vmtools_next.data.models.logistics import MccBotModel
+        from vmtools_next.data.models.mcc_remote import MccInstanceModel
+
+        Session = get_session_factory()
+        db = Session()
+        try:
+            bot = db.query(MccBotModel).filter(MccBotModel.bot_id == bot_id).first()
+            if bot and bot.status == "online":
+                self._auto_managed.add(bot_id)
+                return True
+            inst = db.query(MccInstanceModel).filter(
+                MccInstanceModel.bot_id == bot_id,
+                MccInstanceModel.deleted_at.is_(None),
+            ).first()
+            if not inst:
+                logger.warning("Auto-manage: bot {} has no instance, cannot start", bot_id)
+                return False
+            from vmtools_next.main import get_mineflayer_process_manager
+            mgr = get_mineflayer_process_manager()
+            if mgr is None:
+                return False
+            try:
+                await mgr.start_instance(inst.instance_id)
+            except Exception as e:
+                logger.warning("Auto-manage: start {} failed: {}", bot_id, e)
+                return False
+            # 等待 WS 连接成功（SessionPool 将 mcc_bots.status 置 online）
+            for _ in range(30):
+                await asyncio.sleep(3)
+                bot = db.query(MccBotModel).filter(MccBotModel.bot_id == bot_id).first()
+                if bot and bot.status == "online":
+                    self._auto_managed.add(bot_id)
+                    return True
+            logger.warning("Auto-manage: bot {} start timeout (90s)", bot_id)
+            return False
+        finally:
+            db.close()
+
+    async def _maybe_shutdown_idle(self) -> None:
+        """对 auto_manage 自动拉起的 bot：无任何活动任务且未被手动标记 → 自动下线。"""
+        if not self._auto_managed:
+            return
+        from vmtools_next.data.models.mcc_remote import MccInstanceModel
+
+        Session = get_session_factory()
+        db = Session()
+        try:
+            for bid in list(self._auto_managed):
+                try:
+                    if await self._should_stay_online(db, bid):
+                        continue
+                    inst = db.query(MccInstanceModel).filter(
+                        MccInstanceModel.bot_id == bid,
+                        MccInstanceModel.deleted_at.is_(None),
+                    ).first()
+                    if not inst:
+                        self._auto_managed.discard(bid)
+                        continue
+                    from vmtools_next.main import get_mineflayer_process_manager
+                    mgr = get_mineflayer_process_manager()
+                    if mgr is None:
+                        continue
+                    await mgr.stop_instance(inst.instance_id, preserve_desired_state=False)
+                    self._auto_managed.discard(bid)
+                    logger.info("Auto-manage: bot {} offline (all scheduled tasks finished)", bid)
+                except Exception as e:
+                    logger.warning("Auto-manage shutdown {} error: {}", bid, e)
+        finally:
+            db.close()
+
+    @staticmethod
+    def _should_stay_online(db, bot_id: str) -> bool:
+        """bot 是否仍需保持在线：手动标记「工作中」或存在进行中/排队任务。"""
+        from vmtools_next.core.bot_work import get_manual_work
+        from vmtools_next.data.models.warehouse import ScanQueueModel
+        from vmtools_next.data.models.logistics import LogisticsTaskRunModel
+        from vmtools_next.data.models.build_map_art import MapArtTask, MapArtBotAssignment
+
+        if get_manual_work(db, bot_id) is not None:
+            return True
+        # 扫描进行中/暂停
+        if db.query(ScanQueueModel).filter(
+                ScanQueueModel.bot_id == bot_id,
+                ScanQueueModel.status.in_(["running", "paused"]),
+        ).first():
+            return True
+        # 物流进行中/暂停/排队（排队即将被调度器启动）
+        if db.query(LogisticsTaskRunModel).filter(
+                LogisticsTaskRunModel.bot_id == bot_id,
+                LogisticsTaskRunModel.status.in_(["pending", "running", "paused"]),
+        ).first():
+            return True
+        # 地图画：running 或 pending 任务中该 bot 有分配（running 正在干活，pending 待启动）
+        art_ids: list[str] = []
+        rows = db.query(MapArtTask.task_id).filter(
+            MapArtTask.status.in_(["running", "pending"])).all()
+        if rows:
+            art_ids = [r[0] for r in rows]
+            hit = db.query(MapArtBotAssignment).filter(
+                MapArtBotAssignment.task_id.in_(art_ids),
+                MapArtBotAssignment.bot_id == bot_id,
+            ).first()
+            if hit:
+                return True
+        return False
 
     # ── 7 天记录清理 ──
 

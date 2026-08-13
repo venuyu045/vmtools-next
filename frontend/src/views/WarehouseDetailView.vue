@@ -75,7 +75,6 @@
           v-model="selectedBot"
           placeholder="选择扫描用 Bot（mineflayer）"
           style="width: 260px; margin-right: 12px"
-          filterable
         >
           <el-option
             v-for="b in availableBots"

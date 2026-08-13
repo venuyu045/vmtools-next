@@ -26,10 +26,11 @@ export const tasksApi = {
     run_at?: string | null
     schedule_time?: string
     schedule_weekday?: number
+    auto_manage?: boolean
   }) {
     return client.post('/tasks/scheduled', payload)
   },
-  updateScheduled(taskId: string, payload: { enabled?: boolean; name?: string }) {
+  updateScheduled(taskId: string, payload: { enabled?: boolean; name?: string; auto_manage?: boolean }) {
     return client.put(`/tasks/scheduled/${taskId}`, payload)
   },
   deleteScheduled(taskId: string) {

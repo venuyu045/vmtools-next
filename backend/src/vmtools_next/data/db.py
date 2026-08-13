@@ -241,6 +241,13 @@ def _run_lightweight_migrations(engine) -> None:
                         conn.execute(text("ALTER TABLE mcc_bots ADD COLUMN manual_task_name VARCHAR DEFAULT ''"))
                 except Exception as _e:
                     logger.warning("mcc_bots manual_work migration check: {}", _e)
+            # 定时任务：自动上线/下线开关（2026-08-13）
+            try:
+                s_columns = {row[1] for row in conn.execute(text("PRAGMA table_info(scheduled_tasks)")).fetchall()}
+                if "auto_manage" not in s_columns:
+                    conn.execute(text("ALTER TABLE scheduled_tasks ADD COLUMN auto_manage BOOLEAN DEFAULT 1"))
+            except Exception as _e:
+                logger.warning("scheduled_tasks auto_manage migration check: {}", _e)
             conn.commit()
     except Exception as e:
         logger.warning("Lightweight migration check: {}", e)

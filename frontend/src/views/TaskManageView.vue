@@ -95,6 +95,7 @@
               <th>目标</th>
               <th>调度时间</th>
               <th>Bot</th>
+              <th>自动上下线</th>
               <th>启用</th>
               <th>上次执行</th>
               <th>操作</th>
@@ -107,12 +108,13 @@
               <td>{{ t.target_name || t.target_id }}</td>
               <td class="mono">{{ t.schedule_text }}</td>
               <td class="mono sched-bots">{{ (t.bot_ids || []).join('、') }}</td>
+              <td><el-switch :model-value="t.auto_manage" size="small" @change="(v: string | number | boolean) => toggleAutoManage(t, !!v)" /></td>
               <td><el-switch :model-value="t.enabled" size="small" @change="(v: string | number | boolean) => toggleScheduled(t, !!v)" /></td>
               <td class="mono">{{ t.last_run_at ? fmtShort(t.last_run_at) : '—' }}</td>
               <td><button class="pixel-btn mini danger" @click="delScheduled(t)">删除</button></td>
             </tr>
             <tr v-if="!scheduled.length && !schedLoading">
-              <td colspan="8" class="empty-text">-- 暂无定时任务，点击右上角「+ 新建定时任务」创建 --</td>
+              <td colspan="9" class="empty-text">-- 暂无定时任务，点击右上角「+ 新建定时任务」创建 --</td>
             </tr>
           </tbody>
         </table>
@@ -133,7 +135,7 @@
           </el-select>
         </el-form-item>
         <el-form-item label="目标" required>
-          <el-select v-model="form.target_id" filterable style="width: 100%" :placeholder="targetPlaceholder">
+          <el-select v-model="form.target_id" style="width: 100%" :placeholder="targetPlaceholder">
             <el-option v-for="o in targetOptions" :key="o.value" :label="o.label" :value="o.value" />
           </el-select>
         </el-form-item>
@@ -150,6 +152,7 @@
             type="datetime"
             placeholder="选择日期时间"
             value-format="YYYY-MM-DDTHH:mm:ss"
+            :editable="false"
             style="width: 100%"
           />
         </el-form-item>
@@ -163,13 +166,18 @@
             step="00:05"
             end="23:59"
             placeholder="HH:MM"
+            :editable="false"
             style="width: 140px"
           />
         </el-form-item>
         <el-form-item label="执行 Bot" required>
-          <el-select v-model="form.bot_ids" multiple filterable style="width: 100%" placeholder="选择 MF bot（可多选）">
+          <el-select v-model="form.bot_ids" multiple style="width: 100%" placeholder="选择 MF bot（可多选）">
             <el-option v-for="b in bots" :key="b.bot_id" :label="`${b.bot_id}（${b.name}）`" :value="b.bot_id" />
           </el-select>
+        </el-form-item>
+        <el-form-item label="自动上下线">
+          <el-switch v-model="form.auto_manage" />
+          <span class="auto-manage-tip">开启后：到点自动启动离线 bot 上线执行，任务全部完成且空闲后自动下线（bot 另有任务/被标记「工作中」则保持在线）</span>
         </el-form-item>
       </el-form>
       <template #footer>
@@ -211,6 +219,7 @@ interface ScheduledRow {
   schedule_kind: string
   schedule_text: string
   enabled: boolean
+  auto_manage: boolean
   last_run_at: string | null
 }
 
@@ -233,6 +242,7 @@ const form = ref({
   run_at: null as string | null,
   schedule_time: '14:30',
   schedule_weekday: 0,
+  auto_manage: true,
 })
 
 const targetPlaceholder = () =>
@@ -367,6 +377,7 @@ function openCreate() {
     run_at: null,
     schedule_time: '14:30',
     schedule_weekday: 0,
+    auto_manage: true,
   }
   dialogVisible.value = true
   onTypeChange()
@@ -390,6 +401,7 @@ async function submitScheduled() {
       run_at: f.run_at,
       schedule_time: f.schedule_kind === 'once' ? '' : f.schedule_time,
       schedule_weekday: f.schedule_weekday,
+      auto_manage: f.auto_manage,
     })
     ElMessage.success('定时任务已创建')
     dialogVisible.value = false
@@ -406,6 +418,16 @@ async function toggleScheduled(t: ScheduledRow, val: boolean) {
     await tasksApi.updateScheduled(t.id, { enabled: val })
     t.enabled = val
     ElMessage.success(val ? '已启用' : '已停用')
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.detail || '操作失败')
+  }
+}
+
+async function toggleAutoManage(t: ScheduledRow, val: boolean) {
+  try {
+    await tasksApi.updateScheduled(t.id, { auto_manage: val })
+    t.auto_manage = val
+    ElMessage.success(val ? '已开启自动上下线' : '已关闭自动上下线（bot 保持现状）')
   } catch (e: any) {
     ElMessage.error(e?.response?.data?.detail || '操作失败')
   }
@@ -466,4 +488,5 @@ onMounted(() => {
 .sched-type.logistics { background: rgba(108, 122, 140, 0.15); color: #6c7a8c; }
 .sched-type.map_art { background: rgba(217, 119, 87, 0.15); color: var(--accent); }
 .sched-bots { max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.auto-manage-tip { margin-left: 10px; font-size: 11px; color: var(--text-muted); line-height: 1.5; }
 </style>

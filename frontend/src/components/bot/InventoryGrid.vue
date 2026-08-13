@@ -119,7 +119,7 @@
     <el-dialog v-model="dropDlg.show" title="丢弃物品" width="380px" append-to-body>
       <el-form label-width="70px" @submit.prevent>
         <el-form-item label="物品">
-          <el-select v-model="dropDlg.itemType" filterable placeholder="选择要丢弃的物品" style="width:100%">
+          <el-select v-model="dropDlg.itemType" placeholder="选择要丢弃的物品" style="width:100%">
             <el-option v-for="s in distinctItems" :key="s.item_id" :label="`${s.item_name_zh || label(s.item_id)} × ${s.count}`" :value="s.item_id" />
           </el-select>
         </el-form-item>

@@ -32,5 +32,6 @@ class ScheduledTaskModel(Base):
     schedule_weekday = Column(Integer, default=0)       # weekly：0=周一 ~ 6=周日
 
     enabled = Column(Boolean, default=True, nullable=False)
+    auto_manage = Column(Boolean, default=True, nullable=False)  # 执行时自动上线 bot，任务完成自动下线（2026-08-13）
     last_run_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)

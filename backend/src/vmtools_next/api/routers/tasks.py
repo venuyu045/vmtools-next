@@ -41,11 +41,13 @@ class ScheduledTaskCreate(BaseModel):
     run_at: Optional[str] = None   # once：ISO 时间
     schedule_time: str = ""        # daily/weekly：HH:MM
     schedule_weekday: int = 0      # weekly：0=周一 ~ 6=周日
+    auto_manage: bool = True       # 执行时自动上线 bot、任务完成自动下线（2026-08-13）
 
 
 class ScheduledTaskUpdate(BaseModel):
     enabled: Optional[bool] = None
     name: Optional[str] = None
+    auto_manage: Optional[bool] = None
 
 
 def _as_utc_naive(dt) -> Optional[datetime]:
@@ -363,6 +365,7 @@ def _scheduled_to_dict(t) -> dict:
         "schedule_weekday": t.schedule_weekday,
         "schedule_text": _schedule_text(t),
         "enabled": t.enabled,
+        "auto_manage": bool(getattr(t, "auto_manage", True)),
         "last_run_at": _iso(t.last_run_at),
         "created_at": _iso(t.created_at),
     }
@@ -460,6 +463,7 @@ def create_scheduled_task(
         schedule_time=data.schedule_time,
         schedule_weekday=data.schedule_weekday,
         enabled=True,
+        auto_manage=data.auto_manage,
     )
     db.add(task)
     db.commit()
@@ -487,6 +491,8 @@ def update_scheduled_task(
         if not n:
             raise HTTPException(status_code=400, detail="任务名称不能为空")
         t.name = n
+    if data.auto_manage is not None:
+        t.auto_manage = data.auto_manage
     db.commit()
     db.refresh(t)
     return _scheduled_to_dict(t)
