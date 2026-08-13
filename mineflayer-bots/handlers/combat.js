@@ -27,6 +27,29 @@ function createCombatHandlers(bot, ctx = {}) {
   let autoAttack = null; // { timer, config }
   let guard = null;      // { timer, config }
 
+  // ── 服务器攻击冷却（2026-08-12） ─────────────────────────
+  // MC 1.9+ 横扫/完整攻击要求【攻击冷却满 100%】才触发（剑横扫、全额伤害）。
+  // 服务器每次攻击后广播 set_cooldown（duration=武器冷却 ticks，20tps），
+  // 本地据此记录真实冷却结束时刻；攻击前等待冷却满，避免「非完整攻击」无横扫。
+  let cooldownUntil = 0;
+  try {
+    bot._client.on('set_cooldown', (p) => {
+      const ticks = Number(p && p.duration) || 0;
+      if (ticks > 0) {
+        cooldownUntil = Date.now() + (ticks / 20) * 1000;
+      }
+    });
+  } catch (e) { /* 忽略：监听失败退化为本地估算冷却 */ }
+
+  /** 等待服务器攻击冷却结束（横扫/满伤害前置条件）；无冷却记录时立即返回 */
+  async function waitServerCooldown() {
+    const wait = cooldownUntil - Date.now();
+    if (wait > 0) {
+      // +60ms 余量：确保出手瞬间服务器判定冷却已满（横扫判定在 tick 边界）
+      await new Promise((r) => setTimeout(r, wait + 60));
+    }
+  }
+
   // ── 工具 ──────────────────────────────────────────────
   function matchesType(entity, targetTypes) {
     if (!targetTypes || targetTypes.length === 0) return true; // 空 = 全部
@@ -101,6 +124,8 @@ function createCombatHandlers(bot, ctx = {}) {
       if (!bot.entity || !bot.entity.position) return { success: false, error: 'bot not spawned' };
       const epos = entity.position;
       if (!epos) return { success: false, error: 'target has no position' };
+      // 等待服务器攻击冷却满：横扫/满伤害只判定在冷却 100% 的攻击上（2026-08-12）
+      await waitServerCooldown();
       // 挥手动画（攻击表现；不阻塞主流程）
       try { bot.swingArm('right'); } catch (e) { /* 忽略 */ }
       // 1.21.6+/26.1 新协议：攻击是独立的 packet_attack 包（{entityId}），
