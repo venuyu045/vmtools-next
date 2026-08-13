@@ -182,6 +182,7 @@ const navGroups: NavGroup[] = [
     guestVisible: true,
     guestExpandable: true,
     items: [
+      { path: '/task-manage', label: '任务管理', minRole: 2 },
       { path: '/mcc-instances', label: 'MCC 管理', minRole: 2 },
       { path: '/mf-instances', label: 'MF 管理', minRole: 2 },
       { path: '/player-alerts', label: '上下线提醒', minRole: 2 },

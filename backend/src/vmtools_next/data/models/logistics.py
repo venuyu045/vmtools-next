@@ -38,6 +38,9 @@ class MccBotModel(Base):
     current_task_run_id = Column(String, nullable=True)
     current_build_task_id = Column(String, nullable=True)  # NEW: link to build_tasks
     combat_config = Column(Text, nullable=True)  # 战斗配置持久化（JSON，2026-08-11）
+    # 手动标记「工作中」（2026-08-13 任务管理）：跨上下线保持，被标记 bot 不被自动调度派活
+    manual_working = Column(Boolean, default=False, nullable=False)
+    manual_task_name = Column(String, default="", nullable=False)
     organization_id = Column(String, nullable=True, index=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
 

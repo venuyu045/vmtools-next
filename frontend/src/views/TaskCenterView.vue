@@ -42,15 +42,15 @@
       <div v-else class="bot-grid">
         <div v-for="bot in botCards" :key="bot.bot_id" class="bot-card">
           <div class="bot-head">
-            <span class="engine-badge" :class="bot.engine">{{ bot.engine === 'mineflayer' ? 'MF' : bot.engine === 'mcc' ? 'MCC' : '--' }}</span>
+            <span class="engine-badge mineflayer">MF</span>
             <span class="bot-name">{{ bot.name }}</span>
             <span class="bot-status" :class="bot.status">{{ botStatusLabel(bot.status) }}</span>
           </div>
 
-          <!-- 当前任务 -->
-          <div v-if="bot.currentTask" class="task-box current">
+          <!-- 当前任务（手动标记「工作中」优先展示，2026-08-13 任务管理） -->
+          <div v-if="bot.currentTask" class="task-box current" :class="{ manual: bot.currentTask.type === 'manual' }">
             <div class="task-box-head">
-              <span class="task-type" :class="bot.currentTask.type">{{ bot.currentTask.type === 'map_art' ? '地图画' : '物流' }}</span>
+              <span class="task-type" :class="bot.currentTask.type">{{ taskTypeLabel(bot.currentTask.type) }}</span>
               <span class="task-name" :title="bot.currentTask.name">{{ bot.currentTask.name }}</span>
               <span class="task-status" :class="bot.currentTask.status">{{ bot.currentTask.status_label }}</span>
             </div>
@@ -149,7 +149,7 @@ import { useSocketIO } from '@/composables/useSocketIO'
 import { fmtApiTime } from '@/utils/time'
 
 interface TaskRow {
-  type: 'map_art' | 'logistics'
+  type: 'map_art' | 'logistics' | 'manual'
   id: string
   name: string
   status: string
@@ -168,6 +168,8 @@ interface BotInfo {
   status: string
   engine: string
   busy: boolean
+  /** 手动标记「工作中」（2026-08-13 任务管理） */
+  manual?: { working: boolean; name: string } | null
 }
 
 const router = useRouter()
@@ -200,14 +202,21 @@ const filteredTasks = computed(() => {
   return tasks.value.filter(t => t.type === activeTab.value)
 })
 
-/** Bot → 当前任务 + 排队任务映射 */
+/** Bot → 当前任务 + 排队任务映射（手动标记「工作中」优先展示，2026-08-13） */
 const botCards = computed(() => {
   return bots.value.map(bot => {
     const current = tasks.value.find(t => t.status === 'running' && t.bots.some(b => b.bot_id === bot.bot_id))
     const queued = tasks.value.filter(t => t.status === 'pending' && t.bots.some(b => b.bot_id === bot.bot_id))
-    return { ...bot, currentTask: current || null, queuedTasks: queued }
+    const manualTask: TaskRow | null = bot.manual
+      ? { type: 'manual', id: `manual-${bot.bot_id}`, name: bot.manual.name, status: 'running', status_label: '工作中', progress: {}, bots: [], engine: 'mineflayer' }
+      : null
+    return { ...bot, currentTask: manualTask || current || null, queuedTasks: queued }
   })
 })
+
+function taskTypeLabel(type: string): string {
+  return { manual: '手动', map_art: '地图画', logistics: '物流' }[type] || type
+}
 
 function taskPct(t: TaskRow): number {
   if (t.progress.percent != null) {
@@ -369,6 +378,8 @@ onBeforeUnmount(() => {
 .task-type { font-size: 10px; font-weight: 700; padding: 1px 8px; border-radius: 999px; flex-shrink: 0; }
 .task-type.map_art { background: rgba(217, 119, 87, 0.15); color: var(--accent); }
 .task-type.logistics { background: rgba(108, 122, 140, 0.15); color: #6c7a8c; }
+.task-type.manual { background: rgba(217, 119, 87, 0.2); color: var(--accent); }
+.task-box.current.manual { border-color: var(--accent); }
 .task-status { font-size: 11px; padding: 1px 8px; border-radius: 999px; flex-shrink: 0; }
 .task-status.running { background: rgba(64, 158, 255, 0.15); color: #409eff; }
 .task-status.pending, .task-status.draft { background: rgba(230, 162, 60, 0.15); color: #e6a23c; }

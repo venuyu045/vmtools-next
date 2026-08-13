@@ -278,6 +278,11 @@ async def start_task(data: TaskStartRequest, db: Session = Depends(get_db), user
             status_code=400,
             detail=f"物流任务仅支持 Mineflayer Bot：{data.bot_id} 的引擎为 {engine}",
         )
+    # 手动标记「工作中」的 bot 不派活（2026-08-13 任务管理）
+    from vmtools_next.core.bot_work import ensure_available_for_work
+    err = ensure_available_for_work(db, data.bot_id, "物流")
+    if err:
+        raise HTTPException(status_code=400, detail=err)
 
     # 同一 bot 不允许重复进行中的物流任务
     active = db.query(LogisticsTaskRunModel).filter(

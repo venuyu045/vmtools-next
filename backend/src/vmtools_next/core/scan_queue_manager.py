@@ -113,6 +113,11 @@ class ScanQueueManager:
                     return {"ok": False, "error": "该仓库已有扫描任务在排队/进行中"}
                 if q.bot_id == bot_id and q.status in ("running", "paused"):
                     return {"ok": False, "error": f"Bot {bot_id} 已有进行中的扫描任务"}
+            # 手动标记「工作中」的 bot 不派活（2026-08-13 任务管理）
+            from vmtools_next.core.bot_work import get_manual_work
+            mw = get_manual_work(db, bot_id)
+            if mw is not None:
+                return {"ok": False, "error": f"Bot {bot_id} 已被手动标记为工作中（{mw.get('name')}），仓库扫描不会派活给它，请先在「任务管理」解除标记"}
 
             q = ScanQueueModel(
                 queue_id=str(uuid.uuid4()),

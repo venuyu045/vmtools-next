@@ -9,10 +9,11 @@ from __future__ import annotations
 
 from typing import Optional
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from vmtools_next.api.deps import get_db, get_current_user
+from vmtools_next.api.deps import get_db, get_current_user, require_admin
 from vmtools_next.data.models.build_map_art import MapArtTask, MapArtBotAssignment
 from vmtools_next.data.models.logistics import (
     LogisticsTaskRunModel, LogisticsTaskTemplateModel, MccBotModel,
@@ -20,6 +21,11 @@ from vmtools_next.data.models.logistics import (
 from vmtools_next.core.bot_engine import resolve_bot_engine
 
 router = APIRouter(prefix="/api/tasks", tags=["tasks"])
+
+
+class ManualWorkUpdate(BaseModel):
+    working: bool
+    name: str = ""
 
 # ── 状态文案 ──────────────────────────────────────────────
 
@@ -155,7 +161,8 @@ def tasks_overview(
             _resolve_engine_safe(db, r.bot_id),
         ))
 
-    # Bot 列表（mcc_bots 统一表，含 MF）+ 引擎
+    # Bot 列表（2026-08-13 任务中心仅服务 MF：只返回 mineflayer 引擎的 bot）
+    from vmtools_next.core.bot_work import get_manual_work
     bots = db.query(MccBotModel).all()
     bot_list = []
     running_bot_ids: set[str] = set()
@@ -168,12 +175,16 @@ def tasks_overview(
             engine = resolve_bot_engine(b.bot_id, db)
         except Exception:
             engine = "unknown"
+        if engine != "mineflayer":
+            continue
+        manual = get_manual_work(db, b.bot_id)
         bot_list.append({
             "bot_id": b.bot_id,
             "name": b.name or b.bot_id,
             "status": b.status,
             "engine": engine,
-            "busy": b.bot_id in running_bot_ids,
+            "busy": b.bot_id in running_bot_ids or manual is not None,
+            "manual": manual,  # 手动标记「工作中」（任务中心 Bot 卡片展示）
         })
 
     # 统计
@@ -192,3 +203,58 @@ def tasks_overview(
         "stats": stats,
         "bots": bot_list,
     }
+
+
+# ── 任务管理：手动标记「工作中」（2026-08-13） ──────────────────
+# 管理栏「任务管理」页数据源与写入接口。手动标记跨上下线保持；
+# 被标记 bot 不会被自动调度派活（地图画/物流/扫描入口统一拦截）。
+
+
+@router.get("/manual-work")
+def list_manual_work(
+    db: Session = Depends(get_db),
+    user=Depends(require_admin),
+):
+    """任务管理页：所有 MF bot + 手动工作标记 + 当前系统工作。"""
+    from vmtools_next.data.models.mcc_remote import MccInstanceModel
+    from vmtools_next.core.bot_work import get_manual_work
+    from vmtools_next.api.routers.mcc_bot import _get_bot_current_task
+
+    bots = db.query(MccBotModel).all()
+    instances = db.query(MccInstanceModel).filter(
+        MccInstanceModel.deleted_at.is_(None),
+    ).all()
+    inst_by_bot = {i.bot_id: i for i in instances if i.bot_id}
+
+    result = []
+    for b in bots:
+        inst = inst_by_bot.get(b.bot_id)
+        engine = (getattr(inst, "bot_engine", None) or "mcc") if inst else "mcc"
+        if engine != "mineflayer":
+            continue
+        result.append({
+            "bot_id": b.bot_id,
+            "name": b.name or b.bot_id,
+            "status": b.status,  # online/offline/connecting/error
+            "manual": get_manual_work(db, b.bot_id),
+            "system_task": _get_bot_current_task(db, b.bot_id),
+        })
+    return {"bots": result}
+
+
+@router.put("/manual-work/{bot_id}")
+def update_manual_work(
+    bot_id: str,
+    data: ManualWorkUpdate,
+    db: Session = Depends(get_db),
+    user=Depends(require_admin),
+):
+    """设置 bot 的手动工作标记。working=True 时 name 必填。"""
+    from vmtools_next.core.bot_work import set_manual_work
+    try:
+        saved = set_manual_work(db, bot_id, data.working, data.name)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    return saved

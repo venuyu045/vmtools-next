@@ -79,6 +79,11 @@ async def execute_map_art_start(task_id: str, db: Session) -> tuple[bool, str]:
         engine = resolve_bot_engine(ba.bot_id, db)
         if engine != "mineflayer":
             return False, f"地图画建造仅支持 Mineflayer Bot：{ba.bot_id} 的引擎为 {engine}"
+        # 手动标记「工作中」的 bot 不派活（2026-08-13 任务管理）
+        from vmtools_next.core.bot_work import ensure_available_for_work
+        err = ensure_available_for_work(db, ba.bot_id, "地图画")
+        if err:
+            return False, err
         pool = get_pool_for_engine("mineflayer")
         client = pool.get_client(ba.bot_id) if pool else None
         if client:
@@ -161,6 +166,11 @@ async def create_task(
                 status_code=400,
                 detail=f"地图画建造仅支持 Mineflayer Bot：{bid} 的引擎为 {engine}",
             )
+        # 手动标记「工作中」的 bot 不派活（2026-08-13 任务管理）
+        from vmtools_next.core.bot_work import ensure_available_for_work
+        err = ensure_available_for_work(db, bid, "地图画")
+        if err:
+            raise HTTPException(status_code=400, detail=err)
 
     # 路径安全：只允许解析已上传目录内的投影文件（防任意路径文件读取）
     from pathlib import Path as _Path
@@ -469,6 +479,11 @@ async def manage_task_bot(
         if engine != "mineflayer":
             raise HTTPException(status_code=400,
                                 detail=f"地图画建造仅支持 Mineflayer Bot：{data.bot_id} 的引擎为 {engine}")
+        # 手动标记「工作中」的 bot 不派活（2026-08-13 任务管理）
+        from vmtools_next.core.bot_work import ensure_available_for_work
+        err = ensure_available_for_work(db, data.bot_id, "地图画")
+        if err:
+            raise HTTPException(status_code=400, detail=err)
         pool = get_pool_for_engine("mineflayer")
         client = pool.get_client(data.bot_id) if pool else None
         if not client:

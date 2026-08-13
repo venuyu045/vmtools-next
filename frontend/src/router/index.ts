@@ -59,6 +59,8 @@ const routes = [
       { path: 'tasks', name: 'TaskCenter', component: () => import('@/views/TaskCenterView.vue'), meta: { title: '任务中心', roles: ALL_LOGGED_IN, guestReadable: true } },
 
       // --- 管理员及以上可见 ---
+      // 任务管理（管理组第一个，2026-08-13）：自定义 MF 手动工作标记，被标记 bot 不被自动调度派活
+      { path: 'task-manage', name: 'TaskManage', component: () => import('@/views/TaskManageView.vue'), meta: { title: '任务管理', roles: [...ROLES.admin, ...ROLES.siteAdmin] } },
       { path: 'mcc-instances', name: 'MccInstances', component: () => import('@/views/BotManageView.vue'), meta: { title: 'MCC 管理', engine: 'mcc', roles: [...ROLES.admin, ...ROLES.siteAdmin] } },
     { path: 'mcc-status', name: 'MccStatus', component: () => import('@/views/BotStatusView.vue'), props: { engine: 'mcc', title: 'MCC 状态' }, meta: { title: 'MCC 状态', roles: ALL_LOGGED_IN, guestReadable: true } },
     { path: 'mf-status', name: 'MfStatus', component: () => import('@/views/BotStatusView.vue'), props: { engine: 'mineflayer', title: 'MF 状态' }, meta: { title: 'MF 状态', roles: ALL_LOGGED_IN, guestReadable: true } },

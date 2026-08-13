@@ -130,7 +130,13 @@ def _nearest_residence(loc: dict, residences: list[dict]):
 
 
 def _get_bot_current_task(db: Session, bot_id: str):
-    """查 bot 当前进行中的工作：物流 > 地图画 > 仓库扫描。无则 None（空闲）。"""
+    """查 bot 当前进行中的工作：手动标记 > 物流 > 地图画 > 仓库扫描。无则 None（空闲）。"""
+    # 0) 手动标记「工作中」（2026-08-13 任务管理，优先级最高）
+    from vmtools_next.core.bot_work import get_manual_work
+    mw = get_manual_work(db, bot_id)
+    if mw is not None:
+        return {"type": "manual", "name": mw.get("name") or "手动工作",
+                "status": "running", "progress": None}
     # 1) 物流运行（logistics_task_runs）
     from vmtools_next.data.models.logistics import LogisticsTaskRunModel, LogisticsTaskTemplateModel
     run = db.query(LogisticsTaskRunModel).filter(
@@ -209,8 +215,16 @@ def bot_status_overview(engine: str = "mcc",
         i.bot_id: i for i in instances if i.bot_id
     }
 
-    # ── 批量预取：当前任务（物流 > 地图画 > 仓库扫描，与 _get_bot_current_task 同优先级）──
+    # ── 批量预取：当前任务（手动标记 > 物流 > 地图画 > 仓库扫描，与 _get_bot_current_task 同优先级）──
     task_by_bot: dict[str, dict] = {}
+
+    # 0) 手动标记「工作中」（2026-08-13 任务管理，优先级最高）
+    from vmtools_next.data.models.logistics import MccBotModel as _MccBotModel
+    for _b in db.query(_MccBotModel).filter(_MccBotModel.manual_working.is_(True)).all():
+        if _b.bot_id:
+            _name = (_b.manual_task_name or "").strip() or "手动工作"
+            task_by_bot[_b.bot_id] = {"type": "manual", "name": _name,
+                                      "status": "running", "progress": None}
 
     # 1) 物流运行（logistics_task_runs）
     from vmtools_next.data.models.logistics import LogisticsTaskRunModel, LogisticsTaskTemplateModel

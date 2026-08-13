@@ -233,8 +233,13 @@ def _run_lightweight_migrations(engine) -> None:
                     b_columns = {row[1] for row in conn.execute(text("PRAGMA table_info(mcc_bots)")).fetchall()}
                     if "combat_config" not in b_columns:
                         conn.execute(text("ALTER TABLE mcc_bots ADD COLUMN combat_config TEXT"))
+                    # 手动标记「工作中」（2026-08-13 任务管理）：跨上下线保持
+                    if "manual_working" not in b_columns:
+                        conn.execute(text("ALTER TABLE mcc_bots ADD COLUMN manual_working BOOLEAN DEFAULT 0"))
+                    if "manual_task_name" not in b_columns:
+                        conn.execute(text("ALTER TABLE mcc_bots ADD COLUMN manual_task_name VARCHAR DEFAULT ''"))
                 except Exception as _e:
-                    logger.warning("mcc_bots combat_config migration check: {}", _e)
+                    logger.warning("mcc_bots manual_work migration check: {}", _e)
             conn.commit()
     except Exception as e:
         logger.warning("Lightweight migration check: {}", e)

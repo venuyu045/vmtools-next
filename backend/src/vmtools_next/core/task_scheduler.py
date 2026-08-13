@@ -180,8 +180,12 @@ class TaskScheduler:
         return candidates
 
     def _bot_busy(self, bot_id: str, db) -> bool:
-        """该 bot 是否已在运行中的地图画任务（assignment）或物流任务中。"""
+        """该 bot 是否已在运行中的地图画任务（assignment）、物流任务中，或手动标记「工作中」。"""
         try:
+            # 手动标记「工作中」（2026-08-13 任务管理）：调度器不派活
+            from vmtools_next.core.bot_work import get_manual_work
+            if get_manual_work(db, bot_id) is not None:
+                return True
             from vmtools_next.data.models.build_map_art import MapArtTask, MapArtBotAssignment
             from vmtools_next.data.models.logistics import LogisticsTaskRunModel
             running_tasks = db.query(MapArtTask.task_id).filter(
