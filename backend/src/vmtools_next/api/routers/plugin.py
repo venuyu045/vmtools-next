@@ -21,13 +21,18 @@ class ConfigUpdateRequest(BaseModel):
     config: dict
 
 
-@router.get("", response_model=list[PluginResponse])
-def list_plugins(user=Depends(require_admin)):
-    """List all plugins (mineflayer engine only)."""
+def _pm_or_503():
     from vmtools_next.main import get_plugin_manager
     pm = get_plugin_manager()
     if pm is None:
         raise HTTPException(status_code=503, detail="Plugin manager unavailable")
+    return pm
+
+
+@router.get("", response_model=list[PluginResponse])
+def list_plugins(user=Depends(require_admin)):
+    """List all plugins (mineflayer engine only)."""
+    pm = _pm_or_503()
     return [
         PluginResponse(
             name=p.name,
@@ -40,15 +45,30 @@ def list_plugins(user=Depends(require_admin)):
     ]
 
 
+@router.get("/status")
+def get_bot_plugin_status(bot_id: str, user=Depends(require_admin)):
+    """List all plugins with their per-bot enabled state (2026-08-13).
+
+    前端 MF 管理页「插件」tab 数据源：``GET /api/plugins/status?bot_id=xxx``。
+
+    ``enabled`` = 全局启停；``bot_enabled`` = 该 bot 实际生效状态
+    （bot 记录优先，无记录回退全局）。
+    """
+    pm = _pm_or_503()
+    return {"bot_id": bot_id, "plugins": pm.get_bot_status(bot_id)}
+
+
 @router.post("/{name}/enable")
-async def enable_plugin(name: str, user=Depends(require_admin)):
-    """Enable a plugin."""
-    from vmtools_next.main import get_plugin_manager
-    pm = get_plugin_manager()
-    if pm is None:
-        raise HTTPException(status_code=503, detail="Plugin manager unavailable")
+async def enable_plugin(name: str, user=Depends(require_admin), bot_id: str | None = None):
+    """Enable a plugin (globally, or for one bot when ``?bot_id=`` is given)."""
+    pm = _pm_or_503()
     if name not in pm.plugins:
         raise HTTPException(status_code=404, detail=f"Plugin not found: {name}")
+    if bot_id:
+        ok = await pm.set_bot_enabled(name, bot_id, True)
+        if not ok:
+            raise HTTPException(status_code=500, detail=f"Failed to enable plugin for bot: {name}")
+        return {"name": name, "bot_id": bot_id, "status": "enabled"}
     ok = await pm.enable(name)
     if not ok:
         raise HTTPException(status_code=500, detail=f"Failed to enable plugin: {name}")
@@ -56,14 +76,16 @@ async def enable_plugin(name: str, user=Depends(require_admin)):
 
 
 @router.post("/{name}/disable")
-async def disable_plugin(name: str, user=Depends(require_admin)):
-    """Disable a plugin."""
-    from vmtools_next.main import get_plugin_manager
-    pm = get_plugin_manager()
-    if pm is None:
-        raise HTTPException(status_code=503, detail="Plugin manager unavailable")
+async def disable_plugin(name: str, user=Depends(require_admin), bot_id: str | None = None):
+    """Disable a plugin (globally, or for one bot when ``?bot_id=`` is given)."""
+    pm = _pm_or_503()
     if name not in pm.plugins:
         raise HTTPException(status_code=404, detail=f"Plugin not found: {name}")
+    if bot_id:
+        ok = await pm.set_bot_enabled(name, bot_id, False)
+        if not ok:
+            raise HTTPException(status_code=500, detail=f"Failed to disable plugin for bot: {name}")
+        return {"name": name, "bot_id": bot_id, "status": "disabled"}
     ok = await pm.disable(name)
     if not ok:
         raise HTTPException(status_code=500, detail=f"Failed to disable plugin: {name}")
@@ -73,10 +95,7 @@ async def disable_plugin(name: str, user=Depends(require_admin)):
 @router.post("/{name}/reload")
 async def reload_plugin(name: str, user=Depends(require_admin)):
     """Reload a plugin."""
-    from vmtools_next.main import get_plugin_manager
-    pm = get_plugin_manager()
-    if pm is None:
-        raise HTTPException(status_code=503, detail="Plugin manager unavailable")
+    pm = _pm_or_503()
     if name not in pm.plugins:
         raise HTTPException(status_code=404, detail=f"Plugin not found: {name}")
     ok = await pm.reload(name)
@@ -91,10 +110,7 @@ def get_plugin_config(name: str, user=Depends(require_admin)):
 
     Returns 404 if the plugin is not loaded.
     """
-    from vmtools_next.main import get_plugin_manager
-    pm = get_plugin_manager()
-    if pm is None:
-        raise HTTPException(status_code=404, detail="Plugin manager unavailable")
+    pm = _pm_or_503()
     config = pm.get_config(name)
     if config is None:
         raise HTTPException(status_code=404, detail=f"Plugin not found: {name}")
@@ -119,10 +135,7 @@ async def update_plugin_config(name: str, body: ConfigUpdateRequest, user=Depend
     Partial updates are merged over the plugin's defaults, so unspecified
     keys keep their current values. Returns the effective (merged) config.
     """
-    from vmtools_next.main import get_plugin_manager
-    pm = get_plugin_manager()
-    if pm is None:
-        raise HTTPException(status_code=500, detail="Plugin manager unavailable")
+    pm = _pm_or_503()
     if pm.get_config(name) is None:
         raise HTTPException(status_code=404, detail=f"Plugin not found: {name}")
     ok = await pm.set_config(name, body.config)

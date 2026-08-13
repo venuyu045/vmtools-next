@@ -55,14 +55,7 @@
         <div class="actions" @click.stop>
           <button class="pixel-btn" :disabled="instance.status === 'running' || isBusy(instance.instance_id)" @click="handleStart(instance)">启动</button>
           <button class="pixel-btn warning" :disabled="instance.status !== 'running' || isBusy(instance.instance_id)" @click="handleStop(instance)">停止</button>
-
-          <!-- Bot 未在线时手动连接（MCP 连接自动，在线时无断开按钮） -->
-          <button
-            v-if="!getBot(instance) || getBot(instance)!.status !== 'online'"
-            class="pixel-btn outline"
-            @click="handleConnect(instance)"
-          >连接</button>
-
+          <!-- MCP/WS 连接已全自动（start_instance 内部收敛），不再提供手动连接按钮（2026-08-13） -->
           <button class="pixel-btn outline" @click="openInstance(instance, 'terminal')">详情</button>
           <button class="pixel-btn danger" :disabled="instance.status === 'running'" @click="handleDelete(instance)">删除</button>
           <label class="reconnect-toggle" :title="instance.auto_reconnect ? '已开启自动重连' : '开启自动重连'">
@@ -231,6 +224,13 @@
                 </div>
                 <div v-else class="empty-state">选择 Bot 实例查看攻击</div>
               </el-tab-pane>
+
+              <el-tab-pane v-if="isMf && selectedInstance?.bot_id" label="插件" name="plugins">
+                <div v-if="selectedInstance" class="inventory-tab">
+                  <PluginPanel :bot-id="selectedInstance.bot_id" />
+                </div>
+                <div v-else class="empty-state">选择 Bot 实例查看插件</div>
+              </el-tab-pane>
             </el-tabs>
           </div>
         </template>
@@ -321,11 +321,18 @@
               <div v-else class="empty-state">选择 Bot 实例查看背包</div>
             </el-tab-pane>
 
-            <el-tab-pane v-if="isMf && selectedInstance?.bot_id" label="攻击" name="combat">
+              <el-tab-pane v-if="isMf && selectedInstance?.bot_id" label="攻击" name="combat">
+                <div v-if="selectedInstance" class="inventory-tab">
+                  <CombatPanel :bot-id="selectedInstance.bot_id" />
+                </div>
+                <div v-else class="empty-state">选择 Bot 实例查看攻击</div>
+              </el-tab-pane>
+
+            <el-tab-pane v-if="isMf && selectedInstance?.bot_id" label="插件" name="plugins">
               <div v-if="selectedInstance" class="inventory-tab">
-                <CombatPanel :bot-id="selectedInstance.bot_id" />
+                <PluginPanel :bot-id="selectedInstance.bot_id" />
               </div>
-              <div v-else class="empty-state">选择 Bot 实例查看攻击</div>
+              <div v-else class="empty-state">选择 Bot 实例查看插件</div>
             </el-tab-pane>
           </el-tabs>
         </template>
@@ -371,6 +378,7 @@ import ContainerPanel from '@/components/bot/ContainerPanel.vue'
 import InventoryGrid from '@/components/bot/InventoryGrid.vue'
 import MoveControlPad from '@/components/bot/MoveControlPad.vue'
 import CombatPanel from '@/components/bot/CombatPanel.vue'
+import PluginPanel from '@/components/bot/PluginPanel.vue'
 import { useMccInstanceStore } from '@/stores/mccInstance'
 import { useBotStore } from '@/stores/bot'
 import { botApi } from '@/api/bot'
@@ -404,7 +412,7 @@ const engineTotalCount = computed(() => engineInstances.value.length)
 const showCreate = ref(false)
 const showProfileCreate = ref(false)
 const detailOpen = ref(false)
-const activeTab = ref<'terminal' | 'account' | 'files' | 'inventory' | 'combat'>('terminal')
+const activeTab = ref<'terminal' | 'account' | 'files' | 'inventory' | 'combat' | 'plugins'>('terminal')
 
 // ── MF 实时预览 + 实时坐标（实例详情抽屉顶部） ──
 const isMf = computed(() => engine.value === 'mineflayer')
@@ -664,40 +672,7 @@ async function forceKillAll() {
   }
 }
 
-// Bot connect / disconnect
-async function handleConnect(instance: MccInstance) {
-  let bot = getBot(instance)
-  // 如果还没有 Bot 记录，自动注册
-  if (!bot) {
-    try {
-      bot = await botStore.createBot({
-        bot_id: instance.slug,
-        name: instance.display_name || instance.slug,
-        mc_username: instance.mc_username || '',
-      } as any)
-      // 关联到实例
-      await mccInstanceApi.update(instance.instance_id, { bot_id: instance.slug })
-      instance.bot_id = instance.slug
-    } catch {
-      ElMessage.error('Bot 自动注册失败')
-      return
-    }
-  }
-  const config: any = {}
-  if (instance.mcp_host) config.host = instance.mcp_host
-  if (instance.mcp_port) config.port = instance.mcp_port
-  const result = await botStore.connectBot(bot!.bot_id, config)
-  const newStatus = result?.status || ''
-  if (newStatus === 'online') {
-    ElMessage.success('Bot 已连接')
-  } else if (newStatus === 'error') {
-    ElMessage.error(isMf.value
-      ? '连接失败：Bot 进程未响应（mineflayer 为自动连接，通常无需手动操作）'
-      : '连接失败：MCC MCP 服务器未响应。请确认 MCC 已进入 MC 游戏且 MCP 已启用')
-  } else {
-    ElMessage.warning('连接状态：' + newStatus)
-  }
-}
+// 手动连接已移除（MCP/WS 连接全自动，2026-08-13）；botStore.connectBot 保留供其他入口使用
 
 async function toggleReconnect(instance: MccInstance, event: Event) {
   const checked = (event.target as HTMLInputElement).checked

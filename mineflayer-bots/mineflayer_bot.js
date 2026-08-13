@@ -284,6 +284,10 @@ async function createBotProcess(options) {
           : (typeof jsonMsg.toString === 'function' ? jsonMsg.toString() : String(jsonMsg));
         if (text) {
           console.log(`${ANSI.green}[chat]${ANSI.reset} ${text}`);
+          // 服务器消息（含命令回显/系统提示）同时广播为 bot_message 事件，
+          // 供后端插件订阅（如 auto_afkfarm/auto_afk_super 检测指令响应）。
+          // 保留 toMotd 原始文本（含 § 码），插件端自行剥离。
+          broadcast(createEvent('bot_message', { message: text }));
         }
       } catch (err) {
         // 忽略单条消息解析失败，不影响后续

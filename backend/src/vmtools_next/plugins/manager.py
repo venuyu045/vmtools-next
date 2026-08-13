@@ -264,10 +264,89 @@ class PluginManager:
         return True
 
     async def dispatch_event(self, event_type: str, payload: dict) -> None:
-        """Dispatch an event to all enabled plugins."""
+        """Dispatch an event to all enabled plugins (per-bot aware, 2026-08-13).
+
+        bot 维度启停：若事件负载带 bot_id，则按该 bot 对该插件的记录
+        （plugin_bot_states）判断是否启用；无记录时回退全局 enabled。
+        """
+        bot_id = payload.get("bot_id") if isinstance(payload, dict) else None
         for name, plugin in self._plugins.items():
-            if self._enabled.get(name, False):
-                try:
-                    await plugin.on_event(event_type, payload)
-                except Exception as e:
-                    logger.warning("Plugin {} event error: {}", name, e)
+            if not self._enabled.get(name, False):
+                continue
+            if bot_id and not self.is_enabled_for_bot(name, bot_id):
+                continue
+            try:
+                await plugin.on_event(event_type, payload)
+            except Exception as e:
+                logger.warning("Plugin {} event error: {}", name, e)
+
+    # ── 按 bot 维度的插件启停（2026-08-13） ──
+    # 场景：不同 MF bot 需要不同插件（如 bot A 自动挂机 AFK、bot B 只做仓库）。
+    # 优先级：plugin_bot_states 记录（bot 专属） > plugin_states.enabled（全局）。
+    # 无 bot 记录 → 跟随全局；全局禁用 → 该 bot 也收不到事件。
+
+    def _load_bot_enabled(self, name: str, bot_id: str) -> Optional[bool]:
+        """Read per-bot enabled override; None if never set (follow global)."""
+        try:
+            from vmtools_next.data.db import get_session_factory
+            from vmtools_next.data.models.plugin import PluginBotStateModel
+            db = get_session_factory()()
+            try:
+                row = db.query(PluginBotStateModel).filter(
+                    PluginBotStateModel.bot_id == bot_id,
+                    PluginBotStateModel.plugin_name == name,
+                ).first()
+                return bool(row.enabled) if row is not None else None
+            finally:
+                db.close()
+        except Exception as e:
+            logger.warning("Failed to load bot plugin state {}/{}: {}", bot_id, name, e)
+            return None
+
+    def is_enabled_for_bot(self, name: str, bot_id: str) -> bool:
+        """True if the plugin should run for this bot (bot override > global)."""
+        bot_enabled = self._load_bot_enabled(name, bot_id)
+        if bot_enabled is not None:
+            return bot_enabled
+        return self._enabled.get(name, False)
+
+    async def set_bot_enabled(self, name: str, bot_id: str, enabled: bool) -> bool:
+        """Persist a per-bot plugin enable/disable override."""
+        if name not in self._plugins:
+            return False
+        try:
+            from vmtools_next.data.db import get_session_factory
+            from vmtools_next.data.models.plugin import PluginBotStateModel
+            db = get_session_factory()()
+            try:
+                row = db.query(PluginBotStateModel).filter(
+                    PluginBotStateModel.bot_id == bot_id,
+                    PluginBotStateModel.plugin_name == name,
+                ).first()
+                if row is None:
+                    row = PluginBotStateModel(bot_id=bot_id, plugin_name=name, enabled=enabled)
+                    db.add(row)
+                else:
+                    row.enabled = enabled
+                db.commit()
+            finally:
+                db.close()
+            logger.info("Plugin {} set {} for bot {} (enabled={})", name, "enabled" if enabled else "disabled", bot_id, enabled)
+            return True
+        except Exception as e:
+            logger.error("Failed to persist bot plugin state {}/{}: {}", bot_id, name, e)
+            return False
+
+    def get_bot_status(self, bot_id: str) -> list[dict]:
+        """Return every plugin's global + per-bot enabled state (for the UI)."""
+        result = []
+        for name, plugin in self._plugins.items():
+            result.append({
+                "name": name,
+                "version": getattr(plugin, "version", "0.0.1"),
+                "engine": getattr(plugin, "engine", "mineflayer"),
+                "description": getattr(plugin, "description", ""),
+                "enabled": self._enabled.get(name, False),
+                "bot_enabled": self.is_enabled_for_bot(name, bot_id),
+            })
+        return result
