@@ -156,6 +156,75 @@ class MineflayerSessionPool:
             logger.warning("Failed to sync bot status for %s: %s", bot_id, e)
 
     @staticmethod
+    async def _restore_combat_config(bot_id: str) -> None:
+        """bot 进入服务器后自动恢复上次开启的攻击模式（2026-08-13）。
+
+        从 mcc_bots.combat_config 读取持久化配置；仅当 enabled=true 时自动
+        重新启用（set_auto_attack / set_guard），实现「关闭 bot 再打开保持攻击模式」。
+        配置为 enabled=false 或无配置时不做任何事（前端面板仍可手动恢复参数）。
+        """
+        client = None
+        try:
+            # 从当前会话池取 client（本方法挂在池内，直接拿）
+            import json as _json
+            from vmtools_next.data.db import get_session_factory
+            from vmtools_next.data.models.logistics import MccBotModel
+            with get_session_factory()() as db:
+                row = db.query(MccBotModel).filter(
+                    MccBotModel.bot_id == bot_id,
+                ).first()
+                if not row or not row.combat_config:
+                    return
+                cfg = _json.loads(row.combat_config)
+            if not isinstance(cfg, dict) or not cfg.get("enabled"):
+                return
+            mode = cfg.get("mode")
+            if mode not in ("auto", "guard"):
+                return
+            # 找到该 bot 的会话 client
+            from vmtools_next.main import get_pool_for_engine
+            pool = get_pool_for_engine("mineflayer")
+            if not pool:
+                return
+            client = pool.get_client(bot_id)
+            if client is None:
+                logger.warning("Restore combat config for %s: client not connected", bot_id)
+                return
+            # 公共参数
+            kwargs = dict(
+                enabled=True,
+                radius=cfg.get("scan_radius") or cfg.get("radius") or 8,
+                scan_radius=cfg.get("scan_radius") or cfg.get("radius") or 8,
+                attack_radius=cfg.get("attack_radius") or 3.0,
+                target_types=cfg.get("target_types") or [],
+                interval_ms=cfg.get("interval_ms") or 1000,
+                interval_tick=cfg.get("interval_tick"),
+                interval_mode=cfg.get("interval_mode") or "auto",
+                stop_durability=cfg.get("stop_durability") or 0.1,
+                move_to_target=bool(cfg.get("move_to_target")),
+            )
+            if mode == "guard":
+                gp = cfg.get("guard_pos") or {}
+                result = await client.set_guard(
+                    x=gp.get("x"), y=gp.get("y"), z=gp.get("z"), **kwargs)
+            else:
+                tk = cfg.get("tricks") or {}
+                result = await client.set_auto_attack(
+                    enable_sprint_attack=tk.get("sprint", True),
+                    enable_jump_crit=tk.get("jump_crit", True),
+                    enable_wtap=tk.get("wtap", True),
+                    enable_stap=tk.get("stap", True),
+                    enable_strafe=tk.get("strafe", True),
+                    anti_afk=cfg.get("anti_afk", True),
+                    anti_afk_interval_ms=cfg.get("anti_afk_interval_ms") or 60000,
+                    **kwargs,
+                )
+            logger.info("Restored combat config for %s: mode=%s result_success=%s",
+                        bot_id, mode, bool(result and result.get("success")))
+        except Exception as e:
+            logger.warning("Restore combat config failed for %s: %s", bot_id, e)
+
+    @staticmethod
     async def _persist_bot_state(bot_id: str, status: dict) -> None:
         """把 mineflayer status 推送（坐标/血量/饱食度）写入 DB 并广播 Socket.IO。
 
@@ -251,6 +320,10 @@ class MineflayerSessionPool:
                         db.close()
                 except Exception as e:
                     logger.warning("Failed to sync instance status: %s", e)
+            elif event == "bot_spawned":
+                # bot 进入服务器（entity 就绪）→ 自动恢复上次开启的攻击模式
+                # （2026-08-13：关闭 bot 再打开，保持之前的自动攻击/守护配置）
+                await self._restore_combat_config(bot_id)
             elif event == "status":
                 # 定期状态推送（默认 5s，含 position/health/food）：
                 # 同步坐标/血量/饱食度到 DB + Socket.IO，状态页据此显示坐标与最近领地

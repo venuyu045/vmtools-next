@@ -30,7 +30,8 @@
             </el-select>
           </el-form-item>
           <el-form-item label="攻击间隔">
-            <el-input-number v-model="idle.interval_ms" :min="100" :max="60000" :step="100" /> ms
+            <el-input-number v-model="idle.interval_tick" :min="1" :max="1200" :step="5" /> tick
+            <span class="form-hint">20 tick = 1 秒</span>
           </el-form-item>
           <el-form-item label="耐久阈值">
             <el-input-number v-model="idle.stopPct" :min="1" :max="100" /> %
@@ -40,7 +41,7 @@
             <span style="margin-left: 6px; font-size: 12px; color: #888">
               每
               <el-input-number v-model="idle.antiAfkMs" :min="10" :max="3600" :step="10" style="width: 90px" />
-              秒转头+挥手+小跳，防服务器 AFK 判定扫不到实体
+              秒转头，防服务器 AFK 判定扫不到实体
             </span>
           </el-form-item>
         </el-form>
@@ -73,7 +74,8 @@
             </el-select>
           </el-form-item>
           <el-form-item label="攻击间隔">
-            <el-input-number v-model="pvp.interval_ms" :min="100" :max="60000" :step="100" /> ms
+            <el-input-number v-model="pvp.interval_tick" :min="1" :max="1200" :step="5" /> tick
+            <span class="form-hint">20 tick = 1 秒</span>
           </el-form-item>
           <el-form-item label="攻击节奏">
             <el-select v-model="pvp.interval_mode" style="width: 100%">
@@ -197,9 +199,9 @@ const idle = reactive({
   scan_radius: 8,
   attack_radius: 3,
   target_types: [] as string[],
-  interval_ms: 1000,
+  interval_tick: 20,   // MC 攻击间隔（tick，20 tick = 1 秒）
   stopPct: 10,
-  anti_afk: true,        // 防挂机心跳（防服务器 AFK 判定扫不到实体）
+  anti_afk: true,        // 防挂机心跳（仅转头，2026-08-13）
   antiAfkMs: 60,         // 心跳间隔（秒）
 })
 const pvp = reactive({
@@ -207,8 +209,8 @@ const pvp = reactive({
   scan_radius: 16,
   attack_radius: 3,
   target_types: [] as string[],
-  interval_ms: 1000,
-  interval_mode: 'auto',   // auto=按武器攻速 | manual=interval_ms
+  interval_tick: 20,   // MC 攻击间隔（tick，20 tick = 1 秒）
+  interval_mode: 'auto',   // auto=按武器攻速 | manual=interval_tick
   stopPct: 10,
   // 高版本 PvP 技巧（2026-08-11，默认全开=激进）
   sprint_attack: true,
@@ -238,7 +240,7 @@ function syncFromStatus(data: any) {
     const scanR = cfg.scan_radius ?? cfg.radius ?? 8
     const atkR = cfg.attack_radius ?? 3
     const tts = Array.isArray(cfg.target_types) ? [...cfg.target_types] : []
-    const iv = cfg.interval_ms ?? 1000
+    const iv = cfg.interval_tick ?? Math.round((cfg.interval_ms ?? 1000) / 50)
     const stp = Math.round((cfg.stop_durability ?? 0.1) * 100)
     const isMove = !!cfg.move_to_target
     const en = !!cfg.enabled
@@ -249,7 +251,7 @@ function syncFromStatus(data: any) {
       pvp.scan_radius = scanR
       pvp.attack_radius = atkR
       pvp.target_types = tts
-      pvp.interval_ms = iv
+      pvp.interval_tick = iv
       pvp.interval_mode = cfg.interval_mode === 'manual' ? 'manual' : 'auto'
       pvp.stopPct = stp
       const tk = cfg.tricks || {}
@@ -264,7 +266,7 @@ function syncFromStatus(data: any) {
       idle.scan_radius = scanR
       idle.attack_radius = atkR
       idle.target_types = tts
-      idle.interval_ms = iv
+      idle.interval_tick = iv
       idle.stopPct = stp
       idle.anti_afk = cfg.anti_afk ?? true
       idle.antiAfkMs = Math.round((cfg.anti_afk_interval_ms ?? 60000) / 1000)
@@ -338,7 +340,7 @@ async function saveIdle() {
       scan_radius: idle.scan_radius,
       attack_radius: idle.attack_radius,
       target_types: idle.target_types,
-      interval_ms: idle.interval_ms,
+      interval_tick: idle.interval_tick,
       anti_afk: idle.anti_afk,
       anti_afk_interval_ms: Math.round((idle.antiAfkMs || 60) * 1000),
       interval_mode: 'auto',
@@ -368,7 +370,7 @@ async function savePvp() {
       scan_radius: pvp.scan_radius,
       attack_radius: pvp.attack_radius,
       target_types: pvp.target_types,
-      interval_ms: pvp.interval_ms,
+      interval_tick: pvp.interval_tick,
       interval_mode: pvp.interval_mode,
       stop_durability: pvp.stopPct / 100,
       move_to_target: true,
@@ -458,7 +460,7 @@ async function startGuard() {
       scan_radius: pvp.scan_radius,
       attack_radius: pvp.attack_radius,
       target_types: pvp.target_types,
-      interval_ms: pvp.interval_ms,
+      interval_tick: pvp.interval_tick,
       stop_durability: pvp.stopPct / 100,
       move_to_target: true,
     })

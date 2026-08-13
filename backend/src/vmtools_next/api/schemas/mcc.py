@@ -13,7 +13,9 @@ class CombatAutoAttackRequest(BaseModel):
     attack_radius: float = Field(default=3.0, ge=0.5, le=8.0)      # 实际出手距离
     target_types: list[str] = Field(default_factory=list)
     interval_ms: int = Field(default=1000, ge=100, le=60000)
-    interval_mode: str = "auto"  # auto=按武器攻速 | manual=用 interval_ms
+    # 2026-08-13：MC 习惯单位 tick（1 秒=20 tick），优先于 interval_ms（ms=tick*50）
+    interval_tick: Optional[int] = Field(default=None, ge=1, le=1200)
+    interval_mode: str = "auto"  # auto=按武器攻速 | manual=用 interval_ms/interval_tick
     stop_durability: float = Field(default=0.1, ge=0.0, le=1.0)
     # 2026-08-11：false=挂机（不动，只打攻击半径内）；true=PVP（寻路追击到攻击半径内）
     move_to_target: bool = False
@@ -45,6 +47,8 @@ class CombatGuardRequest(BaseModel):
     attack_radius: float = Field(default=3.0, ge=0.5, le=8.0)
     target_types: list[str] = Field(default_factory=list)
     interval_ms: int = Field(default=1000, ge=100, le=60000)
+    # 2026-08-13：MC 习惯单位 tick（1 秒=20 tick），优先于 interval_ms（ms=tick*50）
+    interval_tick: Optional[int] = Field(default=None, ge=1, le=1200)
     interval_mode: str = Field(default="auto", pattern="^(auto|manual)$")
     stop_durability: float = Field(default=0.1, ge=0.0, le=1.0)
     # 2026-08-11：false=只打近身，true=追出扫描半径外攻击（绕点回防不变）

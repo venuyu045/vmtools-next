@@ -176,17 +176,35 @@ function createCombatHandlers(bot, ctx = {}) {
   // 跳劈（下落攻击1.5x）、W-tap/S-tap（重置冲刺→目标击退小→连击）、strafe 环绕。
   // 假人自身不受击退，技巧核心 = 控制【目标】击退距离 + 连击 + 走位躲避瞄准。
 
-  /** 武器攻速 → 攻击冷却（毫秒）。攻速=每秒攻击次数，冷却 = 1000/攻速。 */
-  function weaponAttackIntervalMs(itemName) {
-    if (!itemName) return 250; // 空手 4.0 次/s
+  /** 武器攻速 → 攻击冷却（tick，MC 1.9+ 标准：1 秒=20 tick）。
+   *  MC 原版攻速换算：冷却 tick = round(20 / 攻速)。 */
+  function weaponAttackIntervalTick(itemName) {
+    if (!itemName) return 5; // 空手 4.0 次/s → 5 tick
     const n = String(itemName).toLowerCase();
-    if (n.includes('sword')) return 625;    // 剑 1.6 → 0.625s
-    if (n.includes('trident')) return 909;  // 三叉戟 1.1 → 0.91s
-    if (n.includes('pickaxe')) return 833;  // 镐 1.2 → 0.83s
-    if (n.includes('shovel')) return 1000;  // 锹 1.0
-    if (n.includes('hoe')) return 1000;     // 锄 1.0
-    if (n.includes('axe')) return 1000;     // 斧 0.8~1.0，简化 1.0s
-    return 1000;                            // 默认 1.0 次/s
+    if (n.includes('sword')) return 10;    // 剑 1.6 → 10 tick（0.5s）
+    if (n.includes('trident')) return 15;  // 三叉戟 1.1 → 15 tick（0.75s）
+    if (n.includes('pickaxe')) return 12;  // 镐 1.2 → 12 tick（0.6s）
+    if (n.includes('shovel')) return 20;   // 锹 1.0 → 20 tick（1s）
+    if (n.includes('hoe')) return 20;      // 锄 1.0 → 20 tick（1s）
+    if (n.includes('axe')) return 25;      // 斧 0.8~1.0 → 25 tick（1.25s）
+    return 20;                             // 默认 1.0 次/s → 20 tick
+  }
+
+  /** 武器攻速 → 攻击冷却（毫秒，内部换算：1 tick = 50ms） */
+  function weaponAttackIntervalMs(itemName) {
+    return weaponAttackIntervalTick(itemName) * 50;
+  }
+
+  /** 当前配置的攻击间隔（毫秒）：manual=用户 tick/ms，auto=按武器攻速。
+   *  tick 优先（interval_tick 为 MC 习惯单位，20tick=1s），兼容旧 interval_ms。 */
+  function intervalMsOf(state) {
+    if (state && state.interval_tick != null) {
+      return Math.max(50, state.interval_tick * 50);
+    }
+    if (state && state.interval_ms != null) {
+      return Math.max(50, state.interval_ms);
+    }
+    return 1000;
   }
 
   let strafeDir = true;
@@ -234,8 +252,8 @@ function createCombatHandlers(bot, ctx = {}) {
     }
   }
 
-  /** 防挂机心跳：转头 + 挥手 + 原地小跳（位置不变，但服务器判定活跃，
-   *  避免 AFK 标记导致实体同步中断、扫不到附近实体/玩家）。 */
+  /** 防挂机心跳：仅转头（用户要求：只要转头即可，去掉挥手/小跳）。
+   *  转头会触发位置/朝向更新同步，多数 AFK 插件判定为活跃。 */
   function antiAfkAction(state) {
     if (!state || !state.anti_afk || state.move_to_target) return;
     const now = Date.now();
@@ -245,14 +263,6 @@ function createCombatHandlers(bot, ctx = {}) {
       // 转头（随机方向，触发位置/朝向更新同步）
       const yaw = Math.random() * Math.PI * 2;
       bot.look(yaw, 0);
-      // 挥手（交互动作，多数 AFK 插件判定为活跃）
-      bot.swingArm('right');
-      // 原地小跳：只改变 y 不改变 x/z（若转头+挥手不足以活跃，跳跃可兜底）
-      bot.setControlState('jump', true);
-      if (state.jumpTimer) clearTimeout(state.jumpTimer);
-      state.jumpTimer = setTimeout(() => {
-        try { bot.setControlState('jump', false); } catch (e) { /* ignore */ }
-      }, 80);
     } catch (e) { /* ignore */ }
   }
 
@@ -336,9 +346,9 @@ function createCombatHandlers(bot, ctx = {}) {
     if (!entity) return { scanned: targets.length };
 
     const now = Date.now();
-    // 攻击冷却：auto=按武器攻速；manual=前端手动间隔
+    // 攻击冷却：auto=按武器攻速；manual=前端手动间隔（tick 优先）
     const interval = state.interval_mode === 'manual'
-      ? state.interval_ms
+      ? intervalMsOf(state)
       : weaponAttackIntervalMs(bot.heldItem ? (bot.heldItem.name || '') : '');
     const dist = bot.entity.position.distanceTo(entity.position);
 
@@ -465,9 +475,9 @@ function createCombatHandlers(bot, ctx = {}) {
     const scanR = state.scan_radius ?? state.radius ?? 8;
     const atkR = state.attack_radius ?? 3;
     const now = Date.now();
-    // 挂机模式攻击冷却：auto=按武器攻速（防疯狂攻击伤害衰减）；manual=用配置间隔
+    // 挂机模式攻击冷却：auto=按武器攻速（防疯狂攻击伤害衰减）；manual=用配置间隔（tick 优先）
     const interval = state.interval_mode === 'manual'
-      ? state.interval_ms
+      ? intervalMsOf(state)
       : weaponAttackIntervalMs(bot.heldItem ? (bot.heldItem.name || '') : '');
     if (state.lastAttackAt && (now - state.lastAttackAt) < interval) {
       return { cooling: true };
@@ -491,6 +501,9 @@ function createCombatHandlers(bot, ctx = {}) {
       attack_radius: state.attack_radius ?? 3,
       target_types: state.target_types,
       interval_ms: state.interval_ms,
+      interval_tick: state.interval_tick != null
+        ? state.interval_tick
+        : Math.round((state.interval_ms != null ? state.interval_ms : 1000) / 50),
       interval_mode: state.interval_mode || 'auto',
       stop_durability: state.stop_durability,
       move_to_target: state.move_to_target,
@@ -525,13 +538,15 @@ function createCombatHandlers(bot, ctx = {}) {
 
   function set_auto_attack({
     enabled = true, radius = 8, scan_radius = null, attack_radius = 3,
-    target_types = [], interval_ms = 1000, interval_mode = 'auto',
+    target_types = [], interval_ms = 1000, interval_tick = null, interval_mode = 'auto',
     stop_durability = 0.1, move_to_target = false,
     enable_sprint_attack = true, enable_jump_crit = true,
     enable_wtap = true, enable_stap = true, enable_strafe = true,
     anti_afk = true, anti_afk_interval_ms = 60000,
   } = {}) {
     stopTimers();
+    // tick 优先（MC 习惯单位），无 tick 时用旧 interval_ms 兼容
+    const ivTick = interval_tick != null ? Math.max(1, Number(interval_tick) || 20) : null;
     autoAttack = {
       enabled: Boolean(enabled),
       mode: 'auto',
@@ -540,6 +555,7 @@ function createCombatHandlers(bot, ctx = {}) {
       radius: Number(scan_radius) || Number(radius) || 8, // 兼容旧引用
       target_types: Array.isArray(target_types) ? target_types : [],
       interval_ms: Math.max(100, Number(interval_ms) || 1000),
+      interval_tick: ivTick,
       interval_mode: interval_mode === 'manual' ? 'manual' : 'auto',
       stop_durability: Number(stop_durability) || 0.1,
       move_to_target: Boolean(move_to_target),
@@ -577,10 +593,12 @@ function createCombatHandlers(bot, ctx = {}) {
     return { success: true, config: summarize(autoAttack) };
   }
 
-  function set_guard({ enabled = true, x = null, y = null, z = null, radius = 8, scan_radius = null, attack_radius = 3, target_types = [], interval_ms = 1000, interval_mode = 'auto', stop_durability = 0.1, move_to_target = false } = {}) {
+  function set_guard({ enabled = true, x = null, y = null, z = null, radius = 8, scan_radius = null, attack_radius = 3, target_types = [], interval_ms = 1000, interval_tick = null, interval_mode = 'auto', stop_durability = 0.1, move_to_target = false } = {}) {
     stopTimers();
     const pos = bot.entity.position;
     const scanR = Number(scan_radius) || Number(radius) || 8;
+    // tick 优先（MC 习惯单位），无 tick 时用旧 interval_ms 兼容
+    const ivTick = interval_tick != null ? Math.max(1, Number(interval_tick) || 20) : null;
     guard = {
       enabled: Boolean(enabled),
       mode: 'guard',
@@ -591,6 +609,7 @@ function createCombatHandlers(bot, ctx = {}) {
       radius: scanR, // 兼容旧引用
       target_types: Array.isArray(target_types) ? target_types : [],
       interval_ms: Math.max(100, Number(interval_ms) || 1000),
+      interval_tick: ivTick,
       interval_mode: interval_mode === 'manual' ? 'manual' : 'auto',
       stop_durability: Number(stop_durability) || 0.1,
       move_to_target: Boolean(move_to_target),
