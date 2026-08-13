@@ -48,6 +48,15 @@ _LOGISTICS_STATUS_LABEL = {
     "cancelled": "已取消",
 }
 
+_SCAN_STATUS_LABEL = {
+    "pending": "排队中",
+    "running": "运行中",
+    "paused": "已暂停",
+    "completed": "已完成",
+    "failed": "失败",
+    "cancelled": "已取消",
+}
+
 
 def _iso(dt) -> Optional[str]:
     return dt.isoformat() if dt else None
@@ -125,7 +134,7 @@ def tasks_overview(
     db: Session = Depends(get_db),
     user=Depends(get_current_user),
 ):
-    """任务中心聚合：地图画 + 物流统一列表、统计、Bot 执行视角。"""
+    """任务中心聚合：地图画 + 物流 + 仓库扫描统一列表、统计、Bot 执行视角。"""
     # 地图画任务（含 bot 分配，取最近 100 条）
     map_art_tasks = db.query(MapArtTask).order_by(
         MapArtTask.created_at.desc()
@@ -151,6 +160,18 @@ def tasks_overview(
         ).all()
         template_name_map = {t.template_id: t.name for t in tpls}
 
+    # 仓库扫描任务（2026-08-13 补：任务中心此前漏掉扫描，扫描中 bot 显示空闲）
+    from vmtools_next.data.models.warehouse import ScanQueueModel, WarehouseModel
+    scan_runs = db.query(ScanQueueModel).order_by(
+        ScanQueueModel.created_at.desc()
+    ).limit(100).all()
+    wh_name_map: dict[str, str] = {}
+    if scan_runs:
+        wh_ids = {s.warehouse_id for s in scan_runs}
+        for w in db.query(WarehouseModel).filter(
+                WarehouseModel.warehouse_id.in_(wh_ids)).all():
+            wh_name_map[w.warehouse_id] = w.name or w.warehouse_id
+
     tasks: list[dict] = []
     for t in map_art_tasks:
         tasks.append(_map_art_to_task(t, assignments_by_task.get(t.task_id, [])))
@@ -160,6 +181,21 @@ def tasks_overview(
             template_name_map.get(r.template_id, ""),
             _resolve_engine_safe(db, r.bot_id),
         ))
+    for s in scan_runs:
+        tasks.append({
+            "type": "scan",
+            "id": s.queue_id,
+            "name": f"仓库扫描·{wh_name_map.get(s.warehouse_id, s.warehouse_id)}",
+            "status": s.status,
+            "status_label": _SCAN_STATUS_LABEL.get(s.status, s.status),
+            "progress": {"percent": round((s.progress or 0.0) * 100, 1)},
+            "bots": [{"bot_id": s.bot_id, "bot_name": s.bot_id}],
+            "engine": "mineflayer",
+            "detail_url": "/warehouses",
+            "created_at": _iso(s.created_at),
+            "started_at": _iso(s.started_at),
+            "finished_at": _iso(s.finished_at),
+        })
 
     # Bot 列表（2026-08-13 任务中心仅服务 MF：只返回 mineflayer 引擎的 bot）
     from vmtools_next.core.bot_work import get_manual_work

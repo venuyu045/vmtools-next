@@ -85,12 +85,13 @@
           <el-tab-pane label="全部" name="all" />
           <el-tab-pane label="地图画建造" name="map_art" />
           <el-tab-pane label="物流任务" name="logistics" />
+          <el-tab-pane label="仓库扫描" name="scan" />
         </el-tabs>
       </div>
       <el-table :data="filteredTasks" v-loading="loading" stripe empty-text="暂无任务" size="default">
         <el-table-column label="类型" width="90">
           <template #default="{ row }">
-            <span class="task-type" :class="row.type">{{ row.type === 'map_art' ? '地图画' : '物流' }}</span>
+            <span class="task-type" :class="row.type">{{ taskTypeLabel(row.type) }}</span>
           </template>
         </el-table-column>
         <el-table-column prop="name" label="任务名" min-width="160" show-overflow-tooltip />
@@ -149,7 +150,7 @@ import { useSocketIO } from '@/composables/useSocketIO'
 import { fmtApiTime } from '@/utils/time'
 
 interface TaskRow {
-  type: 'map_art' | 'logistics' | 'manual'
+  type: 'map_art' | 'logistics' | 'scan' | 'manual'
   id: string
   name: string
   status: string
@@ -215,7 +216,7 @@ const botCards = computed(() => {
 })
 
 function taskTypeLabel(type: string): string {
-  return { manual: '手动', map_art: '地图画', logistics: '物流' }[type] || type
+  return { manual: '手动', map_art: '地图画', logistics: '物流', scan: '仓库扫描' }[type] || type
 }
 
 function taskPct(t: TaskRow): number {
@@ -238,6 +239,10 @@ function botStatusLabel(s: string): string {
 
 async function controlTask(row: TaskRow, action: string) {
   try {
+    if (row.type === 'scan') {
+      ElMessage.info('仓库扫描的暂停/恢复/停止请在仓库详情页操作')
+      return
+    }
     if (row.type === 'map_art') {
       const { data } = await mapArtApi.controlTask(row.id, action)
       ElMessage.success(data?.message || `任务已${action}`)
@@ -266,6 +271,8 @@ async function deleteTask(row: TaskRow) {
 function goDetail(row: TaskRow) {
   if (row.type === 'map_art') {
     router.push(`/map-art/${row.id}`)
+  } else if (row.type === 'scan') {
+    router.push('/warehouses')
   } else {
     router.push('/logistics/runs')
   }
@@ -378,6 +385,7 @@ onBeforeUnmount(() => {
 .task-type { font-size: 10px; font-weight: 700; padding: 1px 8px; border-radius: 999px; flex-shrink: 0; }
 .task-type.map_art { background: rgba(217, 119, 87, 0.15); color: var(--accent); }
 .task-type.logistics { background: rgba(108, 122, 140, 0.15); color: #6c7a8c; }
+.task-type.scan { background: rgba(64, 158, 255, 0.15); color: #409eff; }
 .task-type.manual { background: rgba(217, 119, 87, 0.2); color: var(--accent); }
 .task-box.current.manual { border-color: var(--accent); }
 .task-status { font-size: 11px; padding: 1px 8px; border-radius: 999px; flex-shrink: 0; }

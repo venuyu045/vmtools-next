@@ -1,0 +1,1 @@
+import{i as e}from"./auth-C8q8epFL.js";var t={getOverview(){return e.get(`/tasks/overview`)},getManualWork(){return e.get(`/tasks/manual-work`)},setManualWork(t,n,r){return e.put(`/tasks/manual-work/${t}`,{working:n,name:r})}};export{t};
