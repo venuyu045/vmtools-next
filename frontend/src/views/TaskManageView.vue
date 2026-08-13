@@ -44,19 +44,14 @@
               <span v-else class="muted-text">空闲</span>
             </td>
             <td>
-              <el-select
+              <el-input
                 v-model="b.nameInput"
-                filterable
-                allow-create
-                default-first-option
-                placeholder="输入或选择工作名称"
+                placeholder="输入自定义工作名称（如：挂机farm、刷铁机…）"
+                clearable
                 style="width: 100%"
                 size="small"
-                :disabled="!b.working"
-                @change="(v: string) => b.nameInput = v || ''"
-              >
-                <el-option v-for="p in PRESETS" :key="p" :label="p" :value="p" />
-              </el-select>
+                @input="(v: string) => b.nameInput = v || ''"
+              />
             </td>
             <td>
               <el-switch
@@ -84,9 +79,6 @@
 import { onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { tasksApi } from '@/api/tasks'
-
-/** 常用工作名称快捷预设 */
-const PRESETS = ['挂机 farm', '刷铁机', '农作物机', '全自动刷怪塔', '潜影盒整理', '建筑搭建', '挖矿', '手动挂机']
 
 interface ManualWorkRow {
   bot_id: string
