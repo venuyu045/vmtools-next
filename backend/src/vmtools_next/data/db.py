@@ -121,6 +121,7 @@ def init_db() -> None:
     # Import all model modules so Base.metadata knows about every table
     from vmtools_next.data.models import (  # noqa: F401
         warehouse, auth, logistics, build, mcc_session, mcc_remote, plugin, monitor, player_tracking, lixiangxiang,
+        scheduled_task,
     )
 
     Base.metadata.create_all(bind=engine)

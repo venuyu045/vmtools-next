@@ -88,7 +88,7 @@
           <el-tab-pane label="仓库扫描" name="scan" />
         </el-tabs>
       </div>
-      <el-table :data="filteredTasks" v-loading="loading" stripe empty-text="暂无任务" size="default">
+      <el-table :data="pagedTasks" v-loading="loading" stripe empty-text="暂无任务" size="default">
         <el-table-column label="类型" width="90">
           <template #default="{ row }">
             <span class="task-type" :class="row.type">{{ taskTypeLabel(row.type) }}</span>
@@ -108,7 +108,7 @@
             <span v-else class="muted-text">—</span>
           </template>
         </el-table-column>
-        <el-table-column label="进度" width="160">
+        <el-table-column label="进度 / 任务信息" width="190">
           <template #default="{ row }">
             <el-progress
               :percentage="taskPct(row)"
@@ -118,7 +118,12 @@
             <div class="task-meta mono">{{ taskProgressText(row) }}</div>
           </template>
         </el-table-column>
-        <el-table-column label="创建时间" width="150">
+        <el-table-column label="用时" width="110">
+          <template #default="{ row }">
+            <span class="mono">{{ formatDuration(row.duration_seconds, row.status) }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="创建时间" width="140">
           <template #default="{ row }">{{ fmtApiTime(row.created_at, { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) }}</template>
         </el-table-column>
         <el-table-column label="操作" width="230" fixed="right">
@@ -130,17 +135,25 @@
               <el-button v-if="['running', 'paused', 'pending', 'draft'].includes(row.status)" size="small" type="warning" plain @click="controlTask(row, 'stop')">停止</el-button>
               <el-button v-if="row.type === 'map_art' && ['draft', 'cancelled', 'completed'].includes(row.status)" size="small" type="danger" plain @click="deleteTask(row)">删除</el-button>
             </template>
-            <el-button size="small" @click="goDetail(row)">详情</el-button>
           </template>
         </el-table-column>
       </el-table>
+      <div class="pager-row">
+        <el-pagination
+          v-if="filteredTasks.length > pageSize"
+          layout="total, prev, pager, next"
+          :total="filteredTasks.length"
+          :page-size="pageSize"
+          :current-page="page"
+          @current-change="page = $event"
+        />
+      </div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { tasksApi } from '@/api/tasks'
 import { mapArtApi } from '@/api/mapArt'
@@ -161,6 +174,16 @@ interface TaskRow {
   detail_url?: string
   created_at?: string
   error_message?: string | null
+  /** 用时（秒，2026-08-13） */
+  duration_seconds?: number | null
+  /** 仓库扫描细节 */
+  items_scanned?: number
+  scanned_containers?: number
+  total_containers?: number
+  failed_containers?: number
+  /** 物流细节 */
+  current_state?: string | null
+  loop_count?: number
 }
 
 interface BotInfo {
@@ -173,7 +196,6 @@ interface BotInfo {
   manual?: { working: boolean; name: string } | null
 }
 
-const router = useRouter()
 const authStore = useAuthStore()
 const { on, off } = useSocketIO()
 
@@ -203,6 +225,16 @@ const filteredTasks = computed(() => {
   return tasks.value.filter(t => t.type === activeTab.value)
 })
 
+// 分页（每页 10 条，2026-08-13）
+const pageSize = 10
+const page = ref(1)
+const pagedTasks = computed(() => {
+  const list = filteredTasks.value
+  const start = (page.value - 1) * pageSize
+  return list.slice(start, start + pageSize)
+})
+watch(activeTab, () => { page.value = 1 })
+
 /** Bot → 当前任务 + 排队任务映射（手动标记「工作中」优先展示，2026-08-13） */
 const botCards = computed(() => {
   return bots.value.map(bot => {
@@ -229,8 +261,39 @@ function taskPct(t: TaskRow): number {
 }
 
 function taskProgressText(t: TaskRow): string {
+  // 仓库扫描：扫描物品/容器/失败（2026-08-13 按任务类型显示具体信息）
+  if (t.type === 'scan') {
+    const parts: string[] = []
+    if (t.items_scanned != null) parts.push(`物品 ${t.items_scanned}`)
+    if (t.scanned_containers != null && t.total_containers != null) parts.push(`容器 ${t.scanned_containers}/${t.total_containers}`)
+    if (t.failed_containers) parts.push(`失败 ${t.failed_containers}`)
+    const pct = taskPct(t)
+    return parts.length ? `${parts.join(' · ')}（${pct}%）` : `${pct}%`
+  }
+  // 物流：循环次数 + 当前状态
+  if (t.type === 'logistics') {
+    const bits: string[] = []
+    if (t.loop_count != null && t.loop_count > 0) bits.push(`循环 ${t.loop_count} 次`)
+    if (t.current_state && t.current_state !== 'IDLE') bits.push(t.current_state)
+    const pct = taskPct(t)
+    return bits.length ? `${pct}%${bits.map(b => ` · ${b}`).join('')}` : `${pct}%`
+  }
   if (t.progress.percent != null) return `${taskPct(t)}%`
   return `${t.progress.placed || 0} / ${t.progress.total || 0} 方块`
+}
+
+/** 任务用时格式化（2026-08-13 替换原「详情」按钮） */
+function formatDuration(sec: number | null | undefined, status: string): string {
+  if (sec == null) return '—'
+  const s = Math.max(0, Math.floor(sec))
+  const d = Math.floor(s / 86400)
+  const h = Math.floor((s % 86400) / 3600)
+  const m = Math.floor((s % 3600) / 60)
+  const secs = s % 60
+  if (d > 0) return `${d}天${h}时`
+  if (h > 0) return `${h}时${m}分`
+  if (m > 0) return `${m}分${secs}秒`
+  return `${secs}秒`
 }
 
 function botStatusLabel(s: string): string {
@@ -266,16 +329,6 @@ async function deleteTask(row: TaskRow) {
     ElMessage.success('已删除')
     fetchOverview()
   } catch { /* 取消 */ }
-}
-
-function goDetail(row: TaskRow) {
-  if (row.type === 'map_art') {
-    router.push(`/map-art/${row.id}`)
-  } else if (row.type === 'scan') {
-    router.push('/warehouses')
-  } else {
-    router.push('/logistics/runs')
-  }
 }
 
 /** socket：build_progress（地图画进度）与 task_queue_update（队列变化）到达即刷新 */
@@ -408,4 +461,8 @@ onBeforeUnmount(() => {
   .section-header { flex-direction: column; align-items: flex-start; }
   .task-tabs { width: 100%; }
 }
+
+/* 分页（2026-08-13） */
+.pager-row { display: flex; justify-content: flex-end; padding-top: 6px; }
+.mono { font-variant-numeric: tabular-nums; }
 </style>

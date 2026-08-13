@@ -270,6 +270,14 @@ async def lifespan(app: FastAPI):
     await get_task_scheduler().start()
     logger.info("Task Scheduler started")
 
+    # 7.7 定时任务调度器（任务管理页定时调度 + 7 天记录清理，2026-08-13）
+    from vmtools_next.core.scheduled_task_scheduler import (
+        ScheduledTaskScheduler, set_scheduled_task_scheduler, get_scheduled_task_scheduler,
+    )
+    set_scheduled_task_scheduler(ScheduledTaskScheduler(poll_interval=60.0))
+    await get_scheduled_task_scheduler().start()
+    logger.info("Scheduled Task Scheduler started")
+
     # 8. QQ Bot notification service
     from vmtools_next.core.qqbot_notify import start as qqbot_start
     await qqbot_start()
@@ -307,6 +315,10 @@ async def lifespan(app: FastAPI):
         await _mineflayer_process_manager.stop_all()
     if _scan_queue_manager:
         await _scan_queue_manager.stop()
+    from vmtools_next.core.scheduled_task_scheduler import get_scheduled_task_scheduler
+    _sts = get_scheduled_task_scheduler()
+    if _sts:
+        await _sts.stop()
     from vmtools_next.core.task_scheduler import get_task_scheduler
     _ts = get_task_scheduler()
     if _ts:
