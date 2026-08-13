@@ -278,13 +278,14 @@ class ScheduledTaskScheduler:
                 return False
             # 已发起启动 → 纳入自动管理（无论是否超时，空闲后都会被下线收尾）
             self._auto_managed.add(bot_id)
-            # 等待 WS 连接成功（SessionPool 将 mcc_bots.status 置 online），最多 180s
-            for _ in range(60):
+            # 等待 WS 连接成功（SessionPool 将 mcc_bots.status 置 online），最多 300s
+            # （yggdrasil 等慢速认证首次登录可能需 3~5 分钟）
+            for _ in range(100):
                 await asyncio.sleep(3)
                 bot = db.query(MccBotModel).filter(MccBotModel.bot_id == bot_id).first()
                 if bot and bot.status == "online":
                     return True
-            logger.warning("Auto-manage: bot {} start timeout (180s), will shutdown when idle", bot_id)
+            logger.warning("Auto-manage: bot {} start timeout (300s), will shutdown when idle", bot_id)
             return False
         finally:
             db.close()
@@ -300,7 +301,7 @@ class ScheduledTaskScheduler:
         try:
             for bid in list(self._auto_managed):
                 try:
-                    if await self._should_stay_online(db, bid):
+                    if self._should_stay_online(db, bid):
                         continue
                     inst = db.query(MccInstanceModel).filter(
                         MccInstanceModel.bot_id == bid,
