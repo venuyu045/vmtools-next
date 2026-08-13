@@ -278,13 +278,18 @@ class ScheduledTaskScheduler:
                 return False
             # 已发起启动 → 纳入自动管理（无论是否超时，空闲后都会被下线收尾）
             self._auto_managed.add(bot_id)
-            # 等待 WS 连接成功（SessionPool 将 mcc_bots.status 置 online），最多 300s
-            # （yggdrasil 等慢速认证首次登录可能需 3~5 分钟）
+            # 等待 WS 连接成功（SessionPool 将 mcc_bots.status 置 online），最多 300s。
+            # 注意：轮询必须用独立短 session（同一 session 的 identity map 会缓存
+            # 旧 status 导致永远读不到 online——此前 90s/180s/300s 三次超时的根因）。
             for _ in range(100):
                 await asyncio.sleep(3)
-                bot = db.query(MccBotModel).filter(MccBotModel.bot_id == bot_id).first()
-                if bot and bot.status == "online":
-                    return True
+                s2 = Session()
+                try:
+                    bot2 = s2.query(MccBotModel).filter(MccBotModel.bot_id == bot_id).first()
+                    if bot2 and bot2.status == "online":
+                        return True
+                finally:
+                    s2.close()
             logger.warning("Auto-manage: bot {} start timeout (300s), will shutdown when idle", bot_id)
             return False
         finally:
@@ -301,7 +306,9 @@ class ScheduledTaskScheduler:
         try:
             for bid in list(self._auto_managed):
                 try:
-                    if self._should_stay_online(db, bid):
+                    stay = self._should_stay_online(db, bid)
+                    logger.info("Auto-manage check {}: stay_online={}", bid, stay)
+                    if stay:
                         continue
                     inst = db.query(MccInstanceModel).filter(
                         MccInstanceModel.bot_id == bid,
@@ -314,9 +321,9 @@ class ScheduledTaskScheduler:
                     mgr = get_mineflayer_process_manager()
                     if mgr is None:
                         continue
-                    await mgr.stop_instance(inst.instance_id, preserve_desired_state=False)
+                    r = await mgr.stop_instance(inst.instance_id, preserve_desired_state=False)
                     self._auto_managed.discard(bid)
-                    logger.info("Auto-manage: bot {} offline (all scheduled tasks finished)", bid)
+                    logger.info("Auto-manage: bot {} offline (all scheduled tasks finished): {}", bid, r.get("status"))
                 except Exception as e:
                     logger.warning("Auto-manage shutdown {} error: {}", bid, e)
         finally:
