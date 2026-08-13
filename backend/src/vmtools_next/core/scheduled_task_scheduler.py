@@ -244,10 +244,11 @@ class ScheduledTaskScheduler:
     # ── 自动上线 / 下线（2026-08-13 定时任务生命周期管理） ──
 
     async def _ensure_bot_online(self, bot_id: str) -> bool:
-        """确保 bot 在线：离线则启动对应 mineflayer 实例并等待上线（最多 ~90s）。
+        """确保 bot 在线：离线则启动对应 mineflayer 实例并等待上线（最多 ~180s）。
 
-        只对 auto_manage 定时任务调用；成功上线的 bot 记入 _auto_managed，
-        由 _maybe_shutdown_idle 在任务全部完成后自动下线。
+        只对 auto_manage 定时任务调用；无论是否在超时前上线，只要已发起启动，
+        bot_id 都会记入 _auto_managed，由 _maybe_shutdown_idle 在任务全部完成后
+        自动下线（避免「启动了但没人管」的 bot 残留在线）。
         """
         from vmtools_next.data.models.logistics import MccBotModel
         from vmtools_next.data.models.mcc_remote import MccInstanceModel
@@ -275,14 +276,15 @@ class ScheduledTaskScheduler:
             except Exception as e:
                 logger.warning("Auto-manage: start {} failed: {}", bot_id, e)
                 return False
-            # 等待 WS 连接成功（SessionPool 将 mcc_bots.status 置 online）
-            for _ in range(30):
+            # 已发起启动 → 纳入自动管理（无论是否超时，空闲后都会被下线收尾）
+            self._auto_managed.add(bot_id)
+            # 等待 WS 连接成功（SessionPool 将 mcc_bots.status 置 online），最多 180s
+            for _ in range(60):
                 await asyncio.sleep(3)
                 bot = db.query(MccBotModel).filter(MccBotModel.bot_id == bot_id).first()
                 if bot and bot.status == "online":
-                    self._auto_managed.add(bot_id)
                     return True
-            logger.warning("Auto-manage: bot {} start timeout (90s)", bot_id)
+            logger.warning("Auto-manage: bot {} start timeout (180s), will shutdown when idle", bot_id)
             return False
         finally:
             db.close()
