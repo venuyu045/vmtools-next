@@ -1,12 +1,19 @@
 import { defineStore } from 'pinia'
 import { pluginApi } from '@/api/plugin'
 
+export interface PluginBotState {
+  bot_id: string
+  bot_enabled: boolean
+}
+
 export interface Plugin {
   name: string
   version: string
   enabled: boolean
   engine: string
   description: string
+  /** 每个 MF bot 对该插件的实际启用状态（2026-08-13） */
+  bots: PluginBotState[]
 }
 
 export const usePluginStore = defineStore('plugin', {

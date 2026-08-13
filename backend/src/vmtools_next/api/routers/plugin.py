@@ -9,12 +9,19 @@ from vmtools_next.api.deps import require_admin
 router = APIRouter(prefix="/api/plugins", tags=["plugins"])
 
 
+class PluginBotState(BaseModel):
+    bot_id: str
+    bot_enabled: bool
+
+
 class PluginResponse(BaseModel):
     name: str
     version: str
     enabled: bool
     engine: str = "mineflayer"
     description: str = ""
+    # 每个 MF bot 对该插件的实际启用状态（2026-08-13，插件管理页展示/配置）
+    bots: list[PluginBotState] = []
 
 
 class ConfigUpdateRequest(BaseModel):
@@ -31,8 +38,13 @@ def _pm_or_503():
 
 @router.get("", response_model=list[PluginResponse])
 def list_plugins(user=Depends(require_admin)):
-    """List all plugins (mineflayer engine only)."""
+    """List all plugins (mineflayer engine only), with per-bot enabled states.
+
+    ``bots`` 列出每个 MF bot 对该插件的实际启用状态（bot 记录优先，无记录回退
+    全局），供插件管理页展示「哪些 bot 启用了此插件」并在弹窗中直接配置。
+    """
     pm = _pm_or_503()
+    overview = {p["name"]: p for p in pm.get_plugin_bot_overview()}
     return [
         PluginResponse(
             name=p.name,
@@ -40,6 +52,7 @@ def list_plugins(user=Depends(require_admin)):
             enabled=pm.is_enabled(p.name),
             engine=getattr(p, "engine", "mineflayer"),
             description=getattr(p, "description", ""),
+            bots=overview.get(p.name, {}).get("bots", []),
         )
         for p in pm.plugins.values()
     ]

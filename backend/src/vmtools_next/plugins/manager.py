@@ -350,3 +350,60 @@ class PluginManager:
                 "bot_enabled": self.is_enabled_for_bot(name, bot_id),
             })
         return result
+
+    def _list_mf_bot_ids(self) -> list[str]:
+        """Query all mineflayer-engine bot ids (mcc_bots + mcc_instances mapping).
+
+        Engine 判定与 mcc_bot.py overview 一致：优先实例声明的 bot_engine，
+        无实例时回退 'mcc'。插件体系仅服务 mineflayer，故只列 MF bot。
+        """
+        try:
+            from vmtools_next.data.db import get_session_factory
+            from vmtools_next.data.models.logistics import MccBotModel
+            from vmtools_next.data.models.mcc_remote import MccInstanceModel
+            db = get_session_factory()()
+            try:
+                bot_rows = db.query(MccBotModel.bot_id).all()
+                inst_rows = db.query(MccInstanceModel.bot_id, MccInstanceModel.bot_engine).filter(
+                    MccInstanceModel.deleted_at.is_(None),
+                    MccInstanceModel.bot_id.isnot(None),
+                ).all()
+            finally:
+                db.close()
+            inst_by_bot: dict[str, str] = {i.bot_id: i.bot_engine for i in inst_rows if i.bot_id}
+            mf_bots = set()
+            for (bid,) in bot_rows:
+                if (inst_by_bot.get(bid) or "mcc") == "mineflayer":
+                    mf_bots.add(bid)
+            # 实例声明 mineflayer 但 mcc_bots 尚无记录（bot 未注册/未拉起）也列出
+            for i in inst_rows:
+                if i.bot_id and (i.bot_engine or "mcc") == "mineflayer":
+                    mf_bots.add(i.bot_id)
+            return sorted(mf_bots)
+        except Exception as e:
+            logger.warning("Failed to list MF bot ids: {}", e)
+            return []
+
+    def get_plugin_bot_overview(self) -> list[dict]:
+        """Global view: every plugin + each MF bot's effective state (for plugin mgmt page).
+
+        Each entry: {name, version, engine, description, enabled(global),
+        bots: [{bot_id, bot_enabled}]} where bot_enabled is the effective
+        per-bot state (bot override > global).
+        """
+        bot_ids = self._list_mf_bot_ids()
+        result = []
+        for name, plugin in self._plugins.items():
+            bots = [
+                {"bot_id": bid, "bot_enabled": self.is_enabled_for_bot(name, bid)}
+                for bid in bot_ids
+            ]
+            result.append({
+                "name": name,
+                "version": getattr(plugin, "version", "0.0.1"),
+                "engine": getattr(plugin, "engine", "mineflayer"),
+                "description": getattr(plugin, "description", ""),
+                "enabled": self._enabled.get(name, False),
+                "bots": bots,
+            })
+        return result
