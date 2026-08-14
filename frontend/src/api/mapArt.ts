@@ -56,6 +56,13 @@ export const mapArtApi = {
   saveSupplyBoxes(taskId: string, items: { item_id: string; boxes: { x: number; y: number; z: number }[] }[]) {
     return client.put(`/build/map-art/tasks/${taskId}/supply-boxes`, { items })
   },
+  /** 2026-08-14 三期：全局补货仓库（材料→潜影盒，任务自动复用） */
+  getSupplyWarehouse() {
+    return client.get('/build/map-art/supply-warehouse')
+  },
+  saveSupplyWarehouse(items: { item_id: string; boxes: { x: number; y: number; z: number }[] }[]) {
+    return client.put('/build/map-art/supply-warehouse', { items })
+  },
   /** 2026-08-14 二期：补货潜影盒模板（可复用配置） */
   listSupplyTemplates() {
     return client.get('/build/map-art/supply-templates')

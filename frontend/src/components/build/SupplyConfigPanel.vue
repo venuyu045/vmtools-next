@@ -27,6 +27,7 @@
           bot 补货时按顺序取货，取空自动尝试下一个坐标；未配置坐标的材料回退旧补货方式。
         </p>
         <div class="tpl-actions">
+          <el-button size="small" @click="syncFromWarehouse">🔄 从全局仓库同步</el-button>
           <el-button size="small" @click="openSaveTpl">💾 保存为模板</el-button>
           <el-button size="small" @click="openImportTpl">📥 从模板导入</el-button>
         </div>
@@ -113,6 +114,28 @@ const tplList = ref<any[]>([])
 function openSaveTpl() {
   saveTplName.value = ''
   saveTplOpen.value = true
+}
+
+/** 2026-08-14 三期：从全局补货仓库同步本任务材料（未配置坐标的材料自动复用全局，任务级配置优先） */
+async function syncFromWarehouse() {
+  try {
+    const { data } = await mapArtApi.getSupplyWarehouse()
+    const globalMap = new Map<string, Box[]>()
+    for (const it of ((data.items || []) as any[])) {
+      globalMap.set(it.item_id, ((it.boxes || []) as any[]).map((b: any) => ({ x: b.x, y: b.y, z: b.z })))
+    }
+    let synced = 0
+    for (const it of items.value) {
+      const gBoxes = globalMap.get(it.item_id)
+      if (gBoxes && gBoxes.length > 0 && it.boxes.length === 0) {
+        it.boxes = gBoxes.map((b) => ({ x: b.x, y: b.y, z: b.z }))
+        synced++
+      }
+    }
+    ElMessage.success(synced > 0 ? `已同步 ${synced} 种材料的全局仓库坐标（保存后生效）` : '无新增（材料均已有配置或全局仓库无该材料）')
+  } catch (e) {
+    ElMessage.error(errMsg(e, '同步全局仓库失败'))
+  }
 }
 async function doSaveTpl() {
   savingTpl.value = true

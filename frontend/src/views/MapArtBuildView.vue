@@ -164,6 +164,10 @@ const route = useRoute()
 const taskId = computed(() => route.params.taskId as string)
 const { on: sockOn, off: sockOff, emit: sockEmit } = useSocketIO()
 
+// ── 方块数据缓存（2026-08-14 三期）：同任务再次进入不再重新"正在加载" ──
+// 模块级 Map：组件卸载不丢，再次进入先用缓存秒开，后台静默刷新一次。
+const blockCache = new Map<string, any>()
+
 const task = ref<any>(null)
 const bots = ref<any[]>([])
 const materials = ref<any[]>([])
@@ -301,17 +305,26 @@ async function fetchTask() {
     bots.value = data.bots || []
     await loadAvailableBots()
 
-    loadingBlocks.value = true
+    // 方块数据：有缓存先秒开（不再"正在加载"），后台静默刷新一次
+    const cached = blockCache.get(taskId.value)
+    if (cached) {
+      blockData.value = cached
+      loadingBlocks.value = false
+    } else {
+      loadingBlocks.value = true
+    }
     try {
       const { data: blockResp } = await mapArtApi.getBlocks(taskId.value)
-      blockData.value = {
+      const fresh = {
         task_id: blockResp.task_id,
         blocks: blockResp.blocks || [],
         bots: blockResp.bots || [],
         origin: blockResp.origin || { x: 0, y: 64, z: 0 },
         size: blockResp.size || { x: 32, z: 32 },
       }
-    } catch { /* 方块数据可能尚未生成 */ }
+      blockCache.set(taskId.value, fresh)
+      blockData.value = fresh // 后台刷新：缓存/首次都更新为最新（含 placed 进度）
+    } catch { /* 方块数据可能尚未生成；有缓存则保留缓存 */ }
     loadingBlocks.value = false
   } catch (e) {
     ElMessage.error(errMsg(e, '获取任务详情失败'))

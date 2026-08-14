@@ -193,6 +193,23 @@ class MapArtSupplyTemplate(Base):
                          onupdate=lambda: datetime.now(timezone.utc))
 
 
+class MapArtSupplyWarehouse(Base):
+    """全局补货仓库（2026-08-14 三期）：材料 → 潜影盒坐标映射（全局一份）。
+
+    用户直接设定"某种材料放在哪个潜影盒"，任何地图画任务建造补货时
+    自动按材料复用（coordinator 加载任务级配置后合并全局仓库）。
+    """
+
+    __tablename__ = "map_art_supply_warehouse"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    item_id = Column(String(128), nullable=False, unique=True, index=True)  # "minecraft:white_concrete"
+    # JSON：[{"x":..,"y":..,"z":..}, ...]
+    boxes_json = Column(Text, default="[]")
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc),
+                         onupdate=lambda: datetime.now(timezone.utc))
+
+
 class MapArtBlockState(Base):
     """Per-block state in the map art build area.
 

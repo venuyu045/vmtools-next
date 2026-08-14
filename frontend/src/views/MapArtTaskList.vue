@@ -8,9 +8,16 @@
       </div>
     </div>
 
-    <!-- 补货潜影盒模板管理（2026-08-14 二期） -->
-    <el-dialog v-model="showTemplates" title="补货仓库 · 潜影盒模板" width="680px">
-      <SupplyTemplateManager />
+    <!-- 补货仓库（2026-08-14 三期：全局仓库为主，模板保留为备份） -->
+    <el-dialog v-model="showTemplates" title="补货仓库" width="760px">
+      <el-tabs>
+        <el-tab-pane label="📦 全局仓库（材料↔潜影盒）">
+          <SupplyWarehouseEditor />
+        </el-tab-pane>
+        <el-tab-pane label="🗂 模板（备份）">
+          <SupplyTemplateManager />
+        </el-tab-pane>
+      </el-tabs>
     </el-dialog>
 
     <el-table :data="tasks" stripe v-loading="loading" empty-text="暂无任务">
@@ -85,6 +92,7 @@ import { useMccInstanceStore } from '@/stores/mccInstance'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { errMsg } from '@/utils/error'
 import SupplyTemplateManager from '@/components/build/SupplyTemplateManager.vue'
+import SupplyWarehouseEditor from '@/components/build/SupplyWarehouseEditor.vue'
 
 const botStore = useBotStore()
 const mccStore = useMccInstanceStore()

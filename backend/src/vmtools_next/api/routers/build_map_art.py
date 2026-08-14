@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 from vmtools_next.api.deps import get_db, get_current_user, require_admin
 from vmtools_next.data.models.build_map_art import (
     MapArtTask, MapArtMaterial, MapArtBotAssignment, MapArtBlockState, MapArtSupplyBox, MapArtSupplyTemplate,
+    MapArtSupplyWarehouse,
 )
 from vmtools_next.adapters.litematica.litematica_parser import LitematicaParser
 from vmtools_next.core.map_art_coordinator import (
@@ -184,6 +185,19 @@ class SupplyTemplateCreate(BaseModel):
 
 class SupplyTemplateApply(BaseModel):
     task_id: str
+
+
+def _load_global_warehouse(db: Session) -> dict[str, list[tuple[int, int, int]]]:
+    """读取全局补货仓库（材料 → 潜影盒坐标列表）。"""
+    result: dict[str, list[tuple[int, int, int]]] = {}
+    rows = db.query(MapArtSupplyWarehouse).all()
+    for r in rows:
+        try:
+            boxes = json.loads(r.boxes_json or "[]")
+            result[r.item_id] = [(int(b["x"]), int(b["y"]), int(b["z"])) for b in boxes if "x" in b]
+        except Exception:
+            continue
+    return result
 
 
 def _default_supply_config() -> dict:
@@ -834,6 +848,43 @@ def apply_supply_template(tpl_id: int, data: SupplyTemplateApply, db: Session = 
             saved += 1
     db.commit()
     return {"status": "ok", "applied_materials": saved > 0, "saved": saved}
+
+
+@router.get("/supply-warehouse")
+def get_supply_warehouse(db: Session = Depends(get_db), user=Depends(require_admin)):
+    """读取全局补货仓库（2026-08-14 三期）：全部材料 → 潜影盒坐标映射。"""
+    rows = db.query(MapArtSupplyWarehouse).order_by(MapArtSupplyWarehouse.item_id).all()
+    items = []
+    for r in rows:
+        try:
+            boxes = json.loads(r.boxes_json or "[]")
+        except Exception:
+            boxes = []
+        items.append({"item_id": r.item_id, "boxes": boxes})
+    return {"items": items}
+
+
+@router.put("/supply-warehouse")
+def put_supply_warehouse(data: SupplyBoxesRequest, db: Session = Depends(get_db),
+                         user=Depends(require_admin)):
+    """整体保存全局补货仓库（2026-08-14 三期）：`[{item_id, boxes:[{x,y,z}]}]`。
+
+    整体替换：先删旧再插新。任务补货时会自动合并全局仓库（任务级优先）。
+    """
+    # 清洗：去空坐标、去前缀、去空材料
+    cleaned = []
+    for it in data.items:
+        item_id = it.item_id.split("[")[0]
+        boxes = [{"x": b.x, "y": b.y, "z": b.z} for b in it.boxes
+                 if not (b.x == 0 and b.y == 0 and b.z == 0)]
+        if item_id and boxes:
+            cleaned.append((item_id, boxes))
+    # 整体替换
+    db.query(MapArtSupplyWarehouse).delete()
+    for item_id, boxes in cleaned:
+        db.add(MapArtSupplyWarehouse(item_id=item_id, boxes_json=json.dumps(boxes, ensure_ascii=False)))
+    db.commit()
+    return {"status": "ok", "materials": len(cleaned)}
 
 
 @router.get("/tasks/{task_id}/blocks/placed")

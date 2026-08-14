@@ -1,6 +1,6 @@
 <template>
   <div class="build2d-wrap">
-    <!-- 画布工具栏：缩放 + bot 分区开关（2026-08-14） -->
+    <!-- 画布工具栏：缩放 + bot 分区开关 -->
     <div class="canvas-toolbar">
       <span class="tb-btn" title="缩小" @click="zoomOut">−</span>
       <span class="tb-zoom mono">{{ Math.round(zoom * 100) }}%</span>
@@ -9,27 +9,32 @@
       <span class="tb-sep"></span>
       <el-switch v-model="showRegions" size="small" />
       <span class="tb-label">bot 分区</span>
+      <span class="tb-hint" v-if="zoom > 1">放大后可拖动画布查看任意位置</span>
     </div>
 
+    <!-- 容器：固定区域可滚动；stage 撑开滚动范围；canvas transform 缩放（不重绘） -->
     <div ref="container" class="build2d-container">
-      <div class="canvas-zoom" :style="{ transform: `scale(${zoom})` }">
-        <canvas ref="canvas" class="map-canvas" />
+      <div class="canvas-stage" :style="{ width: stageW + 'px', height: stageH + 'px' }">
+        <canvas
+          ref="canvas"
+          class="map-canvas"
+          :style="{ transform: `scale(${zoom})`, transformOrigin: 'top left' }"
+        />
       </div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, watch, nextTick } from 'vue'
+import { ref, onMounted, onUnmounted, computed, watch, nextTick } from 'vue'
 import { mapArtApi } from '@/api/mapArt'
 
 /**
- * 地图画 2D 俯视预览画布（2026-08-14 二期完善）：
- * - 视角：正上方中心往下（俯视），按投影尺寸自适应居中
- * - 方块渲染：使用 item-icons 官方贴图；已放置=正常显示，未放置=半透明虚化
- * - bot 标记：build_bot_status 推送的实时位置 → 按 bot 颜色画圆点 + 名字
- * - bot 分区：每个 bot 的分配区域用其固定颜色矩形框显示（可开关）
- * - 缩放：transform scale + localStorage 持久化（下次进入保持）
+ * 地图画 2D 俯视预览画布（2026-08-14 三期视图重做）：
+ * - 画布物理尺寸固定（容器尺寸算一次，ResizeObserver 更新），render 不重设尺寸
+ * - 缩放：canvas CSS transform:scale（纯视觉，不重绘）；stage 撑开 = 尺寸×zoom → 滚动条正确
+ * - 拖拽平移：放大后按住拖动画布查看任意位置
+ * - bot 分区开关只重绘内容，尺寸不变 → 无跳动
  */
 
 export interface BotMarker {
@@ -53,27 +58,51 @@ const emit = defineEmits<{ ready: [] }>()
 const container = ref<HTMLElement>()
 const canvas = ref<HTMLCanvasElement>()
 
-// ── 缩放（持久化到 localStorage，下次进入保持） ──
+// ── 缩放（持久化 localStorage） ──
 const ZOOM_KEY = 'vmtools-mapart-zoom'
 const MIN_ZOOM = 0.5
-const MAX_ZOOM = 2.5
-const zoom = ref(parseFloat(localStorage.getItem(ZOOM_KEY) || '1') || 1)
+const MAX_ZOOM = 3
+const zoom = ref(clampZoom(parseFloat(localStorage.getItem(ZOOM_KEY) || '1') || 1))
 function clampZoom(v: number): number { return Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, v)) }
-zoom.value = clampZoom(zoom.value)
-watch(zoom, (v) => {
-  try { localStorage.setItem(ZOOM_KEY, String(clampZoom(v))) } catch { /* 隐私模式 */ }
-})
+watch(zoom, (v) => { try { localStorage.setItem(ZOOM_KEY, String(clampZoom(v))) } catch { /* 隐私模式 */ } })
 function zoomIn() { zoom.value = clampZoom(Math.round((zoom.value + 0.1) * 10) / 10) }
 function zoomOut() { zoom.value = clampZoom(Math.round((zoom.value - 0.1) * 10) / 10) }
 function resetZoom() { zoom.value = 1 }
 
-// ── bot 分区区域框开关（默认开） ──
+// ── bot 分区开关（默认开） ──
 const showRegions = ref(true)
 
-// ── 贴图缓存：/static/item-icons/{pure_id}.png ──
+// ── 画布物理尺寸（固定，px；由容器尺寸算一次） ──
+const cw = ref(0)
+const ch = ref(0)
+// stage 撑开层尺寸 = 画布尺寸 × zoom（撑开滚动范围）
+const stageW = computed(() => Math.round(cw.value * zoom.value))
+const stageH = computed(() => Math.round(ch.value * zoom.value))
+
+// ── 拖拽平移（放大后拖动画布查看任意位置） ──
+let dragging = false
+let dragStartX = 0
+let dragStartY = 0
+let scrollStartLeft = 0
+let scrollStartTop = 0
+function onPointerDown(e: PointerEvent) {
+  dragging = true
+  dragStartX = e.clientX
+  dragStartY = e.clientY
+  scrollStartLeft = container.value?.scrollLeft ?? 0
+  scrollStartTop = container.value?.scrollTop ?? 0
+  container.value?.setPointerCapture?.(e.pointerId)
+}
+function onPointerMove(e: PointerEvent) {
+  if (!dragging || !container.value) return
+  container.value.scrollLeft = scrollStartLeft - (e.clientX - dragStartX)
+  container.value.scrollTop = scrollStartTop - (e.clientY - dragStartY)
+}
+function onPointerUp() { dragging = false }
+
+// ── 贴图缓存 ──
 const textureCache = new Map<string, HTMLImageElement>()
 const textureLoading = new Map<string, Promise<void>>()
-
 function loadTexture(itemId: string): Promise<void> {
   if (textureCache.has(itemId)) return Promise.resolve()
   if (textureLoading.has(itemId)) return textureLoading.get(itemId)!
@@ -88,7 +117,6 @@ function loadTexture(itemId: string): Promise<void> {
   textureLoading.set(itemId, p)
   return p
 }
-
 async function preloadTextures() {
   const ids = new Set<string>()
   for (const m of props.materials || []) ids.add(m.item_id)
@@ -96,7 +124,7 @@ async function preloadTextures() {
   await Promise.all([...ids].map(id => loadTexture(id)))
 }
 
-// ── 颜色：稳定哈希（同一 bot 永远同色，重启不漂移） ──
+// ── 颜色 ──
 function stableColor(seed: string): string {
   let h = 2166136261
   for (let i = 0; i < seed.length; i++) {
@@ -106,7 +134,6 @@ function stableColor(seed: string): string {
   const c = (h >>> 0) & 0xFFFFFF
   return `#${c.toString(16).padStart(6, '0')}`
 }
-
 const COLORS: Record<string, string> = {
   'minecraft:white_wool': '#FFFFFF', 'minecraft:orange_wool': '#F9801D',
   'minecraft:magenta_wool': '#C74EBD', 'minecraft:light_blue_wool': '#3AB3DA',
@@ -118,7 +145,6 @@ const COLORS: Record<string, string> = {
   'minecraft:red_wool': '#B02E26', 'minecraft:black_wool': '#1D1D21',
   'minecraft:white_concrete': '#CFD5D6', 'minecraft:orange_concrete': '#E06300',
 }
-
 function blockColor(blockId: string): string {
   const clean = blockId.split('[')[0]
   return COLORS[clean] ?? stableColor(clean)
@@ -128,10 +154,9 @@ interface Geo {
   minX: number; maxX: number; minZ: number; maxZ: number
   cellSize: number; offsetX: number; offsetY: number
 }
-
-function computeGeo(cw: number, ch: number): Geo | null {
+function computeGeo(): Geo | null {
   const blocks = props.initData?.blocks
-  if (!blocks?.length) return null
+  if (!blocks?.length || cw.value <= 0) return null
   let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity
   for (const b of blocks) {
     minX = Math.min(minX, b.x); maxX = Math.max(maxX, b.x)
@@ -139,18 +164,15 @@ function computeGeo(cw: number, ch: number): Geo | null {
   }
   const cols = maxX - minX + 1
   const rows = maxZ - minZ + 1
-  const cellSize = Math.max(4, Math.min(40, Math.floor(Math.min(cw / cols, ch / rows))))
+  const cellSize = Math.max(4, Math.min(40, Math.floor(Math.min(cw.value / cols, ch.value / rows))))
   const totalW = cols * cellSize
   const totalH = rows * cellSize
   return {
-    minX, maxX, minZ, maxZ,
-    cellSize,
-    offsetX: Math.floor((cw - totalW) / 2),
-    offsetY: Math.floor((ch - totalH) / 2) + 30,
+    minX, maxX, minZ, maxZ, cellSize,
+    offsetX: Math.floor((cw.value - totalW) / 2),
+    offsetY: Math.floor((ch.value - totalH) / 2),
   }
 }
-
-/** 世界/相对坐标 → 画布像素 */
 function toCanvas(geo: Geo, wx: number, wz: number): { x: number; y: number } {
   return { x: geo.offsetX + (wx - geo.minX) * geo.cellSize, y: geo.offsetY + (wz - geo.minZ) * geo.cellSize }
 }
@@ -178,7 +200,6 @@ function drawBlock(ctx: CanvasRenderingContext2D, cx: number, cy: number, cs: nu
   }
 }
 
-/** bot 位置点 */
 function drawBotMarkers(ctx: CanvasRenderingContext2D, geo: Geo) {
   const bots = props.botPositions || []
   if (!bots.length) return
@@ -187,27 +208,16 @@ function drawBotMarkers(ctx: CanvasRenderingContext2D, geo: Geo) {
     if (!b.position || b.position.x == null || b.position.z == null) continue
     const { x: cx, y: cy } = toCanvas(geo, b.position.x, b.position.z)
     const color = b.color || stableColor(b.bot_id)
-    ctx.beginPath()
-    ctx.arc(cx, cy, r + 2, 0, Math.PI * 2)
-    ctx.fillStyle = 'rgba(255,255,255,0.9)'
-    ctx.fill()
-    ctx.beginPath()
-    ctx.arc(cx, cy, r, 0, Math.PI * 2)
-    ctx.fillStyle = color
-    ctx.fill()
-    ctx.lineWidth = 1
-    ctx.strokeStyle = 'rgba(0,0,0,0.6)'
-    ctx.stroke()
-    ctx.font = '10px monospace'
-    ctx.fillStyle = '#ffffff'
-    ctx.shadowColor = 'rgba(0,0,0,0.9)'
-    ctx.shadowBlur = 3
+    ctx.beginPath(); ctx.arc(cx, cy, r + 2, 0, Math.PI * 2); ctx.fillStyle = 'rgba(255,255,255,0.9)'; ctx.fill()
+    ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.fillStyle = color; ctx.fill()
+    ctx.lineWidth = 1; ctx.strokeStyle = 'rgba(0,0,0,0.6)'; ctx.stroke()
+    ctx.font = '10px monospace'; ctx.fillStyle = '#ffffff'
+    ctx.shadowColor = 'rgba(0,0,0,0.9)'; ctx.shadowBlur = 3
     ctx.fillText(b.bot_name || b.bot_id, cx + r + 2, cy + 4)
     ctx.shadowBlur = 0
   }
 }
 
-/** bot 分配区域框（固定颜色矩形 + 名字标注） */
 function drawRegions(ctx: CanvasRenderingContext2D, geo: Geo) {
   if (!showRegions.value) return
   const bots = props.botPositions || []
@@ -220,44 +230,41 @@ function drawRegions(ctx: CanvasRenderingContext2D, geo: Geo) {
     const h = p2.y - p1.y + geo.cellSize
     const color = b.color || stableColor(b.bot_id)
     ctx.save()
-    ctx.strokeStyle = color
-    ctx.lineWidth = 2
-    ctx.setLineDash([6, 4])
+    ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.setLineDash([6, 4])
     ctx.strokeRect(p1.x - 2, p1.y - 2, w + 4, h + 4)
     ctx.setLineDash([])
-    // 区域角标：bot 名
     ctx.font = 'bold 11px monospace'
     const label = b.bot_name || b.bot_id
     const tw = ctx.measureText(label).width
-    ctx.fillStyle = color
-    ctx.globalAlpha = 0.85
+    ctx.fillStyle = color; ctx.globalAlpha = 0.85
     ctx.fillRect(p1.x - 2, p1.y - 2, tw + 8, 15)
-    ctx.globalAlpha = 1
-    ctx.fillStyle = '#ffffff'
+    ctx.globalAlpha = 1; ctx.fillStyle = '#ffffff'
     ctx.fillText(label, p1.x + 2, p1.y + 10)
     ctx.restore()
   }
 }
 
+/** 重绘画布内容（canvas 物理尺寸不变，不引起布局跳动） */
 function render() {
   const cvs = canvas.value
-  if (!cvs || !props.initData?.blocks?.length) return
-
-  const cw = cvs.clientWidth
-  const ch = cvs.clientHeight - 60
-  const geo = computeGeo(cw, ch)
+  if (!cvs || !props.initData?.blocks?.length || cw.value <= 0 || ch.value <= 0) return
+  const geo = computeGeo()
   if (!geo) return
 
   const ctx = cvs.getContext('2d')!
   const dpr = window.devicePixelRatio || 1
-  cvs.width = cw * dpr
-  cvs.height = (ch + 40) * dpr
-  cvs.style.width = cw + 'px'
-  cvs.style.height = (ch + 40) + 'px'
-  ctx.scale(dpr, dpr)
+  // 物理尺寸固定：只在尺寸变化时由 initSize 设置；这里不重设 width/height（防跳动/清空闪烁）
+  if (cvs.width !== Math.round(cw.value * dpr) || cvs.height !== Math.round(ch.value * dpr)) {
+    cvs.width = Math.round(cw.value * dpr)
+    cvs.height = Math.round(ch.value * dpr)
+  }
+  // CSS 尺寸 = 物理尺寸（px）；缩放由 stage + transform 处理，避免 CSS 拉伸与 scale 双重缩放
+  cvs.style.width = cw.value + 'px'
+  cvs.style.height = ch.value + 'px'
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
 
   ctx.fillStyle = '#1a1a2e'
-  ctx.fillRect(0, 0, cw, ch + 40)
+  ctx.fillRect(0, 0, cw.value, ch.value)
 
   let placed = 0
   for (const b of props.initData.blocks) {
@@ -265,29 +272,38 @@ function render() {
     drawBlock(ctx, cx, cy, geo.cellSize, b.expected, b.placed)
     if (b.placed) placed++
   }
-
-  // 区域框（画在方块之上、位置点之下）
   drawRegions(ctx, geo)
-  // bot 位置点
   drawBotMarkers(ctx, geo)
 
   ctx.fillStyle = '#888888'
   ctx.font = '11px monospace'
-  ctx.fillText(`Z: ${geo.minZ} → ${geo.maxZ}  (${geo.maxZ - geo.minZ + 1} 行)`, 10, 16)
-  ctx.fillText(`X: ${geo.minX} → ${geo.maxX}  (${geo.maxX - geo.minX + 1} 列)   已放置: ${placed}/${props.initData.blocks.length}`, 10, 32)
-  const y0 = props.initData.blocks[0]?.y
-  ctx.fillText(`Y 层: ${y0 ?? '?'}`, 10, 48)
+  ctx.fillText(`Z: ${geo.minZ} → ${geo.maxZ}`, 10, 16)
+  ctx.fillText(`X: ${geo.minX} → ${geo.maxX}  已放置: ${placed}/${props.initData.blocks.length}`, 10, 32)
 
   emit('ready')
+}
+
+/** 根据容器尺寸初始化画布物理尺寸（ResizeObserver 调用） */
+function initSize() {
+  const el = container.value
+  if (!el) return
+  const w = el.clientWidth
+  const h = el.clientHeight
+  if (w <= 0 || h <= 0) return
+  if (cw.value !== w || ch.value !== h) {
+    cw.value = w
+    ch.value = h
+    nextTick(render)
+  }
 }
 
 watch(() => props.initData, () => nextTick(render), { deep: true })
 watch(() => props.botPositions, () => nextTick(render), { deep: true })
 watch(showRegions, () => nextTick(render))
+// zoom 变化：仅 stage 尺寸 + transform 自动更新（computed），不重绘
 
-// ── 建造进度实时刷新（每 5s 增量更新已放置格子） ──
+// ── 建造进度实时刷新（5s 增量） ──
 let pollTimer: number | undefined
-
 async function pollPlaced() {
   if (!props.taskId) return
   try {
@@ -297,71 +313,58 @@ async function pollPlaced() {
     if (!blocks) return
     let changed = false
     for (const b of blocks) {
-      if (!b.placed && placedKeys.has(`${b.x},${b.z}`)) {
-        b.placed = true
-        changed = true
-      }
+      if (!b.placed && placedKeys.has(`${b.x},${b.z}`)) { b.placed = true; changed = true }
     }
     if (changed) render()
-  } catch {
-    // 轮询失败静默
-  }
+  } catch { /* 静默 */ }
 }
 
+let resizeObserver: ResizeObserver | null = null
 onMounted(async () => {
   await preloadTextures()
-  await nextTick(render)
+  initSize()
+  resizeObserver = new ResizeObserver(() => initSize())
+  if (container.value) resizeObserver.observe(container.value)
   pollTimer = window.setInterval(pollPlaced, 5000)
+  // 拖拽平移
+  container.value?.addEventListener('pointerdown', onPointerDown)
+  window.addEventListener('pointermove', onPointerMove)
+  window.addEventListener('pointerup', onPointerUp)
 })
-
 onUnmounted(() => {
   if (pollTimer) window.clearInterval(pollTimer)
+  resizeObserver?.disconnect()
+  container.value?.removeEventListener('pointerdown', onPointerDown)
+  window.removeEventListener('pointermove', onPointerMove)
+  window.removeEventListener('pointerup', onPointerUp)
 })
 
 defineExpose({ refresh: render })
 </script>
 
 <style scoped>
-.build2d-wrap { display: flex; flex-direction: column; gap: 6px; }
+.build2d-wrap { display: flex; flex-direction: column; gap: 6px; min-height: 0; }
 .canvas-toolbar {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 4px 8px;
-  background: var(--bg-card);
-  border: 1px solid var(--border-subtle);
-  border-radius: 6px;
-  width: fit-content;
+  display: flex; align-items: center; gap: 6px;
+  padding: 4px 8px; background: var(--bg-card);
+  border: 1px solid var(--border-subtle); border-radius: 6px; width: fit-content;
 }
-.tb-btn {
-  cursor: pointer;
-  user-select: none;
-  padding: 1px 8px;
-  font-size: 15px;
-  line-height: 20px;
-  border-radius: 4px;
-  color: var(--text-secondary);
-}
+.tb-btn { cursor: pointer; user-select: none; padding: 1px 8px; font-size: 15px; line-height: 20px; border-radius: 4px; color: var(--text-secondary); }
 .tb-btn:hover { background: var(--bg-hover); color: var(--text-primary); }
 .tb-zoom { font-size: 12px; color: var(--text-secondary); min-width: 42px; text-align: center; }
 .tb-sep { width: 1px; height: 16px; background: var(--border-subtle); margin: 0 4px; }
 .tb-label { font-size: 12px; color: var(--text-muted); }
+.tb-hint { font-size: 11px; color: var(--text-muted); margin-left: 4px; }
 .build2d-container {
+  flex: 1;
   width: 100%;
-  height: 100%;
   min-height: 400px;
   background: #1a1a2e;
   border-radius: 8px;
   overflow: auto;
+  cursor: grab;
 }
-.canvas-zoom {
-  transform-origin: top left;
-  width: 100%;
-  height: 100%;
-}
-.map-canvas {
-  width: 100%;
-  height: 100%;
-  display: block;
-}
+.build2d-container:active { cursor: grabbing; }
+.canvas-stage { position: relative; }
+.map-canvas { display: block; }
 </style>

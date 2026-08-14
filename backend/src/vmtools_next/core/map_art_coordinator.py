@@ -816,10 +816,15 @@ class MapArtCoordinator:
         self._load_supply_data()
 
     def _load_supply_data(self) -> None:
-        """从 DB 加载任务的补货配置（潜影盒坐标 + 三个传送指令）。"""
+        """从 DB 加载任务的补货配置（任务级潜影盒 + 全局仓库合并 + 三个传送指令）。
+
+        2026-08-14 三期：任务级 map_art_supply_boxes 优先；任务没配该材料时
+        自动回退全局补货仓库（map_art_supply_warehouse）——用户在首页仓库设定的
+        材料↔潜影盒映射，任何任务按需材料自动复用。
+        """
         try:
             from vmtools_next.data.db import get_session_factory
-            from vmtools_next.data.models.build_map_art import MapArtTask, MapArtSupplyBox
+            from vmtools_next.data.models.build_map_art import MapArtTask, MapArtSupplyBox, MapArtSupplyWarehouse
             import json as _json
             db = get_session_factory()()
             try:
@@ -831,11 +836,27 @@ class MapArtCoordinator:
                             self._supply_config = {k: d.get(k, "") for k in ("go", "save", "return")}
                     except Exception:
                         pass
+                # 任务级潜影盒
+                task_boxes: dict[str, list[tuple[int, int, int]]] = {}
                 rows = db.query(MapArtSupplyBox).filter(
                     MapArtSupplyBox.task_id == self.task_id
                 ).order_by(MapArtSupplyBox.sort_order).all()
                 for r in rows:
-                    self._supply_boxes.setdefault(r.item_id, []).append((r.x, r.y, r.z))
+                    task_boxes.setdefault(r.item_id, []).append((r.x, r.y, r.z))
+                # 全局仓库：任务没配的材料自动回退全局
+                global_boxes: dict[str, list[tuple[int, int, int]]] = {}
+                g_rows = db.query(MapArtSupplyWarehouse).all()
+                for g in g_rows:
+                    try:
+                        boxes = _json.loads(g.boxes_json or "[]")
+                        global_boxes[g.item_id] = [(int(b["x"]), int(b["y"]), int(b["z"])) for b in boxes if "x" in b]
+                    except Exception:
+                        continue
+                # 合并：任务级优先，缺的用全局（建造时自动复用）
+                merged: dict[str, list[tuple[int, int, int]]] = dict(global_boxes)
+                for item_id, boxes in task_boxes.items():
+                    merged[item_id] = boxes
+                self._supply_boxes = merged
             finally:
                 db.close()
         except Exception as e:
