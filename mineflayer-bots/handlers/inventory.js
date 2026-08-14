@@ -911,6 +911,86 @@ function createInventoryHandlers(bot, opts = {}) {
     }
   }
 
+  // ── 装备物品到副手（2026-08-14 模块A：猪排等食物放副手） ──
+  // 从背包任意位置（主背包/快捷栏）找 item_type 并装备到副手（slot 45）。
+  async function equip_offhand({ item_type } = {}) {
+    try {
+      if (!item_type) {
+        return { success: false, error: 'item_type is required' };
+      }
+      // 遍历完整 slots（含主背包/快捷栏，不含盔甲/副手），找目标物品
+      let target = null;
+      for (let i = 0; i < bot.inventory.slots.length; i++) {
+        const it = bot.inventory.slots[i];
+        if (it && (it.name === item_type || it.type?.toString() === item_type)) {
+          target = it;
+          break;
+        }
+      }
+      if (!target) {
+        return { success: false, error: `Item ${item_type} not found in inventory` };
+      }
+      await bot.equip(target, 'off-hand');
+      // 等待副手槽位更新
+      await new Promise(r => setTimeout(r, 400));
+      const offhand = bot.inventory.slots[45];
+      return {
+        success: true,
+        item: (offhand && offhand.name) || target.name,
+        slot: 45,
+      };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  }
+
+  // ── 吃副手食物（2026-08-14 模块A：主手拿方块时按住右键吃副手猪排） ──
+  // Minecraft 机制：主手物品无 use 动作（如混凝土方块）时，按住右键会
+  // 持续食用副手食物。这里按住 use 直到吃完 / 饱食度满 / 3s 超时。
+  const FOOD_NAMES = new Set([
+    'cooked_porkchop', 'porkchop', 'cooked_beef', 'beef', 'cooked_chicken', 'chicken',
+    'bread', 'golden_carrot', 'cooked_mutton', 'mutton', 'cooked_cod', 'cod',
+    'cooked_salmon', 'salmon', 'baked_potato', 'carrot', 'apple', 'golden_apple',
+    'enchanted_golden_apple', 'suspicious_stew', 'beetroot_soup', 'mushroom_stew',
+    'rabbit_stew', 'sweet_berries', 'glow_berries', 'honey_bottle', 'dried_kelp',
+    'melon_slice', 'cookie', 'cooked_rabbit', 'rabbit', 'beetroot', 'pumpkin_pie',
+  ]);
+  async function consume_offhand({} = {}) {
+    try {
+      const offhand = bot.inventory.slots[45];
+      if (!offhand) {
+        return { success: false, error: 'No item in offhand' };
+      }
+      const name = offhand.name;
+      if (!FOOD_NAMES.has(name)) {
+        return { success: false, error: `Offhand item ${name} is not food`, item: name };
+      }
+      const startCount = offhand.count;
+      const startFood = bot.food || 0;
+      // 副手进食：mineflayer 的 bot.consume() 只吃主手（set_cooldown 按 heldItem
+      // 匹配），副手食物需手动持续发送 use_item(hand=1) 直到吃掉一个 / 饱了 / 超时。
+      const start = Date.now();
+      while (Date.now() - start < 3000) {
+        bot.activateItem(true); // 使用副手物品（use_item hand=1）
+        await new Promise(r => setTimeout(r, 250));
+        const cur = bot.inventory.slots[45];
+        if (!cur || cur.name !== name) break;      // 副手食物被吃完了
+        if (cur.count < startCount) break;          // 吃掉了一个
+        if ((bot.food || 0) >= 20) break;           // 饱食度已满
+      }
+      try { bot.deactivateItem(); } catch (e) { /* 忽略 */ }
+      return {
+        success: true,
+        item: name,
+        food: bot.food || startFood,
+        health: bot.health || 20,
+      };
+    } catch (err) {
+      try { bot.deactivateItem(); } catch (e) { /* 忽略 */ }
+      return { success: false, error: err.message };
+    }
+  }
+
   return {
     select_hotbar_item,
     set_quick_bar_slot,
@@ -927,6 +1007,8 @@ function createInventoryHandlers(bot, opts = {}) {
     activate_item,
     activate_block,
     get_current_window,
+    equip_offhand,
+    consume_offhand,
   };
 }
 

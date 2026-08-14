@@ -166,6 +166,8 @@ class BotBuildLoop:
         supply_box: Optional[tuple[int, int, int]] = None,  # 分区补给箱坐标（None→用传送）
         supply_boxes: Optional[dict[str, list[tuple[int, int, int]]]] = None,  # 2026-08-14：材料→潜影盒坐标
         supply_config: Optional[dict] = None,  # 2026-08-14：{go, save, return} 三个传送指令
+        food_config: Optional[dict] = None,  # 2026-08-14 模块A：食物配置
+        food_boxes: Optional[list[tuple[int, int, int]]] = None,  # 2026-08-14 模块A：猪排潜影盒坐标
         on_done: Optional[callable] = None,  # 正常完成回调（coordinator 用于任务级完成判定）
     ):
         self.bot_id = bot_id
@@ -186,10 +188,17 @@ class BotBuildLoop:
         self._paused.set()     # start unpaused
         self._stopped = False
         self._current_item: Optional[str] = None  # item currently in hand
+        self._current_slot: Optional[int] = None  # 当前手持快捷栏槽位（模块B：动态识别）
         self._supply_box: Optional[tuple[int, int, int]] = supply_box  # 分区补给箱坐标（None→用传送）
         # 2026-08-14：材料级潜影盒坐标（用户配置，优先级最高）+ 任务级三个传送指令
         self._supply_boxes: dict[str, list[tuple[int, int, int]]] = supply_boxes or {}
         self._supply_cfg: dict = supply_config or self._default_supply_cfg()
+        # 2026-08-14 模块A：食物配置 + 猪排潜影盒坐标
+        self._food_cfg: dict = food_config or self._default_food_cfg()
+        self._food_boxes: list[tuple[int, int, int]] = food_boxes or []
+        # 2026-08-14 模块B：快捷栏槽位 → 材料映射缓存（避免每次全背包搜索）
+        self._hotbar_map: dict[int, str] = {}  # slot(0-8) → clean_item_id
+        self._food_task: Optional[asyncio.Task] = None  # 食物监控协程
 
         # P2-26：EssentialsX 传送点名从 config 读取（保持类默认值兼容）
         try:
@@ -251,8 +260,14 @@ class BotBuildLoop:
         logger.info("[%s] Build loop started: rows %d→%d",
                      self.bot_id, self.region.z_start, self.region.z_end)
 
-        # 断点续建：恢复 DB 中已放置进度（实际跳过由 _verify_block 对世界状态兜底）
+        # 断点续建：恢复 DB 中已放置进度（已 placed 坐标加载到 _verified_set，
+        # 信任 DB 跳过重复 verify——避免 16384 块全量 WS 往返，仅「重新开始」全量核对）
         await self._restore_progress()
+
+        # 2026-08-14 模块A：启动食物监控协程（饱食度/血量低时吃副手猪排）
+        self._food_task = asyncio.create_task(self._food_monitor_loop())
+        # 2026-08-14 模块B：初始化快捷栏槽位映射（避免每色首次全背包搜索）
+        await self._refresh_hotbar_map()
 
         try:
             for row_z in range(self.region.z_start, self.region.z_end + 1):
@@ -300,6 +315,10 @@ class BotBuildLoop:
             self.progress.state = "offline"
             logger.error("[%s] Build loop error: %s", self.bot_id, e)
         finally:
+            # 取消食物监控协程（2026-08-14 模块A）
+            if self._food_task:
+                self._food_task.cancel()
+                self._food_task = None
             # P1-9：中断/异常时 flush 残留进度（防最后几行 DB 进度丢失；行内 offline 时
             # _place_row 未执行到行尾 flush）
             if self._db_updates:
@@ -391,15 +410,14 @@ class BotBuildLoop:
                     return
 
                 world_x = self.origin_x + x
-                # 1) Walk along X: bot must stay within reach of the reference
-                #    block (target's north neighbour, z-1)
-                #    若上一步已在该站立点 2 格内（相邻方块），跳过重复寻路
+                # 2026-08-14 模块C：真·走一格放一格——每放置一块前精确移动到该方块
+                # 正北站立点（相邻格 = 1 格移动）。原实现 threshold=2 跳格、靠
+                # place_block(face=AUTO) 站桩斜放，触及范围边缘易失败且非「走一格」。
                 stand_z = world_z - 1
-                if not self._is_near(world_x, self.origin_y, stand_z, threshold=2):
-                    if not await self._move_to(world_x, self.origin_y, stand_z,
-                                               max_offset=1, label=f"({world_x},{world_z})"):
-                        self.progress.state = "offline"
-                        return
+                if not await self._move_to(world_x, self.origin_y, stand_z,
+                                           max_offset=1, label=f"({world_x},{world_z})"):
+                    self.progress.state = "offline"
+                    return
 
                 # 2) Verify: skip if the target is already correct
                 if await self._verify_block(world_x, self.origin_y, world_z, block_id):
@@ -413,6 +431,12 @@ class BotBuildLoop:
                     self.progress.record_place()
                     self.progress.last_completed_x = x
                     self._db_updates.append((world_x, self.origin_y, world_z, block_id))
+                else:
+                    # 2026-08-14 放置失败告警：连续放置失败说明材料/位置异常，
+                    # 记录但不中断（由行尾/区域完成判定兜底）；累计告警交由上层处理
+                    logger.warning("[%s] Place FAILED after %d retries at (%d,%d,%d) %s",
+                                   self.bot_id, self._place_retries,
+                                   world_x, self.origin_y, world_z, block_id)
 
                 # 4) Rate limiting between placements (anti mis-place / anti-cheat)
                 #    RTT 自适应：每 10 次放置采样一次 ping，间隔 = max(base, RTT*1.5)
@@ -514,8 +538,22 @@ class BotBuildLoop:
                 ).count()
                 if count:
                     self.progress.blocks_placed = count
-                    logger.info("[%s] Resumed with %d blocks already placed",
-                                self.bot_id, count)
+                    # 2026-08-14 模块补充：断点续建信任 DB——加载已 placed 坐标到
+                    # _verified_set，避免 16384 块全量 WS 往返（仅在「重新开始」时全量核对）
+                    rows = db.query(
+                        MapArtBlockState.x, MapArtBlockState.y, MapArtBlockState.z,
+                    ).filter(
+                        MapArtBlockState.task_id == self.task_id,
+                        MapArtBlockState.placed.is_(True),
+                        MapArtBlockState.x >= self.origin_x + self.region.x_start,
+                        MapArtBlockState.x <= self.origin_x + self.region.x_end,
+                        MapArtBlockState.z >= self.origin_z + self.region.z_start,
+                        MapArtBlockState.z <= self.origin_z + self.region.z_end,
+                    ).all()
+                    for row in rows:
+                        self._verified_set.add((row.x, row.y, row.z))
+                    logger.info("[%s] Resumed with %d blocks already placed (%d verified)",
+                                self.bot_id, count, len(rows))
             finally:
                 db.close()
         except Exception as e:
@@ -574,10 +612,28 @@ class BotBuildLoop:
         WS handler 返回错误 dict，而非 reject）。原实现用 except 捕获失败
         永远不触发补货（P0 修复）。
         """
+        # 2026-08-14 模块B：快捷栏动态识别 —— 先查 _hotbar_map 缓存，命中则直接切槽（零搜索），
+        # 未命中才走 select_hotbar_item 全背包搜索，成功后回填缓存。
         if self._current_item == block_id:
             return
         clean_id = block_id.split("[")[0] if "[" in block_id else block_id
 
+        # 1) 查缓存：_hotbar_map 里有 → 直接 set_quick_bar_slot（零成本）
+        for slot, cached_id in self._hotbar_map.items():
+            if cached_id == clean_id:
+                try:
+                    r = await self.mcp.set_quick_bar_slot(slot)
+                    if r.get("success"):
+                        self._current_item = block_id
+                        self._current_slot = slot
+                        return
+                except Exception:
+                    pass
+                # 缓存失效（物品已用完/被移动）→ 从缓存清除，走搜索
+                del self._hotbar_map[slot]
+                break
+
+        # 2) 缓存未命中 → 全背包搜索
         result = await self._try_select_item(clean_id, block_id)
         if result:
             return
@@ -594,9 +650,11 @@ class BotBuildLoop:
                            self.bot_id, clean_id)
             return
 
-        # 背包中没有该物品 → 补货（优先分区补给箱，否则 EssentialsX 传送）
+        # 背包中没有该物品 → 补货（优先分区补给箱，否则 传送）
         logger.info("[%s] %s 用完了，开始补货...", self.bot_id, clean_id)
         if await self._do_restock(block_id):
+            # 补货后刷新 hotbar_map 并重试
+            await self._refresh_hotbar_map()
             await self._try_select_item(clean_id, block_id)
 
     async def _try_select_item(self, clean_id: str, block_id: str) -> bool:
@@ -605,6 +663,11 @@ class BotBuildLoop:
             result = await self.mcp.select_hotbar_item(clean_id)
             if result.get("success"):
                 self._current_item = block_id
+                # 2026-08-14 模块B：记录实际槽位到 hotbar_map
+                slot = result.get("slot")
+                if isinstance(slot, int) and 0 <= slot <= 8:
+                    self._hotbar_map[slot] = clean_id
+                    self._current_slot = slot
                 return True
             logger.warning("[%s] select_hotbar_item %s failed: %s",
                            self.bot_id, clean_id, result.get("error", "?"))
@@ -612,6 +675,21 @@ class BotBuildLoop:
             logger.warning("[%s] select_hotbar_item %s error: %s",
                            self.bot_id, clean_id, e)
         return False
+
+    async def _refresh_hotbar_map(self) -> None:
+        """从 get_inventory_snapshot 重建快捷栏映射（补货后/物品移动后）。"""
+        try:
+            snap = await self.mcp.get_inventory_snapshot(inventory_id=0)
+            items = (snap.get("data", snap)).get("items", [])
+            self._hotbar_map.clear()
+            for s in items:
+                slot = s.get("slot")
+                if isinstance(slot, int) and 0 <= slot <= 8:
+                    item_id = (s.get("type", "") or "").split("[")[0]
+                    if item_id:
+                        self._hotbar_map[slot] = item_id
+        except Exception:
+            pass  # 静默失败，不影响建造
 
     # ── Restocking ────────────────────────────
 
@@ -642,6 +720,27 @@ class BotBuildLoop:
             }
         except Exception:
             return {"go": "/ehomes mdssj", "save": "/esethomes dth", "return": "/ehomes dth"}
+
+    @staticmethod
+    def _default_food_cfg() -> dict:
+        """食物配置默认值（2026-08-14 模块A）。"""
+        try:
+            mf = get_config().mineflayer
+            return {
+                "item_id": getattr(mf, "map_art_food_item", "minecraft:cooked_porkchop"),
+                "go_command": getattr(mf, "map_art_food_go_command", "/res tp lixiangxiang.qwp"),
+                "wait_after_go_ms": int(getattr(mf, "map_art_food_wait_after_go_ms", 5000)),
+                "eat_threshold_food": int(getattr(mf, "map_art_eat_threshold_food", 15)),
+                "eat_threshold_health": int(getattr(mf, "map_art_eat_threshold_health", 15)),
+            }
+        except Exception:
+            return {
+                "item_id": "minecraft:cooked_porkchop",
+                "go_command": "/res tp lixiangxiang.qwp",
+                "wait_after_go_ms": 5000,
+                "eat_threshold_food": 15,
+                "eat_threshold_health": 15,
+            }
 
     async def _do_restock(self, needed_block_id: str, needed_count: int = 64) -> bool:
         """Restock the required item.
@@ -845,6 +944,155 @@ class BotBuildLoop:
             self._last_pos = None  # 传送后位置未知，强制下次寻路
             self.progress.state = "placing"
 
+    # ── 食物监控 + 补货（2026-08-14 模块A）──────────────────────────────
+
+    async def _ensure_food_offhand(self) -> bool:
+        """确保副手 (slot 45) 有食物（猪排），没有则补货。
+
+        返回 True 表示副手已有食物或补货成功，False 表示补货失败（不影响建造）。
+        """
+        food_item = self._food_cfg.get("item_id", "minecraft:cooked_porkchop")
+        # 检查副手是否已有食物
+        try:
+            snap = await self.mcp.get_inventory_snapshot(inventory_id=0)
+            items = (snap.get("data", snap)).get("items", [])
+            for s in items:
+                if s.get("slot") == 40:  # 前端归一化后副手=40
+                    item_id = (s.get("type", "") or "").split("[")[0]
+                    if item_id == food_item and s.get("count", 0) > 0:
+                        return True
+        except Exception:
+            pass
+
+        # 副手无食物 → 尝试从背包装备
+        try:
+            r = await self.mcp.equip_offhand(food_item)
+            if r.get("success"):
+                logger.info("[%s] Equipped %s to offhand from inventory", self.bot_id, food_item)
+                return True
+        except Exception as e:
+            logger.warning("[%s] equip_offhand %s failed: %s", self.bot_id, food_item, e)
+
+        # 背包也没有 → 食物补货
+        logger.info("[%s] 猪排不足，开始食物补货...", self.bot_id)
+        if await self._do_food_restock():
+            return await self._ensure_food_offhand()  # 递归一次（补货后再次装备）
+        return False
+
+    async def _do_food_restock(self) -> bool:
+        """去猪排仓库取猪排。
+
+        独立于材料补货：猪排仓库指令不同（/res tp lixiangxiang.qwp），
+        且指令发后需等 5s（指令自带 3s 延迟 + 2s 安全余量）才能开始寻路。
+        """
+        self.progress.state = "restocking"
+        food_item = self._food_cfg.get("item_id", "minecraft:cooked_porkchop")
+        go_cmd = self._food_cfg.get("go_command", "/res tp lixiangxiang.qwp")
+        wait_ms = int(self._food_cfg.get("wait_after_go_ms", 5000))
+
+        boxes = self._food_boxes
+        if not boxes:
+            logger.warning("[%s] 食物潜影盒未配置，无法补货猪排", self.bot_id)
+            self.progress.state = "placing"
+            return False
+
+        try:
+            # 1. 保存当前位置
+            r1 = await self.mcp.send_chat(self._supply_cfg.get("save", "/esethomes dth"))
+            if isinstance(r1, dict) and r1.get("success") is False:
+                logger.warning("[%s] Food save command failed: %s", self.bot_id, r1.get("error", "?"))
+                return False
+            await asyncio.sleep(1.5)
+
+            # 2. 前往猪排仓库（指令后等 5s 再寻路）
+            logger.info("[%s] Food restock: %s → wait %ds", self.bot_id, go_cmd, wait_ms // 1000)
+            r2 = await self.mcp.send_chat(go_cmd)
+            if isinstance(r2, dict) and r2.get("success") is False:
+                logger.warning("[%s] Food go command failed: %s", self.bot_id, r2.get("error", "?"))
+                return False
+            await asyncio.sleep(wait_ms / 1000.0)
+
+            # 3. 按顺序尝试每个潜影盒坐标
+            taken = False
+            for bx, by, bz in boxes:
+                try:
+                    open_result = await self.mcp.open_container_at(bx, by, bz, timeout_ms=15000)
+                except Exception as e:
+                    logger.warning("[%s] Open food shulker at (%d,%d,%d) error: %s",
+                                   self.bot_id, bx, by, bz, e)
+                    continue
+                data = open_result.get("data", open_result) if isinstance(open_result, dict) else {}
+                container_id = (data or {}).get("container_id") or ""
+                if not container_id:
+                    continue
+                wd = await self.mcp.withdraw_container_item(food_item, 64, container_id)
+                await self.mcp.close_container(container_id)
+                if isinstance(wd, dict) and wd.get("success") is False:
+                    continue
+                taken = True
+                logger.info("[%s] Food restock done: %s ×64 from (%d,%d,%d)",
+                            self.bot_id, food_item, bx, by, bz)
+                break
+            if not taken:
+                logger.warning("[%s] 所有食物潜影盒均未取到 %s", self.bot_id, food_item)
+
+            # 4. 返回工作位置
+            try:
+                await self.mcp.send_chat(self._supply_cfg.get("return", "/ehomes dth"))
+                await asyncio.sleep(1.5)
+            except Exception:
+                pass
+            self._last_pos = None
+            self.progress.state = "placing"
+            return taken
+        except Exception as e:
+            logger.warning("[%s] Food restock failed: %s", self.bot_id, e)
+            self.progress.state = "placing"
+            return False
+
+    async def _food_monitor_loop(self) -> None:
+        """食物监控协程：每 2s 检查饱食度/血量，低于阈值时吃副手猪排。
+
+        在 run 启动时创建，stop 时取消。吃食物期间不阻塞建造循环。
+        """
+        try:
+            while not self._stopped:
+                await asyncio.sleep(2)
+                if self._stopped:
+                    break
+                try:
+                    state = await self.mcp.get_player_state()
+                    health = state.get("health") or 20
+                    food = state.get("food") or 20
+                    threshold_food = int(self._food_cfg.get("eat_threshold_food", 15))
+                    threshold_health = int(self._food_cfg.get("eat_threshold_health", 15))
+
+                    if food < threshold_food or health < threshold_health:
+                        # 优先确保副手有食物
+                        has_food = await self._ensure_food_offhand()
+                        if not has_food:
+                            logger.warning("[%s] 食物不足且补货失败（food=%d, health=%d）",
+                                           self.bot_id, food, health)
+                            continue
+                        # 吃副手食物
+                        try:
+                            r = await self.mcp.consume_offhand()
+                            if r.get("success"):
+                                logger.info("[%s] Ate %s (food=%d→%d, health=%d)",
+                                            self.bot_id,
+                                            r.get("item", "?"),
+                                            food, r.get("food", 20),
+                                            r.get("health", 20))
+                            else:
+                                logger.warning("[%s] consume_offhand failed: %s",
+                                               self.bot_id, r.get("error", "?"))
+                        except Exception as e:
+                            logger.warning("[%s] consume_offhand error: %s", self.bot_id, e)
+                except Exception:
+                    pass  # 单次检查失败不影响建造
+        except asyncio.CancelledError:
+            pass
+
 
 # ──────────────────────────────────────────────
 # MapArtCoordinator — orchestrator
@@ -878,7 +1126,11 @@ class MapArtCoordinator:
         # 2026-08-14：材料级潜影盒坐标 + 任务级三个传送指令（DB 加载，构造时读一次）
         self._supply_boxes: dict[str, list[tuple[int, int, int]]] = {}
         self._supply_config: dict = {}
+        # 2026-08-14 模块A：食物配置 + 猪排潜影盒坐标（DB 加载）
+        self._food_config: dict = {}
+        self._food_boxes: list[tuple[int, int, int]] = []
         self._load_supply_data()
+        self._load_food_data()
 
     def _load_supply_data(self) -> None:
         """从 DB 加载任务的补货配置（任务级潜影盒 + 全局仓库合并 + 三个传送指令）。
@@ -926,6 +1178,33 @@ class MapArtCoordinator:
                 db.close()
         except Exception as e:
             logger.warning("[%s] Load supply data failed: %s", self.task_id, e)
+
+    def _load_food_data(self) -> None:
+        """从 DB 加载食物配置 + 猪排潜影盒坐标（2026-08-14 模块A）。
+        """
+        try:
+            from vmtools_next.data.db import get_session_factory
+            from vmtools_next.data.models.build_map_art import MapArtTask, MapArtFoodBox
+            import json as _json
+            db = get_session_factory()()
+            try:
+                task = db.query(MapArtTask).filter(MapArtTask.task_id == self.task_id).first()
+                if task and task.food_config:
+                    try:
+                        d = _json.loads(task.food_config)
+                        if isinstance(d, dict):
+                            self._food_config = d
+                    except Exception:
+                        pass
+                # 食物潜影盒坐标
+                rows = db.query(MapArtFoodBox).filter(
+                    MapArtFoodBox.task_id == self.task_id
+                ).order_by(MapArtFoodBox.sort_order).all()
+                self._food_boxes = [(r.x, r.y, r.z) for r in rows]
+            finally:
+                db.close()
+        except Exception as e:
+            logger.warning("[%s] Load food data failed: %s", self.task_id, e)
 
     # ── Build 2D matrix from projection layers ──
 
@@ -1001,6 +1280,8 @@ class MapArtCoordinator:
                 supply_box=supply_boxes[i] if i < len(supply_boxes) else None,
                 supply_boxes=self._supply_boxes,
                 supply_config=self._supply_config,
+                food_config=self._food_config,
+                food_boxes=self._food_boxes,
                 on_done=self._on_loop_done,
             )
             self._loops[bot_id] = loop
@@ -1065,6 +1346,8 @@ class MapArtCoordinator:
             supply_box=None,  # 新 bot 走配置潜影盒 / EssentialsX 传送补货（补给箱已按原 bot 分配）
             supply_boxes=self._supply_boxes,
             supply_config=self._supply_config,
+            food_config=self._food_config,
+            food_boxes=self._food_boxes,
             on_done=self._on_loop_done,
         )
         self._loops[bot_id] = loop
@@ -1208,15 +1491,36 @@ class MapArtCoordinator:
         room = f"build_{self.task_id}"
         await sio.emit("build_progress", state.__dict__, room=room)
 
-        # Bot positions（_last_pos = 最近寻路目标≈bot 当前站立点，供 3D 标记定位）
+        # Bot positions（2026-08-14 模块E：优先用真实位置 = mcp.last_status（status 事件
+        # 每 5s 推送 position/health/food），fallback _last_pos 寻路目标；补 health/food
+        # 供前端 tooltip 展示）
         bot_data = []
         for bid, loop in self._loops.items():
             lp = loop._last_pos
+            real_pos = None
+            health = None
+            food = None
+            try:
+                st = getattr(loop.mcp, "last_status", None) or {}
+                if isinstance(st, dict) and st.get("position"):
+                    real_pos = {
+                        "x": st["position"].get("x"),
+                        "y": st["position"].get("y"),
+                        "z": st["position"].get("z"),
+                    }
+                health = st.get("health")
+                food = st.get("food")
+            except Exception:
+                pass
+            # 真实位置优先；没有则回退寻路目标
+            pos = real_pos or ({"x": lp[0], "y": lp[1], "z": lp[2]} if lp else None)
             bot_data.append({
                 "bot_id": bid,
                 "bot_name": loop.bot_name,
                 "state": loop.progress.state,
-                "position": {"x": lp[0], "y": lp[1], "z": lp[2]} if lp else None,
+                "position": pos,
+                "health": health,
+                "food": food,
                 "region": {
                     "x_start": loop.region.x_start,
                     "x_end": loop.region.x_end,

@@ -45,6 +45,9 @@ METHOD_CLICK_WINDOW = "click_window"
 METHOD_ACTIVATE_ITEM = "activate_item"
 METHOD_ACTIVATE_BLOCK = "activate_block"
 METHOD_GET_CURRENT_WINDOW = "get_current_window"
+# 副手 / 食物（2026-08-14 模块A）
+METHOD_EQUIP_OFFHAND = "equip_offhand"
+METHOD_CONSUME_OFFHAND = "consume_offhand"
 
 # Servux 容器预览（不打开容器，直接请求方块实体 NBT）
 METHOD_SERVUX_HANDSHAKE = "servux_handshake"

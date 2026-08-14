@@ -44,6 +44,8 @@ export interface BotMarker {
   position?: { x: number; y: number; z: number } | null
   color?: string
   region?: { x_start: number; x_end: number; z_start: number; z_end: number } | null
+  health?: number | null
+  food?: number | null
 }
 
 const props = defineProps<{
@@ -203,6 +205,10 @@ function computeGeo(): Geo | null {
     minX = Math.min(minX, b.x); maxX = Math.max(maxX, b.x)
     minZ = Math.min(minZ, b.z); maxZ = Math.max(maxZ, b.z)
   }
+  // 2026-08-14 模块E：四周加 2 格 padding——bot 站在行北边（z-1）与边缘，
+  // 此前标记被画布裁掉（用户「看不到 bot 位置」根因之一）
+  const PAD = 2
+  minX -= PAD; maxX += PAD; minZ -= PAD; maxZ += PAD
   const cols = maxX - minX + 1
   const rows = maxZ - minZ + 1
   const cellSize = Math.max(4, Math.min(40, Math.floor(Math.min(cw.value / cols, ch.value / rows))))
@@ -254,7 +260,15 @@ function drawBotMarkers(ctx: CanvasRenderingContext2D, geo: Geo) {
     ctx.lineWidth = 1; ctx.strokeStyle = 'rgba(0,0,0,0.6)'; ctx.stroke()
     ctx.font = '10px monospace'; ctx.fillStyle = '#ffffff'
     ctx.shadowColor = 'rgba(0,0,0,0.9)'; ctx.shadowBlur = 3
-    ctx.fillText(b.bot_name || b.bot_id, cx + r + 2, cy + 4)
+    // 2026-08-14 模块E：标记旁显示名字 + 饱食度/血量（真实状态）
+    let label = b.bot_name || b.bot_id
+    if (b.food != null || b.health != null) {
+      const parts: string[] = []
+      if (b.food != null) parts.push(`饱${Math.round(b.food)}`)
+      if (b.health != null) parts.push(`血${Math.round(b.health)}`)
+      label += ` · ${parts.join(' · ')}`
+    }
+    ctx.fillText(label, cx + r + 2, cy + 4)
     ctx.shadowBlur = 0
   }
 }

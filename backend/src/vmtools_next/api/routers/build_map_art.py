@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session
 from vmtools_next.api.deps import get_db, get_current_user, require_admin
 from vmtools_next.data.models.build_map_art import (
     MapArtTask, MapArtMaterial, MapArtBotAssignment, MapArtBlockState, MapArtSupplyBox, MapArtSupplyTemplate,
-    MapArtSupplyWarehouse,
+    MapArtSupplyWarehouse, MapArtFoodBox,
 )
 from vmtools_next.adapters.litematica.litematica_parser import LitematicaParser
 from vmtools_next.core.map_art_coordinator import (
@@ -188,6 +188,15 @@ class SupplyBoxesRequest(BaseModel):
     items: list[SupplyBoxItem] = []
 
 
+class FoodConfigRequest(BaseModel):
+    """食物补货配置（2026-08-14 模块A）：猪排仓库 + 进食阈值。"""
+    item_id: str = "minecraft:cooked_porkchop"
+    go_command: str = "/res tp lixiangxiang.qwp"
+    wait_after_go_ms: int = 5000
+    eat_threshold_food: int = 15
+    eat_threshold_health: int = 15
+
+
 class SupplyTemplateCreate(BaseModel):
     """补货潜影盒模板（2026-08-14 二期）：可复用配置。"""
     name: str
@@ -238,6 +247,48 @@ def _parse_supply_config(raw: Optional[str]) -> dict:
             "go": str(data.get("go") or default["go"]),
             "save": str(data.get("save") or default["save"]),
             "return": str(data.get("return") or default["return"]),
+        }
+    except Exception:
+        return default
+
+
+def _default_food_config() -> dict:
+    """食物配置默认值（2026-08-14 模块A）。"""
+    from vmtools_next.config import get_config as _cfg
+    try:
+        mf = _cfg().mineflayer
+        return {
+            "item_id": getattr(mf, "map_art_food_item", "minecraft:cooked_porkchop"),
+            "go_command": getattr(mf, "map_art_food_go_command", "/res tp lixiangxiang.qwp"),
+            "wait_after_go_ms": int(getattr(mf, "map_art_food_wait_after_go_ms", 5000)),
+            "eat_threshold_food": int(getattr(mf, "map_art_eat_threshold_food", 15)),
+            "eat_threshold_health": int(getattr(mf, "map_art_eat_threshold_health", 15)),
+        }
+    except Exception:
+        return {
+            "item_id": "minecraft:cooked_porkchop",
+            "go_command": "/res tp lixiangxiang.qwp",
+            "wait_after_go_ms": 5000,
+            "eat_threshold_food": 15,
+            "eat_threshold_health": 15,
+        }
+
+
+def _parse_food_config(raw: Optional[str]) -> dict:
+    """解析任务级 food_config（JSON），缺省回退默认。"""
+    default = _default_food_config()
+    if not raw:
+        return default
+    try:
+        data = json.loads(raw)
+        if not isinstance(data, dict):
+            return default
+        return {
+            "item_id": str(data.get("item_id") or default["item_id"]),
+            "go_command": str(data.get("go_command") or default["go_command"]),
+            "wait_after_go_ms": int(data.get("wait_after_go_ms") or default["wait_after_go_ms"]),
+            "eat_threshold_food": int(data.get("eat_threshold_food") or default["eat_threshold_food"]),
+            "eat_threshold_health": int(data.get("eat_threshold_health") or default["eat_threshold_health"]),
         }
     except Exception:
         return default
@@ -338,6 +389,7 @@ async def create_task(
         organization_id=data.organization_id or getattr(user, "organization_id", None),
         created_by=getattr(user, "game_id", str(user)),
         supply_config=json.dumps(_default_supply_config(), ensure_ascii=False),
+        food_config=json.dumps(_default_food_config(), ensure_ascii=False),
         rotation=rotation,
     )
     db.add(task)
@@ -450,6 +502,7 @@ def get_task(task_id: str, db: Session = Depends(get_db), user=Depends(require_a
         "status": task.status,
         "error_message": task.error_message,
         "supply_config": _parse_supply_config(task.supply_config),
+        "food_config": _parse_food_config(task.food_config),
         "rotation": task.rotation or 0,
         "projection": {
             "file_path": task.projection_file_path,
@@ -939,6 +992,74 @@ def put_supply_warehouse(data: SupplyBoxesRequest, db: Session = Depends(get_db)
     return {"status": "ok", "materials": len(cleaned)}
 
 
+# ── 食物补货配置（2026-08-14 模块A）─────────────────────────────────────
+
+@router.get("/tasks/{task_id}/food-config")
+def get_food_config(task_id: str, db: Session = Depends(get_db), user=Depends(require_admin)):
+    """读取任务级食物配置（猪排仓库指令 + 进食阈值）。"""
+    task = db.query(MapArtTask).filter(MapArtTask.task_id == task_id).first()
+    if not task:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return _parse_food_config(task.food_config)
+
+
+@router.put("/tasks/{task_id}/food-config")
+def put_food_config(task_id: str, data: FoodConfigRequest, db: Session = Depends(get_db),
+                    user=Depends(require_admin)):
+    """保存任务级食物配置（item_id / go_command / 进食阈值均可自定义）。"""
+    task = db.query(MapArtTask).filter(MapArtTask.task_id == task_id).first()
+    if not task:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    _default = _default_food_config()
+    cfg = {
+        "item_id": (data.item_id or "").strip() or _default["item_id"],
+        "go_command": (data.go_command or "").strip() or _default["go_command"],
+        "wait_after_go_ms": data.wait_after_go_ms or _default["wait_after_go_ms"],
+        "eat_threshold_food": data.eat_threshold_food or _default["eat_threshold_food"],
+        "eat_threshold_health": data.eat_threshold_health or _default["eat_threshold_health"],
+    }
+    task.food_config = json.dumps(cfg, ensure_ascii=False)
+    db.commit()
+    return {"status": "ok", "food_config": cfg}
+
+
+@router.get("/tasks/{task_id}/food-boxes")
+def get_food_boxes(task_id: str, db: Session = Depends(get_db), user=Depends(require_admin)):
+    """读取任务食物潜影盒坐标（猪排仓库）。"""
+    task = db.query(MapArtTask).filter(MapArtTask.task_id == task_id).first()
+    if not task:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    rows = db.query(MapArtFoodBox).filter(
+        MapArtFoodBox.task_id == task_id
+    ).order_by(MapArtFoodBox.sort_order).all()
+    return {
+        "item_id": "minecraft:cooked_porkchop",
+        "boxes": [{"x": r.x, "y": r.y, "z": r.z} for r in rows],
+    }
+
+
+@router.put("/tasks/{task_id}/food-boxes")
+def put_food_boxes(task_id: str, data: SupplyBoxesRequest, db: Session = Depends(get_db),
+                   user=Depends(require_admin)):
+    """批量保存任务食物潜影盒坐标（整体替换：先删旧再插新）。"""
+    task = db.query(MapArtTask).filter(MapArtTask.task_id == task_id).first()
+    if not task:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    db.query(MapArtFoodBox).filter(MapArtFoodBox.task_id == task_id).delete()
+    saved = 0
+    for item in data.items:
+        for i, box in enumerate(item.boxes):
+            db.add(MapArtFoodBox(
+                task_id=task_id,
+                item_id=item.item_id.split("[")[0],
+                x=box.x, y=box.y, z=box.z,
+                sort_order=i,
+            ))
+            saved += 1
+    db.commit()
+    return {"status": "ok", "saved": saved}
+
+
 @router.get("/tasks/{task_id}/blocks/placed")
 def get_task_placed_blocks(task_id: str, db: Session = Depends(get_db),
                            user=Depends(require_admin)):
@@ -982,6 +1103,9 @@ def delete_task(task_id: str, db: Session = Depends(get_db), user=Depends(requir
     # 手动删除任务级补货潜影盒配置，防孤儿数据残留。
     db.query(MapArtSupplyBox).filter(
         MapArtSupplyBox.task_id == task_id).delete(synchronize_session=False)
+    # 2026-08-14 模块A：清理食物潜影盒配置（无级联，防孤儿数据）
+    db.query(MapArtFoodBox).filter(
+        MapArtFoodBox.task_id == task_id).delete(synchronize_session=False)
     db.delete(task)
     db.commit()
     return {"deleted": task_id}

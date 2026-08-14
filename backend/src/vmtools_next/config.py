@@ -141,6 +141,14 @@ class MineflayerConfig(BaseModel):
     map_art_supply_return_command: str = "/ehomes dth"
     # 分区补给箱建议位置的 y 偏移（相对建造层 origin_y；默认 -1 = 地面层，P2-8 防悬空）
     map_art_supply_box_y_offset: int = -1
+    # ── 食物补货（2026-08-14 模块A）──
+    # 食物类型（默认熟猪排）；食物仓库传送指令；指令后等待时间（ms，指令自带 3s 延迟故等 5s）
+    map_art_food_item: str = "minecraft:cooked_porkchop"
+    map_art_food_go_command: str = "/res tp lixiangxiang.qwp"
+    map_art_food_wait_after_go_ms: int = 5000
+    # 进食阈值：饱食度/血量低于该值（满 20）时吃副手食物
+    map_art_eat_threshold_food: int = 15
+    map_art_eat_threshold_health: int = 15
     # ── 任务调度（2026-08-12，实施计划阶段 2） ──
     # 地图画任务并发上限（同时运行的任务数；排队任务完成后自动启动下一个）
     task_max_concurrent_build: int = 1

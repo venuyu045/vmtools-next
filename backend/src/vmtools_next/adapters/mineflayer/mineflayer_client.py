@@ -46,6 +46,8 @@ from .protocol import (
     METHOD_ACTIVATE_ITEM,
     METHOD_ACTIVATE_BLOCK,
     METHOD_GET_CURRENT_WINDOW,
+    METHOD_EQUIP_OFFHAND,
+    METHOD_CONSUME_OFFHAND,
     METHOD_SERVUX_HANDSHAKE,
     METHOD_PREVIEW_CONTAINER_AT,
     METHOD_SEND_CHAT,
@@ -733,6 +735,23 @@ class MineflayerBridgeClient(AbstractBotAgent):
         未打开 → opened=false。前端挂载时轮询实现「常驻容器面板」。
         """
         return await self._send_request(METHOD_GET_CURRENT_WINDOW, {},
+                                        timeout=DEFAULT_CMD_TIMEOUT)
+
+    async def equip_offhand(self, item_type: str) -> dict:
+        """装备物品到副手（2026-08-14 模块A：猪排等食物放副手 slot 45）。
+
+        从背包任意位置找 item_type 并装备到副手。
+        """
+        return await self._send_request(METHOD_EQUIP_OFFHAND, {
+            "item_type": item_type,
+        }, timeout=DEFAULT_CMD_TIMEOUT)
+
+    async def consume_offhand(self) -> dict:
+        """吃副手食物（2026-08-14 模块A：主手拿方块时按住右键吃副手猪排）。
+
+        副手无可食用物品 → 返回 success=false（后端据此触发食物补货）。
+        """
+        return await self._send_request(METHOD_CONSUME_OFFHAND, {},
                                         timeout=DEFAULT_CMD_TIMEOUT)
 
     # ── Servux 容器预览（不打开容器） ──

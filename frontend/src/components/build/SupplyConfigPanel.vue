@@ -59,6 +59,51 @@
       </div>
     </el-card>
 
+    <!-- 食物补货配置（2026-08-14 模块A：猪排仓库 + 进食阈值） -->
+    <el-card class="panel" header="食物补货配置（副手猪排）">
+      <el-form label-width="130px" size="small" class="cfg-form">
+        <el-form-item label="食物类型">
+          <el-input v-model="foodCfg.item_id" placeholder="minecraft:cooked_porkchop" />
+        </el-form-item>
+        <el-form-item label="前往猪排仓库">
+          <el-input v-model="foodCfg.go_command" placeholder="/res tp lixiangxiang.qwp" />
+        </el-form-item>
+        <el-form-item label="指令后等待">
+          <el-input-number v-model="foodCfg.wait_after_go_ms" :min="0" :max="60000" :step="1000" :controls="false" />
+          <span class="cfg-hint">ms（指令自带 3s 延迟，默认 5000 更保险）</span>
+        </el-form-item>
+        <el-form-item label="进食阈值·饱食度">
+          <el-input-number v-model="foodCfg.eat_threshold_food" :min="1" :max="20" :controls="false" />
+          <span class="cfg-hint">低于该值（满 20）吃副手猪排</span>
+        </el-form-item>
+        <el-form-item label="进食阈值·血量">
+          <el-input-number v-model="foodCfg.eat_threshold_health" :min="1" :max="20" :controls="false" />
+          <span class="cfg-hint">低于该值吃副手猪排</span>
+        </el-form-item>
+        <el-form-item>
+          <el-button type="primary" size="small" :loading="savingFoodCfg" @click="saveFoodCfg">保存食物配置</el-button>
+        </el-form-item>
+      </el-form>
+
+      <div class="panel-head-actions">
+        <p class="panel-desc">
+          猪排潜影盒坐标（填补货仓库所在维度的世界坐标）。bot 副手猪排不足时：
+          保存当前位置 → 前往猪排仓库（等 5s）→ 取猪排 → 返回工作位置 → 装备副手。
+        </p>
+      </div>
+      <div v-for="(b, i) in foodBoxes" :key="i" class="box-row">
+        <span class="box-label mono">#{{ i + 1 }}</span>
+        <el-input-number v-model="b.x" :controls="false" size="small" class="box-input" placeholder="X" />
+        <el-input-number v-model="b.y" :controls="false" size="small" class="box-input" placeholder="Y" />
+        <el-input-number v-model="b.z" :controls="false" size="small" class="box-input" placeholder="Z" />
+        <el-button size="small" text type="danger" @click="foodBoxes.splice(i, 1)">删除</el-button>
+      </div>
+      <div class="save-bar">
+        <el-button size="small" @click="foodBoxes.push({ x: 0, y: 0, z: 0 })">+ 添加潜影盒</el-button>
+        <el-button type="primary" :loading="savingFoodBoxes" @click="saveFoodBoxes">保存潜影盒坐标</el-button>
+      </div>
+    </el-card>
+
     <!-- 保存为模板（2026-08-14 二期） -->
     <el-dialog v-model="saveTplOpen" title="保存为补货模板" width="400px" append-to-body>
       <p class="tpl-desc">把当前任务的潜影盒配置保存为可复用模板（仅含已配置坐标的材料），下个任务可一键导入。</p>
@@ -101,6 +146,18 @@ const savingCfg = ref(false)
 const savingBoxes = ref(false)
 const items = ref<SupplyItem[]>([])
 const cfg = reactive({ go: '/ehomes mdssj', save: '/esethomes dth', returnCmd: '/ehomes dth' })
+
+// ── 食物补货（2026-08-14 模块A）──
+const foodCfg = reactive({
+  item_id: 'minecraft:cooked_porkchop',
+  go_command: '/res tp lixiangxiang.qwp',
+  wait_after_go_ms: 5000,
+  eat_threshold_food: 15,
+  eat_threshold_health: 15,
+})
+const foodBoxes = ref<Box[]>([])
+const savingFoodCfg = ref(false)
+const savingFoodBoxes = ref(false)
 
 // ── 模板保存/导入（2026-08-14 二期） ──
 const saveTplOpen = ref(false)
@@ -182,9 +239,11 @@ async function doImportTpl() {
 async function load() {
   loading.value = true
   try {
-    const [cfgResp, boxResp] = await Promise.all([
+    const [cfgResp, boxResp, foodCfgResp, foodBoxResp] = await Promise.all([
       mapArtApi.getSupplyConfig(props.taskId),
       mapArtApi.getSupplyBoxes(props.taskId),
+      mapArtApi.getFoodConfig(props.taskId),
+      mapArtApi.getFoodBoxes(props.taskId),
     ])
     const c = cfgResp.data || {}
     cfg.go = c.go || '/ehomes mdssj'
@@ -195,10 +254,46 @@ async function load() {
       display_name: it.display_name || '',
       boxes: (it.boxes || []).map((b: any) => ({ x: b.x, y: b.y, z: b.z })),
     }))
+    // 食物配置 + 猪排潜影盒（2026-08-14 模块A）
+    const fc = foodCfgResp.data || {}
+    foodCfg.item_id = fc.item_id || 'minecraft:cooked_porkchop'
+    foodCfg.go_command = fc.go_command || '/res tp lixiangxiang.qwp'
+    foodCfg.wait_after_go_ms = fc.wait_after_go_ms ?? 5000
+    foodCfg.eat_threshold_food = fc.eat_threshold_food ?? 15
+    foodCfg.eat_threshold_health = fc.eat_threshold_health ?? 15
+    foodBoxes.value = (foodBoxResp.data?.boxes || []).map((b: any) => ({ x: b.x, y: b.y, z: b.z }))
   } catch (e) {
     ElMessage.error(errMsg(e, '加载补货配置失败'))
   } finally {
     loading.value = false
+  }
+}
+
+async function saveFoodCfg() {
+  savingFoodCfg.value = true
+  try {
+    await mapArtApi.saveFoodConfig(props.taskId, { ...foodCfg })
+    ElMessage.success('食物配置已保存')
+  } catch (e) {
+    ElMessage.error(errMsg(e, '保存食物配置失败'))
+  } finally {
+    savingFoodCfg.value = false
+  }
+}
+
+async function saveFoodBoxes() {
+  savingFoodBoxes.value = true
+  try {
+    await mapArtApi.saveFoodBoxes(props.taskId, [{
+      item_id: foodCfg.item_id,
+      boxes: foodBoxes.value.filter(b => !(b.x === 0 && b.y === 0 && b.z === 0)),
+    }])
+    ElMessage.success('猪排潜影盒坐标已保存')
+    await load()
+  } catch (e) {
+    ElMessage.error(errMsg(e, '保存猪排潜影盒坐标失败'))
+  } finally {
+    savingFoodBoxes.value = false
   }
 }
 

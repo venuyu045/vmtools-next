@@ -324,7 +324,7 @@ function stableColor(seed: string): string {
 }
 function botColor(botId: string): string { return stableColor(botId) }
 
-/** 传给画布的 bot 位置标记（含区域框数据） */
+/** 传给画布的 bot 位置标记（含区域框数据 + 真实饱食度/血量） */
 const botMarkers = computed(() =>
   (bots.value || []).map((b: any) => ({
     bot_id: b.bot_id,
@@ -332,6 +332,8 @@ const botMarkers = computed(() =>
     state: b.state,
     position: b.position || null,
     region: b.region || null,
+    health: b.health ?? null,
+    food: b.food ?? null,
   }))
 )
 

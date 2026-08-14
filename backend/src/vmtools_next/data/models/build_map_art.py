@@ -80,6 +80,11 @@ class MapArtTask(Base):
     # go=前往补给点指令 / save=暂存当前位置指令 / return=返回工作位置指令（均可自定义）
     supply_config = Column(Text, default="")
 
+    # 食物配置（2026-08-14 模块A）：JSON，形如
+    # {"item_id":"minecraft:cooked_porkchop","go_command":"/res tp lixiangxiang.qwp",
+    #  "wait_after_go_ms":5000,"eat_threshold_food":15,"eat_threshold_health":15}
+    food_config = Column(Text, default="")
+
     # Relationships
     materials = relationship(
         "MapArtMaterial", back_populates="task",
@@ -91,6 +96,10 @@ class MapArtTask(Base):
     )
     block_states = relationship(
         "MapArtBlockState", back_populates="task",
+        cascade="all, delete-orphan",
+    )
+    food_boxes = relationship(
+        "MapArtFoodBox", back_populates="task",
         cascade="all, delete-orphan",
     )
 
@@ -212,6 +221,30 @@ class MapArtSupplyWarehouse(Base):
     boxes_json = Column(Text, default="[]")
     updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc),
                          onupdate=lambda: datetime.now(timezone.utc))
+
+
+class MapArtFoodBox(Base):
+    """食物潜影盒配置（2026-08-14 模块A）：猪排仓库潜影盒坐标。
+
+    与材料潜影盒分离：食物仓库指令不同（/res tp lixiangxiang.qwp），
+    且需等待 5s 才能寻路（指令自带 3s 延迟）。
+    """
+
+    __tablename__ = "map_art_food_boxes"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    task_id = Column(String(12), ForeignKey("map_art_tasks.task_id", ondelete="CASCADE"), nullable=False, index=True)
+    item_id = Column(String(128), nullable=False, default="minecraft:cooked_porkchop")
+    x = Column(Integer, nullable=False)
+    y = Column(Integer, nullable=False)
+    z = Column(Integer, nullable=False)
+    sort_order = Column(Integer, default=0)
+
+    task = relationship("MapArtTask", back_populates="food_boxes")
+
+    __table_args__ = (
+        Index("idx_mapart_fb_task_item", "task_id", "item_id"),
+    )
 
 
 class MapArtBlockState(Base):

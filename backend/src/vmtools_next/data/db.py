@@ -257,6 +257,9 @@ def _run_lightweight_migrations(engine) -> None:
                 # 地图画任务：投影朝向（rotation，2026-08-14）——0/1/2/3 = 0°/90°/180°/270°
                 if "rotation" not in mt_columns:
                     conn.execute(text("ALTER TABLE map_art_tasks ADD COLUMN rotation INTEGER DEFAULT 0"))
+                # 地图画任务：食物配置（food_config JSON，2026-08-14 模块A）
+                if "food_config" not in mt_columns:
+                    conn.execute(text("ALTER TABLE map_art_tasks ADD COLUMN food_config TEXT DEFAULT ''"))
             except Exception as _e:
                 logger.warning("map_art_tasks supply_config migration check: {}", _e)
             conn.commit()

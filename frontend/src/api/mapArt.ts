@@ -50,6 +50,22 @@ export const mapArtApi = {
   saveSupplyConfig(taskId: string, cfg: { go: string; save: string; return: string }) {
     return client.put(`/build/map-art/tasks/${taskId}/supply-config`, cfg)
   },
+  /** 2026-08-14 模块A：食物补货配置（猪排仓库指令 + 进食阈值） */
+  getFoodConfig(taskId: string) {
+    return client.get(`/build/map-art/tasks/${taskId}/food-config`)
+  },
+  saveFoodConfig(taskId: string, cfg: {
+    item_id: string; go_command: string; wait_after_go_ms: number;
+    eat_threshold_food: number; eat_threshold_health: number
+  }) {
+    return client.put(`/build/map-art/tasks/${taskId}/food-config`, cfg)
+  },
+  getFoodBoxes(taskId: string) {
+    return client.get(`/build/map-art/tasks/${taskId}/food-boxes`)
+  },
+  saveFoodBoxes(taskId: string, items: { item_id: string; boxes: { x: number; y: number; z: number }[] }[]) {
+    return client.put(`/build/map-art/tasks/${taskId}/food-boxes`, { items })
+  },
   /** 2026-08-14：补货潜影盒坐标（材料 ↔ 坐标，1 材料可配多坐标） */
   getSupplyBoxes(taskId: string) {
     return client.get(`/build/map-art/tasks/${taskId}/supply-boxes`)
