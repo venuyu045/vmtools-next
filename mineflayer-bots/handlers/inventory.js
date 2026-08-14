@@ -434,10 +434,17 @@ function createInventoryHandlers(bot, opts = {}) {
   async function open_container_at({ x, y, z } = {}) {
     try {
       const pos = new Vec3(x, y, z);
-      const block = bot.blockAt(pos);
+      let block = bot.blockAt(pos);
 
-      if (!block || block.type === 0) {
-        return { success: false, error: `No block at (${x},${y},${z})` };
+      // 2026-08-14 修复①：blockAt 可能因 chunk 未加载/非容器返回无效
+      // （实测 bot 距目标 3.5 格仍拿到无效方块）→ 在目标附近扫描容器兜底
+      if (!block || block.type === 0 || !isContainerBlockName(block.name)) {
+        const nearby = scanContainerNear(pos, 3);
+        if (!nearby) {
+          return { success: false, error: `No container near (${x},${y},${z})` };
+        }
+        block = nearby.block;
+        pos.copy(nearby.pos);
       }
 
       // 距离远 → pathfinder 先走到容器旁（2 格内），再右键打开
@@ -461,8 +468,12 @@ function createInventoryHandlers(bot, opts = {}) {
 
       let container;
       try {
+        // 2026-08-14 修复②：bot.openContainer 用 containerToOpen.constructor.name==='Block'
+        // 严格判断——prismarine-world 26.1 返回的 Block 跨包实例该判断失败，抛
+        // "containerToOpen is neither a block nor an entity"（实测根因）。
+        // bot.openBlock = activateBlock（右键交互）+ windowOpen 等待，无类型检查。
         container = await Promise.race([
-          bot.openContainer(block),
+          bot.openBlock(block),
           new Promise((_, reject) => setTimeout(() => reject(new Error('open container timeout (8s)')), 8000)),
         ]);
       } finally {
@@ -491,6 +502,34 @@ function createInventoryHandlers(bot, opts = {}) {
     } catch (err) {
       return { success: false, error: err.message };
     }
+  }
+
+  // ── 容器方块名判断（潜影盒各色/箱子/桶/漏斗/发射器等） ──
+  function isContainerBlockName(name) {
+    if (!name) return false;
+    const base = String(name).includes(':') ? String(name).split(':')[1] : name;
+    if (base.includes('shulker_box')) return true;
+    return ['chest', 'trapped_chest', 'barrel', 'hopper', 'dispenser', 'dropper',
+            'furnace', 'blast_furnace', 'smoker', 'brewing_stand', 'ender_chest']
+      .includes(base);
+  }
+
+  // ── 目标坐标附近扫描容器（blockAt 无效时的兜底） ──
+  function scanContainerNear(pos, radius = 3) {
+    try {
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -radius; dx <= radius; dx++) {
+          for (let dz = -radius; dz <= radius; dz++) {
+            const p = pos.offset(dx, dy, dz);
+            const b = bot.blockAt(p);
+            if (b && b.type !== 0 && isContainerBlockName(b.name)) {
+              return { block: b, pos: p };
+            }
+          }
+        }
+      }
+      return null;
+    } catch { return null; }
   }
 
   // ── 关闭容器 ──

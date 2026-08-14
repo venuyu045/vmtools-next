@@ -1268,11 +1268,15 @@ class MapArtCoordinator:
         remaining = total - placed
         eta = (remaining / rate) * 60 if rate > 0 else 0
         # P1-10：全部区域完成 → 任务级 status=completed（不再硬编码 running）；
-        # 2026-08-14：有区域 failed（未放完）→ status=failed
+        # 2026-08-14：有区域 failed（未放完）→ status=failed；
+        # 任一 loop waiting（pause 置 waiting）→ status=paused（防 socket 推送
+        # 覆盖前端暂停态，导致暂停后按钮消失/错乱）
         if self._failed_loops:
             status = "failed"
         elif self._done_loops and len(self._done_loops) >= len(self._loops) and self._loops:
             status = "completed"
+        elif any(l.progress.state == "waiting" for l in self._loops.values()):
+            status = "paused"
         else:
             status = "running"
 
