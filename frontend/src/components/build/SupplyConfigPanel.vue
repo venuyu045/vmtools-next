@@ -23,7 +23,7 @@
     <el-card class="panel" header="补货潜影盒配置（材料 ↔ 坐标）">
       <div class="panel-head-actions">
         <p class="panel-desc">
-          为任务需要的每种材料指定潜影盒坐标（世界坐标，玩家站在该坐标附近可交互）。
+          为任务需要的每种材料指定潜影盒坐标（**填补货仓库所在维度的世界坐标**，玩家站在该坐标附近可交互）。
           bot 补货时按顺序取货，取空自动尝试下一个坐标；未配置坐标的材料回退旧补货方式。
         </p>
         <div class="tpl-actions">
