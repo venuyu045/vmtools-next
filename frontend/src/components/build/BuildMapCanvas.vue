@@ -79,13 +79,28 @@ const ch = ref(0)
 const stageW = computed(() => Math.round(cw.value * zoom.value))
 const stageH = computed(() => Math.round(ch.value * zoom.value))
 
-// ── 拖拽平移（放大后拖动画布查看任意位置） ──
+// ── 拖拽平移 + 双指捏合缩放 ──
+// 2026-08-14：平板「电脑版网页」触摸走 Pointer Events（Edge 电脑模式/触屏本），
+// 仅监听 touch 事件无效。统一用 pointer 事件：单指=拖拽平移，双指=捏合缩放。
 let dragging = false
 let dragStartX = 0
 let dragStartY = 0
 let scrollStartLeft = 0
 let scrollStartTop = 0
+const activePointers = new Map<number, { x: number; y: number }>()
+let pinchStartDist = 0
+let pinchStartZoom = 1
 function onPointerDown(e: PointerEvent) {
+  activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY })
+  if (activePointers.size >= 2) {
+    // 双指 → 进入捏合缩放，取消拖拽
+    dragging = false
+    const pts = [...activePointers.values()]
+    pinchStartDist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y)
+    pinchStartZoom = zoom.value
+    return
+  }
+  // 单指 → 拖拽平移
   dragging = true
   dragStartX = e.clientX
   dragStartY = e.clientY
@@ -94,11 +109,37 @@ function onPointerDown(e: PointerEvent) {
   container.value?.setPointerCapture?.(e.pointerId)
 }
 function onPointerMove(e: PointerEvent) {
-  if (!dragging || !container.value) return
-  container.value.scrollLeft = scrollStartLeft - (e.clientX - dragStartX)
-  container.value.scrollTop = scrollStartTop - (e.clientY - dragStartY)
+  if (!activePointers.has(e.pointerId)) return
+  activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY })
+  if (activePointers.size >= 2) {
+    // 捏合缩放：按两指距离比例更新 zoom（0.5x~3x，0.1 步进）
+    const pts = [...activePointers.values()]
+    const dist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y)
+    if (pinchStartDist > 0) {
+      const next = clampZoom(Math.round(pinchStartZoom * (dist / pinchStartDist) * 10) / 10)
+      if (next !== zoom.value) zoom.value = next
+    }
+    return
+  }
+  if (dragging && container.value) {
+    container.value.scrollLeft = scrollStartLeft - (e.clientX - dragStartX)
+    container.value.scrollTop = scrollStartTop - (e.clientY - dragStartY)
+  }
 }
-function onPointerUp() { dragging = false }
+function onPointerUp(e: PointerEvent) {
+  activePointers.delete(e.pointerId)
+  if (activePointers.size === 1) {
+    // 抬一指剩一指：从剩余手指位置重新开始拖拽
+    const [p] = [...activePointers.values()]
+    dragStartX = p.x
+    dragStartY = p.y
+    scrollStartLeft = container.value?.scrollLeft ?? 0
+    scrollStartTop = container.value?.scrollTop ?? 0
+    dragging = true
+  } else if (activePointers.size === 0) {
+    dragging = false
+  }
+}
 
 // ── 贴图缓存 ──
 const textureCache = new Map<string, HTMLImageElement>()
@@ -344,14 +385,11 @@ defineExpose({ refresh: render })
 
 <style scoped>
 .build2d-wrap {
-  /* 2026-08-14 审查补录修复：无高度约束时被 .canvas-stage（画布×zoom）撑到
-     几千 px，把同列下方的补货传送指令面板挤到页面深处（预览/补货窗口冲突）。
-     加 flex:1 约束在 canvas-area 可视区内 + min-height 保底画布可用高度。 */
+  /* 2026-08-14：预览视图固定大小区域——高度 = 工具栏 + 固定 460px 画布区，
+     不再 flex 撑满/被压缩；宽度自适应列宽；画布内部滚动。 */
   display: flex;
   flex-direction: column;
   gap: 6px;
-  flex: 1;
-  min-height: 240px;
 }
 .canvas-toolbar {
   display: flex; align-items: center; gap: 6px;
@@ -365,15 +403,18 @@ defineExpose({ refresh: render })
 .tb-label { font-size: 12px; color: var(--text-muted); }
 .tb-hint { font-size: 11px; color: var(--text-muted); margin-left: 4px; }
 .build2d-container {
-  flex: 1;
+  /* 2026-08-14：固定大小预览区域（高度 460px，宽度 100%）——稳定不跳动，
+     缩放只改 stage transform，容器滚动范围由 stage 撑开 */
+  flex: none;
   width: 100%;
-  /* 2026-08-14 审查补录修复：原 min-height:400px 在 wrap 可用高度不足时会
-     溢出遮挡下方 control-bar/补货面板 → 改 0 完全自适应，画布内部滚动 */
-  min-height: 0;
+  height: 460px;
   background: #1a1a2e;
   border-radius: 8px;
   overflow: auto;
   cursor: grab;
+  /* 2026-08-14：触控手势（单指拖拽平移/双指捏合缩放）由 JS pointer 事件接管，
+     阻止浏览器默认的页面级滚动/缩放手势；鼠标滚轮/滚动条不受影响 */
+  touch-action: none;
 }
 .build2d-container:active { cursor: grabbing; }
 .canvas-stage { position: relative; }
