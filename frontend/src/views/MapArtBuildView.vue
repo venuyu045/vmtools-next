@@ -168,9 +168,34 @@ const route = useRoute()
 const taskId = computed(() => route.params.taskId as string)
 const { on: sockOn, off: sockOff, emit: sockEmit } = useSocketIO()
 
-// ── 方块数据缓存（2026-08-14 三期）：同任务再次进入不再重新"正在加载" ──
-// 模块级 Map：组件卸载不丢，再次进入先用缓存秒开，后台静默刷新一次。
-const blockCache = new Map<string, any>()
+// ── 方块数据缓存（2026-08-14 常态化）：localStorage 持久化，跨刷新/重进秒开 ──
+// 投影解析结果（blocks 结构）在任务创建后固定不变，仅 placed 进度变化（由
+// BuildMapCanvas 5s 增量轮询更新）。缓存 key=taskId，天然按任务隔离；
+// LRU 只保留最近 3 个任务，防 localStorage 溢出（16384 块 ≈ 1.5MB）。
+const BLOCK_CACHE_PREFIX = 'vmtools-mapart-blocks-'
+const BLOCK_CACHE_MAX = 3
+function cacheGetBlocks(taskId: string): any | null {
+  try {
+    const raw = localStorage.getItem(BLOCK_CACHE_PREFIX + taskId)
+    return raw ? JSON.parse(raw) : null
+  } catch { return null }
+}
+function cacheSetBlocks(taskId: string, data: any) {
+  try {
+    localStorage.setItem(BLOCK_CACHE_PREFIX + taskId, JSON.stringify(data))
+    // LRU：保留最近 N 个任务（按 key 字典序近似时间序）
+    const keys: string[] = []
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i) || ''
+      if (k.startsWith(BLOCK_CACHE_PREFIX)) keys.push(k)
+    }
+    keys.sort()
+    while (keys.length > BLOCK_CACHE_MAX) {
+      localStorage.removeItem(keys[0])
+      keys.shift()
+    }
+  } catch { /* 容量满/隐私模式：放弃持久化，仅本次会话内存生效 */ }
+}
 
 const task = ref<any>(null)
 const bots = ref<any[]>([])
@@ -317,8 +342,8 @@ async function fetchTask() {
     bots.value = data.bots || []
     await loadAvailableBots()
 
-    // 方块数据：有缓存先秒开（不再"正在加载"），后台静默刷新一次
-    const cached = blockCache.get(taskId.value)
+    // 方块数据：localStorage 缓存秒开（跨刷新常态保留），后台静默刷新一次
+    const cached = cacheGetBlocks(taskId.value)
     if (cached) {
       blockData.value = cached
       loadingBlocks.value = false
@@ -334,7 +359,7 @@ async function fetchTask() {
         origin: blockResp.origin || { x: 0, y: 64, z: 0 },
         size: blockResp.size || { x: 32, z: 32 },
       }
-      blockCache.set(taskId.value, fresh)
+      cacheSetBlocks(taskId.value, fresh)
       blockData.value = fresh // 后台刷新：缓存/首次都更新为最新（含 placed 进度）
     } catch { /* 方块数据可能尚未生成；有缓存则保留缓存 */ }
     loadingBlocks.value = false

@@ -273,9 +273,19 @@ class BotBuildLoop:
                     break  # 行内移动/放置中断 → 终止循环
 
             if not self._stopped:
-                self.progress.state = "completed"
-                logger.info("[%s] Region complete: %d blocks placed",
-                            self.bot_id, self.progress.blocks_placed)
+                placed = self.progress.blocks_placed
+                total = self.progress.blocks_total
+                if total > 0 and placed < total:
+                    # 2026-08-14 修复：循环跑完但方块未放完（补货失败/放置失败跳过）
+                    # → 标记区域失败，不再误报 completed（此前 0/16384 也 completed）。
+                    # 仍回调 on_done，由 coordinator 据 state 判定任务 failed。
+                    self.progress.state = "failed"
+                    logger.warning("[%s] Region finished but INCOMPLETE: %d/%d blocks placed",
+                                   self.bot_id, placed, total)
+                else:
+                    self.progress.state = "completed"
+                    logger.info("[%s] Region complete: %d blocks placed",
+                                self.bot_id, placed)
                 # P1-10：通知 coordinator（任务级完成判定 + DB status 更新）
                 if self._on_done:
                     try:
@@ -669,27 +679,39 @@ class BotBuildLoop:
                 await asyncio.sleep(2.5)
 
                 # 3. 按顺序尝试每个潜影盒坐标（取到一组即停；取空尝试下一个）
+                # 2026-08-14 修复①：open_container_at 自带近距离自动寻路（>3 格
+                # pathfinder 靠近 2 格），直接调用即可——原代码前置 _move_to(max_offset=2)
+                # 因 pathfinder 最后 1~2 格不可达/垂直阻挡而 25s 超时，导致"到不了箱子"。
+                # 修复②：open_container_at 返回 container_id(uuid) 而非 inventoryId，
+                # 原代码取 inventoryId→0 → withdraw 永远 "Container 0 not found"（取货从未成功）。
                 taken = False
                 for bx, by, bz in boxes:
-                    if await self._move_to(bx, by, bz, max_offset=2, label="shulker box",
-                                           timeout_ms=25000):
-                        open_result = await self.mcp.open_container_at(bx, by, bz, timeout_ms=5000)
-                        inv_id = (open_result.get("data", open_result)).get("inventoryId", 0)
-                        wd = await self.mcp.withdraw_container_item(clean_id, needed_count, inv_id)
-                        await self.mcp.close_container(inv_id)
-                        # 2026-08-14 审查修复：此前不检查 withdraw 返回值，取货失败
-                        # （背包满/箱内无此物/容器未开）仍标记 taken=True → 继续建造但
-                        # 手里没物品，静默漏块。失败时继续尝试下一个潜影盒坐标。
-                        if isinstance(wd, dict) and wd.get("success") is False:
-                            logger.warning(
-                                "[%s] Withdraw %s from (%d,%d,%d) failed: %s，尝试下一个坐标",
-                                self.bot_id, clean_id, bx, by, bz,
-                                wd.get("error", "?"))
-                            continue
-                        taken = True
-                        logger.info("[%s] Shulker restock done: %s ×%d from (%d,%d,%d)",
-                                    self.bot_id, clean_id, needed_count, bx, by, bz)
-                        break
+                    try:
+                        open_result = await self.mcp.open_container_at(bx, by, bz, timeout_ms=15000)
+                    except Exception as e:
+                        logger.warning("[%s] Open shulker at (%d,%d,%d) error: %s",
+                                       self.bot_id, bx, by, bz, e)
+                        continue
+                    data = open_result.get("data", open_result) if isinstance(open_result, dict) else {}
+                    container_id = (data or {}).get("container_id") or ""
+                    if not container_id:
+                        logger.warning("[%s] Open shulker at (%d,%d,%d) failed: %s",
+                                       self.bot_id, bx, by, bz,
+                                       (data or {}).get("error", "?"))
+                        continue
+                    wd = await self.mcp.withdraw_container_item(clean_id, needed_count, container_id)
+                    await self.mcp.close_container(container_id)
+                    # 2026-08-14 审查修复：取货失败（背包满/箱内无此物）→ 尝试下一个坐标
+                    if isinstance(wd, dict) and wd.get("success") is False:
+                        logger.warning(
+                            "[%s] Withdraw %s from (%d,%d,%d) failed: %s，尝试下一个坐标",
+                            self.bot_id, clean_id, bx, by, bz,
+                            wd.get("error", "?"))
+                        continue
+                    taken = True
+                    logger.info("[%s] Shulker restock done: %s ×%d from (%d,%d,%d)",
+                                self.bot_id, clean_id, needed_count, bx, by, bz)
+                    break
                 if not taken:
                     logger.warning("[%s] 所有配置潜影盒均未取到 %s（可能取空/坐标不符）", self.bot_id, clean_id)
 
@@ -721,29 +743,37 @@ class BotBuildLoop:
                     if blocks:
                         chest = blocks[0]
                         open_result = await self.mcp.open_container_at(
-                            chest["x"], chest["y"], chest["z"], timeout_ms=5000)
-                        inv_id = (open_result.get("data", open_result)).get("inventoryId", 0)
-                        wd = await self.mcp.withdraw_container_item(clean_id, needed_count, inv_id)
-                        await self.mcp.close_container(inv_id)
-                        # 2026-08-14 审查修复：校验取货结果，失败不返回成功
-                        # （否则 bot 继续建造但手里没物品，静默漏块）
-                        if isinstance(wd, dict) and wd.get("success") is False:
-                            logger.warning(
-                                "[%s] Supply-box withdraw %s failed: %s，回退传送仓库",
-                                self.bot_id, clean_id, wd.get("error", "?"))
-                            # 先返回建造位置再走策略2（避免策略2把补给箱处存为临时家）
+                            chest["x"], chest["y"], chest["z"], timeout_ms=10000)
+                        data = open_result.get("data", open_result) if isinstance(open_result, dict) else {}
+                        container_id = (data or {}).get("container_id") or ""
+                        if not container_id:
+                            logger.warning("[%s] Open supply box failed: %s，回退传送仓库",
+                                           self.bot_id, (data or {}).get("error", "?"))
                             if build_pos:
                                 await self._move_to(*build_pos, max_offset=2,
                                                     label="back to build pos")
                         else:
-                            logger.info("[%s] Supply-box restock done: %s ×%d",
-                                        self.bot_id, clean_id, needed_count)
-                            # 返回建造位置
-                            if build_pos:
-                                await self._move_to(*build_pos, max_offset=2,
-                                                    label="back to build pos")
-                            self.progress.state = "placing"
-                            return True
+                            wd = await self.mcp.withdraw_container_item(clean_id, needed_count, container_id)
+                            await self.mcp.close_container(container_id)
+                            # 2026-08-14 审查修复：校验取货结果，失败不返回成功
+                            # （否则 bot 继续建造但手里没物品，静默漏块）
+                            if isinstance(wd, dict) and wd.get("success") is False:
+                                logger.warning(
+                                    "[%s] Supply-box withdraw %s failed: %s，回退传送仓库",
+                                    self.bot_id, clean_id, wd.get("error", "?"))
+                                # 先返回建造位置再走策略2（避免策略2把补给箱处存为临时家）
+                                if build_pos:
+                                    await self._move_to(*build_pos, max_offset=2,
+                                                        label="back to build pos")
+                            else:
+                                logger.info("[%s] Supply-box restock done: %s ×%d",
+                                            self.bot_id, clean_id, needed_count)
+                                # 返回建造位置
+                                if build_pos:
+                                    await self._move_to(*build_pos, max_offset=2,
+                                                        label="back to build pos")
+                                self.progress.state = "placing"
+                                return True
                 logger.warning("[%s] Supply box unavailable, fallback to teleport",
                                self.bot_id)
             except Exception as e:
@@ -780,13 +810,18 @@ class BotBuildLoop:
             chest = blocks[0]
             cx, cy, cz = chest["x"], chest["y"], chest["z"]
 
-            # 4. 打开 → 取材料 → 关（2026-08-14 审查修复：校验取货结果，失败不返回成功）
+            # 4. 打开 → 取材料 → 关（2026-08-14 修复：用 container_id 而非 inventoryId）
             logger.info("[%s] Opening container at (%d,%d,%d)", self.bot_id, cx, cy, cz)
-            open_result = await self.mcp.open_container_at(cx, cy, cz, timeout_ms=5000)
-            inv_id = (open_result.get("data", open_result)).get("inventoryId", 0)
+            open_result = await self.mcp.open_container_at(cx, cy, cz, timeout_ms=10000)
+            data = open_result.get("data", open_result) if isinstance(open_result, dict) else {}
+            container_id = (data or {}).get("container_id") or ""
+            if not container_id:
+                logger.warning("[%s] Open warehouse container failed: %s",
+                               self.bot_id, (data or {}).get("error", "?"))
+                return False
 
-            wd = await self.mcp.withdraw_container_item(clean_id, needed_count, inv_id)
-            await self.mcp.close_container(inv_id)
+            wd = await self.mcp.withdraw_container_item(clean_id, needed_count, container_id)
+            await self.mcp.close_container(container_id)
             if isinstance(wd, dict) and wd.get("success") is False:
                 logger.warning("[%s] Warehouse withdraw %s failed: %s",
                                self.bot_id, clean_id, wd.get("error", "?"))
@@ -835,6 +870,8 @@ class MapArtCoordinator:
         self._progress_task: Optional[asyncio.Task] = None
         self._block_matrix: dict[tuple[int, int], str] = {}
         self._done_loops: set[str] = set()  # P1-10：正常完成的任务判定
+        # 2026-08-14：区域未放完（failed）的 bot——任务级完成判定排除，置 failed
+        self._failed_loops: set[str] = set()
         self._completion_notified: bool = False
         # P2-27：待接管区域队列（remove_bot 释放的未完成区域 → add_bot 分配）
         self._pending_regions: list[Region] = []
@@ -1062,12 +1099,62 @@ class MapArtCoordinator:
     # ── Progress & Socket.IO ──────────────────
 
     def _on_loop_done(self, bot_id: str) -> None:
-        """P1-10：单个 bot 区域正常完成 → 全部完成后任务置 completed（DB + 推送）。"""
+        """P1-10：单个 bot 区域结束 → 全部结束后判定任务 completed / failed（DB + 推送）。"""
+        loop = self._loops.get(bot_id)
         self._done_loops.add(bot_id)
+        # 2026-08-14：区域未放完（补货/放置失败）→ 记入失败集合，完成判定排除
+        if loop is not None and loop.progress.state == "failed":
+            self._failed_loops.add(bot_id)
         if self._completion_notified or not self._loops:
             return
         if len(self._done_loops) >= len(self._loops):
             self._completion_notified = True
+            if self._failed_loops:
+                # 有 bot 区域未放完 → 任务置 failed（不再误报 completed）
+                logger.warning("[%s] Task marked FAILED: %d/%d regions incomplete",
+                               self.task_id, len(self._failed_loops), len(self._loops))
+                # 停止尚未结束的其余 loop
+                for bid, lp in self._loops.items():
+                    if bid not in self._done_loops:
+                        try:
+                            asyncio.create_task(lp.stop())
+                        except Exception:
+                            pass
+                try:
+                    from vmtools_next.data.db import get_session_factory, sio as _sio
+                    from vmtools_next.data.models.build_map_art import MapArtTask
+                    Session = get_session_factory()
+                    db = Session()
+                    try:
+                        task = db.query(MapArtTask).filter(
+                            MapArtTask.task_id == self.task_id).first()
+                        if task and task.status == "running":
+                            task.status = "failed"
+                            task.error_message = (
+                                f"{len(self._failed_loops)} 个 Bot 区域未完成"
+                                f"（补货或放置失败，实际放置 {task.placed_blocks or 0}/{task.total_blocks or 0} 方块）")
+                            task.completed_at = datetime.now(timezone.utc)
+                            db.commit()
+                    finally:
+                        db.close()
+                    asyncio.create_task(_sio.emit(
+                        "build_progress",
+                        {"task_id": self.task_id, "status": "failed",
+                         "error_message": task.error_message},
+                        room=f"build_{self.task_id}",
+                    ))
+                    try:
+                        from vmtools_next.core.task_scheduler import get_task_scheduler
+                        _sched = get_task_scheduler()
+                        if _sched:
+                            asyncio.create_task(_sched.broadcast_queue())
+                            asyncio.create_task(_sched.schedule_once())
+                    except Exception as _sched_err:
+                        logger.warning("[%s] Scheduler notify failed: %s",
+                                       self.task_id, _sched_err)
+                except Exception as e:
+                    logger.warning("[%s] Failure persist failed: %s", self.task_id, e)
+                return
             logger.info("[%s] All regions complete, marking task completed", self.task_id)
             try:
                 from vmtools_next.data.db import get_session_factory, sio as _sio
@@ -1180,10 +1267,14 @@ class MapArtCoordinator:
         rate = placed / (elapsed / 60) if elapsed > 0 else 0
         remaining = total - placed
         eta = (remaining / rate) * 60 if rate > 0 else 0
-        # P1-10：全部区域完成 → 任务级 status=completed（不再硬编码 running）
-        status = ("completed" if self._done_loops
-                  and len(self._done_loops) >= len(self._loops) and self._loops
-                  else "running")
+        # P1-10：全部区域完成 → 任务级 status=completed（不再硬编码 running）；
+        # 2026-08-14：有区域 failed（未放完）→ status=failed
+        if self._failed_loops:
+            status = "failed"
+        elif self._done_loops and len(self._done_loops) >= len(self._loops) and self._loops:
+            status = "completed"
+        else:
+            status = "running"
 
         bots = [{
             "bot_id": l.bot_id,
