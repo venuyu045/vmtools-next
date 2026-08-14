@@ -254,6 +254,9 @@ def _run_lightweight_migrations(engine) -> None:
                 mt_columns = {row[1] for row in conn.execute(text("PRAGMA table_info(map_art_tasks)")).fetchall()}
                 if "supply_config" not in mt_columns:
                     conn.execute(text("ALTER TABLE map_art_tasks ADD COLUMN supply_config TEXT DEFAULT ''"))
+                # 地图画任务：投影朝向（rotation，2026-08-14）——0/1/2/3 = 0°/90°/180°/270°
+                if "rotation" not in mt_columns:
+                    conn.execute(text("ALTER TABLE map_art_tasks ADD COLUMN rotation INTEGER DEFAULT 0"))
             except Exception as _e:
                 logger.warning("map_art_tasks supply_config migration check: {}", _e)
             conn.commit()

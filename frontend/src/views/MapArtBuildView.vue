@@ -130,6 +130,10 @@
         <!-- 统计 -->
         <el-card class="panel" header="统计">
           <div class="stat-row">
+            <span>投影朝向</span>
+            <span>{{ rotationLabel(task?.rotation) }}</span>
+          </div>
+          <div class="stat-row">
             <span>已耗时</span>
             <span>{{ formatTime(elapsed) }}</span>
           </div>
@@ -237,6 +241,14 @@ const STATUS_LABELS: Record<string, string> = {
 const BOT_STATE_LABELS: Record<string, string> = {
   idle: '空闲', moving: '移动中', placing: '放置中', restocking: '补货中',
   waiting: '等待中', completed: '已完成', offline: '已离线', released: '已释放',
+}
+const ROTATION_LABELS: Record<number, string> = {
+  0: '0°（北 / 原方向）', 1: '90°（东 / 顺时针）',
+  2: '180°（南）', 3: '270°（西）',
+}
+function rotationLabel(r?: number): string {
+  const n = ((r ?? 0) % 4 + 4) % 4
+  return ROTATION_LABELS[n] || `${n}0°`
 }
 
 function statusLabel(s?: string): string { return (s && STATUS_LABELS[s]) || s || '未知' }

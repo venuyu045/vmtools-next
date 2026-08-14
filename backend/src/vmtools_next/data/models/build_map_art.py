@@ -51,6 +51,10 @@ class MapArtTask(Base):
     origin_y = Column(Integer, default=0)
     origin_z = Column(Integer, default=0)
 
+    # 投影朝向（2026-08-14）：绕 Y 轴顺时针旋转次数（0/1/2/3 = 0°/90°/180°/270°）。
+    # 解析时对投影局部坐标统一旋转后落库，前端预览/建造均使用旋转后坐标。
+    rotation = Column(Integer, default=0)
+
     # Status lifecycle: draft → pending → running → completed/failed/cancelled
     status = Column(String(20), default="draft")
     error_message = Column(Text, default="")

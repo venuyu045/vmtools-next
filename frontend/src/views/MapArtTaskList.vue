@@ -63,6 +63,15 @@
         <el-form-item label="原点 Z">
           <el-input-number v-model="form.origin_z" />
         </el-form-item>
+        <el-form-item label="朝向">
+          <el-select v-model="form.rotation" style="width: 100%">
+            <el-option :value="0" label="0°（北 / 原方向）" />
+            <el-option :value="1" label="90°（东 / 顺时针）" />
+            <el-option :value="2" label="180°（南）" />
+            <el-option :value="3" label="270°（西）" />
+          </el-select>
+          <span style="color: var(--text-muted); font-size: 12px;">投影绕 Y 轴旋转后放置在原点</span>
+        </el-form-item>
         <el-form-item label="选择 Bot">
           <el-select v-model="form.bot_ids" multiple placeholder="选择参与建造的 Bot">
             <el-option
@@ -104,7 +113,7 @@ const uploadedPath = ref('')
 const allBots = ref<any[]>([])
 const showTemplates = ref(false) // 补货仓库模板弹窗（2026-08-14 二期）
 
-const form = ref({ name: '', origin_x: 0, origin_y: 64, origin_z: 0, bot_ids: [] as string[] })
+const form = ref({ name: '', origin_x: 0, origin_y: 64, origin_z: 0, bot_ids: [] as string[], rotation: 0 })
 
 async function loadBots() {
   try {
@@ -189,10 +198,11 @@ async function createTask() {
       projection_file_path: uploadedPath.value,
       origin_x: form.value.origin_x, origin_y: form.value.origin_y, origin_z: form.value.origin_z,
       bot_ids: form.value.bot_ids,
+      rotation: form.value.rotation,
     })
     ElMessage.success('任务创建成功！')
     showCreate.value = false
-    form.value = { name: '', origin_x: 0, origin_y: 64, origin_z: 0, bot_ids: [] }
+    form.value = { name: '', origin_x: 0, origin_y: 64, origin_z: 0, bot_ids: [], rotation: 0 }
     uploadedPath.value = ''
     fetchTasks()
   } catch (e: any) {

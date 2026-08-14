@@ -127,6 +127,8 @@ class MapArtTaskCreate(BaseModel):
     origin_z: int = 0
     bot_ids: list[str] = []
     organization_id: Optional[str] = None
+    # 投影朝向（2026-08-14）：绕 Y 轴顺时针旋转次数 0/1/2/3 = 0°/90°/180°/270°
+    rotation: int = 0
 
 
 class MapArtTaskResponse(BaseModel):
@@ -140,6 +142,8 @@ class MapArtTaskResponse(BaseModel):
     total_blocks: int
     placed_blocks: int
     created_at: str
+    # 投影朝向（2026-08-14）：0/1/2/3 = 0°/90°/180°/270°
+    rotation: int = 0
 
 
 class TaskControlRequest(BaseModel):
@@ -307,6 +311,16 @@ async def create_task(
                         "请先在 Litematica 中把投影平移到原点 (0,0,0) 后重新导出"),
             )
 
+    # 朝向旋转（2026-08-14）：解析结果统一按 rotation 旋转后落库，
+    # 前端预览 / Bot 建造 / 断点续建全部使用旋转后坐标（DB 即旋转后的最终数据）。
+    rotation = int(data.rotation or 0) % 4
+    if rotation:
+        from vmtools_next.adapters.litematica.litematica_parser import rotate_layers
+        parsed.layers = rotate_layers(parsed.layers, rotation, info.size_x, info.size_z)
+        # 90°/270° 时宽深互换（投影局部坐标已旋转，尺寸随之互换）
+        if rotation in (1, 3):
+            info.size_x, info.size_z = info.size_z, info.size_x
+
     # Create task
     task = MapArtTask(
         name=data.name,
@@ -324,6 +338,7 @@ async def create_task(
         organization_id=data.organization_id or getattr(user, "organization_id", None),
         created_by=getattr(user, "game_id", str(user)),
         supply_config=json.dumps(_default_supply_config(), ensure_ascii=False),
+        rotation=rotation,
     )
     db.add(task)
     db.flush()
@@ -380,6 +395,7 @@ async def create_task(
         total_blocks=task.total_blocks,
         placed_blocks=task.placed_blocks,
         created_at=task.created_at.isoformat() if task.created_at else "",
+        rotation=task.rotation or 0,
     )
 
 
@@ -434,6 +450,7 @@ def get_task(task_id: str, db: Session = Depends(get_db), user=Depends(require_a
         "status": task.status,
         "error_message": task.error_message,
         "supply_config": _parse_supply_config(task.supply_config),
+        "rotation": task.rotation or 0,
         "projection": {
             "file_path": task.projection_file_path,
             "name": task.projection_name,

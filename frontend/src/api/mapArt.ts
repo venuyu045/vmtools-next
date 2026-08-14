@@ -15,6 +15,7 @@ export const mapArtApi = {
     origin_z?: number
     bot_ids?: string[]
     organization_id?: string
+    rotation?: number
   }) {
     return client.post('/build/map-art/tasks', data)
   },

@@ -1923,3 +1923,49 @@ def _decode_block_states(raw_data, bits_per_entry: int, expected_count: int) -> 
         indices.append(value & mask)
 
     return indices
+
+
+# ──────────────────────────────────────────────
+# 投影朝向旋转（2026-08-14）
+# ──────────────────────────────────────────────
+
+def rotate_coord_2d(x: int, z: int, rotation: int, size_x: int, size_z: int) -> tuple[int, int]:
+    """绕 Y 轴（从上方看）顺时针旋转投影局部坐标。
+
+    rotation: 0=0°(北) / 1=90°(东) / 2=180°(南) / 3=270°(西)。
+    投影局部坐标范围 x∈[0,size_x), z∈[0,size_z)；旋转后落回非负象限：
+      - 90° 顺时针：x' = size_z-1-z, z' = x（宽↔深互换）
+      - 180°        ：x' = size_x-1-x, z' = size_z-1-z
+      - 270° 顺时针 ：x' = z, z' = size_x-1-x
+    """
+    if rotation == 1:
+        return size_z - 1 - z, x
+    if rotation == 2:
+        return size_x - 1 - x, size_z - 1 - z
+    if rotation == 3:
+        return z, size_x - 1 - x
+    return x, z
+
+
+def rotate_layers(
+    layers: dict[int, list[tuple[int, int, int, str]]],
+    rotation: int,
+    size_x: int,
+    size_z: int,
+) -> dict[int, list[tuple[int, int, int, str]]]:
+    """按朝向旋转投影层（y 分组坐标表），返回旋转后的新层。
+
+    仅旋转 X/Z 平面坐标，Y（层高）不变；rotation 为 0 时原样返回。
+    调用方需同步把尺寸互换（90°/270°时宽深互换）后再落库。
+    """
+    rotation = int(rotation or 0) % 4
+    if not rotation:
+        return layers
+    out: dict[int, list[tuple[int, int, int, str]]] = {}
+    for y, blocks in layers.items():
+        rotated: list[tuple[int, int, int, str]] = []
+        for wx, wy, wz, block_id in blocks:
+            nx, nz = rotate_coord_2d(wx, wz, rotation, size_x, size_z)
+            rotated.append((nx, wy, nz, block_id))
+        out[y] = rotated
+    return out
