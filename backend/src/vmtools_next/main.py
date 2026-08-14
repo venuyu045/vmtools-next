@@ -500,13 +500,19 @@ def create_app() -> FastAPI:
         app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 
     # SPA fallback (serves index.html for non-API routes)
+    # ⚠️ 2026-08-14 修复：index.html 必须 no-cache——前端构建产物（assets/*.js）带内容 hash，
+    # 若浏览器缓存旧 index.html 会引用已删除的旧 chunk（懒加载 404 → 页面点击无反应/白屏）。
+    # assets 本身带 hash 可安全长缓存（浏览器按新 hash 重新拉取），index.html 每次都必须重新验证。
     @app.get("/{full_path:path}")
     def spa_index(full_path: str):
         if full_path.startswith(("api/", "static/")):
             raise HTTPException(status_code=404, detail="Not found")
         index = BASE_DIR.parent.parent / "static" / "index.html"
         if index.is_file():
-            return FileResponse(str(index))
+            return FileResponse(
+                str(index),
+                headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+            )
         return {"message": "VMTools Next API", "docs": "/docs"}
 
     return app
