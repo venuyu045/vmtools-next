@@ -3,21 +3,26 @@
     <div class="log-toolbar">
       <el-switch v-model="autoScroll" size="small" />
       <span class="log-toolbar-label">自动滚动</span>
+      <el-radio-group v-model="detailMode" size="small" class="log-mode">
+        <el-radio-button :value="false">简略</el-radio-button>
+        <el-radio-button :value="true">详细</el-radio-button>
+      </el-radio-group>
+      <span class="log-toolbar-label">详细模式显示所有操作（含 debug）</span>
       <el-button size="small" text type="danger" class="log-clear" @click="clearLog">清空</el-button>
     </div>
     <div ref="logBody" class="log-body">
-      <div v-for="(entry, i) in logs" :key="i" class="log-line" :class="`log-${entry.level || 'info'}`">
+      <div v-for="(entry, i) in filteredLogs" :key="i" class="log-line" :class="`log-${entry.level || 'info'}`">
         <span class="log-time mono">{{ formatTime(entry.ts) }}</span>
         <span class="log-bot">{{ entry.bot_name || entry.bot_id }}</span>
         <span class="log-msg">{{ entry.message }}</span>
       </div>
-      <div v-if="!logs.length" class="log-empty">暂无日志（开始建造后显示 bot 实时活动）</div>
+      <div v-if="!filteredLogs.length" class="log-empty">暂无日志（开始建造后显示 bot 实时活动）</div>
     </div>
   </el-card>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, nextTick } from 'vue'
+import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { useSocketIO } from '@/composables/useSocketIO'
 import { mapArtApi } from '@/api/mapArt'
 
@@ -27,14 +32,22 @@ import { mapArtApi } from '@/api/mapArt'
  * 寻路→开箱→取货→返回）、建造、食物、错误，颜色区分 info/warn/error。
  * 双通道：socket build_log/build_log_history 实时推送 + REST /logs 每 3s 轮询兜底
  * （防 socket 事件丢失/浏览器缓存导致终端空白）。
+ * 双模式（2026-08-14）：简略=只显示 info/warn/error；详细=全部含 debug（所有操作细节）。
  */
 const props = defineProps<{ taskId: string }>()
 const { on: sockOn, off: sockOff, connect: sockConnect } = useSocketIO()
 
 const logs = ref<any[]>([])
 const autoScroll = ref(true)
+const detailMode = ref(false)
 const logBody = ref<HTMLElement>()
 let pollTimer: number | undefined
+
+/** 简略模式过滤掉 debug（详细模式显示全部） */
+const filteredLogs = computed(() => {
+  if (detailMode.value) return logs.value
+  return logs.value.filter((l: any) => l.level !== 'debug')
+})
 
 function formatTime(ts: string): string {
   if (!ts) return '--:--:--'
@@ -151,6 +164,8 @@ onUnmounted(() => {
   text-overflow: ellipsis;
 }
 .log-msg { color: #d6d6d6; }
+.log-debug .log-msg { color: #8a8a9a; }
+.log-debug .log-bot { color: #6f7f8f; }
 .log-warn .log-msg { color: #e6b800; }
 .log-warn .log-bot { color: #e6b800; }
 .log-error .log-msg { color: #ff6b6b; }

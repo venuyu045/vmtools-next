@@ -766,13 +766,16 @@ class BotBuildLoop:
     def _activity(self, level: str, message: str) -> None:
         """记录活动日志（2026-08-14 终端：实时反馈 bot 在做什么）。
 
-        level: info | warn | error。经 on_activity 回调推给 coordinator 汇聚后
+        level: debug | info | warn | error。debug 为详细模式专属（所有操作细节），
+        简略模式只显示 info/warn/error。经 on_activity 回调推给 coordinator 汇聚后
         通过 Socket.IO 广播到前端实时日志终端。同时写 loguru（服务器 /tmp/vmtools.log
         可见，便于诊断埋点是否触发）。
         """
         try:
             if level == "error":
                 logger.warning("[%s] [ACT:%s] %s", self.bot_id, level, message)
+            elif level == "debug":
+                logger.debug("[%s] [ACT:%s] %s", self.bot_id, level, message)
             else:
                 logger.info("[%s] [ACT:%s] %s", self.bot_id, level, message)
         except Exception:
@@ -839,13 +842,18 @@ class BotBuildLoop:
         try:
             snap = await self.mcp.get_inventory_snapshot(inventory_id=0)
             items = (snap.get("data", snap)).get("items", [])
+            have: list[str] = []
             for s in items:
                 item_id = (s.get("type", "") or "").split("[")[0]
-                if s.get("count", 0) > 0 and item_id:
+                cnt = s.get("count", 0)
+                if cnt > 0 and item_id:
+                    have.append(f"{item_id}×{cnt}")
                     if item_id in task_materials or item_id in common:
+                        self._activity("debug", f"背包有可放置方块 {item_id}×{cnt}，可直接蹲搭")
                         return True  # 背包有可放置方块，可直接蹲搭
-        except Exception:
-            pass
+            self._activity("debug", f"背包物品：{('，'.join(have[:20])) if have else '（空）'}——无可用方块，需补货")
+        except Exception as e:
+            self._activity("debug", f"背包检查失败：{e}（按无可放置方块处理，去补货）")
 
         # 背包无可放置方块 → 补货一种任务材料
         material = self._pick_restock_material()
@@ -947,7 +955,9 @@ class BotBuildLoop:
                 self._activity("info", f"传送前往仓库（{self._supply_cfg.get('go', '/ehomes mdssj')}）")
                 # 传送后等待 chunk 加载（原 2.5s 不足：bot 未落地 chunk 未加载，
                 # blockAt 返回空 → open_container_at 直接失败 → 误回传建造点）
+                self._activity("debug", "传送指令已发出，等待 3.5s 让 chunk 加载、bot 落地...")
                 await asyncio.sleep(3.5)
+                self._activity("debug", "等待完成，开始寻路到潜影盒")
 
                 # 3. 按顺序尝试每个潜影盒坐标（先显式寻路到坐标附近触发 chunk 加载，再开箱）
                 taken = False
@@ -955,9 +965,11 @@ class BotBuildLoop:
                     # 显式寻路到潜影盒附近（触发 chunk 加载 + bot 到位；max_offset=3
                     # 比 2 更宽松，避免最后 1~2 格不可达导致 20s 超时）
                     self._activity("info", f"寻路到潜影盒 ({bx},{by},{bz})")
+                    t0 = time.monotonic()
                     moved = await self._move_to(bx, by, bz, max_offset=3,
                                                 label=f"shulker({bx},{by},{bz})",
                                                 timeout_ms=20000)
+                    self._activity("debug", f"寻路到潜影盒 ({bx},{by},{bz}) {'成功' if moved else '失败'}，耗时 {time.monotonic() - t0:.1f}s")
                     if not moved:
                         self._activity("warn", f"寻路到潜影盒 ({bx},{by},{bz}) 失败")
                         logger.warning("[%s] 寻路到潜影盒(%d,%d,%d)失败，尝试下一个",
@@ -968,18 +980,27 @@ class BotBuildLoop:
                     except Exception as e:
                         logger.warning("[%s] Open shulker at (%d,%d,%d) error: %s",
                                        self.bot_id, bx, by, bz, e)
+                        self._activity("debug", f"open_container_at 抛异常：{e}")
                         continue
                     data = open_result.get("data", open_result) if isinstance(open_result, dict) else {}
                     container_id = (data or {}).get("container_id") or ""
-                    if not container_id:
+                    if container_id:
+                        self._activity("debug",
+                                       f"开箱成功：{data.get('block_name', '?')} container_id={container_id[:8]}.. "
+                                       f"槽位数={data.get('slot_count', '?')}")
+                    else:
                         # 寻路已到位但开箱失败：可能是 chunk 尚未完全加载，等 1s 重试一次
                         logger.warning("[%s] Open shulker at (%d,%d,%d) failed: %s，等 1s 重试",
                                        self.bot_id, bx, by, bz, (data or {}).get("error", "?"))
+                        self._activity("warn", f"开箱失败：{(data or {}).get('error', '?')}，等 1s 重试")
                         await asyncio.sleep(1.0)
                         try:
                             open_result = await self.mcp.open_container_at(bx, by, bz, timeout_ms=15000)
                             data = open_result.get("data", open_result) if isinstance(open_result, dict) else {}
                             container_id = (data or {}).get("container_id") or ""
+                            if container_id:
+                                self._activity("debug",
+                                               f"二次开箱成功：{data.get('block_name', '?')} container_id={container_id[:8]}..")
                         except Exception:
                             container_id = ""
                         if not container_id:
@@ -992,6 +1013,7 @@ class BotBuildLoop:
                     # isinstance 判断永不命中、异常被外层 except 捕获 → 误 fallback 到
                     # 策略2 传送（"挥手瞬间被传回"的根因）。现在失败→尝试下一个坐标，
                     # 且 finally 关闭容器防泄漏。
+                    self._activity("debug", f"请求取货：{clean_id} ×{needed_count}")
                     try:
                         wd = await self.mcp.withdraw_container_item(clean_id, needed_count, container_id)
                     except Exception as e:
@@ -1008,15 +1030,21 @@ class BotBuildLoop:
                     except Exception:
                         pass
                     if isinstance(wd, dict) and wd.get("success") is False:
+                        err = wd.get("error", "?")
+                        # 诊断增强：容器内容摘要（Node 端已附带 container_items）
+                        c_items = wd.get("container_items") or []
+                        if c_items:
+                            self._activity("debug", f"容器内物品（{wd.get('item_count', len(c_items))}种）：{'，'.join(c_items[:15])}")
+                        self._activity("warn", f"取货失败：{err}，尝试下一个坐标")
                         logger.warning(
                             "[%s] Withdraw %s from (%d,%d,%d) failed: %s，尝试下一个坐标",
-                            self.bot_id, clean_id, bx, by, bz,
-                            wd.get("error", "?"))
+                            self.bot_id, clean_id, bx, by, bz, err)
                         continue
                     taken = True
+                    got_count = (wd or {}).get("count", needed_count) if isinstance(wd, dict) else needed_count
                     logger.info("[%s] Shulker restock done: %s ×%d from (%d,%d,%d)",
-                                self.bot_id, clean_id, needed_count, bx, by, bz)
-                    self._activity("info", f"开箱成功，取到 {clean_id} ×{needed_count}")
+                                self.bot_id, clean_id, got_count, bx, by, bz)
+                    self._activity("info", f"开箱成功，取到 {clean_id} ×{got_count}")
                     break
                 if not taken:
                     logger.warning("[%s] 所有配置潜影盒均未取到 %s（可能取空/坐标不符）", self.bot_id, clean_id)
@@ -1694,6 +1722,10 @@ class MapArtCoordinator:
                     Session = get_session_factory()
                     db = Session()
                     try:
+                        # 2026-08-14 修复：failed 分支必须局部导入 datetime——
+                        # 同函数 completed 分支有局部 import，整个函数内 datetime 被
+                        # 视为局部变量，此处不导入会 UnboundLocalError（persist failed）。
+                        from datetime import datetime, timezone
                         task = db.query(MapArtTask).filter(
                             MapArtTask.task_id == self.task_id).first()
                         if task and task.status == "running":

@@ -616,7 +616,15 @@ function createInventoryHandlers(bot, opts = {}) {
       // 查找匹配物品（2026-08-14：itemMatches 兼容 minecraft: 前缀）
       const match = items.find(item => itemMatches(item, item_type));
       if (!match) {
-        return { success: false, error: `Item ${item_type} not found in container` };
+        // 2026-08-14 诊断增强：失败时附带容器内容摘要（前端详细模式显示"容器里有
+        // 什么"，用于定位坐标配置错/盒子放错/已取空）
+        const summary = items.map(i => `${i.name}×${i.count}`).slice(0, 30);
+        return {
+          success: false,
+          error: `Item ${item_type} not found in container`,
+          container_items: summary,
+          item_count: items.length,
+        };
       }
 
       await container.withdraw(match.type, null, Math.min(count, match.count));
