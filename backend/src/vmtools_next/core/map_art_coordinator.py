@@ -1325,8 +1325,9 @@ class MapArtCoordinator:
         self._activity_log.append(entry)
         try:
             asyncio.create_task(sio.emit("build_log", entry, room=f"build_{self.task_id}"))
-        except Exception:
-            pass
+            logger.info("[%s] build_log emitted (level=%s): %s", bot_id, level, message)
+        except Exception as e:
+            logger.warning("[%s] build_log emit failed: %s", bot_id, e)
 
     def emit_log_history(self) -> None:
         """前端 join 房间时回放历史日志（同步方法，由 socket handler 调用）。"""

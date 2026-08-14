@@ -20,6 +20,18 @@
 const { Vec3 } = require('vec3');
 const { v4: uuidv4 } = require('uuid');
 
+// ── 物品匹配（2026-08-14 修复）────────────────────────────────
+// mineflayer 的 item.name 不带命名空间（如 'black_concrete'），而 Python 端
+// 传的 item_type 带 'minecraft:' 前缀（如 'minecraft:black_concrete'）。
+// 直接用 === 比较永远匹配不上（用户反馈"开箱后取货失败"的根因）。统一去前缀比较。
+function itemMatches(item, itemType) {
+  if (!item || !itemType) return false;
+  const clean = (s) => String(s).replace(/^minecraft:/, '');
+  return clean(item.name) === clean(itemType)
+    || clean(item.type) === clean(itemType)
+    || clean(String(item.type)) === clean(itemType);
+}
+
 // ── 全局容器映射（进程级别） ──
 // { containerId: { window, openedAt, position, blockName, auto } }
 const openContainers = new Map();
@@ -309,7 +321,8 @@ function createInventoryHandlers(bot, opts = {}) {
   async function select_hotbar_item({ item_type, prefer_lowest_slot = true } = {}) {
     try {
       const items = bot.inventory.items();
-      const matchName = (it) => it.name === item_type || it.type?.toString() === item_type;
+      // 2026-08-14：itemMatches 兼容 minecraft: 前缀（item.name 不带前缀）
+      const matchName = (it) => itemMatches(it, item_type);
 
       // 1. 快捷栏优先（槽位 36-44，零成本切换）
       const hotbarItems = items.filter(item => item.slot >= 36 && item.slot <= 44);
@@ -600,10 +613,8 @@ function createInventoryHandlers(bot, opts = {}) {
         items = container.containerItems();
       }
 
-      // 查找匹配物品
-      const match = items.find(item =>
-        item.name === item_type || item.type?.toString() === item_type
-      );
+      // 查找匹配物品（2026-08-14：itemMatches 兼容 minecraft: 前缀）
+      const match = items.find(item => itemMatches(item, item_type));
       if (!match) {
         return { success: false, error: `Item ${item_type} not found in container` };
       }
@@ -625,9 +636,7 @@ function createInventoryHandlers(bot, opts = {}) {
       const container = entry.window;
       const items = bot.inventory.items();
 
-      const match = items.find(item =>
-        item.name === item_type || item.type?.toString() === item_type
-      );
+      const match = items.find(item => itemMatches(item, item_type));
       if (!match) {
         return { success: false, error: `Item ${item_type} not found in inventory` };
       }
@@ -653,14 +662,14 @@ function createInventoryHandlers(bot, opts = {}) {
         if (!match) {
           return { success: false, error: `No item in slot ${slot}` };
         }
-        if (item_type && match.name !== item_type && match.type?.toString() !== item_type) {
+        if (item_type && !itemMatches(match, item_type)) {
           return { success: false, error: `Slot ${slot} contains ${match.name}, not ${item_type}` };
         }
       } else {
         // 按类型：全背包找匹配（遍历完整 slots，含副手/盔甲/合成——items() 不含这些槽位）
         for (let i = 0; i < bot.inventory.slots.length; i++) {
           const it = bot.inventory.slots[i];
-          if (it && (it.name === item_type || it.type?.toString() === item_type)) {
+          if (it && itemMatches(it, item_type)) {
             match = it;
             break;
           }
@@ -734,13 +743,13 @@ function createInventoryHandlers(bot, opts = {}) {
         if (!item) {
           return { success: false, error: `No item in slot ${slot}` };
         }
-        if (item_type && item.name !== item_type && item.type?.toString() !== item_type) {
+        if (item_type && !itemMatches(item, item_type)) {
           return { success: false, error: `Slot ${slot} contains ${item.name}, not ${item_type}` };
         }
       } else if (item_type) {
         for (let i = 0; i < bot.inventory.slots.length; i++) {
           const it = bot.inventory.slots[i];
-          if (it && (it.name === item_type || it.type?.toString() === item_type)) {
+          if (it && itemMatches(it, item_type)) {
             item = it;
             break;
           }

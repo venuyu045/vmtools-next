@@ -604,7 +604,7 @@ async def build_map_join(sid, data: dict):
         return
     room = f"build_{task_id}"
     sio.enter_room(sid, room)
-    logger.debug("Socket.IO {} joined room {}", sid, room)
+    logger.info("Socket.IO build_map_join: {} joined room {}", sid, room)
 
     # 2026-08-14 终端：join 时回放历史活动日志（前端实时日志终端初始化）
     try:
