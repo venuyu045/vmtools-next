@@ -12,48 +12,49 @@
       </div>
     </div>
 
+    <!-- 控制栏（2026-08-14：独立行，位于页头与主体之间——与画布完全解耦，
+         任何屏幕高度下都固定在页面顶部可见；task 未加载时不渲染空栏） -->
+    <div class="control-bar" v-if="task">
+      <el-button
+        v-if="task?.status === 'draft' || task?.status === 'pending'"
+        type="primary"
+        @click="control('start')"
+      >
+        开始建造
+      </el-button>
+      <el-button
+        v-else-if="canRestart"
+        type="primary"
+        @click="control('start')"
+      >
+        重新开始
+      </el-button>
+      <el-button
+        v-if="task?.status === 'running'"
+        @click="control('pause')"
+      >
+        暂停
+      </el-button>
+      <el-button
+        v-if="task?.status === 'paused'"
+        type="success"
+        @click="control('resume')"
+      >
+        继续
+      </el-button>
+      <el-button
+        v-if="task?.status === 'running' || task?.status === 'paused'"
+        type="danger"
+        @click="control('stop')"
+      >
+        停止
+      </el-button>
+    </div>
+
     <!-- 主体：预览画布 + 侧边面板 -->
     <div class="main-content">
       <!-- 2D 俯视预览画布 -->
       <div class="canvas-area">
-        <!-- 控制栏（2026-08-14：移到画布上方，避免被 460px 画布压出首屏看不到） -->
-        <div class="control-bar">
-          <el-button
-            v-if="task?.status === 'draft' || task?.status === 'pending'"
-            type="primary"
-            @click="control('start')"
-          >
-            开始建造
-          </el-button>
-          <el-button
-            v-else-if="canRestart"
-            type="primary"
-            @click="control('start')"
-          >
-            重新开始
-          </el-button>
-          <el-button
-            v-if="task?.status === 'running'"
-            @click="control('pause')"
-          >
-            暂停
-          </el-button>
-          <el-button
-            v-if="task?.status === 'paused'"
-            type="success"
-            @click="control('resume')"
-          >
-            继续
-          </el-button>
-          <el-button
-            v-if="task?.status === 'running' || task?.status === 'paused'"
-            type="danger"
-            @click="control('stop')"
-          >
-            停止
-          </el-button>
-        </div>
-
         <div v-if="loadingBlocks" class="loading-canvas">正在加载方块数据…</div>
         <BuildMapCanvas
           v-else
@@ -510,7 +511,10 @@ function onBuildBotStatus(data: any) {
 .control-bar {
   display: flex;
   gap: 8px;
-  padding: 8px 0;
+  padding: 8px 10px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
 }
 .side-panels {
   display: flex;
