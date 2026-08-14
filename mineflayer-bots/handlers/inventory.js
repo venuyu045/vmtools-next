@@ -1024,13 +1024,15 @@ function createInventoryHandlers(bot, opts = {}) {
   }
   function pickScaffoldBlock() {
     const items = bot.inventory.items();
-    const hotbar = items.filter(i => i.slot >= 36 && i.slot <= 44);
-    const pref = ['dirt', 'cobblestone', 'gravel', 'sand', 'stone', 'grass_block', 'cobbled_deepslate'];
-    for (const name of pref) {
-      const it = hotbar.find(i => i.name === name) || items.find(i => i.name === name);
-      if (it) return it;
+    // 2026-08-14：用户确认「消耗建材就行」——直接选背包里数量最多的可放置方块
+    // （通常是建造材料，如混凝土），不再要求泥土/圆石。
+    const placeables = items.filter(isPlaceableBlock);
+    if (placeables.length) {
+      placeables.sort((a, b) => (b.count || 0) - (a.count || 0));
+      return placeables[0];
     }
-    return hotbar.find(isPlaceableBlock) || items.find(isPlaceableBlock) || null;
+    const hotbar = items.filter(i => i.slot >= 36 && i.slot <= 44);
+    return hotbar.find(isPlaceableBlock) || null;
   }
   async function equipScaffold(item) {
     try {
