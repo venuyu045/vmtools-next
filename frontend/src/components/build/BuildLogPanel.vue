@@ -27,7 +27,7 @@ import { useSocketIO } from '@/composables/useSocketIO'
  * 订阅 build_log（增量）+ build_log_history（join 房间时后端回放历史）。
  */
 const props = defineProps<{ taskId: string }>()
-const { on: sockOn, off: sockOff } = useSocketIO()
+const { on: sockOn, off: sockOff, connect: sockConnect } = useSocketIO()
 
 const logs = ref<any[]>([])
 const autoScroll = ref(true)
@@ -73,6 +73,8 @@ function clearLog() {
 }
 
 onMounted(() => {
+  // 确保 socket 已连接再注册（useSocketIO 单例：重复 connect 幂等）
+  sockConnect()
   sockOn('build_log', onLog)
   sockOn('build_log_history', onLogHistory)
 })

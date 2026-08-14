@@ -67,6 +67,9 @@
 
         <!-- 预览正下方：补货仓库配置（需求6/7） -->
         <SupplyConfigPanel :task-id="taskId" class="supply-panel" />
+
+        <!-- 实时日志终端（2026-08-14：仓库补货列表下面，bot 活动实时反馈） -->
+        <BuildLogPanel :task-id="taskId" />
       </div>
 
       <!-- 右侧面板 -->
@@ -134,9 +137,6 @@
           </div>
           <div v-if="!materials?.length" class="empty">暂无材料需求</div>
         </el-card>
-
-        <!-- 实时日志终端（2026-08-14：bot 活动实时反馈） -->
-        <BuildLogPanel :task-id="taskId" />
 
         <!-- 统计 -->
         <el-card class="panel" header="统计">

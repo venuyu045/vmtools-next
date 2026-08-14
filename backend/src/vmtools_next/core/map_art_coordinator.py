@@ -705,8 +705,16 @@ class BotBuildLoop:
         """记录活动日志（2026-08-14 终端：实时反馈 bot 在做什么）。
 
         level: info | warn | error。经 on_activity 回调推给 coordinator 汇聚后
-        通过 Socket.IO 广播到前端实时日志终端。
+        通过 Socket.IO 广播到前端实时日志终端。同时写 loguru（服务器 /tmp/vmtools.log
+        可见，便于诊断埋点是否触发）。
         """
+        try:
+            if level == "error":
+                logger.warning("[%s] [ACT:%s] %s", self.bot_id, level, message)
+            else:
+                logger.info("[%s] [ACT:%s] %s", self.bot_id, level, message)
+        except Exception:
+            pass
         try:
             if self._on_activity:
                 self._on_activity(self.bot_id, self.bot_name, level, message)
