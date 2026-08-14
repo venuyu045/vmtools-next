@@ -39,6 +39,10 @@ export const mapArtApi = {
   getPlacedBlocks(taskId: string) {
     return client.get(`/build/map-art/tasks/${taskId}/blocks/placed`)
   },
+  /** 2026-08-14 终端：活动日志（REST 轮询兜底，不依赖 socket） */
+  getLogs(taskId: string) {
+    return client.get(`/build/map-art/tasks/${taskId}/logs`)
+  },
   /** P2-27：动态 bot 分配（运行中任务 add/remove） */
   manageBot(taskId: string, action: 'add' | 'remove', botId: string) {
     return client.post(`/build/map-art/tasks/${taskId}/bots`, { action, bot_id: botId })

@@ -1060,6 +1060,20 @@ def put_food_boxes(task_id: str, data: SupplyBoxesRequest, db: Session = Depends
     return {"status": "ok", "saved": saved}
 
 
+@router.get("/tasks/{task_id}/logs")
+def get_task_logs(task_id: str, db: Session = Depends(get_db), user=Depends(require_admin)):
+    """读取任务活动日志（2026-08-14 终端 REST 轮询兜底）。
+
+    前端 BuildLogPanel 除 socket 实时推送外，每 3s 轮询此接口增量拉取，
+    避免 socket 事件丢失/缓存导致终端空白。
+    """
+    from vmtools_next.core.map_art_coordinator import get_coordinator
+    coord = get_coordinator(task_id)
+    if not coord:
+        return {"logs": []}
+    return {"logs": list(coord._activity_log)}
+
+
 @router.get("/tasks/{task_id}/blocks/placed")
 def get_task_placed_blocks(task_id: str, db: Session = Depends(get_db),
                            user=Depends(require_admin)):

@@ -19,12 +19,14 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, nextTick } from 'vue'
 import { useSocketIO } from '@/composables/useSocketIO'
+import { mapArtApi } from '@/api/mapArt'
 
 /**
  * 实时日志终端（2026-08-14）：
  * 材料列表下方，实时反馈「什么时间、哪个 bot、在做什么」——补货（缺少材料→传送→
  * 寻路→开箱→取货→返回）、建造、食物、错误，颜色区分 info/warn/error。
- * 订阅 build_log（增量）+ build_log_history（join 房间时后端回放历史）。
+ * 双通道：socket build_log/build_log_history 实时推送 + REST /logs 每 3s 轮询兜底
+ * （防 socket 事件丢失/浏览器缓存导致终端空白）。
  */
 const props = defineProps<{ taskId: string }>()
 const { on: sockOn, off: sockOff, connect: sockConnect } = useSocketIO()
@@ -32,6 +34,7 @@ const { on: sockOn, off: sockOff, connect: sockConnect } = useSocketIO()
 const logs = ref<any[]>([])
 const autoScroll = ref(true)
 const logBody = ref<HTMLElement>()
+let pollTimer: number | undefined
 
 function formatTime(ts: string): string {
   if (!ts) return '--:--:--'
@@ -72,16 +75,44 @@ function clearLog() {
   logs.value = []
 }
 
+/** REST 轮询兜底：每 3s 拉取后端日志缓冲，增量追加（按 ts+message 去重） */
+async function pollLogs() {
+  if (!props.taskId) return
+  try {
+    const { data } = await mapArtApi.getLogs(props.taskId)
+    const remote = (data.logs || []) as any[]
+    if (!remote.length) return
+    const localKeys = new Set(logs.value.map((l: any) => `${l.ts}|${l.message}`))
+    let added = false
+    for (const entry of remote) {
+      if (!localKeys.has(`${entry.ts}|${entry.message}`)) {
+        logs.value.push(entry)
+        added = true
+      }
+    }
+    if (added) {
+      if (logs.value.length > 500) logs.value = logs.value.slice(-500)
+      if (autoScroll.value) scrollToBottom()
+    }
+  } catch {
+    /* 静默：任务未运行/网络失败不影响 */
+  }
+}
+
 onMounted(() => {
   // 确保 socket 已连接再注册（useSocketIO 单例：重复 connect 幂等）
   sockConnect()
   sockOn('build_log', onLog)
   sockOn('build_log_history', onLogHistory)
+  // REST 轮询兜底（3s）
+  pollTimer = window.setInterval(pollLogs, 3000)
+  pollLogs()
 })
 
 onUnmounted(() => {
   sockOff('build_log', onLog)
   sockOff('build_log_history', onLogHistory)
+  if (pollTimer) window.clearInterval(pollTimer)
 })
 </script>
 
