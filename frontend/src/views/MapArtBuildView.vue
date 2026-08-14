@@ -16,17 +16,7 @@
     <div class="main-content">
       <!-- 2D 俯视预览画布 -->
       <div class="canvas-area">
-        <div v-if="loadingBlocks" class="loading-canvas">正在加载方块数据…</div>
-        <BuildMapCanvas
-          v-else
-          :task-id="taskId"
-          :materials="materials"
-          :init-data="blockData"
-          :bot-positions="botMarkers"
-          @ready="onCanvasReady"
-        />
-
-        <!-- 控制栏 -->
+        <!-- 控制栏（2026-08-14：移到画布上方，避免被 460px 画布压出首屏看不到） -->
         <div class="control-bar">
           <el-button
             v-if="task?.status === 'draft' || task?.status === 'pending'"
@@ -63,6 +53,16 @@
             停止
           </el-button>
         </div>
+
+        <div v-if="loadingBlocks" class="loading-canvas">正在加载方块数据…</div>
+        <BuildMapCanvas
+          v-else
+          :task-id="taskId"
+          :materials="materials"
+          :init-data="blockData"
+          :bot-positions="botMarkers"
+          @ready="onCanvasReady"
+        />
 
         <!-- 预览正下方：补货仓库配置（需求6/7） -->
         <SupplyConfigPanel :task-id="taskId" class="supply-panel" />
