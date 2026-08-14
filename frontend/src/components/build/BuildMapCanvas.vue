@@ -343,7 +343,16 @@ defineExpose({ refresh: render })
 </script>
 
 <style scoped>
-.build2d-wrap { display: flex; flex-direction: column; gap: 6px; min-height: 0; }
+.build2d-wrap {
+  /* 2026-08-14 审查补录修复：无高度约束时被 .canvas-stage（画布×zoom）撑到
+     几千 px，把同列下方的补货传送指令面板挤到页面深处（预览/补货窗口冲突）。
+     加 flex:1 约束在 canvas-area 可视区内 + min-height 保底画布可用高度。 */
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 1;
+  min-height: 240px;
+}
 .canvas-toolbar {
   display: flex; align-items: center; gap: 6px;
   padding: 4px 8px; background: var(--bg-card);
@@ -358,7 +367,9 @@ defineExpose({ refresh: render })
 .build2d-container {
   flex: 1;
   width: 100%;
-  min-height: 400px;
+  /* 2026-08-14 审查补录修复：原 min-height:400px 在 wrap 可用高度不足时会
+     溢出遮挡下方 control-bar/补货面板 → 改 0 完全自适应，画布内部滚动 */
+  min-height: 0;
   background: #1a1a2e;
   border-radius: 8px;
   overflow: auto;

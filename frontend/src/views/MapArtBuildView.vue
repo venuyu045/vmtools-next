@@ -427,6 +427,9 @@ function onBuildBotStatus(data: any) {
   flex: 1;
   display: grid;
   grid-template-columns: 1fr 300px;
+  /* 2026-08-14 审查补录修复：行高 auto 时会被画布内容撑破（预览/补货窗口
+     互相挤压）；改为 minmax(0,1fr) 固定为容器高度，两侧列内部滚动 */
+  grid-template-rows: minmax(0, 1fr);
   gap: 12px;
   min-height: 0;
 }
