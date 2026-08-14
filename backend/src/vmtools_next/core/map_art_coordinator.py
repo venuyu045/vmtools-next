@@ -375,11 +375,13 @@ class BotBuildLoop:
 
     async def _move_to(self, x: int, y: int, z: int, max_offset: int = 1,
                        label: str = "", timeout_ms: int | None = None,
-                       ignore_y: bool = True) -> bool:
+                       ignore_y: bool = True, allow_scaffold: bool = True) -> bool:
         """Move bot to within max_offset of (x, y, z) using pathfinder.
 
         2026-08-14：ignore_y 默认 True——地图画建造只关心 x/z 到位（bot 会落到实际
         地面），避免站立层悬空导致 3 维 GoalNear 永远无法满足而 timeout。
+        allow_scaffold：补货/传送链路的内部寻路传 False——仓库内寻路失败时不应再
+        触发蹲搭（蹲搭→背包无方块→又补货→又寻路，递归死循环），直接失败返回即可。
         Returns True on arrival, False on failure (after retries).
         """
         await self._paused.wait()
@@ -408,7 +410,11 @@ class BotBuildLoop:
             await asyncio.sleep(0.5)
 
         # 2026-08-14：pathfinder 全部失败（落差/悬空不可达）→ 尝试自动蹲搭搭路
-        # （用手头方块搭柱/搭桥前往）。仅寻路失败才触发，避免正常建造时搭出多余方块。
+        # （用手头方块搭柱/搭桥前往）。仅寻路失败且允许蹲搭才触发（补货内寻路
+        # allow_scaffold=False，避免"寻路→蹲搭→无方块→补货→再寻路"递归死循环）。
+        if not allow_scaffold:
+            self._activity("debug", f"寻路到 ({x},{y},{z}) 失败（补货链路内，不触发蹲搭）")
+            return False
         await self._paused.wait()
         if self._stopped:
             return False
@@ -721,10 +727,11 @@ class BotBuildLoop:
                            self.bot_id, clean_id)
             return
 
-        # 背包中没有该物品 → 补货（优先分区补给箱，否则 传送）
+        # 背包中没有该物品 → 补货（2026-08-14：全量补齐所有缺的材料再返回，
+        # 避免"缺A补A、回来又缺B再传送"的反复奔波）
         logger.info("[%s] %s 用完了，开始补货...", self.bot_id, clean_id)
         self._activity("warn", f"缺少 {clean_id}，开始补货")
-        if await self._do_restock(block_id):
+        if await self._do_full_restock(clean_id):
             # 补货后刷新 hotbar_map 并重试
             await self._refresh_hotbar_map()
             await self._try_select_item(clean_id, block_id)
@@ -855,13 +862,13 @@ class BotBuildLoop:
         except Exception as e:
             self._activity("debug", f"背包检查失败：{e}（按无可放置方块处理，去补货）")
 
-        # 背包无可放置方块 → 补货一种任务材料
+        # 背包无可放置方块 → 补货一种任务材料（2026-08-14：全量补齐，蹲搭材料也有了）
         material = self._pick_restock_material()
         if not material:
             self._activity("warn", "背包无方块且无可补货材料，无法蹲搭")
             return False
         self._activity("warn", f"背包无方块，先补货 {material} 再蹲搭")
-        if await self._do_restock(material):
+        if await self._do_full_restock(material):
             await self._refresh_hotbar_map()
             return True
         self._activity("warn", f"补货 {material} 失败，无法蹲搭")
@@ -917,6 +924,159 @@ class BotBuildLoop:
                 "eat_threshold_food": 15,
                 "eat_threshold_health": 15,
             }
+
+    async def _restock_one_from_boxes(self, clean_id: str, needed_count: int = 64) -> bool:
+        """在仓库内取单个材料：遍历该材料的潜影盒坐标，寻路→开箱→取货→关箱。
+
+        2026-08-14：由 _do_full_restock 调用（传送已在仓库完成）。寻路用
+        allow_scaffold=False——仓库内寻路失败不再触发蹲搭（防"寻路→蹲搭→无方块→
+        补货→再寻路"递归）。每步打 debug 日志，失败时打印容器内容摘要定位原因。
+        """
+        boxes = self._supply_boxes.get(clean_id) or []
+        if not boxes:
+            self._activity("warn", f"{clean_id} 未配置潜影盒坐标，无法补货")
+            logger.warning("[%s] %s no configured shulker box, skip", self.bot_id, clean_id)
+            return False
+        for bx, by, bz in boxes:
+            self._activity("info", f"寻路到潜影盒 ({bx},{by},{bz}) 取 {clean_id}")
+            t0 = time.monotonic()
+            moved = await self._move_to(bx, by, bz, max_offset=3,
+                                        label=f"shulker({bx},{by},{bz})",
+                                        timeout_ms=20000, allow_scaffold=False)
+            self._activity("debug", f"寻路到 ({bx},{by},{bz}) {'成功' if moved else '失败'}，耗时 {time.monotonic() - t0:.1f}s")
+            if not moved:
+                self._activity("warn", f"寻路到潜影盒 ({bx},{by},{bz}) 失败，尝试下一个")
+                continue
+            try:
+                open_result = await self.mcp.open_container_at(bx, by, bz, timeout_ms=15000)
+            except Exception as e:
+                logger.warning("[%s] Open shulker at (%d,%d,%d) error: %s",
+                               self.bot_id, bx, by, bz, e)
+                self._activity("debug", f"open_container_at 抛异常：{e}")
+                continue
+            data = open_result.get("data", open_result) if isinstance(open_result, dict) else {}
+            container_id = (data or {}).get("container_id") or ""
+            if container_id:
+                self._activity("debug",
+                               f"开箱成功：{data.get('block_name', '?')} container_id={container_id[:8]}.. "
+                               f"槽位数={data.get('slot_count', '?')}")
+            else:
+                self._activity("warn", f"开箱失败：{(data or {}).get('error', '?')}，等 1s 重试")
+                await asyncio.sleep(1.0)
+                try:
+                    open_result = await self.mcp.open_container_at(bx, by, bz, timeout_ms=15000)
+                    data = open_result.get("data", open_result) if isinstance(open_result, dict) else {}
+                    container_id = (data or {}).get("container_id") or ""
+                except Exception:
+                    container_id = ""
+                if not container_id:
+                    self._activity("warn", f"开箱失败（潜影盒 {bx},{by},{bz}），尝试下一个")
+                    continue
+            self._activity("debug", f"请求取货：{clean_id} ×{needed_count}")
+            try:
+                wd = await self.mcp.withdraw_container_item(clean_id, needed_count, container_id)
+            except Exception as e:
+                self._activity("warn", f"开箱后取货失败：{e}")
+                logger.warning("[%s] Withdraw %s from (%d,%d,%d) error: %s",
+                               self.bot_id, clean_id, bx, by, bz, e)
+                try:
+                    await self.mcp.close_container(container_id)
+                except Exception:
+                    pass
+                continue
+            try:
+                await self.mcp.close_container(container_id)
+            except Exception:
+                pass
+            if isinstance(wd, dict) and wd.get("success") is False:
+                err = wd.get("error", "?")
+                c_items = wd.get("container_items") or []
+                if c_items:
+                    self._activity("debug",
+                                   f"容器内物品（{wd.get('item_count', len(c_items))}种）：{'，'.join(c_items[:15])}")
+                self._activity("warn", f"取货失败：{err}，尝试下一个坐标")
+                logger.warning("[%s] Withdraw %s from (%d,%d,%d) failed: %s",
+                               self.bot_id, clean_id, bx, by, bz, err)
+                continue
+            got_count = (wd or {}).get("count", needed_count) if isinstance(wd, dict) else needed_count
+            logger.info("[%s] Shulker restock done: %s ×%d from (%d,%d,%d)",
+                        self.bot_id, clean_id, got_count, bx, by, bz)
+            self._activity("info", f"取到 {clean_id} ×{got_count}")
+            return True
+        self._activity("warn", f"{clean_id} 所有潜影盒均未取到（可能取空/坐标不符/盒子放错）")
+        return False
+
+    async def _do_full_restock(self, trigger_item: str) -> bool:
+        """全量补货（2026-08-14：缺的所有材料一次补齐再返回建造点）。
+
+        触发时遍历所有已配置潜影盒的材料，把背包存量 <64 的每种都从对应潜影盒
+        取一组补齐；传送只做一次（暂存→仓库→逐个取→返回），避免"缺A补A、
+        回建造点又缺B再传送"的反复奔波。trigger_item 即使未配置坐标也尝试补。
+        """
+        clean_trigger = trigger_item.split("[")[0] if "[" in trigger_item else trigger_item
+        # 1) 找出所有缺失材料：配置了潜影盒坐标且背包存量不足的
+        missing: list[str] = []
+        for mat, boxes in self._supply_boxes.items():
+            if not boxes:
+                continue
+            count = await self._check_inventory_level(mat)
+            if count < 64:
+                missing.append(mat)
+        # 2) 触发材料强制加入（本次就是要用它）
+        if clean_trigger not in missing:
+            if self._supply_boxes.get(clean_trigger):
+                missing.append(clean_trigger)
+            else:
+                self._activity("warn", f"{clean_trigger} 未配置潜影盒坐标，无法补货")
+        if not missing:
+            self._activity("info", "背包材料充足，无需补货")
+            return True
+        self._activity("warn", f"需补货材料（{len(missing)}种）：{'，'.join(missing)}")
+
+        # 3) 暂存当前位置 → 传送仓库 → 等 chunk 加载
+        self.progress.state = "restocking"
+        try:
+            r1 = await self.mcp.send_chat(self._supply_cfg.get("save", "/esethomes dth"))
+            if isinstance(r1, dict) and r1.get("success") is False:
+                logger.warning("[%s] save command failed: %s", self.bot_id, r1.get("error", "?"))
+                return False
+            self._activity("info", f"暂存当前位置（{self._supply_cfg.get('save', '/esethomes dth')}）")
+            await asyncio.sleep(1.5)
+            r2 = await self.mcp.send_chat(self._supply_cfg.get("go", "/ehomes mdssj"))
+            if isinstance(r2, dict) and r2.get("success") is False:
+                logger.warning("[%s] go command failed: %s", self.bot_id, r2.get("error", "?"))
+                return False
+            self._activity("info", f"传送前往仓库（{self._supply_cfg.get('go', '/ehomes mdssj')}）")
+            self._activity("debug", "传送指令已发出，等待 3.5s 让 chunk 加载、bot 落地...")
+            await asyncio.sleep(3.5)
+            self._activity("debug", "等待完成，开始逐个取货")
+
+            # 4) 逐个补齐（缺的每种材料去对应潜影盒取一组）
+            ok_all = True
+            for mat in missing:
+                if await self._restock_one_from_boxes(mat, 64):
+                    # 取货成功后再确认背包确实有货（防止 withdraw 假成功）
+                    await asyncio.sleep(0.3)
+                    if await self._check_inventory_level(mat) > 0:
+                        continue
+                ok_all = False
+                self._activity("warn", f"{mat} 补货失败，跳过（后续建造遇到会再试）")
+
+            # 5) 返回建造点
+            self._activity("info", f"传送返回建造点（{self._supply_cfg.get('return', '/ehomes dth')}）")
+            try:
+                await self.mcp.send_chat(self._supply_cfg.get("return", "/ehomes dth"))
+                await asyncio.sleep(1.5)
+            except Exception:
+                pass
+            self._last_pos = None  # 传送后位置未知，强制下次寻路
+            self.progress.state = "placing"
+            await self._refresh_hotbar_map()
+            return ok_all
+        except Exception as e:
+            logger.warning("[%s] Full restock failed: %s", self.bot_id, e)
+            self._activity("warn", f"全量补货异常：{e}")
+            return False
 
     async def _do_restock(self, needed_block_id: str, needed_count: int = 64) -> bool:
         """Restock the required item.
