@@ -290,12 +290,13 @@ async def create_task(
     db.add(task)
     db.flush()
 
-    # Material requirements
+    # Material requirements（2026-08-14：display_name 存中文权威名，前端直接显示中文）
+    from vmtools_next.core.item_names_zh import get_item_zh as _item_zh
     for req in reqs:
         mat = MapArtMaterial(
             task_id=task.task_id,
             item_id=req.item_id,
-            display_name=req.display_name,
+            display_name=_item_zh(req.item_id),
             required_count=req.count,
         )
         db.add(mat)
@@ -641,7 +642,8 @@ def get_supply_boxes(task_id: str, db: Session = Depends(get_db), user=Depends(r
         boxes = [{"x": r.x, "y": r.y, "z": r.z} for r in rows if r.item_id == m.item_id]
         items.append({
             "item_id": m.item_id,
-            "display_name": m.display_name or get_item_zh(m.item_id),
+            # 中文名优先（权威映射），兼容旧任务英文 display_name
+            "display_name": get_item_zh(m.item_id) or m.display_name or "",
             "boxes": boxes,
         })
     return {"items": items}
