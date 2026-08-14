@@ -775,16 +775,22 @@ class BotBuildLoop:
                 if isinstance(r2, dict) and r2.get("success") is False:
                     logger.warning("[%s] go command failed: %s", self.bot_id, r2.get("error", "?"))
                     return False
-                await asyncio.sleep(2.5)
+                # 传送后等待 chunk 加载（原 2.5s 不足：bot 未落地 chunk 未加载，
+                # blockAt 返回空 → open_container_at 直接失败 → 误回传建造点）
+                await asyncio.sleep(3.5)
 
-                # 3. 按顺序尝试每个潜影盒坐标（取到一组即停；取空尝试下一个）
-                # 2026-08-14 修复①：open_container_at 自带近距离自动寻路（>3 格
-                # pathfinder 靠近 2 格），直接调用即可——原代码前置 _move_to(max_offset=2)
-                # 因 pathfinder 最后 1~2 格不可达/垂直阻挡而 25s 超时，导致"到不了箱子"。
-                # 修复②：open_container_at 返回 container_id(uuid) 而非 inventoryId，
-                # 原代码取 inventoryId→0 → withdraw 永远 "Container 0 not found"（取货从未成功）。
+                # 3. 按顺序尝试每个潜影盒坐标（先显式寻路到坐标附近触发 chunk 加载，再开箱）
                 taken = False
                 for bx, by, bz in boxes:
+                    # 显式寻路到潜影盒附近（触发 chunk 加载 + bot 到位；max_offset=3
+                    # 比 2 更宽松，避免最后 1~2 格不可达导致 20s 超时）
+                    moved = await self._move_to(bx, by, bz, max_offset=3,
+                                                label=f"shulker({bx},{by},{bz})",
+                                                timeout_ms=20000)
+                    if not moved:
+                        logger.warning("[%s] 寻路到潜影盒(%d,%d,%d)失败，尝试下一个",
+                                       self.bot_id, bx, by, bz)
+                        continue
                     try:
                         open_result = await self.mcp.open_container_at(bx, by, bz, timeout_ms=15000)
                     except Exception as e:
@@ -794,10 +800,20 @@ class BotBuildLoop:
                     data = open_result.get("data", open_result) if isinstance(open_result, dict) else {}
                     container_id = (data or {}).get("container_id") or ""
                     if not container_id:
-                        logger.warning("[%s] Open shulker at (%d,%d,%d) failed: %s",
-                                       self.bot_id, bx, by, bz,
-                                       (data or {}).get("error", "?"))
-                        continue
+                        # 寻路已到位但开箱失败：可能是 chunk 尚未完全加载，等 1s 重试一次
+                        logger.warning("[%s] Open shulker at (%d,%d,%d) failed: %s，等 1s 重试",
+                                       self.bot_id, bx, by, bz, (data or {}).get("error", "?"))
+                        await asyncio.sleep(1.0)
+                        try:
+                            open_result = await self.mcp.open_container_at(bx, by, bz, timeout_ms=15000)
+                            data = open_result.get("data", open_result) if isinstance(open_result, dict) else {}
+                            container_id = (data or {}).get("container_id") or ""
+                        except Exception:
+                            container_id = ""
+                        if not container_id:
+                            logger.warning("[%s] Shulker (%d,%d,%d) 二次开箱仍失败，尝试下一个",
+                                           self.bot_id, bx, by, bz)
+                            continue
                     wd = await self.mcp.withdraw_container_item(clean_id, needed_count, container_id)
                     await self.mcp.close_container(container_id)
                     # 2026-08-14 审查修复：取货失败（背包满/箱内无此物）→ 尝试下一个坐标
@@ -1012,9 +1028,17 @@ class BotBuildLoop:
                 return False
             await asyncio.sleep(wait_ms / 1000.0)
 
-            # 3. 按顺序尝试每个潜影盒坐标
+            # 3. 按顺序尝试每个潜影盒坐标（先显式寻路触发 chunk 加载，再开箱）
             taken = False
             for bx, by, bz in boxes:
+                # 显式寻路到潜影盒附近（触发 chunk 加载 + bot 到位）
+                moved = await self._move_to(bx, by, bz, max_offset=3,
+                                            label=f"food-shulker({bx},{by},{bz})",
+                                            timeout_ms=20000)
+                if not moved:
+                    logger.warning("[%s] 寻路到食物潜影盒(%d,%d,%d)失败，尝试下一个",
+                                   self.bot_id, bx, by, bz)
+                    continue
                 try:
                     open_result = await self.mcp.open_container_at(bx, by, bz, timeout_ms=15000)
                 except Exception as e:
@@ -1024,7 +1048,16 @@ class BotBuildLoop:
                 data = open_result.get("data", open_result) if isinstance(open_result, dict) else {}
                 container_id = (data or {}).get("container_id") or ""
                 if not container_id:
-                    continue
+                    await asyncio.sleep(1.0)
+                    try:
+                        open_result = await self.mcp.open_container_at(bx, by, bz, timeout_ms=15000)
+                        data = open_result.get("data", open_result) if isinstance(open_result, dict) else {}
+                        container_id = (data or {}).get("container_id") or ""
+                    except Exception:
+                        container_id = ""
+                    if not container_id:
+                        logger.warning("[%s] 食物潜影盒(%d,%d,%d) 二次开箱仍失败", self.bot_id, bx, by, bz)
+                        continue
                 wd = await self.mcp.withdraw_container_item(food_item, 64, container_id)
                 await self.mcp.close_container(container_id)
                 if isinstance(wd, dict) and wd.get("success") is False:

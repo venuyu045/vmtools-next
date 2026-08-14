@@ -434,20 +434,11 @@ function createInventoryHandlers(bot, opts = {}) {
   async function open_container_at({ x, y, z } = {}) {
     try {
       const pos = new Vec3(x, y, z);
-      let block = bot.blockAt(pos);
 
-      // 2026-08-14 修复①：blockAt 可能因 chunk 未加载/非容器返回无效
-      // （实测 bot 距目标 3.5 格仍拿到无效方块）→ 在目标附近扫描容器兜底
-      if (!block || block.type === 0 || !isContainerBlockName(block.name)) {
-        const nearby = scanContainerNear(pos, 3);
-        if (!nearby) {
-          return { success: false, error: `No container near (${x},${y},${z})` };
-        }
-        block = nearby.block;
-        pos.copy(nearby.pos);
-      }
-
-      // 距离远 → pathfinder 先走到容器旁（2 格内），再右键打开
+      // 2026-08-14 修复③：先显式寻路到坐标附近（触发 chunk 加载），再查方块。
+      // 原逻辑 blockAt 在传送后 chunk 未加载时返回 null → scanContainerNear 也扫不到
+      // → 直接 return "No container near"，根本没走到寻路逻辑（用户反馈"没等寻路
+      // 就返回建造点"的根因）。
       if (bot.entity && bot.entity.position) {
         const dist = bot.entity.position.distanceTo(pos);
         if (dist > 3) {
@@ -461,6 +452,19 @@ function createInventoryHandlers(bot, opts = {}) {
             // 寻路失败/超时不阻塞，仍尝试直接打开（可能失败）
           }
         }
+      }
+
+      let block = bot.blockAt(pos);
+
+      // 2026-08-14 修复①：blockAt 可能因 chunk 未加载/非容器返回无效
+      // （实测 bot 距目标 3.5 格仍拿到无效方块）→ 在目标附近扫描容器兜底
+      if (!block || block.type === 0 || !isContainerBlockName(block.name)) {
+        const nearby = scanContainerNear(pos, 3);
+        if (!nearby) {
+          return { success: false, error: `No container near (${x},${y},${z})` };
+        }
+        block = nearby.block;
+        pos.copy(nearby.pos);
       }
 
       const containerId = uuidv4();
