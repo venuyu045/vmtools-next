@@ -413,6 +413,10 @@ class BotBuildLoop:
         if self._stopped:
             return False
         self._activity("warn", f"寻路失败，尝试蹲搭前往 ({x},{y},{z})")
+        # 2026-08-14：蹲搭前置条件——背包必须有可放置方块，没有先补货（从潜影盒拿）
+        if not await self._ensure_scaffold_material():
+            self._activity("warn", f"背包无方块且补货失败，无法蹲搭前往 ({x},{y},{z})")
+            return False
         try:
             result = await self.mcp.scaffold_to(x, y, z, timeout_ms=30000)
             if result.get("success"):
@@ -801,6 +805,59 @@ class BotBuildLoop:
         except Exception as e:
             self._activity("warn", f"传送回建造点异常：{e}")
             return False
+
+    def _pick_restock_material(self) -> Optional[str]:
+        """选一种要补货的材料：优先已配置潜影盒的、其次当前区域需要的方块。"""
+        # 1) 已配置补货潜影盒的材料（用户明确指定了坐标，最可靠）
+        if self._supply_boxes:
+            return next(iter(self._supply_boxes))
+        # 2) 从 block_matrix 选第一个非空气方块
+        for (_x, _z), bid in self.block_matrix.items():
+            clean = bid.split("[")[0] if "[" in bid else bid
+            if clean and clean != "minecraft:air":
+                return clean
+        return None
+
+    async def _ensure_scaffold_material(self) -> bool:
+        """蹲搭前确保背包有可放置方块（任务材料或常见方块）；没有则先补货。
+
+        2026-08-14：蹲搭需要用手头的方块，背包只有食物/工具时搭不了——先补货
+        （从配置的潜影盒拿任务材料）再蹲搭。
+        """
+        # 任务需要的材料集合（这些必然是方块）
+        task_materials: set[str] = set()
+        for (_x, _z), bid in self.block_matrix.items():
+            clean = bid.split("[")[0] if "[" in bid else bid
+            if clean and clean != "minecraft:air":
+                task_materials.add(clean)
+        # 常见可放置方块（即使不是任务材料也能搭路）
+        common = {
+            "minecraft:dirt", "minecraft:cobblestone", "minecraft:stone",
+            "minecraft:gravel", "minecraft:sand", "minecraft:grass_block",
+            "minecraft:cobbled_deepslate", "minecraft:oak_planks",
+        }
+        try:
+            snap = await self.mcp.get_inventory_snapshot(inventory_id=0)
+            items = (snap.get("data", snap)).get("items", [])
+            for s in items:
+                item_id = (s.get("type", "") or "").split("[")[0]
+                if s.get("count", 0) > 0 and item_id:
+                    if item_id in task_materials or item_id in common:
+                        return True  # 背包有可放置方块，可直接蹲搭
+        except Exception:
+            pass
+
+        # 背包无可放置方块 → 补货一种任务材料
+        material = self._pick_restock_material()
+        if not material:
+            self._activity("warn", "背包无方块且无可补货材料，无法蹲搭")
+            return False
+        self._activity("warn", f"背包无方块，先补货 {material} 再蹲搭")
+        if await self._do_restock(material):
+            await self._refresh_hotbar_map()
+            return True
+        self._activity("warn", f"补货 {material} 失败，无法蹲搭")
+        return False
 
     # ── Restocking ────────────────────────────
 
