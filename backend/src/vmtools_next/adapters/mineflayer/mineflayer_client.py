@@ -48,6 +48,7 @@ from .protocol import (
     METHOD_GET_CURRENT_WINDOW,
     METHOD_EQUIP_OFFHAND,
     METHOD_CONSUME_OFFHAND,
+    METHOD_SCAFFOLD_TO,
     METHOD_SERVUX_HANDSHAKE,
     METHOD_PREVIEW_CONTAINER_AT,
     METHOD_SEND_CHAT,
@@ -376,11 +377,13 @@ class MineflayerBridgeClient(AbstractBotAgent):
     # ── 移动 ──
 
     async def move_to(self, x: int, y: int, z: int,
-                       max_offset: int = 3, timeout_ms: int = 15000) -> dict:
+                   max_offset: int = 3, timeout_ms: int = 15000,
+                   ignore_y: bool = False) -> dict:
         return await self._send_request(METHOD_MOVE_TO, {
             "x": x, "y": y, "z": z,
             "max_offset": max_offset,
             "timeout_ms": timeout_ms,
+            "ignore_y": ignore_y,
         }, timeout=timeout_ms / 1000 + 5.0)
 
     async def look_at(self, x: int, y: int, z: int) -> dict:
@@ -753,6 +756,16 @@ class MineflayerBridgeClient(AbstractBotAgent):
         """
         return await self._send_request(METHOD_CONSUME_OFFHAND, {},
                                         timeout=DEFAULT_CMD_TIMEOUT)
+
+    async def scaffold_to(self, x: int, y: int, z: int,
+                          timeout_ms: int = 30000) -> dict:
+        """自动蹲搭搭路前往 (x,y,z)（2026-08-14：pathfinder 不可达时的兜底）。
+
+        用手头方块搭柱/搭桥，蹲下走过去，直到水平到达目标。
+        """
+        return await self._send_request(METHOD_SCAFFOLD_TO, {
+            "x": x, "y": y, "z": z, "timeout_ms": timeout_ms,
+        }, timeout=timeout_ms / 1000 + 5.0)
 
     # ── Servux 容器预览（不打开容器） ──
 

@@ -48,6 +48,8 @@ METHOD_GET_CURRENT_WINDOW = "get_current_window"
 # 副手 / 食物（2026-08-14 模块A）
 METHOD_EQUIP_OFFHAND = "equip_offhand"
 METHOD_CONSUME_OFFHAND = "consume_offhand"
+# 自动蹲搭搭路（2026-08-14：pathfinder 不可达时用方块搭路前往）
+METHOD_SCAFFOLD_TO = "scaffold_to"
 
 # Servux 容器预览（不打开容器，直接请求方块实体 NBT）
 METHOD_SERVUX_HANDSHAKE = "servux_handshake"

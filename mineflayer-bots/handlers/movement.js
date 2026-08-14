@@ -10,7 +10,7 @@
  */
 
 const { Vec3 } = require('vec3');
-const { GoalNear, GoalBlock } = require('mineflayer-pathfinder').goals;
+const { GoalNear, GoalBlock, GoalNearXZ } = require('mineflayer-pathfinder').goals;
 
 /**
  * @param {import('mineflayer').Bot} bot
@@ -24,9 +24,15 @@ function createMovementHandlers(bot) {
   // ⚠️ listener 必须全部清理：建造循环每格调用一次 move_to，若
   // goal_reached/path_stop/path_timeout 的 once 监听残留，16384 格会
   // 泄漏数万个 listener（emit 遍历变慢、内存膨胀）。统一用 finish() 收口。
-  async function move_to({ x, y, z, max_offset = 3, timeout_ms = 15000 }) {
+  async function move_to({ x, y, z, max_offset = 3, timeout_ms = 15000, ignore_y = false }) {
     return new Promise((resolve, reject) => {
-      const goal = new GoalNear(x, y, z, max_offset);
+      // 2026-08-14：ignore_y 用 GoalNearXZ（只匹配 x/z 距离，忽略 y）——地图画
+      // 建造场景 bot 站立层可能悬空（origin_y-1 与实际地面不符），若严格按 3 维
+      // 距离寻路会因 y 差超 range 而 timeout（实测 bot 在 69 层悬空，前进即掉落）。
+      // 忽略 y 后 bot 落到实际地面即可到达目标 x/z，再放置方块。
+      const goal = ignore_y
+        ? new GoalNearXZ(x, z, max_offset)
+        : new GoalNear(x, y, z, max_offset);
       let finished = false;
       let timer = null;
 

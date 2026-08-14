@@ -1014,6 +1014,117 @@ function createInventoryHandlers(bot, opts = {}) {
     }
   }
 
+  // ── 自动蹲搭搭路（2026-08-14：pathfinder 因落差/悬空不可达时的兜底） ──
+  // 用手头方块：目标高于 bot → 脚下搭柱上升；水平有缺口 → 前方脚下搭桥，
+  // 蹲下走过去。直到水平到达目标（垂直由搭路自然处理）。
+  const mcData = (() => { try { return require('minecraft-data')(bot.version || '1.21.6'); } catch { return null; } })();
+  function isPlaceableBlock(item) {
+    if (!item || !item.name) return false;
+    try { return !!mcData && !!mcData.blocks && !!mcData.blocks[item.type]; } catch { return false; }
+  }
+  function pickScaffoldBlock() {
+    const items = bot.inventory.items();
+    const hotbar = items.filter(i => i.slot >= 36 && i.slot <= 44);
+    const pref = ['dirt', 'cobblestone', 'gravel', 'sand', 'stone', 'grass_block', 'cobbled_deepslate'];
+    for (const name of pref) {
+      const it = hotbar.find(i => i.name === name) || items.find(i => i.name === name);
+      if (it) return it;
+    }
+    return hotbar.find(isPlaceableBlock) || items.find(isPlaceableBlock) || null;
+  }
+  async function equipScaffold(item) {
+    try {
+      await bot.equip(item, 'hand');
+      await new Promise(r => setTimeout(r, 300));
+      return true;
+    } catch { return false; }
+  }
+  async function scaffold_to({ x, y, z, timeout_ms = 30000 } = {}) {
+    const releaseControls = () => {
+      try { bot.setControlState('sneak', false); bot.setControlState('forward', false); bot.setControlState('jump', false); } catch (e) { /* 忽略 */ }
+    };
+    try {
+      const blockItem = pickScaffoldBlock();
+      if (!blockItem) return { success: false, error: '背包无可放置方块用于搭路' };
+      if (!await equipScaffold(blockItem)) return { success: false, error: '搭路方块装备失败' };
+
+      const targetX = Math.floor(x) + 0.5;
+      const targetZ = Math.floor(z) + 0.5;
+      const targetY = Math.floor(y);
+      const start = Date.now();
+      let guard = 0;
+
+      while (Date.now() - start < timeout_ms && guard < 300) {
+        guard++;
+        const p = bot.entity.position;
+        const floorX = Math.floor(p.x);
+        const floorY = Math.floor(p.y);
+        const floorZ = Math.floor(p.z);
+        const dx = targetX - p.x;
+        const dz = targetZ - p.z;
+        const horiz = Math.hypot(dx, dz);
+
+        // 水平到达 + 高度接近 → 成功
+        if (horiz < 2.5 && Math.abs(p.y - targetY) < 4) {
+          releaseControls();
+          return { success: true, position: { x: p.x, y: p.y, z: p.z }, mode: 'reached' };
+        }
+
+        // 目标显著高于 bot → 脚下搭柱上升
+        if (targetY - p.y > 1) {
+          const below = bot.blockAt(new Vec3(floorX, floorY - 1, floorZ));
+          if (below && below.type !== 0) {
+            try {
+              await bot.placeBlock(below, new Vec3(0, 1, 0));
+              await new Promise(r => setTimeout(r, 250));
+            } catch (e) { /* 放置失败 */ }
+            // 跳上去（方块会顶起 bot，或手动跳）
+            bot.setControlState('jump', true);
+            await new Promise(r => setTimeout(r, 250));
+            bot.setControlState('jump', false);
+            await new Promise(r => setTimeout(r, 400));
+            continue;
+          }
+        }
+
+        // 水平搭桥：向目标方向搭前方脚下
+        const stepX = Math.sign(dx) || 0;
+        const stepZ = Math.sign(dz) || 0;
+        const nextX = floorX + stepX;
+        const nextZ = floorZ + stepZ;
+        const belowNext = bot.blockAt(new Vec3(nextX, floorY - 1, nextZ));
+        if (!belowNext || belowNext.type === 0) {
+          const below = bot.blockAt(new Vec3(floorX, floorY - 1, floorZ));
+          if (below && below.type !== 0) {
+            try {
+              await bot.placeBlock(below, new Vec3(stepX, 0, stepZ));
+              await new Promise(r => setTimeout(r, 250));
+            } catch (e) { /* 放置失败 */ }
+          }
+        }
+
+        // 蹲下向前走一格
+        bot.setControlState('sneak', true);
+        bot.setControlState('forward', true);
+        await new Promise(r => setTimeout(r, 450));
+        bot.setControlState('forward', false);
+        await new Promise(r => setTimeout(r, 250));
+      }
+      releaseControls();
+      const p2 = bot.entity.position;
+      const ok = Math.hypot(targetX - p2.x, targetZ - p2.z) < 4;
+      return {
+        success: ok,
+        position: { x: p2.x, y: p2.y, z: p2.z },
+        mode: ok ? 'reached' : 'timeout',
+        error: ok ? undefined : '搭路超时',
+      };
+    } catch (err) {
+      releaseControls();
+      return { success: false, error: err.message };
+    }
+  }
+
   return {
     select_hotbar_item,
     set_quick_bar_slot,
@@ -1032,6 +1143,7 @@ function createInventoryHandlers(bot, opts = {}) {
     get_current_window,
     equip_offhand,
     consume_offhand,
+    scaffold_to,
   };
 }
 

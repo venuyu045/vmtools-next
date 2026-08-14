@@ -343,16 +343,23 @@ class BotBuildLoop:
         xs = self._row_x_span()
         target_x = self.origin_x + (xs[0] if xs else self.region.x_start)
         target_z = self.origin_z + row_z - 1  # stand 1 block north
-        ok = await self._move_to(target_x, self.origin_y, target_z,
-                                 max_offset=1, label=f"row {row_z} edge")
+        # 2026-08-14 修复：bot 站立高度 = origin_y -1（地面层，与补给箱 y_offset 一致）。
+        # 原用 origin_y（建造层）作站立高度 → bot 与建造层方块同层/悬空 → pathfinder
+        # 无法移动（实测 bot 在 69 层悬空，前进即掉落）。max_offset 2 更宽松防最后 1 格不可达。
+        ok = await self._move_to(target_x, self.origin_y - 1, target_z,
+                                 max_offset=2, label=f"row {row_z} edge",
+                                 timeout_ms=20000)
         if not ok:
             self.progress.state = "offline"
         return ok
 
     async def _move_to(self, x: int, y: int, z: int, max_offset: int = 1,
-                       label: str = "", timeout_ms: int | None = None) -> bool:
+                       label: str = "", timeout_ms: int | None = None,
+                       ignore_y: bool = True) -> bool:
         """Move bot to within max_offset of (x, y, z) using pathfinder.
 
+        2026-08-14：ignore_y 默认 True——地图画建造只关心 x/z 到位（bot 会落到实际
+        地面），避免站立层悬空导致 3 维 GoalNear 永远无法满足而 timeout。
         Returns True on arrival, False on failure (after retries).
         """
         await self._paused.wait()
@@ -366,6 +373,7 @@ class BotBuildLoop:
             try:
                 result = await self.mcp.move_to(
                     x, y, z, max_offset=max_offset, timeout_ms=timeout,
+                    ignore_y=ignore_y,
                 )
                 if result.get("success"):
                     self._last_pos = (x, y, z)
@@ -378,6 +386,26 @@ class BotBuildLoop:
                                self.bot_id, label or f"({x},{y},{z})",
                                attempt + 1, self._move_retries + 1, e)
             await asyncio.sleep(0.5)
+
+        # 2026-08-14：pathfinder 全部失败（落差/悬空不可达）→ 尝试自动蹲搭搭路
+        # （用手头方块搭柱/搭桥前往）。仅寻路失败才触发，避免正常建造时搭出多余方块。
+        await self._paused.wait()
+        if self._stopped:
+            return False
+        self._activity("warn", f"寻路失败，尝试蹲搭前往 ({x},{y},{z})")
+        try:
+            result = await self.mcp.scaffold_to(x, y, z, timeout_ms=30000)
+            if result.get("success"):
+                self._last_pos = (x, y, z)
+                self._activity("info", f"蹲搭到达 ({x},{y},{z})")
+                return True
+            logger.warning("[%s] Scaffold to (%d,%d,%d) failed: %s",
+                           self.bot_id, x, y, z, result.get("error", "?"))
+            self._activity("warn", f"蹲搭前往 ({x},{y},{z}) 失败")
+        except Exception as e:
+            logger.warning("[%s] Scaffold to (%d,%d,%d) error: %s",
+                           self.bot_id, x, y, z, e)
+            self._activity("warn", f"蹲搭前往 ({x},{y},{z}) 异常")
         return False
 
     async def _place_row(self, row_z: int, world_z: int):
@@ -419,9 +447,11 @@ class BotBuildLoop:
                 # 2026-08-14 模块C：真·走一格放一格——每放置一块前精确移动到该方块
                 # 正北站立点（相邻格 = 1 格移动）。原实现 threshold=2 跳格、靠
                 # place_block(face=AUTO) 站桩斜放，触及范围边缘易失败且非「走一格」。
+                # 2026-08-14 修复：站立高度 = origin_y -1（地面层），避免悬空/与方块同层。
                 stand_z = world_z - 1
-                if not await self._move_to(world_x, self.origin_y, stand_z,
-                                           max_offset=1, label=f"({world_x},{world_z})"):
+                stand_y = self.origin_y - 1
+                if not await self._move_to(world_x, stand_y, stand_z,
+                                           max_offset=2, label=f"({world_x},{world_z})"):
                     self.progress.state = "offline"
                     return
 
