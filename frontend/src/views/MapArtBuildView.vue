@@ -135,6 +135,9 @@
           <div v-if="!materials?.length" class="empty">暂无材料需求</div>
         </el-card>
 
+        <!-- 实时日志终端（2026-08-14：bot 活动实时反馈） -->
+        <BuildLogPanel :task-id="taskId" />
+
         <!-- 统计 -->
         <el-card class="panel" header="统计">
           <div class="stat-row">
@@ -165,6 +168,7 @@ import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import BuildMapCanvas from '@/components/build/BuildMapCanvas.vue'
 import SupplyConfigPanel from '@/components/build/SupplyConfigPanel.vue'
+import BuildLogPanel from '@/components/build/BuildLogPanel.vue'
 import ItemIcon from '@/components/ItemIcon.vue'
 import { useSocketIO } from '@/composables/useSocketIO'
 import { mapArtApi } from '@/api/mapArt'

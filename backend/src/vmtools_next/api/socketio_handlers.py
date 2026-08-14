@@ -606,6 +606,15 @@ async def build_map_join(sid, data: dict):
     sio.enter_room(sid, room)
     logger.debug("Socket.IO {} joined room {}", sid, room)
 
+    # 2026-08-14 终端：join 时回放历史活动日志（前端实时日志终端初始化）
+    try:
+        from vmtools_next.core.map_art_coordinator import get_coordinator
+        coord = get_coordinator(task_id)
+        if coord:
+            coord.emit_log_history()
+    except Exception as e:
+        logger.warning("build_map_join log history failed: {}", e)
+
 
 @sio.event
 async def build_map_leave(sid, data: dict):

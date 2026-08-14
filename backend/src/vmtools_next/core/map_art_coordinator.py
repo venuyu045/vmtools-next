@@ -17,6 +17,7 @@ import asyncio
 import logging
 import time
 import zlib
+from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Optional
@@ -169,6 +170,7 @@ class BotBuildLoop:
         food_config: Optional[dict] = None,  # 2026-08-14 模块A：食物配置
         food_boxes: Optional[list[tuple[int, int, int]]] = None,  # 2026-08-14 模块A：猪排潜影盒坐标
         on_done: Optional[callable] = None,  # 正常完成回调（coordinator 用于任务级完成判定）
+        on_activity: Optional[callable] = None,  # 2026-08-14 终端：活动日志回调 (bot_id, bot_name, level, message)
     ):
         self.bot_id = bot_id
         self.bot_name = bot_name
@@ -183,6 +185,7 @@ class BotBuildLoop:
         self.progress = BotProgress(bot_id=bot_id, region=region)
         self.progress.blocks_total = region.block_count
         self._on_done = on_done
+        self._on_activity = on_activity  # 2026-08-14 终端：活动日志回调
 
         self._paused = asyncio.Event()
         self._paused.set()     # start unpaused
@@ -259,6 +262,7 @@ class BotBuildLoop:
         """Execute the edge-placement build loop for this bot's region."""
         logger.info("[%s] Build loop started: rows %d→%d",
                      self.bot_id, self.region.z_start, self.region.z_end)
+        self._activity("info", f"开始建造区域 z[{self.region.z_start}..{self.region.z_end}]")
 
         # 断点续建：恢复 DB 中已放置进度（已 placed 坐标加载到 _verified_set，
         # 信任 DB 跳过重复 verify——避免 16384 块全量 WS 往返，仅「重新开始」全量核对）
@@ -295,10 +299,12 @@ class BotBuildLoop:
                     # → 标记区域失败，不再误报 completed（此前 0/16384 也 completed）。
                     # 仍回调 on_done，由 coordinator 据 state 判定任务 failed。
                     self.progress.state = "failed"
+                    self._activity("error", f"区域完成但未放完：{placed}/{total} 方块")
                     logger.warning("[%s] Region finished but INCOMPLETE: %d/%d blocks placed",
                                    self.bot_id, placed, total)
                 else:
                     self.progress.state = "completed"
+                    self._activity("info", f"区域完成：{placed} 方块")
                     logger.info("[%s] Region complete: %d blocks placed",
                                 self.bot_id, placed)
                 # P1-10：通知 coordinator（任务级完成判定 + DB status 更新）
@@ -447,6 +453,9 @@ class BotBuildLoop:
 
         # 5) 行完成 → 批量持久化进度（断点续建）
         await self._flush_db(row_z)
+        # 2026-08-14 终端：行完成埋点（低频，每行一条）
+        if row_z == self.region.z_start or row_z % 10 == 0 or row_z == self.region.z_end:
+            self._activity("info", f"第 {row_z} 行完成")
 
     def _is_near(self, x: int, y: int, z: int, threshold: float = 2.0) -> bool:
         """Check whether the bot's last known position is within `threshold` blocks."""
@@ -652,6 +661,7 @@ class BotBuildLoop:
 
         # 背包中没有该物品 → 补货（优先分区补给箱，否则 传送）
         logger.info("[%s] %s 用完了，开始补货...", self.bot_id, clean_id)
+        self._activity("warn", f"缺少 {clean_id}，开始补货")
         if await self._do_restock(block_id):
             # 补货后刷新 hotbar_map 并重试
             await self._refresh_hotbar_map()
@@ -690,6 +700,18 @@ class BotBuildLoop:
                         self._hotbar_map[slot] = item_id
         except Exception:
             pass  # 静默失败，不影响建造
+
+    def _activity(self, level: str, message: str) -> None:
+        """记录活动日志（2026-08-14 终端：实时反馈 bot 在做什么）。
+
+        level: info | warn | error。经 on_activity 回调推给 coordinator 汇聚后
+        通过 Socket.IO 广播到前端实时日志终端。
+        """
+        try:
+            if self._on_activity:
+                self._on_activity(self.bot_id, self.bot_name, level, message)
+        except Exception:
+            pass
 
     # ── Restocking ────────────────────────────
 
@@ -768,6 +790,7 @@ class BotBuildLoop:
                 if isinstance(r1, dict) and r1.get("success") is False:
                     logger.warning("[%s] save command failed: %s", self.bot_id, r1.get("error", "?"))
                     return False
+                self._activity("info", f"暂存当前位置（{self._supply_cfg.get('save', '/esethomes dth')}）")
                 await asyncio.sleep(1.5)
 
                 # 2. 前往补给点（可自定义指令，通常为传送，如 /ehomes mdssj）
@@ -775,6 +798,7 @@ class BotBuildLoop:
                 if isinstance(r2, dict) and r2.get("success") is False:
                     logger.warning("[%s] go command failed: %s", self.bot_id, r2.get("error", "?"))
                     return False
+                self._activity("info", f"传送前往仓库（{self._supply_cfg.get('go', '/ehomes mdssj')}）")
                 # 传送后等待 chunk 加载（原 2.5s 不足：bot 未落地 chunk 未加载，
                 # blockAt 返回空 → open_container_at 直接失败 → 误回传建造点）
                 await asyncio.sleep(3.5)
@@ -784,10 +808,12 @@ class BotBuildLoop:
                 for bx, by, bz in boxes:
                     # 显式寻路到潜影盒附近（触发 chunk 加载 + bot 到位；max_offset=3
                     # 比 2 更宽松，避免最后 1~2 格不可达导致 20s 超时）
+                    self._activity("info", f"寻路到潜影盒 ({bx},{by},{bz})")
                     moved = await self._move_to(bx, by, bz, max_offset=3,
                                                 label=f"shulker({bx},{by},{bz})",
                                                 timeout_ms=20000)
                     if not moved:
+                        self._activity("warn", f"寻路到潜影盒 ({bx},{by},{bz}) 失败")
                         logger.warning("[%s] 寻路到潜影盒(%d,%d,%d)失败，尝试下一个",
                                        self.bot_id, bx, by, bz)
                         continue
@@ -811,12 +837,30 @@ class BotBuildLoop:
                         except Exception:
                             container_id = ""
                         if not container_id:
+                            self._activity("warn", f"开箱失败（潜影盒 {bx},{by},{bz}），尝试下一个")
                             logger.warning("[%s] Shulker (%d,%d,%d) 二次开箱仍失败，尝试下一个",
                                            self.bot_id, bx, by, bz)
                             continue
-                    wd = await self.mcp.withdraw_container_item(clean_id, needed_count, container_id)
-                    await self.mcp.close_container(container_id)
-                    # 2026-08-14 审查修复：取货失败（背包满/箱内无此物）→ 尝试下一个坐标
+                    # 2026-08-14 修复：withdraw 用 try/except 包裹——Python 端对 Node
+                    # 返回 success:false 会抛 MineflayerError（而非返回 dict），原代码
+                    # isinstance 判断永不命中、异常被外层 except 捕获 → 误 fallback 到
+                    # 策略2 传送（"挥手瞬间被传回"的根因）。现在失败→尝试下一个坐标，
+                    # 且 finally 关闭容器防泄漏。
+                    try:
+                        wd = await self.mcp.withdraw_container_item(clean_id, needed_count, container_id)
+                    except Exception as e:
+                        self._activity("warn", f"开箱后取货失败：{e}")
+                        logger.warning("[%s] Withdraw %s from (%d,%d,%d) error: %s，尝试下一个坐标",
+                                       self.bot_id, clean_id, bx, by, bz, e)
+                        try:
+                            await self.mcp.close_container(container_id)
+                        except Exception:
+                            pass
+                        continue
+                    try:
+                        await self.mcp.close_container(container_id)
+                    except Exception:
+                        pass
                     if isinstance(wd, dict) and wd.get("success") is False:
                         logger.warning(
                             "[%s] Withdraw %s from (%d,%d,%d) failed: %s，尝试下一个坐标",
@@ -826,11 +870,13 @@ class BotBuildLoop:
                     taken = True
                     logger.info("[%s] Shulker restock done: %s ×%d from (%d,%d,%d)",
                                 self.bot_id, clean_id, needed_count, bx, by, bz)
+                    self._activity("info", f"开箱成功，取到 {clean_id} ×{needed_count}")
                     break
                 if not taken:
                     logger.warning("[%s] 所有配置潜影盒均未取到 %s（可能取空/坐标不符）", self.bot_id, clean_id)
 
                 # 4. 返回工作位置（可自定义指令，如 /ehomes dth）
+                self._activity("info", f"传送返回建造点（{self._supply_cfg.get('return', '/ehomes dth')}）")
                 try:
                     await self.mcp.send_chat(self._supply_cfg.get("return", "/ehomes dth"))
                     await asyncio.sleep(1.5)
@@ -1022,6 +1068,7 @@ class BotBuildLoop:
 
             # 2. 前往猪排仓库（指令后等 5s 再寻路）
             logger.info("[%s] Food restock: %s → wait %ds", self.bot_id, go_cmd, wait_ms // 1000)
+            self._activity("info", f"猪排不足，传送前往食物仓库（{go_cmd}）")
             r2 = await self.mcp.send_chat(go_cmd)
             if isinstance(r2, dict) and r2.get("success") is False:
                 logger.warning("[%s] Food go command failed: %s", self.bot_id, r2.get("error", "?"))
@@ -1058,13 +1105,26 @@ class BotBuildLoop:
                     if not container_id:
                         logger.warning("[%s] 食物潜影盒(%d,%d,%d) 二次开箱仍失败", self.bot_id, bx, by, bz)
                         continue
-                wd = await self.mcp.withdraw_container_item(food_item, 64, container_id)
-                await self.mcp.close_container(container_id)
+                try:
+                    wd = await self.mcp.withdraw_container_item(food_item, 64, container_id)
+                except Exception as e:
+                    logger.warning("[%s] Withdraw food %s from (%d,%d,%d) error: %s，尝试下一个坐标",
+                                   self.bot_id, food_item, bx, by, bz, e)
+                    try:
+                        await self.mcp.close_container(container_id)
+                    except Exception:
+                        pass
+                    continue
+                try:
+                    await self.mcp.close_container(container_id)
+                except Exception:
+                    pass
                 if isinstance(wd, dict) and wd.get("success") is False:
                     continue
                 taken = True
                 logger.info("[%s] Food restock done: %s ×64 from (%d,%d,%d)",
                             self.bot_id, food_item, bx, by, bz)
+                self._activity("info", f"取到猪排 ×64（{bx},{by},{bz}）")
                 break
             if not taken:
                 logger.warning("[%s] 所有食物潜影盒均未取到 %s", self.bot_id, food_item)
@@ -1101,6 +1161,7 @@ class BotBuildLoop:
                     threshold_health = int(self._food_cfg.get("eat_threshold_health", 15))
 
                     if food < threshold_food or health < threshold_health:
+                        self._activity("info", f"饱食度 {food}/血量 {health} 低，准备进食")
                         # 优先确保副手有食物
                         has_food = await self._ensure_food_offhand()
                         if not has_food:
@@ -1162,6 +1223,8 @@ class MapArtCoordinator:
         # 2026-08-14 模块A：食物配置 + 猪排潜影盒坐标（DB 加载）
         self._food_config: dict = {}
         self._food_boxes: list[tuple[int, int, int]] = []
+        # 2026-08-14 终端：活动日志环形缓冲（最近 300 条，前端 join 时回放）
+        self._activity_log: deque = deque(maxlen=300)
         self._load_supply_data()
         self._load_food_data()
 
@@ -1238,6 +1301,37 @@ class MapArtCoordinator:
                 db.close()
         except Exception as e:
             logger.warning("[%s] Load food data failed: %s", self.task_id, e)
+
+    # ── 活动日志（2026-08-14 终端）───────────────────────────────────
+
+    def _on_loop_activity(self, bot_id: str, bot_name: str, level: str, message: str) -> None:
+        """BotBuildLoop 活动日志回调：汇聚到缓冲 + 广播到前端实时日志终端。"""
+        entry = {
+            "task_id": self.task_id,
+            "bot_id": bot_id,
+            "bot_name": bot_name,
+            "level": level,
+            "message": message,
+            "ts": datetime.now(timezone.utc).isoformat(),
+        }
+        self._activity_log.append(entry)
+        try:
+            asyncio.create_task(sio.emit("build_log", entry, room=f"build_{self.task_id}"))
+        except Exception:
+            pass
+
+    def emit_log_history(self) -> None:
+        """前端 join 房间时回放历史日志（同步方法，由 socket handler 调用）。"""
+        if not self._activity_log:
+            return
+        try:
+            asyncio.create_task(sio.emit(
+                "build_log_history",
+                {"task_id": self.task_id, "logs": list(self._activity_log)},
+                room=f"build_{self.task_id}",
+            ))
+        except Exception:
+            pass
 
     # ── Build 2D matrix from projection layers ──
 
@@ -1316,6 +1410,7 @@ class MapArtCoordinator:
                 food_config=self._food_config,
                 food_boxes=self._food_boxes,
                 on_done=self._on_loop_done,
+                on_activity=self._on_loop_activity,
             )
             self._loops[bot_id] = loop
             asyncio.create_task(loop.run())
@@ -1382,6 +1477,7 @@ class MapArtCoordinator:
             food_config=self._food_config,
             food_boxes=self._food_boxes,
             on_done=self._on_loop_done,
+            on_activity=self._on_loop_activity,
         )
         self._loops[bot_id] = loop
         asyncio.create_task(loop.run())

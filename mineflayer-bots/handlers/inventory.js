@@ -588,7 +588,17 @@ function createInventoryHandlers(bot, opts = {}) {
         return { success: false, error: `Container ${container_id} not found` };
       }
       const container = entry.window;
-      const items = container.containerItems();
+
+      // 2026-08-14 修复④：openBlock 只等 windowOpen（窗口 ID 分配），不等
+      // window_items 包（slots 填充）→ 刚打开时 containerItems() 为空，立即取货
+      // 会报 "Item not found"（用户反馈"挥手瞬间被传回"的根因）。这里轮询等待
+      // slots 加载（最多 2s），消除时序问题。
+      let items = container.containerItems();
+      const waitStart = Date.now();
+      while (items.length === 0 && Date.now() - waitStart < 2000) {
+        await new Promise(r => setTimeout(r, 150));
+        items = container.containerItems();
+      }
 
       // 查找匹配物品
       const match = items.find(item =>
