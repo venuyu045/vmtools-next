@@ -19,44 +19,52 @@
       </el-form>
     </el-card>
 
-    <!-- 材料 ↔ 潜影盒坐标（需求6：每种材料定义对应潜影盒坐标） -->
+    <!-- 材料 ↔ 潜影盒坐标（需求6：每种材料定义对应潜影盒坐标；2026-08-14 改为可折叠，配置一次后基本不用动） -->
     <el-card class="panel" header="补货潜影盒配置（材料 ↔ 坐标）">
-      <div class="panel-head-actions">
-        <p class="panel-desc">
-          为任务需要的每种材料指定潜影盒坐标（**填补货仓库所在维度的世界坐标**，玩家站在该坐标附近可交互）。
-          bot 补货时按顺序取货，取空自动尝试下一个坐标；未配置坐标的材料回退旧补货方式。
-        </p>
-        <div class="tpl-actions">
-          <el-button size="small" @click="syncFromWarehouse">从全局仓库同步</el-button>
-          <el-button size="small" @click="openSaveTpl">保存为模板</el-button>
-          <el-button size="small" @click="openImportTpl">从模板导入</el-button>
-        </div>
-      </div>
-      <div v-loading="loading" class="mat-list">
-        <div v-if="!items.length && !loading" class="empty">暂无材料需求（任务需先解析投影生成材料）</div>
-        <div v-for="it in items" :key="it.item_id" class="mat-item">
-          <div class="mat-head">
-            <ItemIcon :item-id="it.item_id" :name="it.display_name" :size="26" class="mat-icon" />
-            <span class="mat-name">{{ it.display_name || zhItemName(it.item_id) }}</span>
-            <el-button size="small" text type="primary" @click="addBox(it)">+ 添加潜影盒</el-button>
-          </div>
-          <div class="box-list">
-            <div v-for="(b, i) in it.boxes" :key="i" class="box-row">
-              <span class="box-label mono">#{{ i + 1 }}</span>
-              <el-input-number v-model="b.x" :controls="false" size="small" class="box-input" placeholder="X" />
-              <el-input-number v-model="b.y" :controls="false" size="small" class="box-input" placeholder="Y" />
-              <el-input-number v-model="b.z" :controls="false" size="small" class="box-input" placeholder="Z" />
-              <el-button size="small" text type="danger" @click="removeBox(it, i)">删除</el-button>
-            </div>
-            <div v-if="!it.boxes.length" class="box-empty mono">未配置（回退旧补货方式）</div>
-          </div>
-        </div>
-      </div>
-      <div class="save-bar">
-        <el-button type="primary" :loading="savingBoxes" :disabled="!items.length" @click="saveBoxes">
-          保存潜影盒配置
+      <div class="collapse-toggle">
+        <el-button size="small" text type="primary" @click="boxesCollapsed = !boxesCollapsed">
+          {{ boxesCollapsed ? '展开配置' : '收起配置' }}
         </el-button>
+        <span class="cfg-hint">配置一次即可长期复用，可折叠收起</span>
       </div>
+      <template v-if="!boxesCollapsed">
+        <div class="panel-head-actions">
+          <p class="panel-desc">
+            为任务需要的每种材料指定潜影盒坐标（**填补货仓库所在维度的世界坐标**，玩家站在该坐标附近可交互）。
+            bot 补货时按顺序取货，取空自动尝试下一个坐标；未配置坐标的材料回退旧补货方式。
+          </p>
+          <div class="tpl-actions">
+            <el-button size="small" @click="syncFromWarehouse">从全局仓库同步</el-button>
+            <el-button size="small" @click="openSaveTpl">保存为模板</el-button>
+            <el-button size="small" @click="openImportTpl">从模板导入</el-button>
+          </div>
+        </div>
+        <div v-loading="loading" class="mat-list">
+          <div v-if="!items.length && !loading" class="empty">暂无材料需求（任务需先解析投影生成材料）</div>
+          <div v-for="it in items" :key="it.item_id" class="mat-item">
+            <div class="mat-head">
+              <ItemIcon :item-id="it.item_id" :name="it.display_name" :size="26" class="mat-icon" />
+              <span class="mat-name">{{ it.display_name || zhItemName(it.item_id) }}</span>
+              <el-button size="small" text type="primary" @click="addBox(it)">+ 添加潜影盒</el-button>
+            </div>
+            <div class="box-list">
+              <div v-for="(b, i) in it.boxes" :key="i" class="box-row">
+                <span class="box-label mono">#{{ i + 1 }}</span>
+                <el-input-number v-model="b.x" :controls="false" size="small" class="box-input" placeholder="X" />
+                <el-input-number v-model="b.y" :controls="false" size="small" class="box-input" placeholder="Y" />
+                <el-input-number v-model="b.z" :controls="false" size="small" class="box-input" placeholder="Z" />
+                <el-button size="small" text type="danger" @click="removeBox(it, i)">删除</el-button>
+              </div>
+              <div v-if="!it.boxes.length" class="box-empty mono">未配置（回退旧补货方式）</div>
+            </div>
+          </div>
+        </div>
+        <div class="save-bar">
+          <el-button type="primary" :loading="savingBoxes" :disabled="!items.length" @click="saveBoxes">
+            保存潜影盒配置
+          </el-button>
+        </div>
+      </template>
     </el-card>
 
     <!-- 食物补货配置（2026-08-14 模块A：猪排仓库 + 进食阈值） -->
@@ -146,6 +154,8 @@ const savingCfg = ref(false)
 const savingBoxes = ref(false)
 const items = ref<SupplyItem[]>([])
 const cfg = reactive({ go: '/ehomes mdssj', save: '/esethomes dth', returnCmd: '/ehomes dth' })
+// 2026-08-14：补货潜影盒配置默认折叠（配置一次后基本不用动）
+const boxesCollapsed = ref(true)
 
 // ── 食物补货（2026-08-14 模块A）──
 const foodCfg = reactive({
@@ -348,6 +358,7 @@ defineExpose({ reload: load })
 .cfg-hint { font-size: 11px; color: var(--text-muted); margin-left: 8px; line-height: 1.5; }
 .panel-desc { font-size: 12px; color: var(--text-muted); margin: 0 0 8px; line-height: 1.6; }
 .panel-head-actions { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+.collapse-toggle { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
 .tpl-actions { display: flex; gap: 6px; flex-shrink: 0; }
 .tpl-desc { font-size: 12px; color: var(--text-muted); margin: 0 0 10px; line-height: 1.5; }
 .mat-list { display: flex; flex-direction: column; gap: 8px; max-height: 420px; overflow-y: auto; }

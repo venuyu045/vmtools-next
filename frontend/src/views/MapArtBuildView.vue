@@ -70,6 +70,9 @@
 
         <!-- 实时日志终端（2026-08-14：仓库补货列表下面，bot 活动实时反馈） -->
         <BuildLogPanel :task-id="taskId" />
+
+        <!-- Bot 背包实时列表（2026-08-14：终端下面，正在工作的 bot 背包物品） -->
+        <BotInventoryPanel :task-id="taskId" />
       </div>
 
       <!-- 右侧面板 -->
@@ -169,6 +172,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import BuildMapCanvas from '@/components/build/BuildMapCanvas.vue'
 import SupplyConfigPanel from '@/components/build/SupplyConfigPanel.vue'
 import BuildLogPanel from '@/components/build/BuildLogPanel.vue'
+import BotInventoryPanel from '@/components/build/BotInventoryPanel.vue'
 import ItemIcon from '@/components/ItemIcon.vue'
 import { useSocketIO } from '@/composables/useSocketIO'
 import { mapArtApi } from '@/api/mapArt'

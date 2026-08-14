@@ -696,8 +696,10 @@ class BotBuildLoop:
         clean_id = block_id.split("[")[0] if "[" in block_id else block_id
 
         # 1) 查缓存：_hotbar_map 里有 → 直接 set_quick_bar_slot（零成本）
+        # 2026-08-14 修复：缓存存归一化 ID，比较也归一化（原带前缀 vs 无前缀永不命中）
+        norm_id = self._normalize_item_id(clean_id)
         for slot, cached_id in self._hotbar_map.items():
-            if cached_id == clean_id:
+            if cached_id == norm_id:
                 try:
                     r = await self.mcp.set_quick_bar_slot(slot)
                     if r.get("success"):
@@ -742,10 +744,10 @@ class BotBuildLoop:
             result = await self.mcp.select_hotbar_item(clean_id)
             if result.get("success"):
                 self._current_item = block_id
-                # 2026-08-14 模块B：记录实际槽位到 hotbar_map
+                # 2026-08-14 模块B：记录实际槽位到 hotbar_map（存归一化 ID）
                 slot = result.get("slot")
                 if isinstance(slot, int) and 0 <= slot <= 8:
-                    self._hotbar_map[slot] = clean_id
+                    self._hotbar_map[slot] = self._normalize_item_id(clean_id)
                     self._current_slot = slot
                 return True
             logger.warning("[%s] select_hotbar_item %s failed: %s",
@@ -756,7 +758,11 @@ class BotBuildLoop:
         return False
 
     async def _refresh_hotbar_map(self) -> None:
-        """从 get_inventory_snapshot 重建快捷栏映射（补货后/物品移动后）。"""
+        """从 get_inventory_snapshot 重建快捷栏映射（补货后/物品移动后）。
+
+        2026-08-14 修复：snapshot type 无前缀，统一 _normalize_item_id 存储，
+        否则 _ensure_item_in_hand 用带前缀 clean_id 查缓存永远不命中（缓存失效）。
+        """
         try:
             snap = await self.mcp.get_inventory_snapshot(inventory_id=0)
             items = (snap.get("data", snap)).get("items", [])
@@ -764,7 +770,7 @@ class BotBuildLoop:
             for s in items:
                 slot = s.get("slot")
                 if isinstance(slot, int) and 0 <= slot <= 8:
-                    item_id = (s.get("type", "") or "").split("[")[0]
+                    item_id = self._normalize_item_id(s.get("type", ""))
                     if item_id:
                         self._hotbar_map[slot] = item_id
         except Exception:
@@ -816,6 +822,30 @@ class BotBuildLoop:
             self._activity("warn", f"传送回建造点异常：{e}")
             return False
 
+    @staticmethod
+    def _normalize_item_id(item_id: str) -> str:
+        """统一物品 ID：去 minecraft: 前缀 + 去 [后缀（1.21 组件数据）。
+
+        2026-08-14 修复：get_inventory_snapshot 返回的 type 是 "white_concrete"
+        （不带前缀），而 DB/配置/block_matrix 里是 "minecraft:white_concrete"
+        （带前缀）→ 直接 == 比较永远失败 → 背包明明有货却判定"无/缺"（用户实测
+        "取到方块却显示补货失败""背包有方块却显示无方块"的根因）。
+        """
+        if not item_id:
+            return ""
+        item_id = str(item_id).split("[")[0].strip()
+        if item_id.startswith("minecraft:"):
+            item_id = item_id[len("minecraft:"):]
+        return item_id
+
+    def _supply_boxes_for(self, item_id: str) -> list:
+        """按归一化 ID 查找该材料的潜影盒坐标（supply_boxes key 兼容带/不带前缀）。"""
+        norm = self._normalize_item_id(item_id)
+        for key, boxes in self._supply_boxes.items():
+            if self._normalize_item_id(key) == norm:
+                return boxes
+        return []
+
     def _pick_restock_material(self) -> Optional[str]:
         """选一种要补货的材料：优先已配置潜影盒的、其次当前区域需要的方块。"""
         # 1) 已配置补货潜影盒的材料（用户明确指定了坐标，最可靠）
@@ -824,7 +854,7 @@ class BotBuildLoop:
         # 2) 从 block_matrix 选第一个非空气方块
         for (_x, _z), bid in self.block_matrix.items():
             clean = bid.split("[")[0] if "[" in bid else bid
-            if clean and clean != "minecraft:air":
+            if clean and self._normalize_item_id(clean) != "air":
                 return clean
         return None
 
@@ -834,24 +864,24 @@ class BotBuildLoop:
         2026-08-14：蹲搭需要用手头的方块，背包只有食物/工具时搭不了——先补货
         （从配置的潜影盒拿任务材料）再蹲搭。
         """
-        # 任务需要的材料集合（这些必然是方块）
+        # 任务需要的材料集合（这些必然是方块；2026-08-14 统一归一化去前缀）
         task_materials: set[str] = set()
         for (_x, _z), bid in self.block_matrix.items():
-            clean = bid.split("[")[0] if "[" in bid else bid
-            if clean and clean != "minecraft:air":
+            clean = self._normalize_item_id(bid)
+            if clean and clean != "air":
                 task_materials.add(clean)
-        # 常见可放置方块（即使不是任务材料也能搭路）
+        # 常见可放置方块（即使不是任务材料也能搭路；归一化无前缀）
         common = {
-            "minecraft:dirt", "minecraft:cobblestone", "minecraft:stone",
-            "minecraft:gravel", "minecraft:sand", "minecraft:grass_block",
-            "minecraft:cobbled_deepslate", "minecraft:oak_planks",
+            "dirt", "cobblestone", "stone",
+            "gravel", "sand", "grass_block",
+            "cobbled_deepslate", "oak_planks",
         }
         try:
             snap = await self.mcp.get_inventory_snapshot(inventory_id=0)
             items = (snap.get("data", snap)).get("items", [])
             have: list[str] = []
             for s in items:
-                item_id = (s.get("type", "") or "").split("[")[0]
+                item_id = self._normalize_item_id(s.get("type", ""))
                 cnt = s.get("count", 0)
                 if cnt > 0 and item_id:
                     have.append(f"{item_id}×{cnt}")
@@ -877,15 +907,19 @@ class BotBuildLoop:
     # ── Restocking ────────────────────────────
 
     async def _check_inventory_level(self, block_id: str) -> int:
-        """Scan player inventory and return count of block_id."""
-        clean_id = block_id.split("[")[0] if "[" in block_id else block_id
+        """Scan player inventory and return count of block_id.
+
+        2026-08-14 修复：snapshot type 无 minecraft: 前缀，DB 配置带前缀——
+        统一 _normalize_item_id 后比较（原 == 永远失败 → 明明有货判定缺货）。
+        """
+        norm = self._normalize_item_id(block_id)
         try:
             snap = await self.mcp.get_inventory_snapshot(inventory_id=0)
             items = (snap.get("data", snap)).get("items", [])
             total = sum(
                 s.get("count", 0)
                 for s in items
-                if (s.get("type", "") or "").split("[")[0] == clean_id
+                if self._normalize_item_id(s.get("type", "")) == norm
             )
             return total
         except Exception:
@@ -932,7 +966,7 @@ class BotBuildLoop:
         allow_scaffold=False——仓库内寻路失败不再触发蹲搭（防"寻路→蹲搭→无方块→
         补货→再寻路"递归）。每步打 debug 日志，失败时打印容器内容摘要定位原因。
         """
-        boxes = self._supply_boxes.get(clean_id) or []
+        boxes = self._supply_boxes_for(clean_id)
         if not boxes:
             self._activity("warn", f"{clean_id} 未配置潜影盒坐标，无法补货")
             logger.warning("[%s] %s no configured shulker box, skip", self.bot_id, clean_id)
@@ -1013,8 +1047,9 @@ class BotBuildLoop:
         取一组补齐；传送只做一次（暂存→仓库→逐个取→返回），避免"缺A补A、
         回建造点又缺B再传送"的反复奔波。trigger_item 即使未配置坐标也尝试补。
         """
-        clean_trigger = trigger_item.split("[")[0] if "[" in trigger_item else trigger_item
+        clean_trigger = self._normalize_item_id(trigger_item)
         # 1) 找出所有缺失材料：配置了潜影盒坐标且背包存量不足的
+        #    （2026-08-14 修复：mat 归一化后检查背包，避免前缀不匹配判定全缺）
         missing: list[str] = []
         for mat, boxes in self._supply_boxes.items():
             if not boxes:
@@ -1023,8 +1058,8 @@ class BotBuildLoop:
             if count < 64:
                 missing.append(mat)
         # 2) 触发材料强制加入（本次就是要用它）
-        if clean_trigger not in missing:
-            if self._supply_boxes.get(clean_trigger):
+        if not any(self._normalize_item_id(m) == clean_trigger for m in missing):
+            if self._supply_boxes_for(clean_trigger):
                 missing.append(clean_trigger)
             else:
                 self._activity("warn", f"{clean_trigger} 未配置潜影盒坐标，无法补货")
@@ -1840,6 +1875,36 @@ class MapArtCoordinator:
                            self.task_id, bot_id)
             return False
         await loop.stop()
+
+    async def get_bot_inventory(self) -> list[dict]:
+        """返回任务正在工作的每个 bot 的背包快照（前端 bot 背包面板轮询）。
+
+        2026-08-14：物品 ID 统一归一化（snapshot type 无 minecraft: 前缀），
+        前端按名称+数量展示。
+        """
+        results: list[dict] = []
+        for bot_id, loop in self._loops.items():
+            try:
+                snap = await loop.mcp.get_inventory_snapshot(inventory_id=0)
+                items = (snap.get("data", snap)).get("items", [])
+                parsed: list[dict] = []
+                for s in items:
+                    item_id = BotBuildLoop._normalize_item_id(s.get("type", ""))
+                    cnt = s.get("count", 0)
+                    if item_id and cnt > 0:
+                        parsed.append({"name": item_id, "count": cnt})
+                results.append({
+                    "bot_id": bot_id,
+                    "bot_name": loop.bot_name,
+                    "items": parsed,
+                    "total_items": sum(i["count"] for i in parsed),
+                })
+            except Exception as e:
+                logger.warning("[%s] inventory snapshot for %s failed: %s",
+                               self.task_id, bot_id, e)
+                results.append({"bot_id": bot_id, "bot_name": loop.bot_name,
+                                "items": [], "total_items": 0})
+        return results
         self._done_loops.discard(bot_id)
         # 已完成区域无需接管；未完成区域进入待接管队列
         if loop.progress.state != "completed":

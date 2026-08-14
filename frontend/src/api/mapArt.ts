@@ -43,6 +43,10 @@ export const mapArtApi = {
   getLogs(taskId: string) {
     return client.get(`/build/map-art/tasks/${taskId}/logs`)
   },
+  /** 2026-08-14：正在工作的 bot 背包快照（实时终端下方 bot 背包面板轮询） */
+  getBotsInventory(taskId: string) {
+    return client.get(`/build/map-art/tasks/${taskId}/bots/inventory`)
+  },
   /** P2-27：动态 bot 分配（运行中任务 add/remove） */
   manageBot(taskId: string, action: 'add' | 'remove', botId: string) {
     return client.post(`/build/map-art/tasks/${taskId}/bots`, { action, bot_id: botId })

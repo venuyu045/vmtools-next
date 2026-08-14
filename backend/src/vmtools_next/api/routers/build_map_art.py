@@ -1074,6 +1074,17 @@ def get_task_logs(task_id: str, db: Session = Depends(get_db), user=Depends(requ
     return {"logs": list(coord._activity_log)}
 
 
+@router.get("/tasks/{task_id}/bots/inventory")
+async def get_task_bots_inventory(task_id: str, db: Session = Depends(get_db),
+                                  user=Depends(require_admin)):
+    """正在工作的 bot 的背包快照（2026-08-14：实时终端下方 bot 背包面板轮询）。"""
+    from vmtools_next.core.map_art_coordinator import get_coordinator
+    coord = get_coordinator(task_id)
+    if not coord:
+        return {"bots": []}
+    return {"bots": await coord.get_bot_inventory()}
+
+
 @router.get("/tasks/{task_id}/blocks/placed")
 def get_task_placed_blocks(task_id: str, db: Session = Depends(get_db),
                            user=Depends(require_admin)):
