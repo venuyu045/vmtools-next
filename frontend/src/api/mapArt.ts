@@ -56,4 +56,20 @@ export const mapArtApi = {
   saveSupplyBoxes(taskId: string, items: { item_id: string; boxes: { x: number; y: number; z: number }[] }[]) {
     return client.put(`/build/map-art/tasks/${taskId}/supply-boxes`, { items })
   },
+  /** 2026-08-14 二期：补货潜影盒模板（可复用配置） */
+  listSupplyTemplates() {
+    return client.get('/build/map-art/supply-templates')
+  },
+  createSupplyTemplate(name: string, items: { item_id: string; boxes: { x: number; y: number; z: number }[] }[]) {
+    return client.post('/build/map-art/supply-templates', { name, items })
+  },
+  updateSupplyTemplate(id: number, name: string, items: { item_id: string; boxes: { x: number; y: number; z: number }[] }[]) {
+    return client.put(`/build/map-art/supply-templates/${id}`, { name, items })
+  },
+  deleteSupplyTemplate(id: number) {
+    return client.delete(`/build/map-art/supply-templates/${id}`)
+  },
+  applySupplyTemplate(id: number, taskId: string) {
+    return client.post(`/build/map-art/supply-templates/${id}/apply`, { task_id: taskId })
+  },
 }

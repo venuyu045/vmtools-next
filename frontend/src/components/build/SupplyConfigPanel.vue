@@ -21,10 +21,16 @@
 
     <!-- 材料 ↔ 潜影盒坐标（需求6：每种材料定义对应潜影盒坐标） -->
     <el-card class="panel" header="补货潜影盒配置（材料 ↔ 坐标）">
-      <p class="panel-desc">
-        为任务需要的每种材料指定潜影盒坐标（世界坐标，玩家站在该坐标附近可交互）。
-        bot 补货时按顺序取货，取空自动尝试下一个坐标；未配置坐标的材料回退旧补货方式。
-      </p>
+      <div class="panel-head-actions">
+        <p class="panel-desc">
+          为任务需要的每种材料指定潜影盒坐标（世界坐标，玩家站在该坐标附近可交互）。
+          bot 补货时按顺序取货，取空自动尝试下一个坐标；未配置坐标的材料回退旧补货方式。
+        </p>
+        <div class="tpl-actions">
+          <el-button size="small" @click="openSaveTpl">💾 保存为模板</el-button>
+          <el-button size="small" @click="openImportTpl">📥 从模板导入</el-button>
+        </div>
+      </div>
       <div v-loading="loading" class="mat-list">
         <div v-if="!items.length && !loading" class="empty">暂无材料需求（任务需先解析投影生成材料）</div>
         <div v-for="it in items" :key="it.item_id" class="mat-item">
@@ -51,6 +57,28 @@
         </el-button>
       </div>
     </el-card>
+
+    <!-- 保存为模板（2026-08-14 二期） -->
+    <el-dialog v-model="saveTplOpen" title="保存为补货模板" width="400px" append-to-body>
+      <p class="tpl-desc">把当前任务的潜影盒配置保存为可复用模板（仅含已配置坐标的材料），下个任务可一键导入。</p>
+      <el-input v-model="saveTplName" placeholder="模板名称（如：混凝土补货）" />
+      <template #footer>
+        <el-button @click="saveTplOpen = false">取消</el-button>
+        <el-button type="primary" :disabled="!saveTplName.trim()" :loading="savingTpl" @click="doSaveTpl">保存</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 从模板导入（2026-08-14 二期） -->
+    <el-dialog v-model="importTplOpen" title="从模板导入潜影盒配置" width="440px" append-to-body>
+      <p class="tpl-desc">选择模板导入到当前任务（仅导入本任务需要的材料，覆盖当前配置）。</p>
+      <el-select v-model="importTplId" placeholder="选择模板" style="width: 100%">
+        <el-option v-for="t in tplList" :key="t.id" :label="`${t.name}（${t.material_count} 种材料）`" :value="t.id" />
+      </el-select>
+      <template #footer>
+        <el-button @click="importTplOpen = false">取消</el-button>
+        <el-button type="primary" :disabled="!importTplId" :loading="importingTpl" @click="doImportTpl">导入</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -72,6 +100,61 @@ const savingCfg = ref(false)
 const savingBoxes = ref(false)
 const items = ref<SupplyItem[]>([])
 const cfg = reactive({ go: '/ehomes mdssj', save: '/esethomes dth', returnCmd: '/ehomes dth' })
+
+// ── 模板保存/导入（2026-08-14 二期） ──
+const saveTplOpen = ref(false)
+const saveTplName = ref('')
+const savingTpl = ref(false)
+const importTplOpen = ref(false)
+const importTplId = ref<number | null>(null)
+const importingTpl = ref(false)
+const tplList = ref<any[]>([])
+
+function openSaveTpl() {
+  saveTplName.value = ''
+  saveTplOpen.value = true
+}
+async function doSaveTpl() {
+  savingTpl.value = true
+  try {
+    const payload = items.value
+      .map(it => ({ item_id: it.item_id, boxes: it.boxes.filter(b => !(b.x === 0 && b.y === 0 && b.z === 0)) }))
+      .filter(it => it.boxes.length > 0)
+    await mapArtApi.createSupplyTemplate(saveTplName.value.trim(), payload)
+    ElMessage.success('已保存为模板')
+    saveTplOpen.value = false
+  } catch (e) {
+    ElMessage.error(errMsg(e, '保存模板失败'))
+  } finally {
+    savingTpl.value = false
+  }
+}
+
+async function openImportTpl() {
+  importTplOpen.value = true
+  importTplId.value = null
+  try {
+    const { data } = await mapArtApi.listSupplyTemplates()
+    tplList.value = data.templates || []
+    if (!tplList.value.length) ElMessage.info('暂无可用模板，可先在上方「保存为模板」创建')
+  } catch (e) {
+    ElMessage.error(errMsg(e, '加载模板列表失败'))
+  }
+}
+async function doImportTpl() {
+  if (!importTplId.value) return
+  importingTpl.value = true
+  try {
+    const resp = await mapArtApi.applySupplyTemplate(importTplId.value, props.taskId)
+    ElMessage.success(`已导入 ${resp.data?.saved ?? 0} 个潜影盒坐标`)
+    importTplOpen.value = false
+    await load()
+  } catch (e) {
+    ElMessage.error(errMsg(e, '导入模板失败'))
+  } finally {
+    importingTpl.value = false
+  }
+}
 
 async function load() {
   loading.value = true
@@ -146,6 +229,9 @@ defineExpose({ reload: load })
 .cfg-form :deep(.el-form-item) { margin-bottom: 8px; }
 .cfg-hint { font-size: 11px; color: var(--text-muted); margin-left: 8px; line-height: 1.5; }
 .panel-desc { font-size: 12px; color: var(--text-muted); margin: 0 0 8px; line-height: 1.6; }
+.panel-head-actions { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+.tpl-actions { display: flex; gap: 6px; flex-shrink: 0; }
+.tpl-desc { font-size: 12px; color: var(--text-muted); margin: 0 0 10px; line-height: 1.5; }
 .mat-list { display: flex; flex-direction: column; gap: 8px; max-height: 420px; overflow-y: auto; }
 .mat-item { border: 1px solid var(--border-subtle); border-radius: 8px; padding: 8px 10px; }
 .mat-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }

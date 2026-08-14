@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 
 from vmtools_next.api.deps import get_db, get_current_user, require_admin
 from vmtools_next.data.models.build_map_art import (
-    MapArtTask, MapArtMaterial, MapArtBotAssignment, MapArtBlockState, MapArtSupplyBox,
+    MapArtTask, MapArtMaterial, MapArtBotAssignment, MapArtBlockState, MapArtSupplyBox, MapArtSupplyTemplate,
 )
 from vmtools_next.adapters.litematica.litematica_parser import LitematicaParser
 from vmtools_next.core.map_art_coordinator import (
@@ -174,6 +174,16 @@ class SupplyBoxItem(BaseModel):
 
 class SupplyBoxesRequest(BaseModel):
     items: list[SupplyBoxItem] = []
+
+
+class SupplyTemplateCreate(BaseModel):
+    """补货潜影盒模板（2026-08-14 二期）：可复用配置。"""
+    name: str
+    items: list[SupplyBoxItem] = []
+
+
+class SupplyTemplateApply(BaseModel):
+    task_id: str
 
 
 def _default_supply_config() -> dict:
@@ -529,23 +539,28 @@ async def manage_task_bot(
     db: Session = Depends(get_db),
     user=Depends(require_admin),
 ):
-    """P2-27：动态 bot 分配——运行中任务 add/remove bot（区域接管）。
+    """P2-27：动态 bot 分配——add/remove bot。
 
-    - add：把 remove_bot 释放的未完成区域分配给新 bot（从 MF pool 取 client）
-    - remove：停止 bot 并释放其未完成区域，等待后续 add 接管
+    - add：仅运行中任务（把 remove_bot 释放的未完成区域分配给新 bot）
+    - remove：
+      · draft/pending（无 coordinator）：直接删除该 bot 的 assignment 记录，
+        并按剩余 bot 数**重新分区**（剩余区域自动重新划分，不产生空洞）——2026-08-14 二期
+      · running：停止 bot 并释放其未完成区域，等待后续 add 接管
+    - 至少保留 1 个 bot；completed/cancelled/failed 不允许操作
     """
     task = db.query(MapArtTask).filter(MapArtTask.task_id == task_id).first()
     if not task:
         raise HTTPException(status_code=404, detail="任务不存在")
+    if task.status in ("completed", "cancelled", "failed"):
+        raise HTTPException(status_code=400, detail=f"任务当前状态（{task.status}）不允许操作 Bot")
 
     coordinator = get_coordinator(task_id)
-    if not coordinator:
-        raise HTTPException(status_code=400, detail="任务未在运行，动态分配仅对运行中的任务生效")
-
     from vmtools_next.core.bot_engine import resolve_bot_engine
     from vmtools_next.main import get_pool_for_engine
 
     if data.action == "add":
+        if not coordinator:
+            raise HTTPException(status_code=400, detail="任务未在运行，仅运行中的任务可添加 Bot")
         engine = resolve_bot_engine(data.bot_id, db)
         if engine != "mineflayer":
             raise HTTPException(status_code=400,
@@ -585,19 +600,59 @@ async def manage_task_bot(
                 }}
 
     if data.action == "remove":
-        ok = await coordinator.remove_bot(data.bot_id)
-        if not ok:
-            raise HTTPException(status_code=400,
-                                detail=f"Bot {data.bot_id} 不在该运行任务中")
-        # DB：释放原 assignment（标记 released，保留历史）
+        # 至少保留 1 个 bot
+        remaining = db.query(MapArtBotAssignment).filter(
+            MapArtBotAssignment.task_id == task_id,
+            MapArtBotAssignment.state != "released",
+        ).count()
+        if remaining <= 1:
+            raise HTTPException(status_code=400, detail="至少保留 1 个 Bot")
+
+        if coordinator:
+            # 运行中：停止 bot 并释放区域
+            ok = await coordinator.remove_bot(data.bot_id)
+            if not ok:
+                raise HTTPException(status_code=400,
+                                    detail=f"Bot {data.bot_id} 不在该运行任务中")
+            ba = db.query(MapArtBotAssignment).filter(
+                MapArtBotAssignment.task_id == task_id,
+                MapArtBotAssignment.bot_id == data.bot_id,
+            ).first()
+            if ba:
+                ba.state = "released"
+            db.commit()
+            return {"task_id": task_id, "bot_id": data.bot_id, "action": "remove"}
+
+        # draft/pending：直接删除 assignment + 按剩余 bot 重新分区（2026-08-14 二期）
         ba = db.query(MapArtBotAssignment).filter(
             MapArtBotAssignment.task_id == task_id,
             MapArtBotAssignment.bot_id == data.bot_id,
         ).first()
-        if ba:
-            ba.state = "released"
+        if not ba:
+            raise HTTPException(status_code=404, detail=f"Bot {data.bot_id} 不在任务中")
+        db.delete(ba)
+
+        # 按剩余 bot 重新划分区域（全 X 条带，按 Z 切分）
+        survivors = db.query(MapArtBotAssignment).filter(
+            MapArtBotAssignment.task_id == task_id,
+            MapArtBotAssignment.bot_id != data.bot_id,
+        ).order_by(MapArtBotAssignment.id).all()
+        if survivors:
+            size_x = task.projection_size_x or 128
+            size_z = task.projection_size_z or 128
+            regions = partition_rectangular(size_x, size_z, len(survivors))
+            for i, s in enumerate(survivors):
+                r = regions[i]
+                s.region_x_start = r.x_start
+                s.region_x_end = r.x_end
+                s.region_z_start = r.z_start
+                s.region_z_end = r.z_end
+                s.blocks_total = r.block_count
+                s.blocks_placed = 0
+                s.current_row = -1
         db.commit()
-        return {"task_id": task_id, "bot_id": data.bot_id, "action": "remove"}
+        return {"task_id": task_id, "bot_id": data.bot_id, "action": "remove",
+                "repartitioned": len(survivors)}
 
     raise HTTPException(status_code=400, detail=f"未知操作：{data.action}")
 
@@ -670,6 +725,115 @@ def put_supply_boxes(task_id: str, data: SupplyBoxesRequest, db: Session = Depen
             ))
     db.commit()
     return {"status": "ok", "saved": sum(len(i.boxes) for i in data.items)}
+
+
+@router.get("/supply-templates")
+def list_supply_templates(db: Session = Depends(get_db), user=Depends(require_admin)):
+    """补货潜影盒模板列表（2026-08-14 二期：可复用配置）。"""
+    rows = db.query(MapArtSupplyTemplate).order_by(MapArtSupplyTemplate.id.desc()).all()
+    result = []
+    for t in rows:
+        try:
+            items = json.loads(t.items_json or "[]")
+        except Exception:
+            items = []
+        result.append({
+            "id": t.id,
+            "name": t.name,
+            "material_count": len(items),
+            "items": items,
+            "created_at": t.created_at.isoformat() if t.created_at else "",
+        })
+    return {"templates": result}
+
+
+@router.post("/supply-templates")
+def create_supply_template(data: SupplyTemplateCreate, db: Session = Depends(get_db),
+                           user=Depends(require_admin)):
+    """创建补货潜影盒模板（name + items）。"""
+    name = data.name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="模板名称不能为空")
+    # 清洗 items（去空坐标、去前缀）
+    items = []
+    for it in data.items:
+        boxes = [{"x": b.x, "y": b.y, "z": b.z} for b in it.boxes
+                 if not (b.x == 0 and b.y == 0 and b.z == 0)]
+        if boxes:
+            items.append({"item_id": it.item_id.split("[")[0], "boxes": boxes})
+    t = MapArtSupplyTemplate(name=name, items_json=json.dumps(items, ensure_ascii=False))
+    db.add(t)
+    db.commit()
+    return {"status": "ok", "id": t.id}
+
+
+@router.put("/supply-templates/{tpl_id}")
+def update_supply_template(tpl_id: int, data: SupplyTemplateCreate, db: Session = Depends(get_db),
+                           user=Depends(require_admin)):
+    """更新补货潜影盒模板（改名/改坐标）。"""
+    t = db.query(MapArtSupplyTemplate).filter(MapArtSupplyTemplate.id == tpl_id).first()
+    if not t:
+        raise HTTPException(status_code=404, detail="模板不存在")
+    if data.name.strip():
+        t.name = data.name.strip()
+    items = []
+    for it in data.items:
+        boxes = [{"x": b.x, "y": b.y, "z": b.z} for b in it.boxes
+                 if not (b.x == 0 and b.y == 0 and b.z == 0)]
+        if boxes:
+            items.append({"item_id": it.item_id.split("[")[0], "boxes": boxes})
+    t.items_json = json.dumps(items, ensure_ascii=False)
+    db.commit()
+    return {"status": "ok", "id": t.id}
+
+
+@router.delete("/supply-templates/{tpl_id}")
+def delete_supply_template(tpl_id: int, db: Session = Depends(get_db), user=Depends(require_admin)):
+    """删除补货潜影盒模板。"""
+    t = db.query(MapArtSupplyTemplate).filter(MapArtSupplyTemplate.id == tpl_id).first()
+    if not t:
+        raise HTTPException(status_code=404, detail="模板不存在")
+    db.delete(t)
+    db.commit()
+    return {"deleted": tpl_id}
+
+
+@router.post("/supply-templates/{tpl_id}/apply")
+def apply_supply_template(tpl_id: int, data: SupplyTemplateApply, db: Session = Depends(get_db),
+                          user=Depends(require_admin)):
+    """把模板应用到任务（2026-08-14 二期：按任务实际材料交集过滤，整体覆盖任务配置）。"""
+    t = db.query(MapArtSupplyTemplate).filter(MapArtSupplyTemplate.id == tpl_id).first()
+    if not t:
+        raise HTTPException(status_code=404, detail="模板不存在")
+    task = db.query(MapArtTask).filter(MapArtTask.task_id == data.task_id).first()
+    if not task:
+        raise HTTPException(status_code=404, detail="任务不存在")
+
+    # 任务实际材料集合（交集过滤）
+    task_materials = {m.item_id.split("[")[0] for m in db.query(MapArtMaterial).filter(
+        MapArtMaterial.task_id == task.task_id).all()}
+    try:
+        tpl_items = json.loads(t.items_json or "[]")
+    except Exception:
+        tpl_items = []
+
+    # 整体替换任务潜影盒配置
+    db.query(MapArtSupplyBox).filter(MapArtSupplyBox.task_id == task.task_id).delete()
+    saved = 0
+    for it in tpl_items:
+        item_id = (it.get("item_id") or "").split("[")[0]
+        if not item_id or item_id not in task_materials:
+            continue  # 只导入任务存在的材料
+        for i, box in enumerate(it.get("boxes") or []):
+            db.add(MapArtSupplyBox(
+                task_id=task.task_id,
+                item_id=item_id,
+                x=int(box["x"]), y=int(box["y"]), z=int(box["z"]),
+                sort_order=i,
+            ))
+            saved += 1
+    db.commit()
+    return {"status": "ok", "applied_materials": saved > 0, "saved": saved}
 
 
 @router.get("/tasks/{task_id}/blocks/placed")

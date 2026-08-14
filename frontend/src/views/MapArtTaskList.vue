@@ -2,8 +2,16 @@
   <div class="mapart-list-page">
     <div class="page-header">
       <h2>🎨 地图画建造任务</h2>
-      <el-button type="primary" @click="showCreate = true">+ 新建任务</el-button>
+      <div class="header-actions">
+        <el-button @click="showTemplates = true">📦 补货仓库</el-button>
+        <el-button type="primary" @click="showCreate = true">+ 新建任务</el-button>
+      </div>
     </div>
+
+    <!-- 补货潜影盒模板管理（2026-08-14 二期） -->
+    <el-dialog v-model="showTemplates" title="补货仓库 · 潜影盒模板" width="680px">
+      <SupplyTemplateManager />
+    </el-dialog>
 
     <el-table :data="tasks" stripe v-loading="loading" empty-text="暂无任务">
       <el-table-column prop="task_id" label="任务ID" width="120" />
@@ -76,6 +84,7 @@ import { useBotStore } from '@/stores/bot'
 import { useMccInstanceStore } from '@/stores/mccInstance'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { errMsg } from '@/utils/error'
+import SupplyTemplateManager from '@/components/build/SupplyTemplateManager.vue'
 
 const botStore = useBotStore()
 const mccStore = useMccInstanceStore()
@@ -85,6 +94,7 @@ const showCreate = ref(false)
 const creating = ref(false)
 const uploadedPath = ref('')
 const allBots = ref<any[]>([])
+const showTemplates = ref(false) // 补货仓库模板弹窗（2026-08-14 二期）
 
 const form = ref({ name: '', origin_x: 0, origin_y: 64, origin_z: 0, bot_ids: [] as string[] })
 
@@ -197,5 +207,6 @@ onMounted(() => { fetchTasks(); loadBots() })
 <style scoped>
 .mapart-list-page { padding: 20px; }
 .page-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
+.header-actions { display: flex; gap: 8px; }
 .page-header h2 { margin: 0; font-size: 20px; }
 </style>

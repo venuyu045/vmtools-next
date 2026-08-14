@@ -2,7 +2,10 @@
   <div class="mapart-build-page">
     <!-- 页头 -->
     <div class="page-header">
-      <h2>地图画建造 · {{ task?.name || '未命名任务' }}</h2>
+      <div class="header-left">
+        <el-button size="small" @click="$router.push('/map-art-tasks')">← 地图画列表</el-button>
+        <h2>地图画建造 · {{ task?.name || '未命名任务' }}</h2>
+      </div>
       <div class="header-right">
         <el-tag :type="statusTagType">{{ statusLabel(task?.status) }}</el-tag>
         <span class="progress-text">{{ task?.placed_blocks ?? 0 }} / {{ task?.total_blocks ?? 0 }} 方块</span>
@@ -91,13 +94,13 @@
               <strong>{{ bot.bot_name || bot.bot_id }}</strong>
               <el-tag size="small" :type="botStateType(bot.state)">{{ botStateLabel(bot.state) }}</el-tag>
               <el-button
-                v-if="canManageBots"
+                v-if="task?.status === 'draft' || task?.status === 'pending' || canManageBots"
                 size="small"
                 text
                 type="danger"
                 class="bot-remove"
                 @click="handleRemoveBot(bot.bot_id)"
-              >移除</el-button>
+              >{{ canManageBots ? '移除' : '删除' }}</el-button>
             </div>
             <div class="bot-progress">
               <el-progress
@@ -147,7 +150,7 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, computed } from 'vue'
 import { useRoute } from 'vue-router'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import BuildMapCanvas from '@/components/build/BuildMapCanvas.vue'
 import SupplyConfigPanel from '@/components/build/SupplyConfigPanel.vue'
 import ItemIcon from '@/components/ItemIcon.vue'
@@ -198,13 +201,27 @@ async function handleAddBot() {
 }
 
 async function handleRemoveBot(botId: string) {
-  if (!canManageBots.value) return
+  const running = canManageBots.value
+  // 最后一个 bot 不允许删除（至少保留 1 个）
+  if ((bots.value || []).length <= 1) {
+    ElMessage.warning('至少保留 1 个 Bot')
+    return
+  }
+  try {
+    await ElMessageBox.confirm(
+      running
+        ? `确认移除 Bot「${botId}」？未完成区域将释放给后续添加的 Bot 接管`
+        : `确认从任务中删除 Bot「${botId}」？剩余 Bot 的区域将自动重新划分`,
+      '确认操作',
+      { type: 'warning' },
+    )
+  } catch { return }
   try {
     await mapArtApi.manageBot(taskId.value, 'remove', botId)
-    ElMessage.success('Bot 已移除，未完成区域已释放')
+    ElMessage.success(running ? 'Bot 已移除，未完成区域已释放' : 'Bot 已删除，剩余区域已重新划分')
     fetchTask()
   } catch (e) {
-    ElMessage.error(errMsg(e, '移除 Bot 失败'))
+    ElMessage.error(errMsg(e, '操作失败'))
   }
 }
 
@@ -249,13 +266,14 @@ function stableColor(seed: string): string {
 }
 function botColor(botId: string): string { return stableColor(botId) }
 
-/** 传给画布的 bot 位置标记（build_bot_status 推送的实时位置） */
+/** 传给画布的 bot 位置标记（含区域框数据） */
 const botMarkers = computed(() =>
   (bots.value || []).map((b: any) => ({
     bot_id: b.bot_id,
     bot_name: b.bot_name || b.bot_id,
     state: b.state,
     position: b.position || null,
+    region: b.region || null,
   }))
 )
 
@@ -368,11 +386,20 @@ function onBuildBotStatus(data: any) {
   justify-content: space-between;
   align-items: center;
 }
-.page-header h2 {
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+.header-left h2 {
   margin: 0;
   font-size: 20px;
   font-family: var(--font-display);
   font-weight: 400;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .header-right {
   display: flex;

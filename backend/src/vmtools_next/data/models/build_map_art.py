@@ -175,6 +175,24 @@ class MapArtSupplyBox(Base):
     )
 
 
+class MapArtSupplyTemplate(Base):
+    """补货潜影盒模板（2026-08-14 二期）：可复用的材料↔潜影盒坐标配置。
+
+    用户为一批同类地图画（如纯混凝土系列）配好一套潜影盒坐标后存为模板，
+    新任务可一键导入（apply 时按任务实际材料交集过滤）。
+    """
+
+    __tablename__ = "map_art_supply_templates"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    name = Column(String(128), nullable=False, index=True)
+    # JSON：[{"item_id":"minecraft:white_concrete","boxes":[{"x":..,"y":..,"z":..},...]}, ...]
+    items_json = Column(Text, default="[]")
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc),
+                         onupdate=lambda: datetime.now(timezone.utc))
+
+
 class MapArtBlockState(Base):
     """Per-block state in the map art build area.
 
