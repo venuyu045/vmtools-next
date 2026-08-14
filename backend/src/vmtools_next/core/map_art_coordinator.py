@@ -202,6 +202,8 @@ class BotBuildLoop:
         # 2026-08-14 模块B：快捷栏槽位 → 材料映射缓存（避免每次全背包搜索）
         self._hotbar_map: dict[int, str] = {}  # slot(0-8) → clean_item_id
         self._food_task: Optional[asyncio.Task] = None  # 食物监控协程
+        # 2026-08-14：溺水/坠落防护——记录上次血量，持续下降时传送回建造点
+        self._last_health: Optional[float] = None
 
         # P2-26：EssentialsX 传送点名从 config 读取（保持类默认值兼容）
         try:
@@ -273,6 +275,19 @@ class BotBuildLoop:
         # 2026-08-14 模块B：初始化快捷栏槽位映射（避免每色首次全背包搜索）
         await self._refresh_hotbar_map()
 
+        # 2026-08-14：保存建造点 home（/esethome dth），供寻路失败/淹死复活后
+        # 用 /ehomes dth 传送回来。若 bot 当前不在建造点（如刚登录），此操作
+        # 保存的是当前点——首次补货后 save 指令会覆盖为正确建造点。
+        try:
+            r = await self.mcp.send_chat(self._supply_cfg.get("save", "/esethomes dth"))
+            if isinstance(r, dict) and r.get("success") is False:
+                logger.warning("[%s] save build home failed: %s", self.bot_id, r.get("error", "?"))
+            else:
+                await asyncio.sleep(1.0)
+                self._activity("info", "已保存建造点位置（dth）")
+        except Exception as e:
+            logger.warning("[%s] save build home error: %s", self.bot_id, e)
+
         try:
             for row_z in range(self.region.z_start, self.region.z_end + 1):
                 if self._stopped:
@@ -283,6 +298,11 @@ class BotBuildLoop:
 
                 # Position bot at north edge of current row
                 moved = await self._move_to_row_edge(row_z)
+                if not moved and not self._stopped:
+                    # 2026-08-14：行边缘寻路失败（bot 淹死复活到远处/掉落/被卡）→
+                    # 传送回建造点重试一次，避免任务直接失败
+                    await self._try_teleport_home("行边缘寻路失败")
+                    moved = await self._move_to_row_edge(row_z)
                 if not moved or self._stopped:
                     break  # 移动失败（bot 离线/不可达）→ 终止本 bot 循环
 
@@ -452,8 +472,16 @@ class BotBuildLoop:
                 stand_y = self.origin_y - 1
                 if not await self._move_to(world_x, stand_y, stand_z,
                                            max_offset=2, label=f"({world_x},{world_z})"):
-                    self.progress.state = "offline"
-                    return
+                    # 2026-08-14：放置点移动失败（可能淹死复活到远处/掉坑）→
+                    # 传送回建造点重试一次，避免直接区域失败
+                    if await self._try_teleport_home("放置点移动失败"):
+                        if not await self._move_to(world_x, stand_y, stand_z,
+                                                   max_offset=2, label=f"({world_x},{world_z})"):
+                            self.progress.state = "offline"
+                            return
+                    else:
+                        self.progress.state = "offline"
+                        return
 
                 # 2) Verify: skip if the target is already correct
                 if await self._verify_block(world_x, self.origin_y, world_z, block_id):
@@ -750,6 +778,29 @@ class BotBuildLoop:
                 self._on_activity(self.bot_id, self.bot_name, level, message)
         except Exception:
             pass
+
+    async def _try_teleport_home(self, reason: str = "") -> bool:
+        """传送回建造点（return 指令，默认 /ehomes dth）。
+
+        2026-08-14：寻路/蹲搭失败、bot 淹死复活到远处、溺水等场景兜底——
+        pathfinder 无法跨越远距离时直接用传送指令回到建造点。
+        """
+        try:
+            cmd = self._supply_cfg.get("return", "/ehomes dth")
+            if reason:
+                self._activity("warn", f"{reason}，传送回建造点（{cmd}）")
+            else:
+                self._activity("info", f"传送回建造点（{cmd}）")
+            r = await self.mcp.send_chat(cmd)
+            if isinstance(r, dict) and r.get("success") is False:
+                self._activity("warn", f"传送回建造点失败：{r.get('error', '?')}")
+                return False
+            await asyncio.sleep(2.5)
+            self._last_pos = None  # 传送后位置未知，强制重新寻路
+            return True
+        except Exception as e:
+            self._activity("warn", f"传送回建造点异常：{e}")
+            return False
 
     # ── Restocking ────────────────────────────
 
@@ -1197,6 +1248,15 @@ class BotBuildLoop:
                     food = state.get("food") or 20
                     threshold_food = int(self._food_cfg.get("eat_threshold_food", 15))
                     threshold_health = int(self._food_cfg.get("eat_threshold_health", 15))
+
+                    # 2026-08-14 溺水/坠落防护：血量持续下降且低（掉水淹死/虚空坠落）→
+                    # 立即传送回建造点，避免死亡后复活到远处丢失位置
+                    if health < 8 and self._last_health is not None and health < self._last_health:
+                        self._activity("warn", f"血量持续下降（{self._last_health}→{health}），疑似溺水/坠落，传送回建造点")
+                        await self._try_teleport_home("血量持续下降")
+                        self._last_health = health
+                        continue
+                    self._last_health = health
 
                     if food < threshold_food or health < threshold_health:
                         self._activity("info", f"饱食度 {food}/血量 {health} 低，准备进食")
