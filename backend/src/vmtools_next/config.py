@@ -132,6 +132,13 @@ class MineflayerConfig(BaseModel):
     # EssentialsX 传送点名（补货回程用；换服务器需调整，P2-26 去硬编码）
     map_art_warehouse_home: str = "mdssj"   # 仓库传送点（需管理员 /sethome）
     map_art_temp_home: str = "gzqy"         # 临时回家点（建造位置）
+    # 补货传送指令默认值（2026-08-14，任务级可覆盖；用户要求三个指令都可自定义）：
+    #   go     前往补给点指令（默认传送到仓库传送点）
+    #   save   暂存当前位置指令（bot 离开建造位置前保存位置）
+    #   return 返回工作位置指令（补货完成后传送回来）
+    map_art_supply_go_command: str = "/ehomes mdssj"
+    map_art_supply_save_command: str = "/esethomes dth"
+    map_art_supply_return_command: str = "/ehomes dth"
     # 分区补给箱建议位置的 y 偏移（相对建造层 origin_y；默认 -1 = 地面层，P2-8 防悬空）
     map_art_supply_box_y_offset: int = -1
     # ── 任务调度（2026-08-12，实施计划阶段 2） ──

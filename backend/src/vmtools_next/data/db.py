@@ -120,8 +120,8 @@ def init_db() -> None:
 
     # Import all model modules so Base.metadata knows about every table
     from vmtools_next.data.models import (  # noqa: F401
-        warehouse, auth, logistics, build, mcc_session, mcc_remote, plugin, monitor, player_tracking, lixiangxiang,
-        scheduled_task,
+        warehouse, auth, logistics, build, build_map_art, mcc_session, mcc_remote, plugin, monitor, player_tracking,
+        lixiangxiang, scheduled_task,
     )
 
     Base.metadata.create_all(bind=engine)
@@ -248,6 +248,14 @@ def _run_lightweight_migrations(engine) -> None:
                     conn.execute(text("ALTER TABLE scheduled_tasks ADD COLUMN auto_manage BOOLEAN DEFAULT 1"))
             except Exception as _e:
                 logger.warning("scheduled_tasks auto_manage migration check: {}", _e)
+            # 地图画任务：补货传送指令配置（supply_config JSON，2026-08-14）
+            # 形如 {"go":"/ehomes mdssj","save":"/esethomes dth","return":"/ehomes dth"}
+            try:
+                mt_columns = {row[1] for row in conn.execute(text("PRAGMA table_info(map_art_tasks)")).fetchall()}
+                if "supply_config" not in mt_columns:
+                    conn.execute(text("ALTER TABLE map_art_tasks ADD COLUMN supply_config TEXT DEFAULT ''"))
+            except Exception as _e:
+                logger.warning("map_art_tasks supply_config migration check: {}", _e)
             conn.commit()
     except Exception as e:
         logger.warning("Lightweight migration check: {}", e)

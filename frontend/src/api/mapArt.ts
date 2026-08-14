@@ -42,4 +42,18 @@ export const mapArtApi = {
   manageBot(taskId: string, action: 'add' | 'remove', botId: string) {
     return client.post(`/build/map-art/tasks/${taskId}/bots`, { action, bot_id: botId })
   },
+  /** 2026-08-14：补货传送指令（go/save/return 三个可自定义） */
+  getSupplyConfig(taskId: string) {
+    return client.get(`/build/map-art/tasks/${taskId}/supply-config`)
+  },
+  saveSupplyConfig(taskId: string, cfg: { go: string; save: string; return: string }) {
+    return client.put(`/build/map-art/tasks/${taskId}/supply-config`, cfg)
+  },
+  /** 2026-08-14：补货潜影盒坐标（材料 ↔ 坐标，1 材料可配多坐标） */
+  getSupplyBoxes(taskId: string) {
+    return client.get(`/build/map-art/tasks/${taskId}/supply-boxes`)
+  },
+  saveSupplyBoxes(taskId: string, items: { item_id: string; boxes: { x: number; y: number; z: number }[] }[]) {
+    return client.put(`/build/map-art/tasks/${taskId}/supply-boxes`, { items })
+  },
 }

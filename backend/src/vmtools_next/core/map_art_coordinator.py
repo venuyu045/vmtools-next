@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+import zlib
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Optional
@@ -163,6 +164,8 @@ class BotBuildLoop:
         origin_x: int, origin_y: int, origin_z: int,
         mcp: AbstractBotAgent,
         supply_box: Optional[tuple[int, int, int]] = None,  # 分区补给箱坐标（None→用传送）
+        supply_boxes: Optional[dict[str, list[tuple[int, int, int]]]] = None,  # 2026-08-14：材料→潜影盒坐标
+        supply_config: Optional[dict] = None,  # 2026-08-14：{go, save, return} 三个传送指令
         on_done: Optional[callable] = None,  # 正常完成回调（coordinator 用于任务级完成判定）
     ):
         self.bot_id = bot_id
@@ -184,6 +187,9 @@ class BotBuildLoop:
         self._stopped = False
         self._current_item: Optional[str] = None  # item currently in hand
         self._supply_box: Optional[tuple[int, int, int]] = supply_box  # 分区补给箱坐标（None→用传送）
+        # 2026-08-14：材料级潜影盒坐标（用户配置，优先级最高）+ 任务级三个传送指令
+        self._supply_boxes: dict[str, list[tuple[int, int, int]]] = supply_boxes or {}
+        self._supply_cfg: dict = supply_config or self._default_supply_cfg()
 
         # P2-26：EssentialsX 传送点名从 config 读取（保持类默认值兼容）
         try:
@@ -614,10 +620,25 @@ class BotBuildLoop:
         except Exception:
             return 0
 
+    @staticmethod
+    def _default_supply_cfg() -> dict:
+        """任务未配置时使用全局默认三个传送指令（config.py map_art_supply_*_command）。"""
+        try:
+            mf = get_config().mineflayer
+            return {
+                "go": getattr(mf, "map_art_supply_go_command", "/ehomes mdssj") or "/ehomes mdssj",
+                "save": getattr(mf, "map_art_supply_save_command", "/esethomes dth") or "/esethomes dth",
+                "return": getattr(mf, "map_art_supply_return_command", "/ehomes dth") or "/ehomes dth",
+            }
+        except Exception:
+            return {"go": "/ehomes mdssj", "save": "/esethomes dth", "return": "/ehomes dth"}
+
     async def _do_restock(self, needed_block_id: str, needed_count: int = 64) -> bool:
         """Restock the required item.
 
-        Two strategies (per development doc §补给策略):
+        Strategies (优先级从高到低，2026-08-14 更新)：
+          0. 材料级潜影盒坐标（用户配置 map_art_supply_boxes）：暂存位置 → 传送补给点 →
+             寻路到该材料潜影盒坐标打开取货 → 返回工作位置（三个指令均可自定义）
           1. 分区补给箱（_supply_box 已配置）：寻路到补给箱附近 → 打开取货 → 返回建造位置
           2. fallback EssentialsX 传送：/esethome gzqy → /ehomes mdssj → withdraw → /ehomes gzqy
         """
@@ -626,6 +647,55 @@ class BotBuildLoop:
 
         # 记录建造位置（传送补货时回程用）
         build_pos = self._last_pos
+
+        # ── 策略 0（2026-08-14）：材料级潜影盒坐标（用户配置，优先级最高） ──
+        boxes = self._supply_boxes.get(clean_id) or []
+        if boxes:
+            try:
+                logger.info("[%s] Restock %s from configured shulker boxes (%d coords)",
+                            self.bot_id, clean_id, len(boxes))
+                # 1. 暂存当前位置（可自定义指令，如 /esethomes dth）
+                r1 = await self.mcp.send_chat(self._supply_cfg.get("save", "/esethomes dth"))
+                if isinstance(r1, dict) and r1.get("success") is False:
+                    logger.warning("[%s] save command failed: %s", self.bot_id, r1.get("error", "?"))
+                    return False
+                await asyncio.sleep(1.5)
+
+                # 2. 前往补给点（可自定义指令，通常为传送，如 /ehomes mdssj）
+                r2 = await self.mcp.send_chat(self._supply_cfg.get("go", "/ehomes mdssj"))
+                if isinstance(r2, dict) and r2.get("success") is False:
+                    logger.warning("[%s] go command failed: %s", self.bot_id, r2.get("error", "?"))
+                    return False
+                await asyncio.sleep(2.5)
+
+                # 3. 按顺序尝试每个潜影盒坐标（取到一组即停；取空尝试下一个）
+                taken = False
+                for bx, by, bz in boxes:
+                    if await self._move_to(bx, by, bz, max_offset=2, label="shulker box",
+                                           timeout_ms=25000):
+                        open_result = await self.mcp.open_container_at(bx, by, bz, timeout_ms=5000)
+                        inv_id = (open_result.get("data", open_result)).get("inventoryId", 0)
+                        await self.mcp.withdraw_container_item(clean_id, needed_count, inv_id)
+                        await self.mcp.close_container(inv_id)
+                        taken = True
+                        logger.info("[%s] Shulker restock done: %s ×%d from (%d,%d,%d)",
+                                    self.bot_id, clean_id, needed_count, bx, by, bz)
+                        break
+                if not taken:
+                    logger.warning("[%s] 所有配置潜影盒均未取到 %s（可能取空/坐标不符）", self.bot_id, clean_id)
+
+                # 4. 返回工作位置（可自定义指令，如 /ehomes dth）
+                try:
+                    await self.mcp.send_chat(self._supply_cfg.get("return", "/ehomes dth"))
+                    await asyncio.sleep(1.5)
+                except Exception:
+                    pass
+                self._last_pos = None  # 传送后位置未知，强制下次寻路
+                self.progress.state = "placing"
+                return taken
+            except Exception as e:
+                logger.warning("[%s] Shulker-box restock failed: %s, fallback to old strategy",
+                               self.bot_id, e)
 
         # ── 策略 1：分区补给箱（无传送依赖，适合多 bot 分区） ──
         if self._supply_box is not None:
@@ -740,6 +810,36 @@ class MapArtCoordinator:
         self._completion_notified: bool = False
         # P2-27：待接管区域队列（remove_bot 释放的未完成区域 → add_bot 分配）
         self._pending_regions: list[Region] = []
+        # 2026-08-14：材料级潜影盒坐标 + 任务级三个传送指令（DB 加载，构造时读一次）
+        self._supply_boxes: dict[str, list[tuple[int, int, int]]] = {}
+        self._supply_config: dict = {}
+        self._load_supply_data()
+
+    def _load_supply_data(self) -> None:
+        """从 DB 加载任务的补货配置（潜影盒坐标 + 三个传送指令）。"""
+        try:
+            from vmtools_next.data.db import get_session_factory
+            from vmtools_next.data.models.build_map_art import MapArtTask, MapArtSupplyBox
+            import json as _json
+            db = get_session_factory()()
+            try:
+                task = db.query(MapArtTask).filter(MapArtTask.task_id == self.task_id).first()
+                if task and task.supply_config:
+                    try:
+                        d = _json.loads(task.supply_config)
+                        if isinstance(d, dict):
+                            self._supply_config = {k: d.get(k, "") for k in ("go", "save", "return")}
+                    except Exception:
+                        pass
+                rows = db.query(MapArtSupplyBox).filter(
+                    MapArtSupplyBox.task_id == self.task_id
+                ).order_by(MapArtSupplyBox.sort_order).all()
+                for r in rows:
+                    self._supply_boxes.setdefault(r.item_id, []).append((r.x, r.y, r.z))
+            finally:
+                db.close()
+        except Exception as e:
+            logger.warning("[%s] Load supply data failed: %s", self.task_id, e)
 
     # ── Build 2D matrix from projection layers ──
 
@@ -813,6 +913,8 @@ class MapArtCoordinator:
                 origin_z=self.origin[2],
                 mcp=mcp,
                 supply_box=supply_boxes[i] if i < len(supply_boxes) else None,
+                supply_boxes=self._supply_boxes,
+                supply_config=self._supply_config,
                 on_done=self._on_loop_done,
             )
             self._loops[bot_id] = loop
@@ -874,7 +976,9 @@ class MapArtCoordinator:
             origin_y=self.origin[1],
             origin_z=self.origin[2],
             mcp=mcp,
-            supply_box=None,  # 新 bot 走 EssentialsX 传送补货（补给箱已按原 bot 分配）
+            supply_box=None,  # 新 bot 走配置潜影盒 / EssentialsX 传送补货（补给箱已按原 bot 分配）
+            supply_boxes=self._supply_boxes,
+            supply_config=self._supply_config,
             on_done=self._on_loop_done,
         )
         self._loops[bot_id] = loop
@@ -1001,7 +1105,9 @@ class MapArtCoordinator:
             {
                 "bot_id": bid,
                 "name": name,
-                "color": f"#{(hash(bid) & 0xFFFFFF):06x}",
+                # 稳定颜色（2026-08-14）：改用 crc32——Python hash() 对字符串每次进程随机，
+                # 重启后颜色漂移；crc32 保证同一 bot 永远同色（前端画布标记同算法）
+                "color": f"#{zlib.crc32(bid.encode()) & 0xFFFFFF:06x}",
                 "region": {
                     "x_start": r.x_start, "x_end": r.x_end,
                     "z_start": r.z_start, "z_end": r.z_end,

@@ -1,69 +1,103 @@
 <template>
   <div class="mapart-build-page">
-    <!-- Header -->
+    <!-- 页头 -->
     <div class="page-header">
-      <h2>{{ task?.name || 'Map Art Build' }}</h2>
+      <h2>地图画建造 · {{ task?.name || '未命名任务' }}</h2>
       <div class="header-right">
-        <el-tag :type="statusTagType">{{ task?.status || 'draft' }}</el-tag>
-        <span class="progress-text">{{ task?.placed_blocks ?? 0 }} / {{ task?.total_blocks ?? 0 }} blocks</span>
+        <el-tag :type="statusTagType">{{ statusLabel(task?.status) }}</el-tag>
+        <span class="progress-text">{{ task?.placed_blocks ?? 0 }} / {{ task?.total_blocks ?? 0 }} 方块</span>
       </div>
     </div>
 
-    <!-- Main content: 3D canvas + side panels -->
+    <!-- 主体：预览画布 + 侧边面板 -->
     <div class="main-content">
-      <!-- 3D Canvas -->
+      <!-- 2D 俯视预览画布 -->
       <div class="canvas-area">
-        <div v-if="loadingBlocks" class="loading-canvas">加载方块数据...</div>
+        <div v-if="loadingBlocks" class="loading-canvas">正在加载方块数据…</div>
         <BuildMapCanvas
           v-else
           :task-id="taskId"
           :materials="materials"
           :init-data="blockData"
+          :bot-positions="botMarkers"
           @ready="onCanvasReady"
         />
 
-        <!-- Control bar -->
+        <!-- 控制栏 -->
         <div class="control-bar">
           <el-button
             v-if="task?.status === 'draft' || task?.status === 'pending'"
             type="primary"
             @click="control('start')"
           >
-            ▶ Start
+            ▶ 开始建造
           </el-button>
           <el-button
             v-if="task?.status === 'running'"
             @click="control('pause')"
           >
-            ⏸ Pause
+            ⏸ 暂停
           </el-button>
           <el-button
             v-if="task?.status === 'paused'"
             type="success"
             @click="control('resume')"
           >
-            ▶ Resume
+            ▶ 继续
           </el-button>
           <el-button
             v-if="task?.status === 'running' || task?.status === 'paused'"
             type="danger"
             @click="control('stop')"
           >
-            ⏹ Stop
+            ⏹ 停止
           </el-button>
         </div>
+
+        <!-- 预览正下方：补货仓库配置（需求6/7） -->
+        <SupplyConfigPanel :task-id="taskId" class="supply-panel" />
       </div>
 
-      <!-- Right panels -->
+      <!-- 右侧面板 -->
       <div class="side-panels">
-        <!-- Bot status -->
-        <el-card class="panel" header="Bots">
-          <div v-if="!bots.length" class="empty">No bots assigned</div>
+        <!-- Bot 列表 -->
+        <el-card class="panel" header="Bot 列表">
+          <div class="bot-manage-bar">
+            <el-select
+              v-model="selectedAddBot"
+              placeholder="选择要添加的 Bot"
+              size="small"
+              clearable
+              :disabled="!canManageBots"
+            >
+              <el-option
+                v-for="b in availableBots"
+                :key="b.bot_id"
+                :label="`${b.name || b.bot_id} [${b.status === 'online' ? '在线' : b.status}]`"
+                :value="b.bot_id"
+              />
+            </el-select>
+            <el-button size="small" type="primary" :disabled="!selectedAddBot || !canManageBots" @click="handleAddBot">
+              添加
+            </el-button>
+            <el-tooltip content="仅运行中的任务可动态添加/移除 Bot" placement="top">
+              <span class="manage-hint" v-if="!canManageBots">运行中才可管理</span>
+            </el-tooltip>
+          </div>
+          <div v-if="!bots.length" class="empty">暂无分配的 Bot</div>
           <div v-for="bot in bots" :key="bot.bot_id" class="bot-row">
             <div class="bot-header">
               <span class="bot-dot" :style="{ background: botColor(bot.bot_id) }" />
               <strong>{{ bot.bot_name || bot.bot_id }}</strong>
-              <el-tag size="small" :type="botStateType(bot.state)">{{ bot.state }}</el-tag>
+              <el-tag size="small" :type="botStateType(bot.state)">{{ botStateLabel(bot.state) }}</el-tag>
+              <el-button
+                v-if="canManageBots"
+                size="small"
+                text
+                type="danger"
+                class="bot-remove"
+                @click="handleRemoveBot(bot.bot_id)"
+              >移除</el-button>
             </div>
             <div class="bot-progress">
               <el-progress
@@ -74,34 +108,35 @@
               <span class="bot-stats">{{ bot.placed }} / {{ bot.total }}</span>
             </div>
             <div class="bot-meta">
-              <span>Row {{ bot.current_row >= 0 ? bot.current_row : '-' }}</span>
-              <span>{{ (bot.rate ?? 0).toFixed(1) }} blk/min</span>
+              <span>行 {{ bot.current_row >= 0 ? bot.current_row : '-' }}</span>
+              <span>{{ (bot.rate ?? 0).toFixed(1) }} 块/分钟</span>
             </div>
           </div>
         </el-card>
 
-        <!-- Materials -->
-        <el-card class="panel" header="Materials">
+        <!-- 材料需求 -->
+        <el-card class="panel" header="材料需求">
           <div v-for="m in materials?.slice(0, 12)" :key="m.item_id" class="mat-row">
-            <span class="mat-dot" :style="{ background: matColor(m.item_id) }" />
+            <ItemIcon :item-id="m.item_id" :name="m.display_name" :size="24" class="mat-icon" />
             <span class="mat-name">{{ m.display_name }}</span>
             <span class="mat-count">{{ m.placed ?? 0 }} / {{ m.required }}</span>
           </div>
+          <div v-if="!materials?.length" class="empty">暂无材料需求</div>
         </el-card>
 
-        <!-- Stats -->
-        <el-card class="panel" header="Stats">
+        <!-- 统计 -->
+        <el-card class="panel" header="统计">
           <div class="stat-row">
-            <span>Elapsed</span>
+            <span>已耗时</span>
             <span>{{ formatTime(elapsed) }}</span>
           </div>
           <div class="stat-row">
-            <span>ETA</span>
+            <span>预计剩余</span>
             <span>{{ formatTime(eta) }}</span>
           </div>
           <div class="stat-row">
-            <span>Overall Rate</span>
-            <span>{{ overallRate }} blk/min</span>
+            <span>平均速率</span>
+            <span>{{ overallRate }} 块/分钟</span>
           </div>
         </el-card>
       </div>
@@ -114,9 +149,13 @@ import { ref, onMounted, onUnmounted, computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import BuildMapCanvas from '@/components/build/BuildMapCanvas.vue'
+import SupplyConfigPanel from '@/components/build/SupplyConfigPanel.vue'
+import ItemIcon from '@/components/ItemIcon.vue'
 import { useSocketIO } from '@/composables/useSocketIO'
 import { mapArtApi } from '@/api/mapArt'
+import { botApi } from '@/api/bot'
 import { errMsg } from '@/utils/error'
+import { zhItemName } from '@/utils/itemZh'
 
 const route = useRoute()
 const taskId = computed(() => route.params.taskId as string)
@@ -131,6 +170,57 @@ const elapsed = ref(0)
 const eta = ref(0)
 const overallRate = ref('0')
 
+// ── Bot 动态管理（需求4：添加/删除 bot，自动分配区域） ──
+const selectedAddBot = ref('')
+const availableBots = ref<any[]>([])
+/** 仅运行中的任务可动态添加/移除 bot（后端校验，前端同步禁用） */
+const canManageBots = computed(() => task.value?.status === 'running')
+
+async function loadAvailableBots() {
+  try {
+    const { data } = await botApi.list()
+    const all = Array.isArray(data) ? data : (data.bots || data.items || [])
+    const assigned = new Set((bots.value || []).map((b: any) => b.bot_id))
+    availableBots.value = all.filter((b: any) => !assigned.has(b.bot_id))
+  } catch { /* 加载失败静默，添加按钮仍可点击尝试 */ }
+}
+
+async function handleAddBot() {
+  if (!selectedAddBot.value || !canManageBots.value) return
+  try {
+    await mapArtApi.manageBot(taskId.value, 'add', selectedAddBot.value)
+    ElMessage.success('Bot 已添加，自动分配待接管区域')
+    selectedAddBot.value = ''
+    fetchTask()
+  } catch (e) {
+    ElMessage.error(errMsg(e, '添加 Bot 失败'))
+  }
+}
+
+async function handleRemoveBot(botId: string) {
+  if (!canManageBots.value) return
+  try {
+    await mapArtApi.manageBot(taskId.value, 'remove', botId)
+    ElMessage.success('Bot 已移除，未完成区域已释放')
+    fetchTask()
+  } catch (e) {
+    ElMessage.error(errMsg(e, '移除 Bot 失败'))
+  }
+}
+
+// ── 状态中文映射（需求5：全页汉化） ──
+const STATUS_LABELS: Record<string, string> = {
+  draft: '草稿', pending: '待启动', running: '运行中',
+  paused: '已暂停', completed: '已完成', failed: '失败', cancelled: '已取消',
+}
+const BOT_STATE_LABELS: Record<string, string> = {
+  idle: '空闲', moving: '移动中', placing: '放置中', restocking: '补货中',
+  waiting: '等待中', completed: '已完成', offline: '已离线', released: '已释放',
+}
+
+function statusLabel(s?: string): string { return (s && STATUS_LABELS[s]) || s || '未知' }
+function botStateLabel(s?: string): string { return (s && BOT_STATE_LABELS[s]) || s || '未知' }
+
 const statusTagType = computed(() => {
   const s = task.value?.status
   if (s === 'running') return 'success'
@@ -141,51 +231,58 @@ const statusTagType = computed(() => {
 })
 
 function botStateType(state: string): string {
-  if (state === 'placing') return 'success'
+  if (state === 'placing' || state === 'completed') return 'success'
   if (state === 'offline' || state === 'failed') return 'danger'
   if (state === 'restocking' || state === 'moving') return 'warning'
   return 'info'
 }
 
-function botColor(botId: string): string {
-  const h = botId.split('').reduce((s, c) => s + c.charCodeAt(0), 0)
-  return `#${((h * 2654435761) >>> 0).toString(16).slice(0, 6)}`
-}
-
-function matColor(itemId: string): string {
-  const colors: Record<string, string> = {
-    'minecraft:white_wool': '#FFFFFF', 'minecraft:orange_wool': '#F9801D',
-    'minecraft:magenta_wool': '#C74EBD', 'minecraft:light_blue_wool': '#3AB3DA',
-    'minecraft:yellow_wool': '#FED83D', 'minecraft:lime_wool': '#80C71F',
-    'minecraft:pink_wool': '#F38BAA', 'minecraft:gray_wool': '#474F52',
-    'minecraft:light_gray_wool': '#9D9D97', 'minecraft:cyan_wool': '#169C9D',
-    'minecraft:purple_wool': '#8932B8', 'minecraft:blue_wool': '#3C44AA',
-    'minecraft:brown_wool': '#835432', 'minecraft:green_wool': '#5E7C16',
-    'minecraft:red_wool': '#B02E26', 'minecraft:black_wool': '#1D1D21',
+// ── bot 稳定颜色（与画布同算法：同一 bot 永远同色） ──
+function stableColor(seed: string): string {
+  let h = 2166136261
+  for (let i = 0; i < seed.length; i++) {
+    h ^= seed.charCodeAt(i)
+    h = Math.imul(h, 16777619)
   }
-  return colors[itemId] ?? '#888888'
+  const c = (h >>> 0) & 0xFFFFFF
+  return `#${c.toString(16).padStart(6, '0')}`
 }
+function botColor(botId: string): string { return stableColor(botId) }
+
+/** 传给画布的 bot 位置标记（build_bot_status 推送的实时位置） */
+const botMarkers = computed(() =>
+  (bots.value || []).map((b: any) => ({
+    bot_id: b.bot_id,
+    bot_name: b.bot_name || b.bot_id,
+    state: b.state,
+    position: b.position || null,
+  }))
+)
 
 function formatTime(secs: number): string {
   const m = Math.floor(secs / 60)
   const s = Math.floor(secs % 60)
-  return `${m}m ${s}s`
+  return `${m}分 ${s}秒`
 }
 
 function onCanvasReady() {
-  // Canvas initialized
+  // 画布就绪
 }
 
-// ---- API calls ----
+// ── 数据加载 ──
 
 async function fetchTask() {
   try {
     const { data } = await mapArtApi.getTask(taskId.value)
     task.value = data
-    materials.value = data.materials || []
+    // 材料名汉化（后端 display_name 可能为英文，前端映射兜底）
+    materials.value = (data.materials || []).map((m: any) => ({
+      ...m,
+      display_name: m.display_name || zhItemName(m.item_id),
+    }))
     bots.value = data.bots || []
+    await loadAvailableBots()
 
-    // Load block data for 3D canvas
     loadingBlocks.value = true
     try {
       const { data: blockResp } = await mapArtApi.getBlocks(taskId.value)
@@ -196,7 +293,7 @@ async function fetchTask() {
         origin: blockResp.origin || { x: 0, y: 64, z: 0 },
         size: blockResp.size || { x: 32, z: 32 },
       }
-    } catch { /* blocks may not be loaded yet */ }
+    } catch { /* 方块数据可能尚未生成 */ }
     loadingBlocks.value = false
   } catch (e) {
     ElMessage.error(errMsg(e, '获取任务详情失败'))
@@ -204,7 +301,7 @@ async function fetchTask() {
 }
 
 const ACTION_LABELS: Record<string, string> = {
-  start: '启动', pause: '暂停', resume: '继续', stop: '停止',
+  start: '开始', pause: '暂停', resume: '继续', stop: '停止',
 }
 
 async function control(action: string) {
@@ -217,14 +314,11 @@ async function control(action: string) {
   }
 }
 
-// ---- Socket.IO progress updates ----
-// ⚠️ 组件级 handler 必须在 onUnmounted 注销：否则多次进入页面会累积
-// 多个 build_progress/build_bot_status 监听（P1 修复：重复处理+内存泄漏）。
+// ── Socket.IO 进度更新（组件级 handler 必须 onUnmounted 注销防累积） ──
 
 onMounted(() => {
   fetchTask()
   sockEmit('build_map_join', { task_id: taskId.value })
-
   sockOn('build_progress', onBuildProgress)
   sockOn('build_bot_status', onBuildBotStatus)
 })
@@ -244,10 +338,13 @@ function onBuildProgress(data: any) {
     ? (data.placed_blocks / (data.elapsed_sec / 60)).toFixed(1)
     : '0'
   // 注意：后端 _aggregate 的 materials 当前为 {}（未填充），空对象是 truthy——
-  // 若不加 length 检查会每 2s 把 Materials 面板清空（P1 修复：空对象不覆盖）
+  // 不加 length 检查会每 2s 把材料面板清空
   if (data.materials && Object.keys(data.materials).length > 0) {
     materials.value = Object.entries(data.materials).map(([k, v]: [string, any]) => ({
-      item_id: k, display_name: k.split(':')[1], placed: v.placed, required: v.required,
+      item_id: k,
+      display_name: zhItemName(k),
+      placed: v.placed,
+      required: v.required,
     }))
   }
 }
@@ -274,6 +371,8 @@ function onBuildBotStatus(data: any) {
 .page-header h2 {
   margin: 0;
   font-size: 20px;
+  font-family: var(--font-display);
+  font-weight: 400;
 }
 .header-right {
   display: flex;
@@ -287,7 +386,7 @@ function onBuildBotStatus(data: any) {
 .main-content {
   flex: 1;
   display: grid;
-  grid-template-columns: 1fr 280px;
+  grid-template-columns: 1fr 300px;
   gap: 12px;
   min-height: 0;
 }
@@ -295,6 +394,22 @@ function onBuildBotStatus(data: any) {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  min-height: 0;
+  overflow-y: auto;
+}
+.supply-panel { margin-top: 4px; }
+.bot-manage-bar { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
+.bot-manage-bar .el-select { flex: 1; min-width: 0; }
+.manage-hint { font-size: 11px; color: var(--text-muted); white-space: nowrap; }
+.bot-remove { margin-left: auto; }
+.loading-canvas {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  background: var(--bg-card);
+  border-radius: 8px;
 }
 .control-bar {
   display: flex;
@@ -306,6 +421,7 @@ function onBuildBotStatus(data: any) {
   flex-direction: column;
   gap: 12px;
   overflow-y: auto;
+  max-height: 100%;
 }
 .panel {
   flex-shrink: 0;
@@ -328,9 +444,15 @@ function onBuildBotStatus(data: any) {
   display: flex; align-items: center; gap: 8px;
   padding: 3px 0; font-size: 12px;
 }
-.mat-dot { width: 10px; height: 10px; border-radius: 2px; flex-shrink: 0; }
-.mat-name { flex: 1; }
-.mat-count { color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.mat-icon { flex-shrink: 0; border-radius: 3px; }
+.mat-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mat-count { color: var(--text-muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .stat-row { display: flex; justify-content: space-between; padding: 4px 0; font-size: 13px; }
 .empty { color: var(--text-muted); padding: 12px 0; text-align: center; }
+
+/* 移动端：单列布局 */
+@media (max-width: 900px) {
+  .main-content { grid-template-columns: 1fr; }
+  .side-panels { max-height: none; }
+}
 </style>

@@ -19,9 +19,9 @@
         </template>
       </el-table-column>
       <el-table-column prop="projection_name" label="投影" />
-      <el-table-column label="操作" width="180">
+      <el-table-column label="操作" width="160">
         <template #default="{ row }">
-          <el-button size="small" @click="$router.push(`/map-art/${row.task_id}`)">查看 3D</el-button>
+          <el-button size="small" type="primary" plain @click="$router.push(`/map-art/${row.task_id}`)">详情</el-button>
           <el-button size="small" type="danger" @click="deleteTask(row.task_id)">删除</el-button>
         </template>
       </el-table-column>

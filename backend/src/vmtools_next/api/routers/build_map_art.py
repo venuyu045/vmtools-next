@@ -6,6 +6,7 @@ Per implementation-plan.md Section 5 (API Design).
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from datetime import datetime, timezone
 from typing import Optional
@@ -16,7 +17,7 @@ from sqlalchemy.orm import Session
 
 from vmtools_next.api.deps import get_db, get_current_user, require_admin
 from vmtools_next.data.models.build_map_art import (
-    MapArtTask, MapArtMaterial, MapArtBotAssignment, MapArtBlockState,
+    MapArtTask, MapArtMaterial, MapArtBotAssignment, MapArtBlockState, MapArtSupplyBox,
 )
 from vmtools_next.adapters.litematica.litematica_parser import LitematicaParser
 from vmtools_next.core.map_art_coordinator import (
@@ -151,6 +152,61 @@ class BotManageRequest(BaseModel):
     bot_id: str
 
 
+class SupplyConfigRequest(BaseModel):
+    """补货传送指令（2026-08-14）：三个指令均可自定义。"""
+    go: str = ""       # 前往补给点指令（如 "/ehomes mdssj"）
+    save: str = ""     # 暂存当前位置指令（如 "/esethomes dth"）
+    return_: str = ""  # 返回工作位置指令（如 "/ehomes dth"）——pydantic 字段名避开关键字
+
+
+class SupplyBoxCoord(BaseModel):
+    x: int
+    y: int
+    z: int
+
+
+class SupplyBoxItem(BaseModel):
+    """一种材料对应的潜影盒坐标列表。"""
+    item_id: str
+    boxes: list[SupplyBoxCoord] = []
+
+
+class SupplyBoxesRequest(BaseModel):
+    items: list[SupplyBoxItem] = []
+
+
+def _default_supply_config() -> dict:
+    """任务级补货指令默认值（config 可配，见 config.py map_art_supply_*_command）。"""
+    from vmtools_next.config import get_config as _cfg
+    try:
+        mf = _cfg().mineflayer
+        return {
+            "go": getattr(mf, "map_art_supply_go_command", "/ehomes mdssj") or "/ehomes mdssj",
+            "save": getattr(mf, "map_art_supply_save_command", "/esethomes dth") or "/esethomes dth",
+            "return": getattr(mf, "map_art_supply_return_command", "/ehomes dth") or "/ehomes dth",
+        }
+    except Exception:
+        return {"go": "/ehomes mdssj", "save": "/esethomes dth", "return": "/ehomes dth"}
+
+
+def _parse_supply_config(raw: Optional[str]) -> dict:
+    """解析任务级 supply_config（JSON），缺省回退默认。"""
+    default = _default_supply_config()
+    if not raw:
+        return default
+    try:
+        data = json.loads(raw)
+        if not isinstance(data, dict):
+            return default
+        return {
+            "go": str(data.get("go") or default["go"]),
+            "save": str(data.get("save") or default["save"]),
+            "return": str(data.get("return") or default["return"]),
+        }
+    except Exception:
+        return default
+
+
 # ──────────────────────────────────────────────
 # Routes
 # ──────────────────────────────────────────────
@@ -229,6 +285,7 @@ async def create_task(
         total_blocks=info.total_blocks,
         organization_id=data.organization_id or getattr(user, "organization_id", None),
         created_by=getattr(user, "game_id", str(user)),
+        supply_config=json.dumps(_default_supply_config(), ensure_ascii=False),
     )
     db.add(task)
     db.flush()
@@ -337,6 +394,7 @@ def get_task(task_id: str, db: Session = Depends(get_db), user=Depends(require_a
         "description": task.description,
         "status": task.status,
         "error_message": task.error_message,
+        "supply_config": _parse_supply_config(task.supply_config),
         "projection": {
             "file_path": task.projection_file_path,
             "name": task.projection_name,
@@ -540,6 +598,75 @@ async def manage_task_bot(
         return {"task_id": task_id, "bot_id": data.bot_id, "action": "remove"}
 
     raise HTTPException(status_code=400, detail=f"未知操作：{data.action}")
+
+
+@router.get("/tasks/{task_id}/supply-config")
+def get_supply_config(task_id: str, db: Session = Depends(get_db), user=Depends(require_admin)):
+    """读取任务级补货传送指令（三个指令均可自定义，缺省回退 config 默认）。"""
+    task = db.query(MapArtTask).filter(MapArtTask.task_id == task_id).first()
+    if not task:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return _parse_supply_config(task.supply_config)
+
+
+@router.put("/tasks/{task_id}/supply-config")
+def put_supply_config(task_id: str, data: SupplyConfigRequest, db: Session = Depends(get_db),
+                      user=Depends(require_admin)):
+    """保存任务级补货传送指令（go=前往补给点 / save=暂存位置 / return=返回工作位置）。"""
+    task = db.query(MapArtTask).filter(MapArtTask.task_id == task_id).first()
+    if not task:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    cfg = {
+        "go": data.go.strip() or "/ehomes mdssj",
+        "save": data.save.strip() or "/esethomes dth",
+        "return": data.return_.strip() or "/ehomes dth",
+    }
+    task.supply_config = json.dumps(cfg, ensure_ascii=False)
+    db.commit()
+    return {"status": "ok", "supply_config": cfg}
+
+
+@router.get("/tasks/{task_id}/supply-boxes")
+def get_supply_boxes(task_id: str, db: Session = Depends(get_db), user=Depends(require_admin)):
+    """读取任务全部材料的补货潜影盒坐标（按材料分组；含中文名）。"""
+    task = db.query(MapArtTask).filter(MapArtTask.task_id == task_id).first()
+    if not task:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    rows = db.query(MapArtSupplyBox).filter(MapArtSupplyBox.task_id == task_id).order_by(
+        MapArtSupplyBox.sort_order).all()
+    materials = db.query(MapArtMaterial).filter(MapArtMaterial.task_id == task_id).all()
+    from vmtools_next.core.item_names_zh import get_item_zh
+    items = []
+    for m in materials:
+        boxes = [{"x": r.x, "y": r.y, "z": r.z} for r in rows if r.item_id == m.item_id]
+        items.append({
+            "item_id": m.item_id,
+            "display_name": m.display_name or get_item_zh(m.item_id),
+            "boxes": boxes,
+        })
+    return {"items": items}
+
+
+@router.put("/tasks/{task_id}/supply-boxes")
+def put_supply_boxes(task_id: str, data: SupplyBoxesRequest, db: Session = Depends(get_db),
+                     user=Depends(require_admin)):
+    """批量保存任务补货潜影盒坐标（整体替换：先删旧再插新；1 材料可配多坐标）。"""
+    task = db.query(MapArtTask).filter(MapArtTask.task_id == task_id).first()
+    if not task:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    # 整体替换
+    db.query(MapArtSupplyBox).filter(MapArtSupplyBox.task_id == task_id).delete()
+    for item in data.items:
+        clean_item = item.item_id.split("[")[0]
+        for i, box in enumerate(item.boxes):
+            db.add(MapArtSupplyBox(
+                task_id=task_id,
+                item_id=clean_item,
+                x=box.x, y=box.y, z=box.z,
+                sort_order=i,
+            ))
+    db.commit()
+    return {"status": "ok", "saved": sum(len(i.boxes) for i in data.items)}
 
 
 @router.get("/tasks/{task_id}/blocks/placed")

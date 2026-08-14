@@ -71,6 +71,11 @@ class MapArtTask(Base):
     organization_id = Column(String(36), nullable=True, index=True)
     created_by = Column(String(64), default="")
 
+    # 补货配置（2026-08-14）：JSON 字符串，形如
+    # {"go":"/ehomes mdssj","save":"/esethomes dth","return":"/ehomes dth"}
+    # go=前往补给点指令 / save=暂存当前位置指令 / return=返回工作位置指令（均可自定义）
+    supply_config = Column(Text, default="")
+
     # Relationships
     materials = relationship(
         "MapArtMaterial", back_populates="task",
@@ -145,6 +150,28 @@ class MapArtBotAssignment(Base):
     __table_args__ = (
         Index("idx_mapart_ba_task", "task_id"),
         Index("idx_mapart_ba_bot", "bot_id"),
+    )
+
+
+class MapArtSupplyBox(Base):
+    """补货潜影盒配置（2026-08-14）：每种材料对应 1~N 个潜影盒坐标。
+
+    bot 补货时按 sort_order 顺序取货：寻路/传送至坐标附近 → 打开 → 取一组(64) →
+    取空则尝试下一个坐标。坐标填世界坐标（玩家站在该坐标附近可交互）。
+    """
+
+    __tablename__ = "map_art_supply_boxes"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    task_id = Column(String(12), ForeignKey("map_art_tasks.task_id", ondelete="CASCADE"), nullable=False, index=True)
+    item_id = Column(String(128), nullable=False)  # "minecraft:white_wool"
+    x = Column(Integer, nullable=False)
+    y = Column(Integer, nullable=False)
+    z = Column(Integer, nullable=False)
+    sort_order = Column(Integer, default=0)  # 同一材料多个潜影盒的取货顺序
+
+    __table_args__ = (
+        Index("idx_mapart_sb_task_item", "task_id", "item_id"),
     )
 
 
