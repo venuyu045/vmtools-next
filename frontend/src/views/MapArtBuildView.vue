@@ -219,10 +219,10 @@ const selectedAddBot = ref('')
 const availableBots = ref<any[]>([])
 /** 仅运行中的任务可动态添加/移除 bot（后端校验，前端同步禁用） */
 const canManageBots = computed(() => task.value?.status === 'running')
-/** 2026-08-14：failed / 未完成的 completed 任务可「重新开始」（断点续建，保留已放进度） */
+/** 2026-08-14：failed / cancelled / 未完成的 completed 任务可「重新开始」（断点续建，保留已放进度） */
 const canRestart = computed(() => {
   const s = task.value?.status
-  if (s === 'failed') return true
+  if (s === 'failed' || s === 'cancelled') return true
   if (s === 'completed') {
     return (task.value?.placed_blocks ?? 0) < (task.value?.total_blocks ?? 0)
   }
