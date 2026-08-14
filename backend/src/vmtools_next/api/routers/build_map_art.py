@@ -513,8 +513,26 @@ async def control_task(
     coordinator = get_coordinator(task_id)
 
     if data.action == "start":
-        if task.status not in ("draft", "pending"):
+        # 2026-08-14：支持从 failed /「未完成的 completed」回退重启（断点续建）。
+        # 允许状态：draft/pending（新建待启）+ failed（失败重试）
+        #          + completed 且 placed<total（被误判/中断的"完成"任务回退）
+        startable = task.status in ("draft", "pending", "failed") or (
+            task.status == "completed"
+            and (task.placed_blocks or 0) < (task.total_blocks or 0)
+        )
+        if not startable:
             raise HTTPException(status_code=400, detail=f"任务当前状态（{task.status}）无法启动")
+        # 终态重试前：清理残留 coordinator（防旧 progress 推送与新任务并存）
+        if coordinator is not None:
+            try:
+                await coordinator.stop()
+            except Exception:
+                pass
+            unregister_coordinator(task_id)
+        # 清终态标记（保留 placed 进度——断点续建由 _verify_block 对世界状态兜底）
+        if task.status in ("failed", "completed"):
+            task.error_message = ""
+            task.completed_at = None
         # 2026-08-12（实施计划阶段 2）：多任务并发由 TaskScheduler 统一调度——
         # 有 running 任务时不再 400 拒绝，而是置 pending 入队，当前任务完成后自动开始。
         running = db.query(MapArtTask).filter(
