@@ -350,7 +350,14 @@ function onCanvasReady() {
 async function fetchTask() {
   try {
     const { data } = await mapArtApi.getTask(taskId.value)
-    task.value = data
+    // 2026-08-14 修复：get_task 返回 progress 嵌套对象，原代码直接读顶层
+    // task.placed_blocks/total_blocks → undefined → 页头 0/0、canRestart 0<0=false
+    // → 控制栏按钮永远不渲染（截图实测根因）。统一展平到顶层供模板使用。
+    task.value = {
+      ...data,
+      placed_blocks: data.progress?.placed_blocks ?? data.placed_blocks ?? 0,
+      total_blocks: data.progress?.total_blocks ?? data.total_blocks ?? 0,
+    }
     // 材料名汉化（后端 display_name 可能为英文，前端映射兜底）
     materials.value = (data.materials || []).map((m: any) => ({
       ...m,
