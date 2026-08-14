@@ -675,8 +675,17 @@ class BotBuildLoop:
                                            timeout_ms=25000):
                         open_result = await self.mcp.open_container_at(bx, by, bz, timeout_ms=5000)
                         inv_id = (open_result.get("data", open_result)).get("inventoryId", 0)
-                        await self.mcp.withdraw_container_item(clean_id, needed_count, inv_id)
+                        wd = await self.mcp.withdraw_container_item(clean_id, needed_count, inv_id)
                         await self.mcp.close_container(inv_id)
+                        # 2026-08-14 审查修复：此前不检查 withdraw 返回值，取货失败
+                        # （背包满/箱内无此物/容器未开）仍标记 taken=True → 继续建造但
+                        # 手里没物品，静默漏块。失败时继续尝试下一个潜影盒坐标。
+                        if isinstance(wd, dict) and wd.get("success") is False:
+                            logger.warning(
+                                "[%s] Withdraw %s from (%d,%d,%d) failed: %s，尝试下一个坐标",
+                                self.bot_id, clean_id, bx, by, bz,
+                                wd.get("error", "?"))
+                            continue
                         taken = True
                         logger.info("[%s] Shulker restock done: %s ×%d from (%d,%d,%d)",
                                     self.bot_id, clean_id, needed_count, bx, by, bz)
@@ -714,16 +723,27 @@ class BotBuildLoop:
                         open_result = await self.mcp.open_container_at(
                             chest["x"], chest["y"], chest["z"], timeout_ms=5000)
                         inv_id = (open_result.get("data", open_result)).get("inventoryId", 0)
-                        await self.mcp.withdraw_container_item(clean_id, needed_count, inv_id)
+                        wd = await self.mcp.withdraw_container_item(clean_id, needed_count, inv_id)
                         await self.mcp.close_container(inv_id)
-                        logger.info("[%s] Supply-box restock done: %s ×%d",
-                                    self.bot_id, clean_id, needed_count)
-                        # 返回建造位置
-                        if build_pos:
-                            await self._move_to(*build_pos, max_offset=2,
-                                                label="back to build pos")
-                        self.progress.state = "placing"
-                        return True
+                        # 2026-08-14 审查修复：校验取货结果，失败不返回成功
+                        # （否则 bot 继续建造但手里没物品，静默漏块）
+                        if isinstance(wd, dict) and wd.get("success") is False:
+                            logger.warning(
+                                "[%s] Supply-box withdraw %s failed: %s，回退传送仓库",
+                                self.bot_id, clean_id, wd.get("error", "?"))
+                            # 先返回建造位置再走策略2（避免策略2把补给箱处存为临时家）
+                            if build_pos:
+                                await self._move_to(*build_pos, max_offset=2,
+                                                    label="back to build pos")
+                        else:
+                            logger.info("[%s] Supply-box restock done: %s ×%d",
+                                        self.bot_id, clean_id, needed_count)
+                            # 返回建造位置
+                            if build_pos:
+                                await self._move_to(*build_pos, max_offset=2,
+                                                    label="back to build pos")
+                            self.progress.state = "placing"
+                            return True
                 logger.warning("[%s] Supply box unavailable, fallback to teleport",
                                self.bot_id)
             except Exception as e:
@@ -731,6 +751,7 @@ class BotBuildLoop:
                                self.bot_id, e)
 
         # ── 策略 2：EssentialsX 传送仓库 ──
+        saved_pos = False
         try:
             # 1. 保存当前位置（命令失败 → 立即中止，避免位置未知继续误操作）
             logger.info("[%s] Saving position → /esethome %s", self.bot_id, self.TEMP_HOME)
@@ -738,6 +759,7 @@ class BotBuildLoop:
             if isinstance(r1, dict) and r1.get("success") is False:
                 logger.warning("[%s] /esethome failed: %s", self.bot_id, r1.get("error", "?"))
                 return False
+            saved_pos = True  # 位置保存成功，finally 才允许传送回（2026-08-14 审查修复）
             await asyncio.sleep(1.5)
 
             # 2. 传到仓库
@@ -758,13 +780,17 @@ class BotBuildLoop:
             chest = blocks[0]
             cx, cy, cz = chest["x"], chest["y"], chest["z"]
 
-            # 4. 打开 → 取材料 → 关
+            # 4. 打开 → 取材料 → 关（2026-08-14 审查修复：校验取货结果，失败不返回成功）
             logger.info("[%s] Opening container at (%d,%d,%d)", self.bot_id, cx, cy, cz)
             open_result = await self.mcp.open_container_at(cx, cy, cz, timeout_ms=5000)
             inv_id = (open_result.get("data", open_result)).get("inventoryId", 0)
 
-            await self.mcp.withdraw_container_item(clean_id, needed_count, inv_id)
+            wd = await self.mcp.withdraw_container_item(clean_id, needed_count, inv_id)
             await self.mcp.close_container(inv_id)
+            if isinstance(wd, dict) and wd.get("success") is False:
+                logger.warning("[%s] Warehouse withdraw %s failed: %s",
+                               self.bot_id, clean_id, wd.get("error", "?"))
+                return False
 
             logger.info("[%s] Restock done: %s ×%d, returning...", self.bot_id, clean_id, needed_count)
             return True
@@ -773,12 +799,14 @@ class BotBuildLoop:
             logger.error("[%s] Restock failed: %s", self.bot_id, e)
             return False
         finally:
-            # 5. 传回建造位置（无论成败都返回）；try/except 防覆盖返回值
-            try:
-                await self.mcp.send_chat(f"/ehomes {self.TEMP_HOME}")
-                await asyncio.sleep(1.5)
-            except Exception:
-                pass
+            # 5. 传回建造位置（仅当位置已成功保存——/esethome 失败时传回会迷失）；
+            #    try/except 防覆盖返回值
+            if saved_pos:
+                try:
+                    await self.mcp.send_chat(f"/ehomes {self.TEMP_HOME}")
+                    await asyncio.sleep(1.5)
+                except Exception:
+                    pass
             self._last_pos = None  # 传送后位置未知，强制下次寻路
             self.progress.state = "placing"
 

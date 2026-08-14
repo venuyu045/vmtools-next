@@ -371,7 +371,7 @@ class ScheduledTaskScheduler:
         """删除终态且结束时间 >7 天的扫描/地图画/物流记录（含关联日志）。"""
         from vmtools_next.data.models.warehouse import ScanQueueModel
         from vmtools_next.data.models.build_map_art import (
-            MapArtTask, MapArtMaterial, MapArtBotAssignment, MapArtBlockState,
+            MapArtTask, MapArtMaterial, MapArtBotAssignment, MapArtBlockState, MapArtSupplyBox,
         )
         from vmtools_next.data.models.logistics import (
             LogisticsTaskRunModel, LogisticsTaskLogModel,
@@ -408,6 +408,10 @@ class ScheduledTaskScheduler:
                     MapArtBotAssignment.task_id.in_(art_ids)).delete(synchronize_session=False)
                 db.query(MapArtMaterial).filter(
                     MapArtMaterial.task_id.in_(art_ids)).delete(synchronize_session=False)
+                # 2026-08-14 审查修复：任务级补货潜影盒配置一并清理（防孤儿残留，
+                # 同 delete_task 的修复口径；该表无 relationship 级联且外键未启用）
+                db.query(MapArtSupplyBox).filter(
+                    MapArtSupplyBox.task_id.in_(art_ids)).delete(synchronize_session=False)
                 for a in del_arts:
                     db.delete(a)
                 db.flush()

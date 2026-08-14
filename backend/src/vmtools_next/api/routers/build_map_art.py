@@ -94,8 +94,15 @@ async def execute_map_art_start(task_id: str, db: Session) -> tuple[bool, str]:
     if not bot_mcps:
         return False, "没有可用的 Mineflayer Bot（未连接）"
 
-    await coord.start(bot_mcps)
-    register_coordinator(task_id, coord)
+    try:
+        await coord.start(bot_mcps)
+        register_coordinator(task_id, coord)
+    except Exception as e:
+        # 2026-08-14 审查修复：coord.start（连接 bot/初始化 loop）抛异常时
+        # 会直接 500 且任务停留在 running（调用方已先置 running 落库）→
+        # 捕获并返回失败，由调用方置 failed + 写 error_message。
+        logger.exception("[%s] Map art start failed", task_id)
+        return False, f"启动失败：{e}"
     return True, "started"
 
 
@@ -267,7 +274,13 @@ async def create_task(
     _upload_dir = (_Path(__file__).resolve().parent.parent.parent.parent.parent
                    / "uploads" / "build_projections").resolve()
     _proj_path = _Path(data.projection_file_path).resolve()
-    if not str(_proj_path).startswith(str(_upload_dir)) or not _proj_path.is_file():
+    # 2026-08-14 审查修复：原用 str.startswith 前缀匹配，存在目录前缀边界绕过
+    # （如 /uploads/build_projections_evil/x.litematic 可通过校验）→ 改用 is_relative_to
+    try:
+        _inside_upload = _proj_path.is_relative_to(_upload_dir)
+    except Exception:
+        _inside_upload = False
+    if not _inside_upload or not _proj_path.is_file():
         raise HTTPException(status_code=400, detail="projection_file_path 必须位于上传目录内")
     # Parse projection to get metadata and materials
     try:
@@ -687,10 +700,13 @@ def put_supply_config(task_id: str, data: SupplyConfigRequest, db: Session = Dep
     task = db.query(MapArtTask).filter(MapArtTask.task_id == task_id).first()
     if not task:
         raise HTTPException(status_code=404, detail="任务不存在")
+    # 2026-08-14 审查修复：空值回退 config 默认（_default_supply_config），
+    # 此前硬编码 "/ehomes mdssj" 等，与 config.py 可配置项不一致
+    _default = _default_supply_config()
     cfg = {
-        "go": data.go.strip() or "/ehomes mdssj",
-        "save": data.save.strip() or "/esethomes dth",
-        "return": data.return_.strip() or "/ehomes dth",
+        "go": data.go.strip() or _default["go"],
+        "save": data.save.strip() or _default["save"],
+        "return": data.return_.strip() or _default["return"],
     }
     task.supply_config = json.dumps(cfg, ensure_ascii=False)
     db.commit()
@@ -925,6 +941,11 @@ def delete_task(task_id: str, db: Session = Depends(get_db), user=Depends(requir
     if task.status not in ("draft", "cancelled", "completed"):
         raise HTTPException(status_code=400, detail=f"任务当前状态（{task.status}）不允许删除")
     unregister_coordinator(task_id)
+    # 2026-08-14 审查修复：MapArtSupplyBox 未挂在 MapArtTask 的 relationship 上
+    # （无级联），且 SQLite 默认未启用 foreign_keys（ondelete=CASCADE 不生效）→
+    # 手动删除任务级补货潜影盒配置，防孤儿数据残留。
+    db.query(MapArtSupplyBox).filter(
+        MapArtSupplyBox.task_id == task_id).delete(synchronize_session=False)
     db.delete(task)
     db.commit()
     return {"deleted": task_id}

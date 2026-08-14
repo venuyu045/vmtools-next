@@ -1,9 +1,9 @@
 <template>
   <div class="mapart-list-page">
     <div class="page-header">
-      <h2>🎨 地图画建造任务</h2>
+      <h2>地图画建造任务</h2>
       <div class="header-actions">
-        <el-button @click="showTemplates = true">📦 补货仓库</el-button>
+        <el-button @click="showTemplates = true">补货仓库</el-button>
         <el-button type="primary" @click="showCreate = true">+ 新建任务</el-button>
       </div>
     </div>
@@ -11,10 +11,10 @@
     <!-- 补货仓库（2026-08-14 三期：全局仓库为主，模板保留为备份） -->
     <el-dialog v-model="showTemplates" title="补货仓库" width="760px">
       <el-tabs>
-        <el-tab-pane label="📦 全局仓库（材料↔潜影盒）">
+        <el-tab-pane label="全局仓库（材料↔潜影盒）">
           <SupplyWarehouseEditor />
         </el-tab-pane>
-        <el-tab-pane label="🗂 模板（备份）">
+        <el-tab-pane label="模板（备份）">
           <SupplyTemplateManager />
         </el-tab-pane>
       </el-tabs>

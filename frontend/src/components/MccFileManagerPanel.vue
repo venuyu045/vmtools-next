@@ -19,7 +19,7 @@
     </div>
 
     <div v-if="permissionDenied" class="permission-deny mono">
-      <div class="deny-icon">🔒</div>
+      <div class="deny-icon"></div>
       <div class="deny-msg">你没有权限访问此实例的文件</div>
       <div class="deny-hint">只有实例创建者才能查看和管理文件，你可以联系创建者添加权限</div>
     </div>

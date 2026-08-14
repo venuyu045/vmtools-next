@@ -1,8 +1,8 @@
 <template>
   <div class="inv-container">
-    <div v-if="moveMode" class="cursor-bar move">📦 移动模式：点击要移动的物品（高亮），再点击目标槽位完成移动/交换 · 点击原槽位/ESC 取消</div>
+    <div v-if="moveMode" class="cursor-bar move">移动模式：点击要移动的物品（高亮），再点击目标槽位完成移动/交换 · 点击原槽位/ESC 取消</div>
     <div v-else-if="cursorMsg" class="cursor-bar">{{ cursorMsg }}</div>
-    <div class="help">{{ p.clickable ? '左键=拿/放/交换 · 右键=丢弃 · 🔄刷新看结果' : '点击物品=详情（左键拿/放·右键半组·手持·移动·丢弃·使用）· 右键槽位=半组' }}</div>
+    <div class="help">{{ p.clickable ? '左键=拿/放/交换 · 右键=丢弃 · 刷新看结果' : '点击物品=详情（左键拿/放·右键半组·手持·移动·丢弃·使用）· 右键槽位=半组' }}</div>
 
     <div class="layout">
       <!-- Main inventory: slots 9-35 (3 rows), with armor/offhand on right -->
@@ -65,13 +65,13 @@
     </div>
 
     <div class="bar">
-      <el-button size="small" @click="doRefresh" :loading="loading">🔄 刷新</el-button>
+      <el-button size="small" @click="doRefresh" :loading="loading">刷新</el-button>
       <template v-if="!p.clickable">
-        <el-button size="small" :type="moveMode ? 'warning' : 'default'" @click="toggleMoveMode">📦 {{ moveMode ? '退出移动' : '移动物品' }}</el-button>
-        <el-button size="small" @click="openDropDlg" :disabled="!hasItems">🗑 丢弃物品</el-button>
+        <el-button size="small" :type="moveMode ? 'warning' : 'default'" @click="toggleMoveMode">{{ moveMode ? '退出移动' : '移动物品' }}</el-button>
+        <el-button size="small" @click="openDropDlg" :disabled="!hasItems">丢弃物品</el-button>
       </template>
       <span>{{ inventory?.total_items ?? 0 }} 物品 · {{ inventory?.empty_slots ?? 0 }} 空位</span>
-      <span v-if="!p.clickable && inventory?.selected_hotbar != null" class="held-info">✋ 手持：快捷栏 {{ (inventory.selected_hotbar ?? 0) + 1 }}</span>
+      <span v-if="!p.clickable && inventory?.selected_hotbar != null" class="held-info">手持：快捷栏 {{ (inventory.selected_hotbar ?? 0) + 1 }}</span>
     </div>
 
     <!-- 物品详情弹窗（MF 模式） -->
@@ -103,12 +103,12 @@
         </el-descriptions>
 
         <div class="detail-actions">
-          <el-button v-if="isHotbarSlot(detail.item.slot)" size="small" type="primary" @click="doHold">✋ 设为手持</el-button>
+          <el-button v-if="isHotbarSlot(detail.item.slot)" size="small" type="primary" @click="doHold">设为手持</el-button>
           <el-button size="small" type="primary" plain @click="doInvPickup">左键拿起/放下</el-button>
           <el-button size="small" plain @click="doInvHalf">右键半组</el-button>
           <el-button size="small" @click="doActivateHeld">右键激活（手持）</el-button>
-          <el-button size="small" @click="doMoveFromDetail">📦 移动</el-button>
-          <el-button size="small" type="warning" @click="doUse">🍖 使用</el-button>
+          <el-button size="small" @click="doMoveFromDetail">移动</el-button>
+          <el-button size="small" type="warning" @click="doUse">使用</el-button>
           <el-button size="small" @click="doDropOne">丢 1 个</el-button>
           <el-button size="small" type="danger" @click="doDropStack">丢整组 ({{ detail.item.count }})</el-button>
         </div>
@@ -136,8 +136,8 @@
     <!-- Context menu (MCC mode only) -->
     <div v-if="menu.show" class="ctx" :style="{top:menu.y+'px',left:menu.x+'px'}">
       <div class="ctxh">{{ label(menu.item?.item_id||'') }} ×{{ menu.item?.count }}</div>
-      <div class="ctxi" @click="doDrop('DropItemStack')">🗑 丢弃整组</div>
-      <div class="ctxi" @click="doDrop('DropSingleItem')">🗑 丢弃 1 个</div>
+      <div class="ctxi" @click="doDrop('DropItemStack')">丢弃整组</div>
+      <div class="ctxi" @click="doDrop('DropSingleItem')">丢弃 1 个</div>
       <div class="ctxi cancel" @click="menu.show=false">取消</div>
     </div>
   </div>
@@ -186,7 +186,7 @@ const moveFrom = ref(-1)
 const detail = ref({ show: false, item: null as Slot | null })
 const dropDlg = ref({ show: false, itemType: '', count: 1, maxCount: 64 })
 
-const cursorMsg = computed(() => cursorSlot.value >= 0 ? `👆 已从槽位 ${cursorSlot.value} 拿起物品，再点目标格放下/交换` : '')
+const cursorMsg = computed(() => cursorSlot.value >= 0 ? `已从槽位 ${cursorSlot.value} 拿起物品，再点目标格放下/交换` : '')
 
 const sm = computed(() => {
   const m: Record<number, Slot> = {}

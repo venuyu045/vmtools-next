@@ -33,27 +33,27 @@
             type="primary"
             @click="control('start')"
           >
-            ▶ 开始建造
+            开始建造
           </el-button>
           <el-button
             v-if="task?.status === 'running'"
             @click="control('pause')"
           >
-            ⏸ 暂停
+            暂停
           </el-button>
           <el-button
             v-if="task?.status === 'paused'"
             type="success"
             @click="control('resume')"
           >
-            ▶ 继续
+            继续
           </el-button>
           <el-button
             v-if="task?.status === 'running' || task?.status === 'paused'"
             type="danger"
             @click="control('stop')"
           >
-            ⏹ 停止
+            停止
           </el-button>
         </div>
 

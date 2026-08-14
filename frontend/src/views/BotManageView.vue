@@ -660,7 +660,7 @@ async function stopAll() {
 async function forceKillAll() {
   try {
     await ElMessageBox.confirm(
-      `⚠️ 将立即强制终止服务器上所有 Bot 进程！\n\n包括：正在运行的实例 + 后端重启后残留的孤儿进程。`,
+      `将立即强制终止服务器上所有 Bot 进程！\n\n包括：正在运行的实例 + 后端重启后残留的孤儿进程。`,
       '强制终止所有进程',
       { type: 'error', confirmButtonText: '确认终止', cancelButtonText: '取消' },
     )

@@ -27,9 +27,9 @@
           bot 补货时按顺序取货，取空自动尝试下一个坐标；未配置坐标的材料回退旧补货方式。
         </p>
         <div class="tpl-actions">
-          <el-button size="small" @click="syncFromWarehouse">🔄 从全局仓库同步</el-button>
-          <el-button size="small" @click="openSaveTpl">💾 保存为模板</el-button>
-          <el-button size="small" @click="openImportTpl">📥 从模板导入</el-button>
+          <el-button size="small" @click="syncFromWarehouse">从全局仓库同步</el-button>
+          <el-button size="small" @click="openSaveTpl">保存为模板</el-button>
+          <el-button size="small" @click="openImportTpl">从模板导入</el-button>
         </div>
       </div>
       <div v-loading="loading" class="mat-list">

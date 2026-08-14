@@ -32,14 +32,14 @@
 
         <div class="vitals">
           <div class="vital">
-            <span class="vital-label">❤ 血量</span>
+            <span class="vital-label">血量</span>
             <div class="bar">
               <div class="bar-fill health" :style="{ width: healthPct(bot) }" />
             </div>
             <span class="vital-val">{{ bot.current_health != null ? bot.current_health + ' / 20' : '—' }}</span>
           </div>
           <div class="vital">
-            <span class="vital-label">🍗 饱食度</span>
+            <span class="vital-label">饱食度</span>
             <div class="bar">
               <div class="bar-fill food" :style="{ width: foodPct(bot) }" />
             </div>
