@@ -1798,10 +1798,11 @@ class LitematicaParser:
                 if block_name == "minecraft:air":
                     continue
 
-                # 3D index → coordinates
+                # 3D index → coordinates（2026-08-14 修复：Litematica 存储顺序为 x→y→z，
+                # 即 x 最快、y 次之、z 最慢；旧代码写成 x→z→y 会在多层(y>1)投影时错位）
                 x = idx % sx
-                z = (idx // sx) % sz
-                y = idx // (sx * sz)
+                y = (idx // sx) % sy
+                z = idx // (sx * sy)
 
                 world_x = px + x
                 world_y = py + y
@@ -1888,22 +1889,37 @@ class LitematicaParser:
 def _decode_block_states(raw_data, bits_per_entry: int, expected_count: int) -> list[int]:
     """Decode bit-packed block states array.
 
-    Minecraft stores block states as an array of longs, each containing
-    multiple block indices packed at bits_per_entry bits each.
+    ⚠️ 2026-08-14 修复（核心 bug）：Minecraft 1.16+ 的 BlockStates 是**跨 long 连续
+    bit 流**（SimpleBitStorage.get()：bitIndex = index*bits，longIndex = bitIndex>>6，
+    offset = bitIndex&63，一个值可能横跨两个相邻 long）。旧实现按 `64//bits` 每 long
+    独立解、丢弃每 long 末尾余数位——当 bits 不整除 64 时（如 bits=3），从第
+    floor(64/bits)+1 个值起全部错位，导致图案错乱 + 材料统计错误 + 末尾缺块。
     """
     if not raw_data:
         return [0] * expected_count
+    if bits_per_entry <= 0:
+        return [0] * expected_count
 
-    indices = []
-    masks_per_long = 64 // bits_per_entry if bits_per_entry > 0 else 64
     mask = (1 << bits_per_entry) - 1
+    indices: list[int] = []
 
-    for long_val in raw_data:
-        if long_val < 0:
-            long_val += 2**64
-        for i in range(masks_per_long):
-            if len(indices) >= expected_count:
-                break
-            indices.append((long_val >> (i * bits_per_entry)) & mask)
+    for i in range(expected_count):
+        bit_pos = i * bits_per_entry
+        long_idx = bit_pos >> 6
+        if long_idx >= len(raw_data):
+            break
+        v = raw_data[long_idx]
+        if v < 0:
+            v += 1 << 64
+        offset = bit_pos & 63
+        value = v >> offset
+        remaining = 64 - offset
+        # 一个值横跨两个相邻 long 时，拼接高位
+        if remaining < bits_per_entry and long_idx + 1 < len(raw_data):
+            v2 = raw_data[long_idx + 1]
+            if v2 < 0:
+                v2 += 1 << 64
+            value |= v2 << remaining
+        indices.append(value & mask)
 
-    return indices[:expected_count]
+    return indices

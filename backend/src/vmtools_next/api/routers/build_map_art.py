@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from vmtools_next.api.deps import get_db, get_current_user, require_admin
@@ -156,7 +156,8 @@ class SupplyConfigRequest(BaseModel):
     """补货传送指令（2026-08-14）：三个指令均可自定义。"""
     go: str = ""       # 前往补给点指令（如 "/ehomes mdssj"）
     save: str = ""     # 暂存当前位置指令（如 "/esethomes dth"）
-    return_: str = ""  # 返回工作位置指令（如 "/ehomes dth"）——pydantic 字段名避开关键字
+    # 前端 JSON 字段名为 "return"（Python 关键字不能做字段名），用 alias 映射到 return_
+    return_: str = Field(default="", alias="return")
 
 
 class SupplyBoxCoord(BaseModel):
