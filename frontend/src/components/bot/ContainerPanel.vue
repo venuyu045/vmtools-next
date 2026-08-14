@@ -69,6 +69,7 @@ import { ElMessage } from 'element-plus'
 import { botApi } from '@/api/bot'
 import { useSocketIO } from '@/composables/useSocketIO'
 import ItemIcon from '@/components/ItemIcon.vue'
+import { errMsg } from '@/utils/error'
 
 const props = defineProps<{ botId: string }>()
 const { on: sockOn, off: sockOff } = useSocketIO()
@@ -229,7 +230,7 @@ async function doClick(idx: number, mouseButton: 0 | 1) {
     }
     await refreshSnapshot()
   } catch (e: any) {
-    ElMessage.error(e?.response?.data?.detail || '窗口点击失败')
+    ElMessage.error(errMsg(e, '窗口点击失败'))
   } finally {
     clicking.value = false
   }
@@ -271,7 +272,7 @@ async function doDropToVoid() {
     ElMessage.success('已丢弃到虚空')
     await refreshSnapshot()
   } catch (e: any) {
-    ElMessage.error(e?.response?.data?.detail || '丢弃失败')
+    ElMessage.error(errMsg(e, '丢弃失败'))
   } finally {
     clicking.value = false
   }
@@ -312,7 +313,7 @@ async function scan() {
     containers.value = blocks
     if (blocks.length === 0) ElMessage.info('未发现容器方块')
   } catch (err: any) {
-    ElMessage.error(err?.response?.data?.detail || '扫描失败')
+    ElMessage.error(errMsg(err, '扫描失败'))
   } finally {
     scanning.value = false
   }
@@ -329,7 +330,7 @@ async function goOpen(c: ContainerBlock) {
     items.value = new Map()
     await refreshSnapshot()
   } catch (err: any) {
-    ElMessage.error(err?.response?.data?.detail || '打开失败（可能被阻挡/无法交互）')
+    ElMessage.error(errMsg(err, '打开失败（可能被阻挡/无法交互）'))
   } finally {
     busy.value = false
   }
@@ -365,7 +366,7 @@ async function goActivate(c: ContainerBlock) {
         : '未检测到打开的窗口（该方块/物品未触发 GUI，或服务器插件无响应）')
     }
   } catch (e: any) {
-    ElMessage.error(e?.response?.data?.detail || '右键方块失败')
+    ElMessage.error(errMsg(e, '右键方块失败'))
   } finally {
     activating.value = false
   }
@@ -409,7 +410,7 @@ async function refreshSnapshot() {
     // 槽位数以快照为准（大箱子 54 / 小箱子 27）
     if (resp.data?.slot_count) active.value.slot_count = resp.data.slot_count
   } catch (err: any) {
-    ElMessage.error(err?.response?.data?.detail || '读取容器失败')
+    ElMessage.error(errMsg(err, '读取容器失败'))
   } finally {
     loading.value = false
   }

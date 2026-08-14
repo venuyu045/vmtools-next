@@ -103,6 +103,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useMccInstanceStore } from '@/stores/mccInstance'
 import type { MccFileBreadcrumb, MccFileContent, MccFileEntry, MccFileTreeNode } from '@/api/mccInstance'
+import { errMsg } from '@/utils/error'
 
 const props = withDefaults(defineProps<{
   instanceId: string
@@ -289,7 +290,7 @@ async function handleUpload(event: Event) {
     await refreshFiles()
     ElMessage.success('文件已上传')
   } catch (error: any) {
-    ElMessage.error(error.response?.data?.detail || '上传失败')
+    ElMessage.error(errMsg(error, '上传失败'))
   } finally {
     input.value = ''
   }

@@ -104,6 +104,7 @@ import ItemIcon from '@/components/ItemIcon.vue'
 import { fmtApiTime } from '@/utils/time'
 import { warehouseApi } from '@/api/warehouse'
 import { boxCount, fmtBigNum, fmtExact } from '@/utils/format'
+import { errMsg } from '@/utils/error'
 
 interface ItemContainer { x: number; y: number; z: number; count: number; slot: number }
 interface ItemWarehouse { warehouse_id: string; warehouse_name: string; count: number; containers: ItemContainer[] }
@@ -148,7 +149,7 @@ async function doSearch() {
     searched.value = true
     expanded.value = new Set()
   } catch (e: any) {
-    ElMessage.error('搜索失败: ' + (e?.response?.data?.detail || e))
+    ElMessage.error(errMsg(e, '搜索失败'))
   } finally {
     loading.value = false
   }

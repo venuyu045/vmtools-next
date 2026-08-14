@@ -138,6 +138,7 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { botApi } from '@/api/bot'
+import { errMsg } from '@/utils/error'
 
 interface EntityInfo {
   id: number
@@ -328,7 +329,7 @@ async function loadEntities() {
     const resp = await botApi.combatEntities(props.botId, scan, types)
     entities.value = resp.data?.entities || []
   } catch (err: any) {
-    ElMessage.warning(err?.response?.data?.detail || '获取实体列表失败')
+    ElMessage.warning(errMsg(err, '获取实体列表失败'))
   }
 }
 
@@ -358,7 +359,7 @@ async function saveIdle() {
     ElMessage.success(idle.enabled ? '挂机攻击已开启' : '挂机攻击已关闭')
     loadEntities()
   } catch (err: any) {
-    ElMessage.error(err?.response?.data?.detail || '配置失败')
+    ElMessage.error(errMsg(err, '配置失败'))
   }
 }
 
@@ -386,7 +387,7 @@ async function savePvp() {
     ElMessage.success(pvp.enabled ? 'PVP 攻击已开启' : 'PVP 攻击已关闭')
     loadEntities()
   } catch (err: any) {
-    ElMessage.error(err?.response?.data?.detail || '配置失败')
+    ElMessage.error(errMsg(err, '配置失败'))
   }
 }
 
@@ -416,7 +417,7 @@ async function stopAll() {
     activeMode.value = null
     ElMessage.success('已停止攻击')
   } catch (err: any) {
-    ElMessage.error(err?.response?.data?.detail || '停止失败')
+    ElMessage.error(errMsg(err, '停止失败'))
   }
 }
 
@@ -438,7 +439,7 @@ async function manualAttack() {
     ElMessage.success(`已攻击 ${resp.data?.result?.target || '目标'}`)
     loadEntities()
   } catch (err: any) {
-    ElMessage.error(err?.response?.data?.detail || '攻击失败')
+    ElMessage.error(errMsg(err, '攻击失败'))
   }
 }
 
@@ -448,7 +449,7 @@ async function attackOne(id: number) {
     ElMessage.success(`已攻击 ${resp.data?.result?.target || id}`)
     loadEntities()
   } catch (err: any) {
-    ElMessage.error(err?.response?.data?.detail || '攻击失败')
+    ElMessage.error(errMsg(err, '攻击失败'))
   }
 }
 
@@ -470,7 +471,7 @@ async function startGuard() {
     saveLocal()
     ElMessage.success('守护模式已开启（守护当前位置）')
   } catch (err: any) {
-    ElMessage.error(err?.response?.data?.detail || '守护配置失败')
+    ElMessage.error(errMsg(err, '守护配置失败'))
   }
 }
 

@@ -174,6 +174,7 @@ import MccFileManagerPanel from '@/components/MccFileManagerPanel.vue'
 import { useMccInstanceStore } from '@/stores/mccInstance'
 import type { MccAccountConfig, MccAuthType, MccInstance } from '@/api/mccInstance'
 import { mccInstanceApi } from '@/api/mccInstance'
+import { errMsg } from '@/utils/error'
 
 const mccStore = useMccInstanceStore()
 const showCreate = ref(false)
@@ -276,7 +277,7 @@ async function handleStart(instance: MccInstance) {
     await mccStore.fetchTerminalHistory(instance.instance_id)
     ElMessage.success('启动命令已发送')
   } catch (error: any) {
-    ElMessage.error(error.response?.data?.detail || '启动失败，请检查 MCC 程序路径')
+    ElMessage.error(errMsg(error, '启动失败，请检查 MCC 程序路径'))
   }
 }
 

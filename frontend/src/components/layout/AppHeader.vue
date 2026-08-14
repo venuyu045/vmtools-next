@@ -95,6 +95,7 @@ import { ElMessage } from 'element-plus'
 import { useAuthStore, roleLabel } from '@/stores/auth'
 import { authApi } from '@/api/auth'
 import { useTheme } from '@/composables/useTheme'
+import { errMsg } from '@/utils/error'
 
 const emit = defineEmits<{
   toggleSidebar: []
@@ -168,7 +169,7 @@ async function submitChangePwd() {
     ElMessage.success('密码修改成功')
     showPwdDialog.value = false
   } catch (e: any) {
-    ElMessage.error(e?.response?.data?.detail || '修改失败，请检查旧密码')
+    ElMessage.error(errMsg(e, '修改失败，请检查旧密码'))
   } finally {
     pwdSaving.value = false
   }

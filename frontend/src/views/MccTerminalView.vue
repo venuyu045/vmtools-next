@@ -42,6 +42,7 @@ import { ElMessage } from 'element-plus'
 import { useRoute } from 'vue-router'
 import MccWebTerminal from '@/components/MccWebTerminal.vue'
 import { useMccInstanceStore } from '@/stores/mccInstance'
+import { errMsg } from '@/utils/error'
 
 const route = useRoute()
 const store = useMccInstanceStore()
@@ -70,7 +71,7 @@ async function startInstance() {
     await store.fetchTerminalHistory(instance.value.instance_id)
     ElMessage.success('启动命令已发送')
   } catch (error: any) {
-    ElMessage.error(error.response?.data?.detail || '启动失败，请检查 MCC 程序路径')
+    ElMessage.error(errMsg(error, '启动失败，请检查 MCC 程序路径'))
   }
 }
 

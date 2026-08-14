@@ -72,6 +72,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { ElMessage } from 'element-plus'
 import ThemeSwitch from '@/components/ThemeSwitch.vue'
+import { errMsg } from '@/utils/error'
 
 const router = useRouter()
 const route = useRoute()
@@ -93,7 +94,7 @@ async function handleLogin() {
     await authStore.login(form.game_id, form.password)
     router.push('/dashboard')
   } catch (e: any) {
-    ElMessage.error(e.response?.data?.detail || '登录失败')
+    ElMessage.error(errMsg(e, '登录失败'))
   } finally {
     loading.value = false
   }
@@ -104,7 +105,7 @@ async function handleQqLogin() {
   try {
     await authStore.startQqAuth()
   } catch (e: any) {
-    ElMessage.error(e?.response?.data?.detail || 'QQ 登录暂不可用，请稍后再试')
+    ElMessage.error(errMsg(e, 'QQ 登录暂不可用，请稍后再试'))
     qqLoading.value = false
   }
 }
@@ -121,7 +122,7 @@ async function handleQqTicket(ticket: string) {
       router.replace(`/register?qq_ticket=${ticket}`)
     }
   } catch (e: any) {
-    ElMessage.error(e?.response?.data?.detail || 'QQ 认证已过期，请重新发起')
+    ElMessage.error(errMsg(e, 'QQ 认证已过期，请重新发起'))
   } finally {
     qqLoading.value = false
   }

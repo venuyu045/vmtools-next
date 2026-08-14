@@ -64,6 +64,7 @@ import '@xterm/xterm/css/xterm.css'
 import { useMccInstanceStore, TERMINAL_MAX_LINES } from '@/stores/mccInstance'
 import { useSocketIO } from '@/composables/useSocketIO'
 import { mccInstanceApi, type MccTerminalLine } from '@/api/mccInstance'
+import { errMsg } from '@/utils/error'
 
 const props = withDefaults(defineProps<{
   instanceId: string
@@ -376,7 +377,7 @@ async function reloadHistory() {
     const count = terminalLines.value.length
     if (count > 0) renderAllLines()
   } catch (error: any) {
-    ElMessage.error(error?.response?.data?.detail || '加载终端历史失败')
+    ElMessage.error(errMsg(error, '加载终端历史失败'))
     connState.value = { text: 'history error', color: '#ff4d4f' }
   }
 }
@@ -549,7 +550,7 @@ async function downloadLog() {
     link.click()
     URL.revokeObjectURL(url)
   } catch (error: any) {
-    ElMessage.error(error?.response?.data?.detail || '日志导出失败')
+    ElMessage.error(errMsg(error, '日志导出失败'))
   }
 }
 

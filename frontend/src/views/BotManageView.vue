@@ -385,6 +385,7 @@ import { botApi } from '@/api/bot'
 import api from '@/api/client'
 import type { MccAccountConfig, MccAuthType, MccInstance } from '@/api/mccInstance'
 import { mccInstanceApi } from '@/api/mccInstance'
+import { errMsg } from '@/utils/error'
 
 const route = useRoute()
 const mccStore = useMccInstanceStore()
@@ -741,7 +742,7 @@ async function fetchInventory() {
     const { data } = await botApi.getInventory(botId)
     inventoryData.value = data
   } catch (e: any) {
-    ElMessage.error('获取背包失败: ' + (e?.response?.data?.detail || e))
+    ElMessage.error(errMsg(e, '获取背包失败'))
   } finally { inventoryLoading.value = false }
 }
 
@@ -757,7 +758,7 @@ async function handleInventoryAction(payload: { action: string; slot_id: number;
     ElMessage.success('操作完成')
     fetchInventory()
   } catch (e: any) {
-    ElMessage.error('操作失败: ' + (e?.response?.data?.detail || e))
+    ElMessage.error(errMsg(e, '操作失败'))
   }
 }
 
@@ -773,7 +774,7 @@ async function handleInventoryDrop(payload: { item_type: string; count: number; 
     ElMessage.success(`丢弃 ${payload.item_type} ×${payload.count}${payload.slot !== undefined ? `（槽位 ${payload.slot}）` : ''}`)
     fetchInventory()
   } catch (e: any) {
-    ElMessage.error('丢弃失败: ' + (e?.response?.data?.detail || e))
+    ElMessage.error(errMsg(e, '丢弃失败'))
   }
 }
 
@@ -786,7 +787,7 @@ async function handleSelectHotbar(slot: number) {
     ElMessage.success(`已切换到快捷栏槽位 ${slot + 1}`)
     fetchInventory()
   } catch (e: any) {
-    ElMessage.error('切换手持失败: ' + (e?.response?.data?.detail || e))
+    ElMessage.error(errMsg(e, '切换手持失败'))
   }
 }
 
@@ -802,7 +803,7 @@ async function handleInventoryMove(payload: { slot_id: number; dest_slot_id: num
     ElMessage.success(`已移动槽位 ${payload.slot_id} → ${payload.dest_slot_id}`)
     fetchInventory()
   } catch (e: any) {
-    ElMessage.error('移动失败: ' + (e?.response?.data?.detail || e))
+    ElMessage.error(errMsg(e, '移动失败'))
   }
 }
 
@@ -818,7 +819,7 @@ async function handleInventoryUse(payload: { item_type: string; slot: number }) 
     ElMessage.success(`已使用 ${payload.item_type}`)
     fetchInventory()
   } catch (e: any) {
-    ElMessage.error('使用失败: ' + (e?.response?.data?.detail || e))
+    ElMessage.error(errMsg(e, '使用失败'))
   }
 }
 

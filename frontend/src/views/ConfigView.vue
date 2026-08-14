@@ -60,6 +60,7 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { useConfigStore } from '@/stores/config'
 import { ElMessage } from 'element-plus'
 import client from '@/api/client'
+import { errMsg } from '@/utils/error'
 
 const configStore = useConfigStore()
 const saving = ref(false)
@@ -111,7 +112,7 @@ async function saveMccConfig() {
     ElMessage.success('MCC 配置已保存并生效')
     await configStore.fetchConfig()
   } catch (error: any) {
-    ElMessage.error(error.response?.data?.detail || '保存失败')
+    ElMessage.error(errMsg(error, '保存失败'))
   } finally {
     saving.value = false
   }

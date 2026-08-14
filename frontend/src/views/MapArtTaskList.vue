@@ -75,6 +75,7 @@ import { botApi } from '@/api/bot'
 import { useBotStore } from '@/stores/bot'
 import { useMccInstanceStore } from '@/stores/mccInstance'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { errMsg } from '@/utils/error'
 
 const botStore = useBotStore()
 const mccStore = useMccInstanceStore()
@@ -156,7 +157,7 @@ async function onFileChange(uploadFile: any) {
     uploadedPath.value = data.file_path
     ElMessage.success(`投影上传成功: ${data.projection_info.total_blocks} 个方块`)
   } catch (e) {
-    ElMessage.error('上传失败')
+    ElMessage.error(errMsg(e, '投影上传失败'))
   }
 }
 
@@ -177,7 +178,7 @@ async function createTask() {
     uploadedPath.value = ''
     fetchTasks()
   } catch (e: any) {
-    ElMessage.error(`创建失败: ${e?.response?.data?.detail || e}`)
+    ElMessage.error(`创建失败：${errMsg(e, '创建任务失败')}`)
   } finally { creating.value = false }
 }
 

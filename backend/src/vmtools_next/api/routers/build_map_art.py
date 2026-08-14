@@ -44,7 +44,7 @@ async def execute_map_art_start(task_id: str, db: Session) -> tuple[bool, str]:
     """
     task = db.query(MapArtTask).filter(MapArtTask.task_id == task_id).first()
     if not task:
-        return False, "Task not found"
+        return False, "任务不存在"
 
     # P2-7：投影解析结果在 create_task 时已写入 MapArtBlockState（DB 即解析缓存），
     # 启动时直接从 DB 重建 layers，避免对大投影重复 parse_file（512×512+ 耗时/IO）。
@@ -137,6 +137,15 @@ class TaskControlRequest(BaseModel):
     action: str  # start | pause | resume | stop
 
 
+# 控制动作中文标签（2026-08-13 汉化）
+_ACTION_LABELS = {
+    "start": "启动",
+    "pause": "暂停",
+    "resume": "继续",
+    "stop": "停止",
+}
+
+
 class BotManageRequest(BaseModel):
     action: str  # add | remove
     bot_id: str
@@ -190,7 +199,7 @@ async def create_task(
         )
         reqs = await LitematicaParser.get_material_requirements(data.projection_file_path)
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Failed to parse projection: {e}")
+        raise HTTPException(status_code=400, detail=f"投影解析失败：{e}")
 
     # P2-12：坐标系一致性校验——map_art 后端用「相对坐标+origin」放置、前端用投影
     # 坐标渲染，均假设投影 Position=(0,0,0)；带偏移投影会"什么都建不出"或坐标错位。
@@ -251,10 +260,12 @@ async def create_task(
         db.add(ba)
 
     # Block states（P2-19：bulk insert 分批提交，避免 16384+ 条单 commit 过慢）
+    # ⚠️ 2026-08-13 修复：此前误写 `layers`（未定义变量）→ NameError 500；
+    # 方块数据来自 parse_file 返回的 parsed.layers（y_offset → [(x,y,z,block)]）
     _payload = [
         {"task_id": task.task_id, "x": wx, "y": wy, "z": wz,
          "expected_block": block_id}
-        for y_offset, blocks in layers.items()
+        for y_offset, blocks in parsed.layers.items()
         for wx, wy, wz, block_id in blocks
     ]
     for i in range(0, len(_payload), 1000):
@@ -311,7 +322,7 @@ def get_task(task_id: str, db: Session = Depends(get_db), user=Depends(require_a
     """Get full task details including materials and bot assignments."""
     task = db.query(MapArtTask).filter(MapArtTask.task_id == task_id).first()
     if not task:
-        raise HTTPException(status_code=404, detail="Task not found")
+        raise HTTPException(status_code=404, detail="任务不存在")
 
     materials = db.query(MapArtMaterial).filter(
         MapArtMaterial.task_id == task_id
@@ -383,13 +394,13 @@ async def control_task(
     """Control a build task: start, pause, resume, stop."""
     task = db.query(MapArtTask).filter(MapArtTask.task_id == task_id).first()
     if not task:
-        raise HTTPException(status_code=404, detail="Task not found")
+        raise HTTPException(status_code=404, detail="任务不存在")
 
     coordinator = get_coordinator(task_id)
 
     if data.action == "start":
         if task.status not in ("draft", "pending"):
-            raise HTTPException(status_code=400, detail=f"Cannot start task in '{task.status}' state")
+            raise HTTPException(status_code=400, detail=f"任务当前状态（{task.status}）无法启动")
         # 2026-08-12（实施计划阶段 2）：多任务并发由 TaskScheduler 统一调度——
         # 有 running 任务时不再 400 拒绝，而是置 pending 入队，当前任务完成后自动开始。
         running = db.query(MapArtTask).filter(
@@ -445,10 +456,10 @@ async def control_task(
             await _sched.schedule_once()
 
     else:
-        raise HTTPException(status_code=400, detail=f"Unknown action: {data.action}")
+        raise HTTPException(status_code=400, detail=f"未知操作：{data.action}")
 
     db.commit()
-    return {"task_id": task_id, "status": task.status, "message": f"Task {data.action}ed"}
+    return {"task_id": task_id, "status": task.status, "message": f"任务已{_ACTION_LABELS.get(data.action, data.action)}"}
 
 
 @router.post("/tasks/{task_id}/bots")
@@ -465,11 +476,11 @@ async def manage_task_bot(
     """
     task = db.query(MapArtTask).filter(MapArtTask.task_id == task_id).first()
     if not task:
-        raise HTTPException(status_code=404, detail="Task not found")
+        raise HTTPException(status_code=404, detail="任务不存在")
 
     coordinator = get_coordinator(task_id)
     if not coordinator:
-        raise HTTPException(status_code=400, detail="任务未在运行，动态分配仅对 running 任务生效")
+        raise HTTPException(status_code=400, detail="任务未在运行，动态分配仅对运行中的任务生效")
 
     from vmtools_next.core.bot_engine import resolve_bot_engine
     from vmtools_next.main import get_pool_for_engine
@@ -528,7 +539,7 @@ async def manage_task_bot(
         db.commit()
         return {"task_id": task_id, "bot_id": data.bot_id, "action": "remove"}
 
-    raise HTTPException(status_code=400, detail=f"Unknown action: {data.action}")
+    raise HTTPException(status_code=400, detail=f"未知操作：{data.action}")
 
 
 @router.get("/tasks/{task_id}/blocks/placed")
@@ -541,7 +552,7 @@ def get_task_placed_blocks(task_id: str, db: Session = Depends(get_db),
     """
     task = db.query(MapArtTask).filter(MapArtTask.task_id == task_id).first()
     if not task:
-        raise HTTPException(status_code=404, detail="Task not found")
+        raise HTTPException(status_code=404, detail="任务不存在")
 
     blocks = db.query(MapArtBlockState).filter(
         MapArtBlockState.task_id == task_id,
@@ -565,9 +576,9 @@ def delete_task(task_id: str, db: Session = Depends(get_db), user=Depends(requir
     """Delete a task (only draft/cancelled/completed)."""
     task = db.query(MapArtTask).filter(MapArtTask.task_id == task_id).first()
     if not task:
-        raise HTTPException(status_code=404, detail="Task not found")
+        raise HTTPException(status_code=404, detail="任务不存在")
     if task.status not in ("draft", "cancelled", "completed"):
-        raise HTTPException(status_code=400, detail=f"Cannot delete task in '{task.status}' state")
+        raise HTTPException(status_code=400, detail=f"任务当前状态（{task.status}）不允许删除")
     unregister_coordinator(task_id)
     db.delete(task)
     db.commit()
@@ -582,7 +593,7 @@ def get_task_blocks(task_id: str, db: Session = Depends(get_db), user=Depends(re
     """
     task = db.query(MapArtTask).filter(MapArtTask.task_id == task_id).first()
     if not task:
-        raise HTTPException(status_code=404, detail="Task not found")
+        raise HTTPException(status_code=404, detail="任务不存在")
 
     blocks = db.query(MapArtBlockState).filter(
         MapArtBlockState.task_id == task_id
@@ -630,10 +641,10 @@ async def upload_projection(
     from pathlib import Path, PurePosixPath
 
     if not file.filename or not file.filename.endswith(".litematic"):
-        raise HTTPException(400, "Only .litematic files are accepted")
+        raise HTTPException(400, "仅支持 .litematic 投影文件")
     content = await file.read()
     if len(content) > 50 * 1024 * 1024:
-        raise HTTPException(400, "File too large (max 50MB)")
+        raise HTTPException(400, "文件过大（上限 50MB）")
 
     # Save to uploads directory (absolute path)；文件名只取 basename，杜绝 ../ 穿越
     BASE = Path(__file__).resolve().parent.parent.parent.parent.parent  # backend/

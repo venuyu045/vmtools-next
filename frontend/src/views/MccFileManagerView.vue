@@ -34,6 +34,7 @@ import { ElMessage } from 'element-plus'
 import { useRoute } from 'vue-router'
 import MccFileManagerPanel from '@/components/MccFileManagerPanel.vue'
 import { useMccInstanceStore } from '@/stores/mccInstance'
+import { errMsg } from '@/utils/error'
 
 const route = useRoute()
 const store = useMccInstanceStore()
@@ -59,7 +60,7 @@ async function startInstance() {
     await store.startInstance(instance.value.instance_id)
     ElMessage.success('启动命令已发送')
   } catch (error: any) {
-    ElMessage.error(error.response?.data?.detail || '启动失败')
+    ElMessage.error(errMsg(error, '启动失败'))
   }
 }
 

@@ -121,6 +121,7 @@ import { useRouter } from 'vue-router'
 import { usePluginStore, type Plugin, type PluginBotState } from '@/stores/plugin'
 import { pluginApi } from '@/api/plugin'
 import { ElMessage } from 'element-plus'
+import { errMsg } from '@/utils/error'
 
 const pluginStore = usePluginStore()
 const router = useRouter()
@@ -134,7 +135,7 @@ async function handleToggle(plugin: any) {
     await pluginStore.togglePlugin(plugin.name)
     ElMessage.success(`插件已${plugin.enabled ? '禁用' : '启用'}`)
   } catch (e: any) {
-    ElMessage.error(`操作失败：${e?.response?.data?.detail || e?.message || '未知错误'}`)
+    ElMessage.error(errMsg(e, '操作失败'))
   } finally {
     pending.value.delete(plugin.name)
   }
@@ -151,7 +152,7 @@ async function handleReload(plugin: any) {
     await pluginStore.reloadPlugin(plugin.name)
     ElMessage.success('插件已重载')
   } catch (e: any) {
-    ElMessage.error(`重载失败：${e?.response?.data?.detail || e?.message || '未知错误'}`)
+    ElMessage.error(errMsg(e, '重载失败'))
   } finally {
     pending.value.delete(plugin.name)
   }
@@ -176,7 +177,7 @@ async function refreshBots() {
     const updated = pluginStore.plugins.find(p => p.name === botConfigPlugin.value?.name)
     if (updated) botConfigPlugin.value = updated
   } catch (e: any) {
-    ElMessage.error(e?.response?.data?.detail || '刷新失败')
+    ElMessage.error(errMsg(e, '刷新失败'))
   } finally {
     botConfigLoading.value = false
   }
@@ -195,7 +196,7 @@ async function handleBotToggle(b: PluginBotState, val: boolean) {
     b.bot_enabled = val
     ElMessage.success(`bot ${b.bot_id} 已${val ? '启用' : '禁用'} ${botConfigPlugin.value.name}`)
   } catch (e: any) {
-    ElMessage.error(e?.response?.data?.detail || '操作失败')
+    ElMessage.error(errMsg(e, '操作失败'))
   } finally {
     botPending.value.delete(b.bot_id)
   }

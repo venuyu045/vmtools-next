@@ -116,6 +116,7 @@ import { ElMessage } from 'element-plus'
 import BuildMapCanvas from '@/components/build/BuildMapCanvas.vue'
 import { useSocketIO } from '@/composables/useSocketIO'
 import { mapArtApi } from '@/api/mapArt'
+import { errMsg } from '@/utils/error'
 
 const route = useRoute()
 const taskId = computed(() => route.params.taskId as string)
@@ -198,17 +199,21 @@ async function fetchTask() {
     } catch { /* blocks may not be loaded yet */ }
     loadingBlocks.value = false
   } catch (e) {
-    ElMessage.error('Failed to fetch task')
+    ElMessage.error(errMsg(e, '获取任务详情失败'))
   }
+}
+
+const ACTION_LABELS: Record<string, string> = {
+  start: '启动', pause: '暂停', resume: '继续', stop: '停止',
 }
 
 async function control(action: string) {
   try {
     await mapArtApi.controlTask(taskId.value, action)
-    ElMessage.success(`Task ${action}ed`)
+    ElMessage.success(`任务已${ACTION_LABELS[action] || action}`)
     fetchTask()
   } catch (e) {
-    ElMessage.error(`Failed to ${action} task`)
+    ElMessage.error(errMsg(e, `任务${ACTION_LABELS[action] || action}失败`))
   }
 }
 

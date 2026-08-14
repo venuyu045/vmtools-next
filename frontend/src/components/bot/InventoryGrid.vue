@@ -149,6 +149,7 @@ import { onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import ItemIcon from '@/components/ItemIcon.vue'
 import { botApi } from '@/api/bot'
+import { errMsg } from '@/utils/error'
 
 interface Slot {
   slot: number
@@ -324,7 +325,7 @@ async function doInvClick(slotIdx: number, mouseButton: 0 | 1) {
     }
     emit('refresh')
   } catch (err: any) {
-    ElMessage.error(err?.response?.data?.detail || '窗口点击失败')
+    ElMessage.error(errMsg(err, '窗口点击失败'))
   }
 }
 
@@ -369,7 +370,7 @@ async function doActivateHeld() {
     }
     emit('refresh')
   } catch (err: any) {
-    ElMessage.error(err?.response?.data?.detail || '激活失败')
+    ElMessage.error(errMsg(err, '激活失败'))
   }
 }
 

@@ -39,6 +39,7 @@
 import { onMounted, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { pluginApi } from '@/api/plugin'
+import { errMsg } from '@/utils/error'
 
 interface BotPluginStatus {
   name: string
@@ -62,7 +63,7 @@ async function load() {
     const resp = await pluginApi.getBotPluginStatus(props.botId)
     plugins.value = resp.data?.plugins || []
   } catch (e: any) {
-    ElMessage.warning(e?.response?.data?.detail || '获取插件状态失败')
+    ElMessage.warning(errMsg(e, '获取插件状态失败'))
   } finally {
     loading.value = false
   }
@@ -80,7 +81,7 @@ async function handleToggle(p: BotPluginStatus, val: boolean) {
     p.bot_enabled = val
     ElMessage.success(`插件 ${p.name} 已为本 bot ${val ? '启用' : '禁用'}`)
   } catch (e: any) {
-    ElMessage.error(e?.response?.data?.detail || '操作失败')
+    ElMessage.error(errMsg(e, '操作失败'))
   } finally {
     pending.value.delete(p.name)
   }
