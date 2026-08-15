@@ -63,7 +63,22 @@ function createBlockHandlers(bot) {
       }
 
       if (!refBlock || refBlock.type === 0) {
-        return { success: false, error: `No reference block near ${pos}` };
+        // 2026-08-15 修复「No reference block near」：目标方块周围全是空气
+        // （地图画建在平台边缘/悬空处，目标正下方无地面支撑）——参考面全失效。
+        // 用背包方块先垫到目标正下方（参考 = bot 脚下/附近的相邻实心方块），
+        // 再以垫块为参考放置目标（对齐 litematica-printer PLACE_IN_AIR + Baritone
+        // 自动搭支撑的简化实现）。
+        const padded = await padUnderTarget(pos);
+        if (!padded) {
+          return { success: false, error: `No reference block near ${pos}（自动垫块失败）` };
+        }
+        // 垫块成功后：以垫块为参考（UP 面）放置目标
+        refPos = new Vec3(pos.x, pos.y - 1, pos.z);
+        refBlock = bot.blockAt(refPos);
+        faceVec = FACE_VECTORS.UP;
+        if (!refBlock || refBlock.type === 0) {
+          return { success: false, error: `垫块后仍无参考（${pos}）` };
+        }
       }
 
       // 2. 检查手持物品
@@ -76,6 +91,61 @@ function createBlockHandlers(bot) {
       return { success: true, block: { x, y, z }, placed_with: bot.heldItem.name, face };
     } catch (err) {
       return { success: false, error: err.message };
+    }
+  }
+
+  // ── 自动垫参考块（2026-08-15：目标周围无参考面时，用背包方块垫到目标下方）──
+  // 目标 (x,y,z) 正下方是空气/水时，找 bot 可触及的相邻实心方块作参考，把背包
+  // 方块放到 (x,y-1,z)，让目标有 DOWN 参考面。返回 true 表示垫块成功。
+  async function padUnderTarget(pos) {
+    try {
+      const blockItem = bot.inventory.items()
+        .filter(i => i.name && i.name !== 'air' && i.count > 0)
+        .sort((a, b) => (b.count || 0) - (a.count || 0))[0];
+      if (!blockItem) return false;
+      await bot.equip(blockItem, 'hand');
+      await new Promise(r => setTimeout(r, 300));
+
+      const below = new Vec3(pos.x, pos.y - 1, pos.z);
+      // 候选参考面（从 bot 当前站位/目标下方附近找实心方块，点击其相邻面）
+      const botPos = bot.entity?.position;
+      const candidates = [];
+      if (botPos) {
+        const bx = Math.floor(botPos.x), by = Math.floor(botPos.y), bz = Math.floor(botPos.z);
+        // bot 脚下及其 8 邻域（水平面），点击朝向 below 的方向
+        for (let dx = -1; dx <= 1; dx++) {
+          for (let dz = -1; dz <= 1; dz++) {
+            const p = new Vec3(bx + dx, by - 1, bz + dz);
+            if (p.distanceTo(below) <= 2.5) candidates.push(p);
+          }
+        }
+        // bot 站立格同层（水平 8 邻域），可能用于垫目标正下方侧面
+        for (let dx = -1; dx <= 1; dx++) {
+          for (let dz = -1; dz <= 1; dz++) {
+            const p = new Vec3(bx + dx, by, bz + dz);
+            if (p.distanceTo(below) <= 2.5) candidates.push(p);
+          }
+        }
+      }
+      // 直接目标下方附近的方块（below 的 6 邻域）
+      for (const d of [new Vec3(1,0,0), new Vec3(-1,0,0), new Vec3(0,0,1), new Vec3(0,0,-1), new Vec3(0,-1,0), new Vec3(0,1,0)]) {
+        candidates.push(below.plus(d));
+      }
+      for (const ref of candidates) {
+        const rb = bot.blockAt(ref);
+        if (!rb || rb.type === 0 || isLiquidBlock(rb)) continue;
+        const faceVec = below.minus(ref); // 从 ref 指向 below 的方向
+        if (faceVec.x * faceVec.x + faceVec.y * faceVec.y + faceVec.z * faceVec.z !== 1) continue;
+        try {
+          await bot.placeBlock(rb, faceVec);
+          await new Promise(r => setTimeout(r, 400));
+          const placed = bot.blockAt(below);
+          if (placed && placed.type !== 0) return true;
+        } catch (e) { /* 尝试下一个候选 */ }
+      }
+      return false;
+    } catch (err) {
+      return false;
     }
   }
 

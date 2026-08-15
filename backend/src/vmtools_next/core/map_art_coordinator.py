@@ -320,6 +320,18 @@ class BotBuildLoop:
                 self.progress.current_row = row_z
                 world_z = self.origin_z + row_z
 
+                # 2026-08-15：每行开始前主动检查 bot 是否在建造区域附近——死亡复活到
+                # 主城/传送点失效等场景，不等寻路失败才兜底，直接传送重置（位置验证
+                # 已修复：get_player_state 的 location 字段现在能被正确解析）。
+                try:
+                    _p = await self._get_player_pos()
+                    if _p and not self._near_build_area(_p[0], _p[1]):
+                        self._activity("warn",
+                                       f"bot 当前不在建造区域（{_p[0]:.0f},{_p[1]:.0f}），主动传送回建造点")
+                        await self._try_teleport_home("bot 不在建造区域")
+                except Exception:
+                    pass
+
                 # Position bot at north edge of current row
                 moved = await self._move_to_row_edge(row_z)
                 if not moved and not self._stopped:
@@ -850,6 +862,7 @@ class BotBuildLoop:
             if not isinstance(st, dict):
                 return None
             pos = (st.get("position") or st.get("pos")
+                   or st.get("location")  # 2026-08-15：get_player_state 返回的是 location 字段
                    or st.get("player") or st.get("entity") or {})
             if isinstance(pos, dict):
                 x, z = pos.get("x"), pos.get("z")
@@ -1189,7 +1202,17 @@ class BotBuildLoop:
             logger.info("[%s] Shulker restock done: %s ×%d from (%d,%d,%d)",
                         self.bot_id, clean_id, got_count, bx, by, bz)
             self._activity("info", f"取到 {clean_id} ×{got_count}")
-            return True
+            # 2026-08-15：取货后必须背包确认——withdraw 返回 success 不代表背包已同步。
+            # 循环轮询背包直到出现该材料（最多 3s），确认真正拿到才算补货成功。
+            for _i in range(10):
+                await asyncio.sleep(0.3)
+                if await self._check_inventory_level(clean_id) > 0:
+                    self._activity("debug", f"背包确认：{clean_id} ×{await self._check_inventory_level(clean_id)}")
+                    return True
+            self._activity("warn", f"{clean_id} 取货后背包未确认到物品（可能是假成功），视为失败")
+            logger.warning("[%s] %s withdraw success but inventory check empty", self.bot_id, clean_id)
+            # 不 return True，继续尝试下一个坐标
+            continue
         self._activity("warn", f"{clean_id} 所有潜影盒均未取到（可能取空/坐标不符/盒子放错）")
         return False
 
@@ -1240,18 +1263,31 @@ class BotBuildLoop:
             await asyncio.sleep(3.5)
             self._activity("debug", "等待完成，开始逐个取货")
 
-            # 4) 逐个补齐（缺的每种材料去对应潜影盒取一组）
-            ok_all = True
-            for mat in missing:
-                if await self._restock_one_from_boxes(mat, 64):
-                    # 取货成功后再确认背包确实有货（防止 withdraw 假成功）
-                    await asyncio.sleep(0.3)
-                    if await self._check_inventory_level(mat) > 0:
-                        continue
-                ok_all = False
-                self._activity("warn", f"{mat} 补货失败，跳过（后续建造遇到会再试）")
+            # 4) 逐个补齐（缺的每种材料去对应潜影盒取一组；2026-08-15：取货后背包确认，
+            #    补完再全量复查，缺的补第二轮——确认全部补齐（或尽力而为）才传走，
+            #    不再"补一半就传走"）
+            missing_now = list(missing)
+            for _round in range(2):
+                if not missing_now:
+                    break
+                for mat in missing_now:
+                    if await self._restock_one_from_boxes(mat, 64):
+                        continue  # 背包已确认有货（_restock_one_from_boxes 内部确认）
+                    self._activity("warn", f"{mat} 补货失败，继续下一个")
+                # 全量复查：仍缺的进入第二轮
+                missing_now = [m for m in missing_now
+                               if await self._check_inventory_level(m) < 64]
+                if missing_now:
+                    self._activity("warn", f"第一轮补货后仍缺：{missing_now}，再补一轮")
 
-            # 5) 返回建造点
+            # 5) 返回建造点（2026-08-15：传走前报告最终缺失——若还有缺的，
+            #    说明盒子取空/坐标错，回建造点后会再次触发补货，避免无限卡仓库）
+            if missing_now:
+                self._activity("warn",
+                               f"补货结束仍有缺失（{len(missing_now)}种）：{'，'.join(missing_now)}——"
+                               f"可能是潜影盒取空/坐标不符，回建造点后再试")
+            else:
+                self._activity("info", f"全部补齐（{len(missing)}种材料均已确认在背包）")
             self._activity("info", f"传送返回建造点（{self._supply_cfg.get('return', '/ehomes dth')}）")
             try:
                 await self.mcp.send_chat(self._supply_cfg.get("return", "/ehomes dth"))
@@ -1261,7 +1297,7 @@ class BotBuildLoop:
             self._last_pos = None  # 传送后位置未知，强制下次寻路
             self.progress.state = "placing"
             await self._refresh_hotbar_map()
-            return ok_all
+            return not missing_now
         except Exception as e:
             logger.warning("[%s] Full restock failed: %s", self.bot_id, e)
             self._activity("warn", f"全量补货异常：{e}")
