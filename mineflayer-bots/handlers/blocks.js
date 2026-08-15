@@ -27,16 +27,6 @@ function isLiquidBlock(block) {
 }
 
 // ── 2026-08-15 第二批（对齐 litematica-printer Action.getValidSide）──
-// 可替换方块（点击其面会把方块放进去/替换掉它——不可作参考）。
-// 对齐 printer：参考方块必须「有碰撞箱（可点击）且不可替换（isReplaceable 为假）」。
-function isReplaceableBlock(block) {
-  if (!block || block.type === 0) return true; // 空气可替换
-  if (isLiquidBlock(block)) return true;
-  const name = block.name || '';
-  // 半砖/楼梯/按钮/压力板/火把/轨道/雪/花草/作物/地毯等可替换方块
-  return /slab|stairs|button|pressure_plate|torch|rail|snow|grass|flower|tall|short|fern|mushroom|carpet|sapling|vine|lily|air|fire|redstone|repeater|comparator|lever|tripwire|sign|root|crop|dead|seagrass|kelp|sugar_cane|bamboo|cocoa|propagule|petal|plant|sculk_vein|lichen/.test(name);
-}
-
 // 交互方块（点击触发 GUI/交互，需潜行；作为参考面时排在最后，防误开箱子/工作台）
 function isInteractiveBlock(block) {
   if (!block) return false;
@@ -44,11 +34,14 @@ function isInteractiveBlock(block) {
   return /chest|barrel|furnace|blast_furnace|smoker|brewing|hopper|dispenser|dropper|crafting_table|enchanting|anvil|door|trapdoor|fence_gate|note_block|jukebox|beacon|lectern|shulker|ender_chest|grindstone|smithing|stonecutter|loom|cartography|composter|cake|dragon_egg|bell|campfire|respawn|lodestone|daylight|cauldron|button|lever|chiseled_bookshelf|decorated_pot/.test(name);
 }
 
-// 参考方块有效性：非空气非液体且不可替换（对齐 printer canBeClicked && !isReplaceable）
+// 参考方块有效性：非空气非液体即可。
+// ⚠️ 2026-08-15 修正：去掉"不可替换"正则判定——宽泛子串正则（grass/redstone/root
+// 等）会误伤 grass_block / redstone_block 等实心平台方块，导致 DOWN 参考被跳过、
+// 平台上第一行放置全失败（No reference block）。对齐 printer canBeClicked 的
+// 宽松语义：有方块（非空气非液体）即可作为放置参考；交互方块由调用方排序规避。
 function isUsableReference(block) {
   if (!block || block.type === 0) return false;
   if (isLiquidBlock(block)) return false;
-  if (isReplaceableBlock(block)) return false;
   return true;
 }
 
