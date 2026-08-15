@@ -164,8 +164,13 @@ function createBlockHandlers(bot) {
         return { success: false, error: 'No item in hand' };
       }
 
-      // 3. 放置方块
+      // 3. 放置方块（2026-08-15 诊断日志：定位 blockUpdate 不触发根因）
+      try {
+        const bp = bot.entity?.position;
+        console.log(`[place-diag] target=(${x},${y},${z}) ref=${refBlock.name}@(${refPos.x},${refPos.y},${refPos.z}) face=${faceVec} held=${bot.heldItem.name}x${bot.heldItem.count} botPos=(${bp ? bp.x.toFixed(2) : '?'},${bp ? bp.y.toFixed(2) : '?'},${bp ? bp.z.toFixed(2) : '?'}) ground=${bot.entity?.onGround}`);
+      } catch (e) { /* 日志失败忽略 */ }
       await bot.placeBlock(refBlock, faceVec);
+      console.log(`[place-diag] OK placed ${x},${y},${z}`);
       return { success: true, block: { x, y, z }, placed_with: bot.heldItem.name, face };
     } catch (err) {
       return { success: false, error: err.message };
