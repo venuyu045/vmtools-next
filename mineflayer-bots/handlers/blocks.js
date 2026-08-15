@@ -59,6 +59,25 @@ function isAirLikeName(name) {
  */
 function createBlockHandlers(bot) {
 
+  // ── 本地强制更新方块（2026-08-15 P3：服务器放置成功但客户端 blockAt 未同步）──
+  // 服务器接受放置后，用 prismarine-block 构造方块并 bot.world.setBlock 写入本地，
+  // 让后续 verify / baritone A* 能读到正确状态（否则全是旧 air）。
+  async function forceLocalBlock(pos, heldItem) {
+    try {
+      if (!heldItem || !pos) return;
+      const Block = require('prismarine-block')(bot.version);
+      const reg = bot.registry;
+      const def = reg.blocksByName[heldItem.name];
+      if (!def) return;
+      // 构造本地方块（biome=0, metadata=0；世界刷新后服务器会覆盖为真实值）
+      const nb = new Block(def.id, 0, 0, reg);
+      nb.position = pos;
+      bot.world.setBlock(pos, nb);
+      // 同时广播 blockUpdate（让依赖该事件的逻辑感知）
+      bot.emit('blockUpdate', nb, null);
+    } catch (e) { /* 本地更新失败忽略 */ }
+  }
+
   // ── 放置方块 ──
   // face: UP/DOWN/NORTH/SOUTH/WEST/EAST（点击参考方块的哪个面）
   //       AUTO = 自动选面：遍历候选面找第一个非空气、非液体的参考方块
@@ -170,6 +189,12 @@ function createBlockHandlers(bot) {
         console.log(`[place-diag] target=(${x},${y},${z}) ref=${refBlock.name}@(${refPos.x},${refPos.y},${refPos.z}) face=${faceVec} held=${bot.heldItem.name}x${bot.heldItem.count} botPos=(${bp ? bp.x.toFixed(2) : '?'},${bp ? bp.y.toFixed(2) : '?'},${bp ? bp.z.toFixed(2) : '?'}) ground=${bot.entity?.onGround}`);
       } catch (e) { /* 日志失败忽略 */ }
       await bot.placeBlock(refBlock, faceVec);
+      // 2026-08-15 P3 关键修复：服务器接受放置但客户端 blockAt 可能未更新
+      // （blockUpdate 未推送/经 Via 不同步）→ 本地强制 setBlock（信任服务器已放置），
+      // 否则后续 verify / baritone A* 读到旧 air → 误判"没放上/不可走/踩不上去"。
+      try {
+        await forceLocalBlock(pos, bot.heldItem);
+      } catch (e) { /* 本地更新失败不影响放置本身 */ }
       console.log(`[place-diag] OK placed ${x},${y},${z}`);
       return { success: true, block: { x, y, z }, placed_with: bot.heldItem.name, face };
     } catch (err) {

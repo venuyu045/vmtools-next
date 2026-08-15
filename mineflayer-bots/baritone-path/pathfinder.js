@@ -25,6 +25,20 @@ async function pathTo(bot, goalX, goalY, goalZ, opts = {}) {
   const log = (m) => { if (onLog) onLog(m); };
 
   const world = new World(bot);
+  // 2026-08-15 P5：寻路前清空方块缓存——世界会变化（bot 放置/平台实际存在但
+  // 缓存可能是旧 air），A* 必须读到最新状态（否则 no_path 误判）
+  world.clearCache();
+  // 2026-08-15 P5：等待目标 chunk 加载（baritone A* 需要读目标区域方块，
+  // chunk 未加载时 blockAt 全 null → 误判不可走）
+  try {
+    const cx = Math.floor(goalX / 16), cz = Math.floor(goalZ / 16);
+    if (typeof bot.world.hasChunk === 'function' && !bot.world.hasChunk(cx, cz)) {
+      for (let i = 0; i < 25; i++) {
+        await sleep(200);
+        if (bot.world.hasChunk(cx, cz)) break;
+      }
+    }
+  } catch (e) { /* 无法检查 chunk 则跳过 */ }
   const start = botFoot(bot);
   if (!start) return { success: false, reason: 'no_position' };
 
@@ -91,5 +105,7 @@ async function pathTo(bot, goalX, goalY, goalZ, opts = {}) {
   const finalPos = botFoot(bot);
   return { success: true, reason: 'done', path, position: finalPos };
 }
+
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
 module.exports = { pathTo };
