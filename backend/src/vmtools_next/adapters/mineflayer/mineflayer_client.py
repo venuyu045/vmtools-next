@@ -756,7 +756,6 @@ class MineflayerBridgeClient(AbstractBotAgent):
         """
         return await self._send_request(METHOD_CONSUME_OFFHAND, {},
                                         timeout=DEFAULT_CMD_TIMEOUT)
-
     async def scaffold_to(self, x: int, y: int, z: int,
                           timeout_ms: int = 30000) -> dict:
         """自动蹲搭搭路前往 (x,y,z)（2026-08-14：pathfinder 不可达时的兜底）。
@@ -766,6 +765,15 @@ class MineflayerBridgeClient(AbstractBotAgent):
         return await self._send_request(METHOD_SCAFFOLD_TO, {
             "x": x, "y": y, "z": z, "timeout_ms": timeout_ms,
         }, timeout=timeout_ms / 1000 + 5.0)
+
+    async def ensure_standable(self, x: int, y: int, z: int) -> dict:
+        """确保目标站立点安全（2026-08-15：站立点有水/岩浆时用背包方块填掉）。
+
+        寻路前调用，避免 bot 到达后站进水里。返回 {success, note|error, need_block?}。
+        """
+        return await self._send_request(METHOD_ENSURE_STANDABLE, {
+            "x": x, "y": y, "z": z,
+        }, timeout=DEFAULT_CMD_TIMEOUT)
 
     # ── Servux 容器预览（不打开容器） ──
 

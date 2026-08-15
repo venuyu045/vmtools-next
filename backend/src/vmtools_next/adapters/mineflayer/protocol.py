@@ -50,6 +50,8 @@ METHOD_EQUIP_OFFHAND = "equip_offhand"
 METHOD_CONSUME_OFFHAND = "consume_offhand"
 # 自动蹲搭搭路（2026-08-14：pathfinder 不可达时用方块搭路前往）
 METHOD_SCAFFOLD_TO = "scaffold_to"
+# 确保目标站立点安全（2026-08-15：站立点有水/岩浆时用背包方块填掉）
+METHOD_ENSURE_STANDABLE = "ensure_standable"
 
 # Servux 容器预览（不打开容器，直接请求方块实体 NBT）
 METHOD_SERVUX_HANDSHAKE = "servux_handshake"

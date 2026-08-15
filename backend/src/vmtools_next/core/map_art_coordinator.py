@@ -14,6 +14,7 @@ Key design (per implementation-plan.md Section 3):
 from __future__ import annotations
 
 import asyncio
+import functools
 import logging
 import time
 import zlib
@@ -27,6 +28,20 @@ from vmtools_next.config import get_config
 from vmtools_next.data.db import sio
 
 logger = logging.getLogger("vmtools.map_art")
+
+
+def _restock_serialized(fn):
+    """串行化补货协程（2026-08-15 修复并发开箱互相覆盖窗口）。
+
+    主建造循环缺材料、蹲搭前补货、食物监控可能同时触发补货——并发开箱会让
+    mineflayer 窗口状态互相覆盖（实测 withdraw 报 Cannot read properties of
+    null (reading 'type') + 日志重复出现）。用 per-bot 互斥锁把补货整体串行化。
+    """
+    @functools.wraps(fn)
+    async def wrapper(self, *args, **kwargs):
+        async with self._restock_lock:
+            return await fn(self, *args, **kwargs)
+    return wrapper
 
 
 # ──────────────────────────────────────────────
@@ -196,6 +211,11 @@ class BotBuildLoop:
         # 首次 _near_build_area 时计算一次（O(N)），之后 O(1)——大尺寸地图画
         # （512/1024+ 格）不能每次全量遍历 block_matrix。
         self._area_bounds: Optional[tuple[float, float, float, float]] = None
+        # 2026-08-15 修复：补货互斥锁——防多个协程（主建造循环缺材料 + 蹲搭前补货 +
+        # 食物监控）同时触发 _do_full_restock/_do_restock，并发开箱互相覆盖窗口
+        # 导致 mineflayer withdraw 读 null selectedItem 崩溃（实测 Cannot read
+        # properties of null (reading 'type') + 日志重复出现）。
+        self._restock_lock = asyncio.Lock()
         self._supply_box: Optional[tuple[int, int, int]] = supply_box  # 分区补给箱坐标（None→用传送）
         # 2026-08-14：材料级潜影盒坐标（用户配置，优先级最高）+ 任务级三个传送指令
         self._supply_boxes: dict[str, list[tuple[int, int, int]]] = supply_boxes or {}
@@ -392,6 +412,18 @@ class BotBuildLoop:
         if self._stopped:
             return False
         self.progress.state = "moving"
+        # 2026-08-15：寻路前确保目标站立点安全——站立点有水/岩浆时用背包方块填掉，
+        # 避免 pathfinder 到达后 bot 站进水里（用户实测"寻路到水里面"）。填水失败
+        # 不阻塞寻路（由后续溺水分级防护/传送兜底处理）。
+        try:
+            es = await self.mcp.ensure_standable(x, y, z)
+            if isinstance(es, dict):
+                if es.get("note"):
+                    self._activity("debug", f"站立点检查：{es['note']}")
+                elif es.get("success") is False and es.get("need_block"):
+                    self._activity("warn", f"目标站立点需垫方块但背包无方块：{es.get('error', '?')}")
+        except Exception:
+            pass
         timeout = timeout_ms or self._move_timeout_ms
         for attempt in range(self._move_retries + 1):
             if self._stopped:
@@ -478,6 +510,8 @@ class BotBuildLoop:
                     return
 
                 world_x = self.origin_x + x
+                # 2026-08-15 日志增强：每格建造过程 debug 级记录（详细模式可见）
+                self._activity("debug", f"建造 ({world_x},{self.origin_y},{world_z}) ← {self._normalize_item_id(block_id)}")
                 # 2026-08-14 模块C：真·走一格放一格——每放置一块前精确移动到该方块
                 # 正北站立点（相邻格 = 1 格移动）。原实现 threshold=2 跳格、靠
                 # place_block(face=AUTO) 站桩斜放，触及范围边缘易失败且非「走一格」。
@@ -502,6 +536,7 @@ class BotBuildLoop:
                     self.progress.record_place()
                     self.progress.last_completed_x = x
                     self._db_updates.append((world_x, self.origin_y, world_z, block_id))
+                    self._activity("debug", f"({world_x},{world_z}) 已放置，跳过")
                     continue
 
                 # 3) Place with retry + rate limiting
@@ -509,12 +544,14 @@ class BotBuildLoop:
                     self.progress.record_place()
                     self.progress.last_completed_x = x
                     self._db_updates.append((world_x, self.origin_y, world_z, block_id))
+                    self._activity("debug", f"放置成功 ({world_x},{world_z}) {self._normalize_item_id(block_id)}")
                 else:
                     # 2026-08-14 放置失败告警：连续放置失败说明材料/位置异常，
                     # 记录但不中断（由行尾/区域完成判定兜底）；累计告警交由上层处理
                     logger.warning("[%s] Place FAILED after %d retries at (%d,%d,%d) %s",
                                    self.bot_id, self._place_retries,
                                    world_x, self.origin_y, world_z, block_id)
+                    self._activity("warn", f"放置失败 ({world_x},{world_z}) {self._normalize_item_id(block_id)}（重试{self._place_retries}次仍失败）")
 
                 # 4) Rate limiting between placements (anti mis-place / anti-cheat)
                 #    RTT 自适应：每 10 次放置采样一次 ping，间隔 = max(base, RTT*1.5)
@@ -1156,6 +1193,7 @@ class BotBuildLoop:
         self._activity("warn", f"{clean_id} 所有潜影盒均未取到（可能取空/坐标不符/盒子放错）")
         return False
 
+    @_restock_serialized
     async def _do_full_restock(self, trigger_item: str) -> bool:
         """全量补货（2026-08-14：缺的所有材料一次补齐再返回建造点）。
 
@@ -1229,6 +1267,7 @@ class BotBuildLoop:
             self._activity("warn", f"全量补货异常：{e}")
             return False
 
+    @_restock_serialized
     async def _do_restock(self, needed_block_id: str, needed_count: int = 64) -> bool:
         """Restock the required item.
 
@@ -1526,6 +1565,7 @@ class BotBuildLoop:
             return await self._ensure_food_offhand()  # 递归一次（补货后再次装备）
         return False
 
+    @_restock_serialized
     async def _do_food_restock(self) -> bool:
         """去猪排仓库取猪排。
 

@@ -595,6 +595,22 @@ function createInventoryHandlers(bot, opts = {}) {
 
   // ── 从容器取物品 ──
   async function withdraw_container_item({ item_type, count = 64, container_id } = {}) {
+    // 2026-08-15：mineflayer transfer 内部 clickWindow 后立即读
+    // window.selectedItem.type——窗口状态未同步时 selectedItem 仍为 null 会抛
+    // "Cannot read properties of null (reading 'type')"（实测偶发）。失败重试最多
+    // 3 次（间隔 400ms），且每次都重新等待窗口 items 同步，规避时序竞态。
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const r = await tryWithdrawOnce(item_type, count, container_id);
+      if (r.success || attempt >= 2 || !/null|undefined/.test(r.error || '')) {
+        return r;
+      }
+      // 空窗口/竞态 → 等 400ms 重试
+      await new Promise(res => setTimeout(res, 400));
+    }
+    return { success: false, error: 'withdraw retries exhausted' };
+  }
+
+  async function tryWithdrawOnce(item_type, count = 64, container_id) {
     try {
       const entry = openContainers.get(container_id);
       if (!entry) {
@@ -1030,6 +1046,11 @@ function createInventoryHandlers(bot, opts = {}) {
     if (!item || !item.name) return false;
     try { return !!mcData && !!mcData.blocks && !!mcData.blocks[item.type]; } catch { return false; }
   }
+  function isWaterBlock(b) {
+    if (!b) return false;
+    const n = String(b.name || '').toLowerCase();
+    return n.includes('water') || n.includes('lava');
+  }
   function pickScaffoldBlock() {
     const items = bot.inventory.items();
     // 2026-08-14：用户确认「消耗建材就行」——直接选背包里数量最多的可放置方块
@@ -1048,6 +1069,37 @@ function createInventoryHandlers(bot, opts = {}) {
       await new Promise(r => setTimeout(r, 300));
       return true;
     } catch { return false; }
+  }
+
+  // ── 确保目标站立点安全（2026-08-15 参考 Baritone：水源处理） ──
+  // 目标站立格（bot 脚所在 y 层）是水/岩浆 → 用背包方块填掉，让 bot 能站上去，
+  // 避免 pathfinder 到达后站进水里（用户实测"寻路到水里面"）。
+  async function ensure_standable({ x, y, z } = {}) {
+    try {
+      const standPos = new Vec3(Math.floor(x), Math.floor(y), Math.floor(z));
+      const at = bot.blockAt(standPos);
+      // 站立格本身是水/岩浆 → 填方块（reference=脚下实心方块，向上放置覆盖水面）
+      if (isWaterBlock(at)) {
+        const below = bot.blockAt(standPos.offset(0, -1, 0));
+        if (!below || below.type === 0) {
+          // 脚下也空 → 无支撑，交给 pathfinder/scaffold 处理
+          return { success: true, note: '站立点水面且脚下无支撑，交给寻路处理' };
+        }
+        const blockItem = pickScaffoldBlock();
+        if (!blockItem) return { success: false, error: '背包无可放置方块填水', need_block: true };
+        if (!await equipScaffold(blockItem)) return { success: false, error: '填水方块装备失败' };
+        try {
+          await bot.placeBlock(below, new Vec3(0, 1, 0)); // 在站立格放置方块覆盖水
+          await new Promise(r => setTimeout(r, 500));
+          return { success: true, note: `已填掉站立点水（${blockItem.name}）` };
+        } catch (e) {
+          return { success: false, error: `填水失败：${e.message}`, need_block: true };
+        }
+      }
+      return { success: true, note: '站立点安全' };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
   }
   async function scaffold_to({ x, y, z, timeout_ms = 30000 } = {}) {
     const releaseControls = () => {
@@ -1103,6 +1155,25 @@ function createInventoryHandlers(bot, opts = {}) {
         const nextX = floorX + stepX;
         const nextZ = floorZ + stepZ;
         const belowNext = bot.blockAt(new Vec3(nextX, floorY - 1, nextZ));
+        // 2026-08-15：前方是水/岩浆 → 先填方块（参考 Baritone 水源处理），避免走进水里
+        const atNext = bot.blockAt(new Vec3(nextX, floorY, nextZ));
+        if (isWaterBlock(atNext)) {
+          const below = bot.blockAt(new Vec3(floorX, floorY - 1, floorZ));
+          if (below && below.type !== 0) {
+            try {
+              await bot.placeBlock(below, new Vec3(stepX, 0, stepZ));
+              await new Promise(r => setTimeout(r, 250));
+              // 填掉 bot 前方站立格的水（在 nextX,floorY,nextZ 放置）
+              try {
+                const ref = bot.blockAt(new Vec3(nextX, floorY - 1, nextZ));
+                if (ref && ref.type !== 0) {
+                  await bot.placeBlock(ref, new Vec3(0, 1, 0));
+                  await new Promise(r => setTimeout(r, 250));
+                }
+              } catch (e) { /* 填水失败不阻塞 */ }
+            } catch (e) { /* 放置失败 */ }
+          }
+        }
         if (!belowNext || belowNext.type === 0) {
           const below = bot.blockAt(new Vec3(floorX, floorY - 1, floorZ));
           if (below && below.type !== 0) {
@@ -1153,6 +1224,7 @@ function createInventoryHandlers(bot, opts = {}) {
     get_current_window,
     equip_offhand,
     consume_offhand,
+    ensure_standable,
     scaffold_to,
   };
 }
