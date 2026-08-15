@@ -464,6 +464,20 @@ class BotBuildLoop:
                 except Exception:
                     pass
 
+    def _stand_y_for_row(self, row_z: int) -> int:
+        """bot 站立高度（2026-08-15「踩在地图画上建造」，Baritone mapArt 模式）：
+
+        - 第一行（row_z == z_start）：站平台顶（68 层 white_concrete 顶面 = origin_y，
+          默认 map_art_stand_y_offset=0）；第一行没有"上一行已放方块"可踩。
+        - 后续行：站【上一行已放置的地图画方块】顶（69 层方块顶 = origin_y + 1）。
+
+        bot 脚下始终是实体方块（平台 / 已放地图画），行内沿 X 移动不会走到
+        平台外/海里——用户实测"bot 站在建造方块边上一格掉海里"由此修复。
+        """
+        if row_z > self.region.z_start:
+            return self.origin_y + 1
+        return self.origin_y + self._stand_y_offset
+
     async def _move_to_row_edge(self, row_z: int):
         """Move bot to the north edge of the given row (plan D: stand at row edge).
 
@@ -474,10 +488,9 @@ class BotBuildLoop:
         xs = self._row_x_span()
         target_x = self.origin_x + (xs[0] if xs else self.region.x_start)
         target_z = self.origin_z + row_z - 1  # stand 1 block north
-        # 2026-08-14 修复：bot 站立高度 = origin_y -1（地面层，与补给箱 y_offset 一致）。
-        # 原用 origin_y（建造层）作站立高度 → bot 与建造层方块同层/悬空 → pathfinder
-        # 无法移动（实测 bot 在 69 层悬空，前进即掉落）。max_offset 2 更宽松防最后 1 格不可达。
-        ok = await self._move_to(target_x, self.origin_y + self._stand_y_offset, target_z,
+        # 2026-08-15「踩地图画建造」：站立高度随行变化——第一行站平台顶，
+        # 后续行站上一行已放方块顶（bot 脚下始终有方块，不掉海里）。
+        ok = await self._move_to(target_x, self._stand_y_for_row(row_z), target_z,
                                  max_offset=1, label=f"row {row_z} edge",
                                  timeout_ms=20000, verify_height=True)
         if not ok:
@@ -631,8 +644,10 @@ class BotBuildLoop:
                 # 2026-08-14 修复：站立高度 = origin_y -1（地面层），避免悬空/与方块同层。
                 # ⚠️ 2026-08-15 回退：行内直走（walk_toward）实测导致 bot 掉下平台
                 # （y=58.5 vs 站立层68）→ 后续放置全失败，本轮回退为纯 _move_to。
+                # 2026-08-15「踩地图画建造」：站立高度随行变化（第一行站平台顶，
+                # 后续行站上一行已放方块顶）——bot 脚下始终有方块，不掉海里。
                 stand_z = world_z - 1
-                stand_y = self.origin_y + self._stand_y_offset
+                stand_y = self._stand_y_for_row(row_z)
                 if not await self._move_to(world_x, stand_y, stand_z,
                                            max_offset=1, label=f"({world_x},{world_z})",
                                            verify_height=True):
