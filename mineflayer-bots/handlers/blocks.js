@@ -114,6 +114,33 @@ function createBlockHandlers(bot) {
       }
 
       if (!isUsableReference(refBlock)) {
+        // 2026-08-15 修复：参考全失效可能是 chunk 未加载（传送后/跨 chunk 边界，
+        // bot 刚落地 blockAt 读到 null/空气）→ 等 1.5s 重读一次（chunk 加载中），
+        // 仍失效才走垫块兜底。
+        await new Promise(r => setTimeout(r, 1500));
+        refBlock = bot.blockAt(refPos);
+        if (!isUsableReference(refBlock)) {
+          // 重扫候选面（chunk 加载后可能已有参考）
+          let chosen = null;
+          let fallback = null;
+          for (const f of CANDIDATE_FACES) {
+            const fv = FACE_VECTORS[f];
+            const rp = pos.minus(fv);
+            const rb = bot.blockAt(rp);
+            if (!isUsableReference(rb)) continue;
+            if (!fallback) fallback = { fv, rp, rb };
+            if (!isInteractiveBlock(rb)) { chosen = { fv, rp, rb }; break; }
+          }
+          const finalRef = chosen || fallback;
+          if (finalRef) {
+            faceVec = finalRef.fv;
+            refPos = finalRef.rp;
+            refBlock = finalRef.rb;
+          }
+        }
+      }
+
+      if (!isUsableReference(refBlock)) {
         // 2026-08-15 修复「No reference block near」：目标方块周围全是空气
         // （地图画建在平台边缘/悬空处，目标正下方无地面支撑）——参考面全失效。
         // 用背包方块先垫到目标正下方（参考 = bot 脚下/附近的相邻实心方块），
