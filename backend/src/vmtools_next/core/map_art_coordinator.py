@@ -876,12 +876,16 @@ class BotBuildLoop:
                     # 客户端 blockAt 可能读旧 air → 信任服务器直接以目标下方为参考放置
                 )
                 if result.get("success"):
-                    # 2026-08-15 P3：放置后真实确认——blockUpdate 可能误判/方块被弹开/
-                    # 放错位置。读取世界验证，不对则继续重试（防"放过了实际没放上"）。
+                    # 2026-08-15 P3：放置后真实确认——但客户端 blockAt 可能读到旧 air
+                    # （Via 不推送块更新）→ air/读取失败 不算失败（信任 place_block success，
+                    # 服务器已接受放置）；只有"读到明确的其它非预期方块"才重试。
                     try:
                         v = await self.mcp.get_world_block_at(x, y, z)
                         actual = ((v.get("name") or "air").split("[")[0])
                         if actual == block_id.split("[")[0]:
+                            return True
+                        if actual in ("air", ""):
+                            # 客户端数据旧（服务器已放置但本地未同步）→ 信任成功
                             return True
                         logger.warning(
                             "[%s] Place confirmed WRONG at (%d,%d,%d): got %s want %s — retry",

@@ -222,18 +222,17 @@ function createBlockHandlers(bot) {
         return { success: false, error: 'No item in hand' };
       }
 
-      // 3. 放置方块（2026-08-15 诊断日志：定位 blockUpdate 不触发根因）
+      // 3. 放置方块（2026-08-15 P3 关键：统一用 _genericPlace 直接发送放置请求——
+      //    mineflayer 的 placeBlock 会 waitForUpdate 5s，经 Via 服务器放置成功但
+      //    客户端收不到 blockUpdate → 必超时抛错误判失败。发出即成功（信任服务器），
+      //    forceLocalBlock 本地标记供 verify/A* 读取。
       try {
         const bp = bot.entity?.position;
-        console.log(`[place-diag] target=(${x},${y},${z}) ref=${refBlock.name}@(${refPos.x},${refPos.y},${refPos.z}) face=${faceVec} held=${bot.heldItem.name}x${bot.heldItem.count} botPos=(${bp ? bp.x.toFixed(2) : '?'},${bp ? bp.y.toFixed(2) : '?'},${bp ? bp.z.toFixed(2) : '?'}) ground=${bot.entity?.onGround}`);
+        console.log(`[place-diag] target=(${x},${y},${z}) ref=${refBlock.name || '?'}@(${refPos.x},${refPos.y},${refPos.z}) face=${faceVec} held=${bot.heldItem.name}x${bot.heldItem.count} botPos=(${bp ? bp.x.toFixed(2) : '?'},${bp ? bp.y.toFixed(2) : '?'},${bp ? bp.z.toFixed(2) : '?'}) ground=${bot.entity?.onGround}`);
       } catch (e) { /* 日志失败忽略 */ }
-      await bot.placeBlock(refBlock, faceVec);
-      // 2026-08-15 P3 关键修复：服务器接受放置但客户端 blockAt 可能未更新
-      // （blockUpdate 未推送/经 Via 不同步）→ 本地强制 setBlock（信任服务器已放置），
-      // 否则后续 verify / baritone A* 读到旧 air → 误判"没放上/不可走/踩不上去"。
-      try {
-        await forceLocalBlock(pos, bot.heldItem);
-      } catch (e) { /* 本地更新失败不影响放置本身 */ }
+      await bot._genericPlace(refBlock, faceVec, { swingArm: 'right' });
+      // 本地强制同步（服务器已放置，客户端 blockAt 可能未更新）
+      try { await forceLocalBlock(pos, bot.heldItem); } catch (e) { /* 忽略 */ }
       console.log(`[place-diag] OK placed ${x},${y},${z}`);
       return { success: true, block: { x, y, z }, placed_with: bot.heldItem.name, face };
     } catch (err) {
