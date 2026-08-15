@@ -799,28 +799,119 @@ class BotBuildLoop:
         except Exception:
             pass
 
-    async def _try_teleport_home(self, reason: str = "") -> bool:
-        """传送回建造点（return 指令，默认 /ehomes dth）。
+    async def _get_player_pos(self) -> Optional[tuple[float, float]]:
+        """获取 bot 当前 X/Z 坐标（传送后验证是否回到建造区域）。
 
-        2026-08-14：寻路/蹲搭失败、bot 淹死复活到远处、溺水等场景兜底——
-        pathfinder 无法跨越远距离时直接用传送指令回到建造点。
+        优先 mcp.last_status（status 事件每 5s 推送 position），失败再调
+        get_player_state。返回 (x, z)，获取不到返回 None。
+        """
+        def _extract(st: dict) -> Optional[tuple[float, float]]:
+            if not isinstance(st, dict):
+                return None
+            pos = (st.get("position") or st.get("pos")
+                   or st.get("player") or st.get("entity") or {})
+            if isinstance(pos, dict):
+                x, z = pos.get("x"), pos.get("z")
+                if isinstance(x, (int, float)) and isinstance(z, (int, float)):
+                    return (float(x), float(z))
+            elif isinstance(pos, (list, tuple)) and len(pos) >= 3:
+                if isinstance(pos[0], (int, float)) and isinstance(pos[2], (int, float)):
+                    return (float(pos[0]), float(pos[2]))
+            return None
+        try:
+            p = _extract(getattr(self.mcp, "last_status", None) or {})
+            if p:
+                return p
+        except Exception:
+            pass
+        try:
+            r = await self.mcp.get_player_state()
+            data = r.get("data", r) if isinstance(r, dict) else {}
+            if isinstance(data, dict):
+                p = _extract(data)
+                if p:
+                    return p
+                # 部分实现 position 在 data 的 status 子对象里
+                p = _extract(data.get("status") or data.get("bot_status") or {})
+                if p:
+                    return p
+        except Exception:
+            pass
+        return None
+
+    def _near_build_area(self, x: float, z: float, margin: int = 40) -> bool:
+        """判断 (x,z) 是否在建造区域附近（以 block_matrix 中心为圆心，半径外扩 margin）。
+
+        2026-08-14：死亡/意外导致临时传送点（dth）被覆盖/失效时，传送后位置可能
+        在远处（出生点/其他地点）——据此判断是否需要固定指令兜底。
         """
         try:
-            cmd = self._supply_cfg.get("return", "/ehomes dth")
-            if reason:
-                self._activity("warn", f"{reason}，传送回建造点（{cmd}）")
-            else:
-                self._activity("info", f"传送回建造点（{cmd}）")
+            xs = [k[0] for k in self.block_matrix]
+            zs = [k[1] for k in self.block_matrix]
+            if not xs or not zs:
+                return True  # 未知区域不拦截（避免误判导致无限兜底）
+            cx = self.origin_x + (min(xs) + max(xs)) / 2.0
+            cz = self.origin_z + (min(zs) + max(zs)) / 2.0
+            radius = (max(xs) - min(xs)) / 2.0 + margin
+            return (x - cx) ** 2 + (z - cz) ** 2 <= radius ** 2
+        except Exception:
+            return True
+
+    async def _send_teleport(self, cmd: str) -> bool:
+        """发送传送指令并等待落地；失败返回 False。"""
+        try:
             r = await self.mcp.send_chat(cmd)
             if isinstance(r, dict) and r.get("success") is False:
-                self._activity("warn", f"传送回建造点失败：{r.get('error', '?')}")
+                self._activity("warn", f"传送失败：{r.get('error', '?')}")
                 return False
             await asyncio.sleep(2.5)
             self._last_pos = None  # 传送后位置未知，强制重新寻路
             return True
         except Exception as e:
-            self._activity("warn", f"传送回建造点异常：{e}")
+            self._activity("warn", f"传送异常：{e}")
             return False
+
+    async def _verify_at_build_area(self) -> bool:
+        """传送后验证 bot 是否真的回到建造区域附近。
+
+        位置获取不到时不拦截（返回 True）——避免状态推送延迟导致误判；能获取到
+        且不在建造区域 → 判定传送失败（临时点可能被死亡/意外覆盖），需固定指令兜底。
+        """
+        pos = await self._get_player_pos()
+        if pos is None:
+            self._activity("debug", "传送后无法获取 bot 位置，视为成功（不拦截）")
+            return True
+        x, z = pos
+        if self._near_build_area(x, z):
+            self._activity("debug", f"传送后位置验证通过（{x:.0f},{z:.0f}）在建造区域附近")
+            return True
+        self._activity("warn", f"传送后位置不在建造区域（{x:.0f},{z:.0f}），需固定指令兜底")
+        return False
+
+    async def _try_teleport_home(self, reason: str = "") -> bool:
+        """传送回建造点（2026-08-14 兜底链）：
+
+        1) 先用临时点 return（/ehomes dth）传送 → 等 2.5s → 验证位置在建造区域附近；
+        2) 临时点传送失败/位置不对（死亡/意外导致 dth 不在地图画区域）→
+           改用固定指令 return_fixed（/ehomes mapart 或 /tp x y z，可自定义）兜底；
+        3) 固定指令仍失败 → warn 并返回 False（调用方据此决定是否终止该 bot）。
+        """
+        # 1) 临时点传送
+        cmd = self._supply_cfg.get("return", "/ehomes dth")
+        if reason:
+            self._activity("warn", f"{reason}，传送回建造点（{cmd}）")
+        else:
+            self._activity("info", f"传送回建造点（{cmd}）")
+        if await self._send_teleport(cmd) and await self._verify_at_build_area():
+            return True
+        # 2) 固定指令兜底
+        fixed = (self._supply_cfg.get("return_fixed") or "").strip()
+        if fixed and fixed != cmd:
+            self._activity("warn", f"临时传送点不可用，改用固定指令兜底（{fixed}）")
+            if await self._send_teleport(fixed) and await self._verify_at_build_area():
+                return True
+        self._activity("warn", "传送回建造点失败（临时点+固定指令均未到建造区域）")
+        return False
 
     @staticmethod
     def _normalize_item_id(item_id: str) -> str:
@@ -927,16 +1018,22 @@ class BotBuildLoop:
 
     @staticmethod
     def _default_supply_cfg() -> dict:
-        """任务未配置时使用全局默认三个传送指令（config.py map_art_supply_*_command）。"""
+        """任务未配置时使用全局默认三个传送指令（config.py map_art_supply_*_command）。
+
+        2026-08-14：新增 return_fixed——固定返回指令（死亡/意外导致临时点 dth
+        不在地图画区域时的兜底传送，如 /ehomes mapart 或 /tp x y z）。
+        """
         try:
             mf = get_config().mineflayer
             return {
                 "go": getattr(mf, "map_art_supply_go_command", "/ehomes mdssj") or "/ehomes mdssj",
                 "save": getattr(mf, "map_art_supply_save_command", "/esethomes dth") or "/esethomes dth",
                 "return": getattr(mf, "map_art_supply_return_command", "/ehomes dth") or "/ehomes dth",
+                "return_fixed": getattr(mf, "map_art_supply_fixed_return_command", "/ehomes mapart") or "/ehomes mapart",
             }
         except Exception:
-            return {"go": "/ehomes mdssj", "save": "/esethomes dth", "return": "/ehomes dth"}
+            return {"go": "/ehomes mdssj", "save": "/esethomes dth", "return": "/ehomes dth",
+                    "return_fixed": "/ehomes mapart"}
 
     @staticmethod
     def _default_food_cfg() -> dict:
@@ -1624,7 +1721,7 @@ class MapArtCoordinator:
                     try:
                         d = _json.loads(task.supply_config)
                         if isinstance(d, dict):
-                            self._supply_config = {k: d.get(k, "") for k in ("go", "save", "return")}
+                            self._supply_config = {k: d.get(k, "") for k in ("go", "save", "return", "return_fixed")}
                     except Exception:
                         pass
                 # 任务级潜影盒

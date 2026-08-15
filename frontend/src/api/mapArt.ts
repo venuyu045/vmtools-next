@@ -55,7 +55,7 @@ export const mapArtApi = {
   getSupplyConfig(taskId: string) {
     return client.get(`/build/map-art/tasks/${taskId}/supply-config`)
   },
-  saveSupplyConfig(taskId: string, cfg: { go: string; save: string; return: string }) {
+  saveSupplyConfig(taskId: string, cfg: { go: string; save: string; return: string; return_fixed?: string }) {
     return client.put(`/build/map-art/tasks/${taskId}/supply-config`, cfg)
   },
   /** 2026-08-14 模块A：食物补货配置（猪排仓库指令 + 进食阈值） */

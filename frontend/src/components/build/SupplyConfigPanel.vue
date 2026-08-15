@@ -1,6 +1,6 @@
 <template>
   <div class="supply-config-panel">
-    <!-- 传送指令设置（需求7：三个指令均可自定义） -->
+    <!-- 传送指令设置（需求7：三个指令均可自定义 + 2026-08-14 固定返回兜底） -->
     <el-card class="panel" header="补货传送指令（可自定义）">
       <el-form label-width="130px" size="small" class="cfg-form">
         <el-form-item label="前往补给点">
@@ -12,9 +12,13 @@
         <el-form-item label="返回工作位置">
           <el-input v-model="cfg.returnCmd" placeholder="/ehomes dth" />
         </el-form-item>
+        <el-form-item label="固定返回（兜底）">
+          <el-input v-model="cfg.returnFixed" placeholder="/ehomes mapart" />
+          <span class="cfg-hint">死亡/意外导致临时点（dth）不在地图画区域时，用此固定方式传回地图画（如 /ehomes mapart 或 /tp x y z）</span>
+        </el-form-item>
         <el-form-item>
           <el-button type="primary" size="small" :loading="savingCfg" @click="saveCfg">保存指令</el-button>
-          <span class="cfg-hint">bot 物品用完补货时：先执行「暂存当前位置」→「前往补给点」取货 →「返回工作位置」</span>
+          <span class="cfg-hint">bot 物品用完补货时：先执行「暂存当前位置」→「前往补给点」取货 →「返回工作位置」；回建造点失败自动用「固定返回」兜底</span>
         </el-form-item>
       </el-form>
     </el-card>
@@ -153,7 +157,7 @@ const loading = ref(false)
 const savingCfg = ref(false)
 const savingBoxes = ref(false)
 const items = ref<SupplyItem[]>([])
-const cfg = reactive({ go: '/ehomes mdssj', save: '/esethomes dth', returnCmd: '/ehomes dth' })
+const cfg = reactive({ go: '/ehomes mdssj', save: '/esethomes dth', returnCmd: '/ehomes dth', returnFixed: '/ehomes mapart' })
 // 2026-08-14：补货潜影盒配置默认折叠（配置一次后基本不用动）
 const boxesCollapsed = ref(true)
 
@@ -259,6 +263,7 @@ async function load() {
     cfg.go = c.go || '/ehomes mdssj'
     cfg.save = c.save || '/esethomes dth'
     cfg.returnCmd = c.return || c.return_ || '/ehomes dth'
+    cfg.returnFixed = c.return_fixed || '/ehomes mapart'
     items.value = (boxResp.data?.items || []).map((it: any) => ({
       item_id: it.item_id,
       display_name: it.display_name || '',
@@ -314,6 +319,7 @@ async function saveCfg() {
       go: cfg.go.trim(),
       save: cfg.save.trim(),
       return: cfg.returnCmd.trim(),
+      return_fixed: cfg.returnFixed.trim(),
     })
     ElMessage.success('传送指令已保存')
   } catch (e) {

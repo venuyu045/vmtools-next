@@ -165,11 +165,13 @@ class BotManageRequest(BaseModel):
 
 
 class SupplyConfigRequest(BaseModel):
-    """补货传送指令（2026-08-14）：三个指令均可自定义。"""
+    """补货传送指令（2026-08-14）：三个指令均可自定义 + 固定返回兜底指令。"""
     go: str = ""       # 前往补给点指令（如 "/ehomes mdssj"）
     save: str = ""     # 暂存当前位置指令（如 "/esethomes dth"）
     # 前端 JSON 字段名为 "return"（Python 关键字不能做字段名），用 alias 映射到 return_
     return_: str = Field(default="", alias="return")
+    # 2026-08-14：固定返回指令（死亡/意外导致临时点不在地图画区域时的兜底传送）
+    return_fixed: str = ""
 
 
 class SupplyBoxCoord(BaseModel):
@@ -229,9 +231,11 @@ def _default_supply_config() -> dict:
             "go": getattr(mf, "map_art_supply_go_command", "/ehomes mdssj") or "/ehomes mdssj",
             "save": getattr(mf, "map_art_supply_save_command", "/esethomes dth") or "/esethomes dth",
             "return": getattr(mf, "map_art_supply_return_command", "/ehomes dth") or "/ehomes dth",
+            "return_fixed": getattr(mf, "map_art_supply_fixed_return_command", "/ehomes mapart") or "/ehomes mapart",
         }
     except Exception:
-        return {"go": "/ehomes mdssj", "save": "/esethomes dth", "return": "/ehomes dth"}
+        return {"go": "/ehomes mdssj", "save": "/esethomes dth", "return": "/ehomes dth",
+                "return_fixed": "/ehomes mapart"}
 
 
 def _parse_supply_config(raw: Optional[str]) -> dict:
@@ -247,6 +251,7 @@ def _parse_supply_config(raw: Optional[str]) -> dict:
             "go": str(data.get("go") or default["go"]),
             "save": str(data.get("save") or default["save"]),
             "return": str(data.get("return") or default["return"]),
+            "return_fixed": str(data.get("return_fixed") or default["return_fixed"]),
         }
     except Exception:
         return default
@@ -796,6 +801,8 @@ def put_supply_config(task_id: str, data: SupplyConfigRequest, db: Session = Dep
         "go": data.go.strip() or _default["go"],
         "save": data.save.strip() or _default["save"],
         "return": data.return_.strip() or _default["return"],
+        # 2026-08-14：固定返回兜底指令（死亡/意外导致临时点不在地图画区域时用）
+        "return_fixed": data.return_fixed.strip() or _default["return_fixed"],
     }
     task.supply_config = json.dumps(cfg, ensure_ascii=False)
     db.commit()

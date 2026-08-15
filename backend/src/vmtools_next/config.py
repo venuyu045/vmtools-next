@@ -139,6 +139,9 @@ class MineflayerConfig(BaseModel):
     map_art_supply_go_command: str = "/ehomes mdssj"
     map_art_supply_save_command: str = "/esethomes dth"
     map_art_supply_return_command: str = "/ehomes dth"
+    # 固定返回指令（2026-08-14：兜底）——死亡/意外导致临时传送点（dth）不在地图画
+    # 区域时，用此固定方式传回地图画（如 /ehomes mapart 或 /tp x y z），可自定义。
+    map_art_supply_fixed_return_command: str = "/ehomes mapart"
     # 分区补给箱建议位置的 y 偏移（相对建造层 origin_y；默认 -1 = 地面层，P2-8 防悬空）
     map_art_supply_box_y_offset: int = -1
     # ── 食物补货（2026-08-14 模块A）──
