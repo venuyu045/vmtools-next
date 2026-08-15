@@ -317,34 +317,42 @@ class BotBuildLoop:
         await self._refresh_hotbar_map()
 
         # 2026-08-14：保存建造点 home（/esethome dth），供寻路失败/淹死复活后
-        # 用 /ehomes dth 传送回来。若 bot 当前不在建造点（如刚登录），此操作
-        # 保存的是当前点——首次补货后 save 指令会覆盖为正确建造点。
-        # ⚠️ 2026-08-15 决定性修复：dth 必须保存【确认到位】的区域北缘站立点
-        # （z=origin_z-1, y=origin_y-1=68），而不是 bot 当前任意位置——否则：
-        #   ① bot 在主城启动 → 把主城存成 dth → 后续 /ehomes dth 全回主城；
-        #   ② bot 在平台下低处（y=58）启动 → 把低处存成 dth → 传送回仍在低处。
-        # 流程：先寻路（+蹲搭）走到北缘站立点并 verify_height 确认 → 再保存 dth。
+        # 用 /ehomes dth 传送回来。
+        # ⚠️ 2026-08-15 决定性修复：dth 必须保存【确认到位】的平台站立点（y=68）。
+        # 启动定位优先级（平台下是水、bot 可能掉水里爬不上平台）：
+        #   1) return_fixed（用户配置的可靠家，如 /ehomes mapart 在平台上）→ 传送 → 严格验证
+        #   2) 无 return_fixed → 寻路（+蹲搭）走回北缘站立点 → verify_height 确认
+        # 到位后才保存 dth（否则 dth=主城/水里等错误位置，传送链全断）。
         try:
             gx0 = self.origin_x + self.region.x_start
             gz0 = self.origin_z + self.region.z_start - 1
-            gy0 = self.origin_y - 1  # 站立层（地面）
-            self._activity("info", f"定位到建造点北缘（{gx0},{gy0},{gz0}）后保存 dth")
-            moved0 = await self._move_to(gx0, gy0, gz0, max_offset=2,
-                                         label="initial position",
-                                         timeout_ms=30000,
-                                         allow_scaffold=True,  # 平台边缘/低处可蹲搭爬升
-                                         verify_height=True)
-            if not moved0:
-                # 走不过去（悬崖/不可达）→ 尝试传送回建造区再定位
-                self._activity("warn", "无法走到建造点北缘，尝试传送后重新定位")
-                await self._try_teleport_home("启动定位失败")
+            gy0 = self.origin_y - 1  # 站立层（平台顶 y=68）
+            fixed0 = (self._supply_cfg.get("return_fixed") or "/ehomes mapart").strip()
+            placed0 = False
+            if fixed0:
+                self._activity("info", f"启动定位：传送回固定建造点（{fixed0}）")
+                if await self._send_teleport(fixed0):
+                    placed0 = await self._verify_at_build_area()
+            if not placed0:
+                self._activity("info", f"定位到建造点北缘（{gx0},{gy0},{gz0}）")
                 moved0 = await self._move_to(gx0, gy0, gz0, max_offset=2,
-                                             label="initial position retry",
+                                             label="initial position",
                                              timeout_ms=30000,
-                                             allow_scaffold=True,
+                                             allow_scaffold=True,  # 平台边缘/低处可蹲搭爬升
                                              verify_height=True)
-            if not moved0:
-                self._activity("warn", "仍无法定位到建造点北缘，dth 将保存当前位置（可能不准）")
+                if not moved0:
+                    self._activity("warn", "无法走到建造点北缘，尝试传送 dth 后重新定位")
+                    await self._try_teleport_home("启动定位失败")
+                    moved0 = await self._move_to(gx0, gy0, gz0, max_offset=2,
+                                                 label="initial position retry",
+                                                 timeout_ms=30000,
+                                                 allow_scaffold=True,
+                                                 verify_height=True)
+                placed0 = moved0
+            if not placed0:
+                self._activity("warn", "仍无法定位到建造点，dth 将保存当前位置（可能不准）")
+            else:
+                self._activity("info", "已确认到位，保存 dth")
         except Exception as _e:
             logger.warning("[%s] Initial positioning failed: %s", self.bot_id, _e)
         try:
@@ -1019,7 +1027,9 @@ class BotBuildLoop:
             if isinstance(r, dict) and r.get("success") is False:
                 self._activity("warn", f"传送失败：{r.get('error', '?')}")
                 return False
-            await asyncio.sleep(2.5)
+            # 2026-08-15 修复：等 3.5s 落地稳定（原 2.5s 在悬空传送点/平台边缘时
+            # bot 未落地，验证瞬间通过但下一秒掉下平台）
+            await asyncio.sleep(3.5)
             self._last_pos = None  # 传送后位置未知，强制重新寻路
             return True
         except Exception as e:
@@ -1027,11 +1037,15 @@ class BotBuildLoop:
             return False
 
     async def _verify_at_build_area(self, retries: int = 2) -> bool:
-        """传送后验证 bot 是否真的回到建造区域附近（2026-08-15 第二批增强）。
+        """传送后验证 bot 是否真的回到建造区域附近（2026-08-15 增强）。
 
         - 位置获取失败时等 1.5s 重试（最多 retries 次），全部失败才视为"未知不拦截"——
           避免传送失败被静默掩盖（原实现位置 None 直接放行，兜底链失效）。
-        - 带 y 校验（_near_build_area 的 y 参数）：x/z 正确但高度错误的落点判定为不在区域。
+        - 2026-08-15 决定性修复（y 严格校验 + 复查）：
+          · 站立层 y = origin_y-1（68）；bot 站平台顶脚部 y≈68.0±0.5。
+          · y 偏差 ≥1.0 判失败（悬空 y=69、掉水里 y=58 都不再"验证通过"——
+            此前 y=69 在 3 格容忍内被放行，bot 下一秒掉进平台下水面）。
+          · 验证通过后再等 1.5s 复查一次位置（确认没掉下去/没漂走）。
         """
         for attempt in range(retries + 1):
             if attempt > 0:
@@ -1045,7 +1059,29 @@ class BotBuildLoop:
                 self._activity("debug", "传送后多次尝试仍无法获取 bot 位置，视为成功（不拦截）")
                 return True
             x, z, y = p
-            if self._near_build_area(x, z, y):
+            expected_y = self.origin_y - 1  # 站立层（平台顶 y=68）
+            # 2026-08-15 决定性修复：y 严格校验（<1.0）——bot 站平台顶脚部 y≈68.0±0.5；
+            # 悬空 y=69 / 掉水里 y=58 都判失败（此前 3 格容忍放行 y=69，bot 下一秒掉水里）
+            if abs(float(y) - expected_y) >= 1.0:
+                self._activity("warn",
+                               f"传送后高度不符（站立层={expected_y}，实际y={y:.1f}）——"
+                               f"判定未到位（可能悬空/掉水），走兜底")
+                return False
+            if self._near_build_area(x, z):  # x/z 判断（y 已单独严格校验）
+                # 复查：等 1.5s 再确认位置没变（防悬空瞬间验证通过后掉下去）
+                await asyncio.sleep(1.5)
+                p2 = await self._get_player_pos_full()
+                if p2 is None:
+                    self._activity("debug",
+                                   f"传送后位置验证通过（{x:.0f},{z:.0f},y={y:.0f}），复查位置获取失败视为通过")
+                    return True
+                x2, z2, y2 = p2
+                if (abs(x2 - x) > 3.0 or abs(z2 - z) > 3.0
+                        or abs(float(y2) - expected_y) >= 1.0):
+                    self._activity("warn",
+                                   f"传送后位置复查异常（初始{x:.0f},{z:.0f},y={y:.0f}→复查"
+                                   f"{x2:.0f},{z2:.0f},y={y2:.0f}）——bot 未稳定，判定未到位")
+                    return False
                 self._activity("debug",
                                f"传送后位置验证通过（{x:.0f},{z:.0f},y={y:.0f}）在建造区域附近")
                 return True
@@ -1072,8 +1108,8 @@ class BotBuildLoop:
             self._activity("info", f"传送回建造点（{cmd}）")
         if await self._send_teleport(cmd) and await self._verify_at_build_area():
             return True
-        # 2) 固定指令兜底
-        fixed = (self._supply_cfg.get("return_fixed") or "").strip()
+        # 2) 固定指令兜底（2026-08-15：DB 未配置 return_fixed 时回退默认 /ehomes mapart）
+        fixed = (self._supply_cfg.get("return_fixed") or "/ehomes mapart").strip()
         if fixed and fixed != cmd:
             self._activity("warn", f"临时传送点不可用，改用固定指令兜底（{fixed}）")
             if await self._send_teleport(fixed) and await self._verify_at_build_area():
