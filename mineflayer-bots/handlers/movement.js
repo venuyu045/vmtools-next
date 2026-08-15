@@ -11,6 +11,7 @@
 
 const { Vec3 } = require('vec3');
 const { GoalNear, GoalBlock, GoalNearXZ } = require('mineflayer-pathfinder').goals;
+const { pathTo } = require('../baritone-path/pathfinder');
 
 /**
  * @param {import('mineflayer').Bot} bot
@@ -321,7 +322,31 @@ async function walk_toward({ x, z, timeout_ms = 8000 } = {}) {
   });
 }
 
-return { move_to, walk_toward, look_at, get_player_state, cancel_pathing, is_player_nearby, set_control_state, look, jump, sneak };
+  // ── baritone 移植寻路（2026-08-15：A* + Moves 模型 + 控制键执行）──
+  // 替代 mineflayer-pathfinder：支持爬升(ASCEND)/跳跃(PARKOUR)/下降(DESCEND)，
+  // 解决用户实测「bot 不会跳、蹲搭寻路有问题」。
+  async function baritone_move({ x, y, z, max_offset = 1, timeout_ms = 60000 } = {}) {
+    try {
+      const r = await pathTo(bot, x, y, z, {
+        maxOffset: max_offset,
+        timeoutMs: timeout_ms,
+        onLog: (m) => console.log(`[baritone] ${m}`),
+      });
+      if (r.success) {
+        return { success: true, reason: r.reason || 'done', position: r.position };
+      }
+      return {
+        success: false,
+        reason: r.reason || 'baritone_failed',
+        position: r.position,
+        path: (r.path || []).map(p => p.name),
+      };
+    } catch (err) {
+      return { success: false, reason: 'baritone_error:' + err.message };
+    }
+  }
+
+  return { move_to, walk_toward, look_at, get_player_state, cancel_pathing, is_player_nearby, set_control_state, look, jump, sneak, baritone_move };
 }
 
 module.exports = { createMovementHandlers };
