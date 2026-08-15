@@ -86,9 +86,10 @@ function createBlockHandlers(bot) {
   // 南面/行内/上方兜底）：
   //   SOUTH（ref=北面 z-1）→ DOWN（ref=下方）→ NORTH（ref=南面）
   //   → WEST/EAST（ref=行内 x±1）→ UP（ref=上方）
-  async function place_block({ x, y, z, face = 'UP' } = {}) {
+  async function place_block({ x, y, z, face = 'UP', trust_down = false } = {}) {
     try {
       const pos = new Vec3(x, y, z);
+      const options = { trust_down };
       let faceVec = FACE_VECTORS[face] || FACE_VECTORS.UP;
       let refPos = pos.minus(faceVec);
       let refBlock = bot.blockAt(refPos);
@@ -160,21 +161,59 @@ function createBlockHandlers(bot) {
       }
 
       if (!isUsableReference(refBlock)) {
-        // 2026-08-15 修复「No reference block near」：目标方块周围全是空气
-        // （地图画建在平台边缘/悬空处，目标正下方无地面支撑）——参考面全失效。
-        // 用背包方块先垫到目标正下方（参考 = bot 脚下/附近的相邻实心方块），
-        // 再以垫块为参考放置目标（对齐 litematica-printer PLACE_IN_AIR + Baritone
-        // 自动搭支撑的简化实现）。
-        const padded = await padUnderTarget(pos);
-        if (!padded) {
-          return { success: false, error: `No reference block near ${pos}（自动垫块失败）` };
-        }
-        // 垫块成功后：以垫块为参考（UP 面）放置目标
-        refPos = new Vec3(pos.x, pos.y - 1, pos.z);
-        refBlock = bot.blockAt(refPos);
-        faceVec = FACE_VECTORS.UP;
-        if (!isUsableReference(refBlock)) {
-          return { success: false, error: `垫块后仍无参考（${pos}）` };
+        // 2026-08-15 P3 关键：地图画场景 trust_down=true —— 目标正下方是平台
+        // （服务器端真实存在），但客户端 blockAt 可能读到旧 air（重连后 Via chunk
+        // 数据过期）→ 参考检测误判失效。信任服务器：直接以目标下方为参考发送
+        // 放置请求（mineflayer placeBlock 用 refBlock.position，服务器端决定成败）。
+        if (options.trust_down) {
+          refPos = new Vec3(pos.x, pos.y - 1, pos.z);
+          const rb = bot.blockAt(refPos);
+          // 即使 rb 是 air 也构造参考（仅用 position），服务器端下方有平台即成功
+          refBlock = rb || { position: refPos };
+          faceVec = FACE_VECTORS.UP;
+          if (rb && isUsableReference(rb)) {
+            // 下方确实有参考（客户端读到）→ 直接放置
+            // （继续走下方放置逻辑）
+          }
+          // 客户端读到 air：仍尝试放置（服务器端决定）；失败走垫块兜底
+          try {
+            if (bot.heldItem) {
+              // 2026-08-15 P3：用 _genericPlace 直接发送放置请求（不等待 blockUpdate——
+              // 经 Via 服务器放置成功但客户端可能收不到块更新，waitForUpdate 5s 必超时误判失败）
+              await bot._genericPlace(refBlock, faceVec, { swingArm: 'right' });
+              await forceLocalBlock(pos, bot.heldItem);
+              console.log(`[place-diag] trust_down OK placed ${x},${y},${z}`);
+              return { success: true, block: { x, y, z }, placed_with: bot.heldItem.name, face: 'DOWN' };
+            }
+          } catch (e) { /* trust_down 放置失败 → 走垫块 */ }
+          // 信任失败（服务器端下方确无方块）→ 真实垫块兜底
+          const padded = await padUnderTarget(pos);
+          if (!padded) {
+            return { success: false, error: `No reference block near ${pos}（自动垫块失败）` };
+          }
+          refPos = new Vec3(pos.x, pos.y - 1, pos.z);
+          refBlock = bot.blockAt(refPos);
+          faceVec = FACE_VECTORS.UP;
+          if (!isUsableReference(refBlock)) {
+            return { success: false, error: `垫块后仍无参考（${pos}）` };
+          }
+        } else {
+          // 2026-08-15 修复「No reference block near」：目标方块周围全是空气
+          // （地图画建在平台边缘/悬空处，目标正下方无地面支撑）——参考面全失效。
+          // 用背包方块先垫到目标正下方（参考 = bot 脚下/附近的相邻实心方块），
+          // 再以垫块为参考放置目标（对齐 litematica-printer PLACE_IN_AIR + Baritone
+          // 自动搭支撑的简化实现）。
+          const padded = await padUnderTarget(pos);
+          if (!padded) {
+            return { success: false, error: `No reference block near ${pos}（自动垫块失败）` };
+          }
+          // 垫块成功后：以垫块为参考（UP 面）放置目标
+          refPos = new Vec3(pos.x, pos.y - 1, pos.z);
+          refBlock = bot.blockAt(refPos);
+          faceVec = FACE_VECTORS.UP;
+          if (!isUsableReference(refBlock)) {
+            return { success: false, error: `垫块后仍无参考（${pos}）` };
+          }
         }
       }
 
@@ -248,7 +287,15 @@ function createBlockHandlers(bot) {
           await bot.placeBlock(rb, faceVec);
           await new Promise(r => setTimeout(r, 400));
           const placed = bot.blockAt(below);
-          if (placed && placed.type !== 0) return true;
+          if (placed && placed.type !== 0) {
+            // 2026-08-15 P3：垫块成功后本地同步（客户端 blockAt 可能未更新，
+            // 否则垫块后参考检测仍读 air → 放置失败）
+            try {
+              const held = bot.heldItem;
+              if (held) await forceLocalBlock(below, held);
+            } catch (e) { /* 忽略 */ }
+            return true;
+          }
         } catch (e) { /* 尝试下一个候选 */ }
       }
       return false;

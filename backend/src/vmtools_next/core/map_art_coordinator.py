@@ -872,6 +872,8 @@ class BotBuildLoop:
                     face="AUTO",
                     hand="MAIN_HAND",
                     look_at_block=False,
+                    trust_down=True,  # 2026-08-15 P3：地图画目标下方是平台，
+                    # 客户端 blockAt 可能读旧 air → 信任服务器直接以目标下方为参考放置
                 )
                 if result.get("success"):
                     # 2026-08-15 P3：放置后真实确认——blockUpdate 可能误判/方块被弹开/

@@ -319,9 +319,11 @@ class MineflayerBridgeClient(AbstractBotAgent):
     # ── 方块操作 ──
 
     async def place_block(self, x: int, y: int, z: int, face: str = "UP",
-                          hand: str = "MAIN_HAND", look_at_block: bool = True) -> dict:
+                          hand: str = "MAIN_HAND", look_at_block: bool = True,
+                          trust_down: bool = False) -> dict:
         return await self._send_request(METHOD_PLACE_BLOCK, {
             "x": x, "y": y, "z": z, "face": face,
+            "trust_down": trust_down,
         }, timeout=DEFAULT_CMD_TIMEOUT)
 
     async def dig_block(self, x: int, y: int, z: int) -> dict:
