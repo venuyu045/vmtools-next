@@ -319,17 +319,34 @@ class BotBuildLoop:
         # 2026-08-14：保存建造点 home（/esethome dth），供寻路失败/淹死复活后
         # 用 /ehomes dth 传送回来。若 bot 当前不在建造点（如刚登录），此操作
         # 保存的是当前点——首次补货后 save 指令会覆盖为正确建造点。
-        # ⚠️ 2026-08-15 修复：必须在确认 bot 在建造区域后才保存 dth——否则 bot
-        # 从主城启动时会把主城存成 dth，后续所有 /ehomes dth 都回主城，传送链全断。
+        # ⚠️ 2026-08-15 决定性修复：dth 必须保存【确认到位】的区域北缘站立点
+        # （z=origin_z-1, y=origin_y-1=68），而不是 bot 当前任意位置——否则：
+        #   ① bot 在主城启动 → 把主城存成 dth → 后续 /ehomes dth 全回主城；
+        #   ② bot 在平台下低处（y=58）启动 → 把低处存成 dth → 传送回仍在低处。
+        # 流程：先寻路（+蹲搭）走到北缘站立点并 verify_height 确认 → 再保存 dth。
         try:
-            _p0 = await self._get_player_pos_full()
-            if _p0 and not self._near_build_area(_p0[0], _p0[1], _p0[2]):
-                self._activity("warn",
-                               f"bot 当前不在建造区域（{_p0[0]:.0f},{_p0[1]:.0f},y={_p0[2]:.0f}），先传送回建造点再保存 home")
-                await self._try_teleport_home("启动时不在建造区域")
-                await asyncio.sleep(1.0)
-        except Exception:
-            pass
+            gx0 = self.origin_x + self.region.x_start
+            gz0 = self.origin_z + self.region.z_start - 1
+            gy0 = self.origin_y - 1  # 站立层（地面）
+            self._activity("info", f"定位到建造点北缘（{gx0},{gy0},{gz0}）后保存 dth")
+            moved0 = await self._move_to(gx0, gy0, gz0, max_offset=2,
+                                         label="initial position",
+                                         timeout_ms=30000,
+                                         allow_scaffold=True,  # 平台边缘/低处可蹲搭爬升
+                                         verify_height=True)
+            if not moved0:
+                # 走不过去（悬崖/不可达）→ 尝试传送回建造区再定位
+                self._activity("warn", "无法走到建造点北缘，尝试传送后重新定位")
+                await self._try_teleport_home("启动定位失败")
+                moved0 = await self._move_to(gx0, gy0, gz0, max_offset=2,
+                                             label="initial position retry",
+                                             timeout_ms=30000,
+                                             allow_scaffold=True,
+                                             verify_height=True)
+            if not moved0:
+                self._activity("warn", "仍无法定位到建造点北缘，dth 将保存当前位置（可能不准）")
+        except Exception as _e:
+            logger.warning("[%s] Initial positioning failed: %s", self.bot_id, _e)
         try:
             r = await self.mcp.send_chat(self._supply_cfg.get("save", "/esethomes dth"))
             if isinstance(r, dict) and r.get("success") is False:
