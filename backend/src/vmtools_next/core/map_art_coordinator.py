@@ -464,7 +464,7 @@ class BotBuildLoop:
         # 原用 origin_y（建造层）作站立高度 → bot 与建造层方块同层/悬空 → pathfinder
         # 无法移动（实测 bot 在 69 层悬空，前进即掉落）。max_offset 2 更宽松防最后 1 格不可达。
         ok = await self._move_to(target_x, self.origin_y + self._stand_y_offset, target_z,
-                                 max_offset=2, label=f"row {row_z} edge",
+                                 max_offset=1, label=f"row {row_z} edge",
                                  timeout_ms=20000, verify_height=True)
         if not ok:
             self.progress.state = "offline"
@@ -513,13 +513,19 @@ class BotBuildLoop:
                 )
                 if result.get("success"):
                     if verify_height:
-                        # 2026-08-15 修复：校验 bot 实际高度（GoalNearXZ 不检查 y）
+                        # 2026-08-15 修复（第二次收紧）：校验 bot 实际高度与目标站立层。
+                        #   原阈值 >4.0 太宽松：bot 在 69 层高台（mapart 侧）vs 目标 68 层
+                        #   偏差 1 也被放行 → bot 在错误层"到位"→ 放置时参考/距离不对全失败
+                        #   （实测 move_to 返回 success 但 bot 停 69 层 5396.35，放置 5398
+                        #   视线被挡/距离边缘 → blockUpdate 不触发）。收紧到 >0.6：
+                        #   bot 脚部 y 必须贴近目标站立层（68.0±0.6），否则视为未到位，
+                        #   由 _move_to 重试/传送兜底继续逼近（13:30 实测 bot 能寻路到 68 层）。
                         try:
                             st = await self.mcp.get_player_state()
                             d2 = st.get("data", st) if isinstance(st, dict) else {}
                             loc = d2.get("location") or {}
                             by = loc.get("y")
-                            if isinstance(by, (int, float)) and abs(float(by) - y) > 4.0:
+                            if isinstance(by, (int, float)) and abs(float(by) - y) > 0.6:
                                 self._activity(
                                     "warn",
                                     f"移动到位但高度不符（目标y={y}，实际y={by:.1f}）——"
@@ -614,13 +620,13 @@ class BotBuildLoop:
                 stand_z = world_z - 1
                 stand_y = self.origin_y + self._stand_y_offset
                 if not await self._move_to(world_x, stand_y, stand_z,
-                                           max_offset=2, label=f"({world_x},{world_z})",
+                                           max_offset=1, label=f"({world_x},{world_z})",
                                            verify_height=True):
                     # 2026-08-14：放置点移动失败（可能淹死复活到远处/掉坑）→
                     # 传送回建造点重试一次，避免直接区域失败
                     if await self._try_teleport_home("放置点移动失败"):
                         if not await self._move_to(world_x, stand_y, stand_z,
-                                                   max_offset=2, label=f"({world_x},{world_z})",
+                                                   max_offset=1, label=f"({world_x},{world_z})",
                                                    verify_height=True):
                             self.progress.state = "offline"
                             return
