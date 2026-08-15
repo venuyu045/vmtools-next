@@ -17,7 +17,9 @@ import websockets
 from vmtools_next.adapters.abstract.bot_agent import AbstractBotAgent
 
 from .protocol import (
-    METHOD_MOVE_TO,
+METHOD_MOVE_TO,
+    # 2026-08-15 baritone 移植寻路
+    METHOD_BARITONE_MOVE,
     METHOD_LOOK_AT,
     METHOD_GET_PLAYER_STATE,
     METHOD_CANCEL_PATHING,
