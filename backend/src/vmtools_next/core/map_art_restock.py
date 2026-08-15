@@ -186,8 +186,11 @@ class ShulkerRestocker:
         self._activity("debug",
                        f"寻路到 ({bx},{by},{bz}) {'成功' if moved else '失败'}，耗时 {time.monotonic() - t0:.1f}s")
         if not moved:
-            return 0
-
+            # 2026-08-15 P3：寻路失败（客户端 chunk 数据旧/baritone no_path）≠箱子不可达——
+            # bot 传送到仓库后可能已在箱子 reach 内，直接尝试开箱（open_container_at
+            # 需要靠近才会成功；若太远会失败并返回 0，不影响正确性）。
+            self._activity("debug",
+                           f"寻路到 ({bx},{by},{bz}) 失败，尝试直接开箱（bot 可能在附近）")
         container_id = await self._open_box(bx, by, bz)
         if not container_id:
             return 0
