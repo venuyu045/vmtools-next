@@ -37,9 +37,15 @@ async function pathTo(bot, goalX, goalY, goalZ, opts = {}) {
 
   const path = findPath(world, start, goalX, goalY, goalZ, maxOffset, maxNodes);
   if (!path || path.length === 0) {
-    // 已在目标附近（A* 起终点即目标）
+    // 已在目标附近（A* 起终点即目标）——2026-08-15 P5 严格化：
+    //   maxOffset===1 → bot 脚格必须与目标格一致（水平）且 y 偏差≤1；
+    //   maxOffset>1 → 允许 ±maxOffset 格。
     const f = botFoot(bot);
-    if (Math.hypot(f.px - goalX, f.pz - goalZ) <= maxOffset + 0.5) {
+    const yDiff = Math.abs(f.py - goalY);
+    const hOk = maxOffset === 1
+      ? (f.x === goalX && f.z === goalZ)
+      : (Math.abs(f.x - goalX) <= maxOffset && Math.abs(f.z - goalZ) <= maxOffset);
+    if (hOk && yDiff <= 1) {
       return { success: true, reason: 'already_there', path: [], position: f };
     }
     return { success: false, reason: 'no_path', position: start };

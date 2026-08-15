@@ -84,9 +84,15 @@ function findPath(world, start, goalX, goalY, goalZ, maxOffset = 1, maxNodes = 2
   while (!open.isEmpty() && nodes < maxNodes) {
     const cur = open.pop();
     nodes++;
-    // 目标判定：水平距离 ≤ maxOffset 且 y 偏差 ≤ 3（允许垂直落点）
+    // 目标判定（2026-08-15 P5 修正）：
+    //   maxOffset===1（精确站立）→ 必须与目标格一致（水平），y 偏差 ≤1——
+    //   原 `|x-goalX|<=1` 让起点(-3212)距目标(-3211)差1格也被判"已到"，
+    //   导致爬升目标(-3211,70,5398)被跳过（真机 BT_MOVE2 already_there 误判）。
+    //   maxOffset>1（宽松定位，如初始/走回）→ 保持容差。
     const dxg = Math.abs(cur.x - goalX), dzg = Math.abs(cur.z - goalZ);
-    if (dxg <= maxOffset && dzg <= maxOffset && Math.abs(cur.y - goalY) <= 3) {
+    const yTol = maxOffset === 1 ? 1 : 3;
+    const hTol = maxOffset === 1 ? 0 : maxOffset;
+    if (dxg <= hTol && dzg <= hTol && Math.abs(cur.y - goalY) <= yTol) {
       return reconstruct(cur);
     }
     for (const m of moves) {
