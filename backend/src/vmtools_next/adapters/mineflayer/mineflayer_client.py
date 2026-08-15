@@ -376,7 +376,6 @@ class MineflayerBridgeClient(AbstractBotAgent):
         }, timeout=DEFAULT_CMD_TIMEOUT)
 
     # ── 移动 ──
-
     async def move_to(self, x: int, y: int, z: int,
                    max_offset: int = 3, timeout_ms: int = 15000,
                    ignore_y: bool = False) -> dict:
@@ -386,6 +385,18 @@ class MineflayerBridgeClient(AbstractBotAgent):
             "timeout_ms": timeout_ms,
             "ignore_y": ignore_y,
         }, timeout=timeout_ms / 1000 + 5.0)
+
+    async def baritone_move(self, x: int, y: int, z: int,
+                            max_offset: int = 1, timeout_ms: int = 60000) -> dict:
+        """baritone 移植寻路（2026-08-15）：A* + Moves 模型，支持爬升/跳跃/下降。
+        返回 {success, reason, position, path?}；失败 reason 含具体原因。
+        """
+        return await self._send_request(METHOD_BARITONE_MOVE, {
+            "x": x, "y": y, "z": z,
+            "max_offset": max_offset,
+            "timeout_ms": timeout_ms,
+        }, timeout=timeout_ms / 1000 + 5.0)
+
     async def walk_toward(self, x: int, z: int, timeout_ms: int = 8000) -> dict:
         """行内小步直走（2026-08-15 第三批）：控制键直走到 (x, z)（不移动 y）。
 

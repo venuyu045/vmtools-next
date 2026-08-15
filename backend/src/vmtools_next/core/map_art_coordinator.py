@@ -534,10 +534,18 @@ class BotBuildLoop:
             if self._stopped:
                 return False
             try:
-                result = await self.mcp.move_to(
-                    x, y, z, max_offset=max_offset, timeout_ms=timeout,
-                    ignore_y=ignore_y,
-                )
+                # 2026-08-15 P1：优先 baritone 移植寻路（A* + Moves，支持爬升/跳跃/
+                # 下降，寻路天然校验站立面——平台边缘无方块不会走）。失败回退旧 pathfinder。
+                result = await self.mcp.baritone_move(
+                    x, y, z, max_offset=min(max_offset, 2), timeout_ms=timeout)
+                if not result.get("success"):
+                    self._activity(
+                        "debug",
+                        f"baritone 寻路失败（{result.get('reason') or '?'}），回退旧 pathfinder")
+                    result = await self.mcp.move_to(
+                        x, y, z, max_offset=max_offset, timeout_ms=timeout,
+                        ignore_y=ignore_y,
+                    )
                 if result.get("success"):
                     if verify_height:
                         # 2026-08-15 修复（第二次收紧）：校验 bot 实际高度与目标站立层。
@@ -558,6 +566,22 @@ class BotBuildLoop:
                                     f"移动到位但高度不符（目标y={y}，实际y={by:.1f}）——"
                                     f"bot 可能掉下/不在站立层，视为未到位")
                                 return False
+                            # 2026-08-15 P4 边缘检测：bot 脚下必须有实体方块
+                            # （防悬空/掉水后误判"到位"；baritone 寻路已保证路径安全，
+                            #  此处兜底校验落地）
+                            if isinstance(by, (int, float)):
+                                foot = await self.mcp.get_world_block_at(
+                                    int(round(loc.get("x", x))), int(by) - 1,
+                                    int(round(loc.get("z", z))))
+                                foot_name = ((foot.get("name") or "air")
+                                             .split("[")[0])
+                                if foot_name in ("air", "water", "lava",
+                                                 "flowing_water", "flowing_lava"):
+                                    self._activity(
+                                        "warn",
+                                        f"移动到位但脚下是 {foot_name}（bot 悬空/掉水）"
+                                        f"——判定未到位")
+                                    return False
                         except Exception:
                             pass
                     self._last_pos = (x, y, z)
@@ -814,10 +838,11 @@ class BotBuildLoop:
 
         P2-9：已验证正确的坐标缓存到 _verified_set——同一 run 内不重复
         get_world_block_at（WS 往返）；方块变化由放置后重放兜底。
+        ⚠️ 2026-08-15 P3 修正：不信任缓存直接跳过——方块可能被破坏（打掉），
+        必须每次真实读取世界比对，发现"已放但被打掉"→返回 False →重放。
+        （16384 格 × 本地 WS 读取开销可接受，换来环境感知正确性）
         """
         key = (x, y, z)
-        if key in self._verified_set:
-            return True
         try:
             result = await self.mcp.get_world_block_at(x, y, z)
             actual = (result.get("name") or "air").split("[")[0]
@@ -825,6 +850,9 @@ class BotBuildLoop:
             if actual == expected:
                 self._verified_set.add(key)
                 return True
+            if key in self._verified_set:
+                # 2026-08-15 P3：缓存说已放但世界实际不对（被破坏）→ 清除缓存并重放
+                self._verified_set.discard(key)
             return False
         except Exception:
             return False
@@ -846,7 +874,19 @@ class BotBuildLoop:
                     look_at_block=False,
                 )
                 if result.get("success"):
-                    return True
+                    # 2026-08-15 P3：放置后真实确认——blockUpdate 可能误判/方块被弹开/
+                    # 放错位置。读取世界验证，不对则继续重试（防"放过了实际没放上"）。
+                    try:
+                        v = await self.mcp.get_world_block_at(x, y, z)
+                        actual = ((v.get("name") or "air").split("[")[0])
+                        if actual == block_id.split("[")[0]:
+                            return True
+                        logger.warning(
+                            "[%s] Place confirmed WRONG at (%d,%d,%d): got %s want %s — retry",
+                            self.bot_id, x, y, z, actual, block_id.split("[")[0])
+                    except Exception:
+                        # 读取失败（chunk 未加载等）→ 信任 place_block 结果（避免死循环）
+                        return True
                 logger.warning("[%s] Place failed at (%d,%d,%d) attempt %d/%d: %s",
                                self.bot_id, x, y, z, attempt + 1, self._place_retries, result)
             except Exception as e:

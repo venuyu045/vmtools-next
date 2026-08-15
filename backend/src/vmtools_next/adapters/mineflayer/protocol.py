@@ -11,6 +11,8 @@ Message flow:
 
 # Movement / pathfinding
 METHOD_MOVE_TO = "move_to"
+# 2026-08-15 baritone 移植寻路（A* + Moves 模型，支持爬升/跳跃/下降）
+METHOD_BARITONE_MOVE = "baritone_move"
 METHOD_LOOK_AT = "look_at"
 METHOD_GET_PLAYER_STATE = "get_player_state"
 METHOD_CANCEL_PATHING = "cancel_pathing"
