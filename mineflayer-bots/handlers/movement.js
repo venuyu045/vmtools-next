@@ -25,26 +25,53 @@ function createMovementHandlers(bot) {
   // goal_reached/path_stop/path_timeout 的 once 监听残留，16384 格会
   // 泄漏数万个 listener（emit 遍历变慢、内存膨胀）。统一用 finish() 收口。
   async function move_to({ x, y, z, max_offset = 3, timeout_ms = 15000, ignore_y = false }) {
-    return new Promise((resolve, reject) => {
-      // 2026-08-14：ignore_y 用 GoalNearXZ（只匹配 x/z 距离，忽略 y）——地图画
-      // 建造场景 bot 站立层可能悬空（origin_y-1 与实际地面不符），若严格按 3 维
-      // 距离寻路会因 y 差超 range 而 timeout（实测 bot 在 69 层悬空，前进即掉落）。
-      // 忽略 y 后 bot 落到实际地面即可到达目标 x/z，再放置方块。
+    return new Promise(async (resolve, reject) => {
+      // N4 chunk 预检（2026-08-15 第二批，对齐 baritone PathExecutor chunk 边缘暂停）：
+      // 目标 chunk 未加载时先等加载（最多 5s），避免"目标方块读取为空/寻路直接失败"。
+      try {
+        const chunkX = Math.floor(x / 16), chunkZ = Math.floor(z / 16);
+        const hasChunk = typeof bot.world.hasChunk === 'function';
+        if (hasChunk && !bot.world.hasChunk(chunkX, chunkZ)) {
+          for (let i = 0; i < 25; i++) {
+            await new Promise(r => setTimeout(r, 200));
+            if (bot.world.hasChunk(chunkX, chunkZ)) break;
+          }
+        }
+      } catch (e) { /* 无法检查 chunk 状态则跳过预检 */ }
+
+      // N3 成本估算超时（2026-08-15 第二批，对齐 baritone PathExecutor）：
+      // 近目标快超时、远目标给足；下限 5s、上限 = 调用方 timeout_ms。
+      // 例：2 格距离 → 4.6s；50 格 → 20s（调用方上限）。
+      let estTimeout = 15000;
+      try {
+        const p = bot.entity ? bot.entity.position : null;
+        const dx = p ? Math.abs(x - p.x) : 0;
+        const dz = p ? Math.abs(z - p.z) : 0;
+        const dy = p ? Math.abs(y - p.y) : 0;
+        const manhattan = dx + dz;
+        estTimeout = 3000 + manhattan * 800 + (dy > 1 ? 2000 : 0);
+      } catch (e) { /* 取不到位置则用默认估算 */ }
+      const effectiveTimeout = Math.min(timeout_ms, Math.max(5000, estTimeout));
+
       const goal = ignore_y
         ? new GoalNearXZ(x, z, max_offset)
         : new GoalNear(x, y, z, max_offset);
       let finished = false;
       let timer = null;
+      let stuckTimer = null;
+      let startTimer = null;
 
       const cleanup = () => {
         bot.removeListener('goal_reached', onGoalReached);
         bot.removeListener('path_stop', onStopped);
         bot.removeListener('path_timeout', onTimeout);
+        if (timer) clearTimeout(timer);
+        if (stuckTimer) clearInterval(stuckTimer);
+        if (startTimer) clearTimeout(startTimer);
       };
       const finish = (result) => {
         if (finished) return;
         finished = true;
-        if (timer) clearTimeout(timer);
         cleanup();
         pathfindingResolver = null;
         resolve(result);
@@ -60,7 +87,46 @@ function createMovementHandlers(bot) {
       timer = setTimeout(() => {
         bot.pathfinder.stop();
         finish({ success: false, reason: 'timeout', position: getPos() });
-      }, timeout_ms);
+      }, effectiveTimeout);
+
+      // N3 卡住检测：每 2s 采样位置，连续 3 次（6s）移动 <0.2 格且未达 goal → 主动放弃
+      // （对齐 playercontrolpp BaritonePathingController STUCK_LIMIT，不等 20s 超时）
+      let lastPos = bot.entity ? { x: bot.entity.position.x, z: bot.entity.position.z } : null;
+      let stillTicks = 0;
+      stuckTimer = setInterval(() => {
+        if (finished) return;
+        const pos = bot.entity ? bot.entity.position : null;
+        if (!pos) return;
+        if (lastPos) {
+          const moved = Math.hypot(pos.x - lastPos.x, pos.z - lastPos.z);
+          const d = Math.hypot(pos.x - x, pos.z - z);
+          if (moved < 0.2 && d > max_offset) {
+            stillTicks++;
+            if (stillTicks >= 3) { // 6s 未移动
+              bot.pathfinder.stop();
+              finish({ success: false, reason: 'stuck', position: getPos() });
+              return;
+            }
+          } else {
+            stillTicks = 0;
+          }
+        }
+        lastPos = { x: pos.x, z: pos.z };
+      }, 2000);
+
+      // N3 未开始检测：setGoal 后 3s 内 pathfinder 无进展（isMoving false 且距离>max_offset）
+      // → 提前放弃（对齐 playercontrolpp PATHING_NOT_STARTED 40 tick）
+      startTimer = setTimeout(() => {
+        if (finished) return;
+        let moving = true;
+        try { moving = bot.pathfinder.isMoving(); } catch (e) { moving = true; }
+        const pos = bot.entity ? bot.entity.position : null;
+        const d = pos ? Math.hypot(pos.x - x, pos.z - z) : 9999;
+        if (!moving && d > max_offset) {
+          bot.pathfinder.stop();
+          finish({ success: false, reason: 'path_not_started', position: getPos() });
+        }
+      }, 3000);
 
       try {
         bot.pathfinder.setGoal(goal);
@@ -198,7 +264,64 @@ function sneak({ state = null } = {}) {
   }
 }
 
-return { move_to, look_at, get_player_state, cancel_pathing, is_player_nearby, set_control_state, look, jump, sneak };
+// ── 行内小步直走（2026-08-15 第三批：消除每格寻路，大图性能关键）──
+// 行内相邻格是直线 1 格位移，用控制键直走替代 pathfinder setGoal（每格一次
+// pathfinder 计算在 512²/1024² 图上会爆炸）。撞墙/卡地形（3s 位置不动）→ 返回
+// 失败，调用方回退 pathfinder。仅用于距离 ≤3 的直线相邻格（不处理 y 落差）。
+async function walk_toward({ x, z, timeout_ms = 8000 } = {}) {
+  return new Promise((resolve) => {
+    const pos = bot.entity ? bot.entity.position : null;
+    if (!pos) return resolve({ success: false, reason: 'no_entity' });
+    const dx = x - pos.x, dz = z - pos.z;
+    const dist = Math.hypot(dx, dz);
+    if (dist > 3.0) return resolve({ success: false, reason: 'too_far' });
+
+    let finished = false;
+    const cleanup = () => {
+      bot.setControlState('forward', false);
+      if (interval) clearInterval(interval);
+      if (timeoutHandle) clearTimeout(timeoutHandle);
+      finished = true;
+    };
+    const finish = (result) => {
+      if (finished) return;
+      cleanup();
+      resolve(result);
+    };
+
+    // 朝向目标（lookAt 自动算 yaw/pitch，force=true 立即转向）
+    bot.lookAt(new Vec3(x, bot.entity.position.y, z), true).catch(() => {});
+    bot.setControlState('forward', true);
+
+    let lastPos = { x: pos.x, z: pos.z };
+    let stillTicks = 0;
+    const start = Date.now();
+
+    const check = () => {
+      if (finished) return;
+      const p = bot.entity ? bot.entity.position : null;
+      if (!p) return finish({ success: false, reason: 'no_entity' });
+      const d = Math.hypot(p.x - x, p.z - z);
+      if (d <= 0.5) return finish({ success: true, position: { x: p.x, y: p.y, z: p.z } });
+      const moved = Math.hypot(p.x - lastPos.x, p.z - lastPos.z);
+      if (moved < 0.15) {
+        stillTicks++;
+        if (stillTicks >= 6) return finish({ success: false, reason: 'stuck' }); // 3s 未移动
+      } else {
+        stillTicks = 0;
+      }
+      lastPos = { x: p.x, z: p.z };
+      if (Date.now() - start > timeout_ms) return finish({ success: false, reason: 'timeout' });
+    };
+    const interval = setInterval(check, 500);
+    const timeoutHandle = setTimeout(() => {
+      if (!finished) finish({ success: false, reason: 'timeout' });
+    }, timeout_ms + 500);
+    check(); // 立即检查一次（可能已在目标点）
+  });
+}
+
+return { move_to, walk_toward, look_at, get_player_state, cancel_pathing, is_player_nearby, set_control_state, look, jump, sneak };
 }
 
 module.exports = { createMovementHandlers };

@@ -26,6 +26,7 @@ from .protocol import (
     METHOD_LOOK,
     METHOD_JUMP,
     METHOD_SNEAK,
+    METHOD_WALK_TOWARD,
     METHOD_PLACE_BLOCK,
     METHOD_DIG_BLOCK,
     METHOD_GET_WORLD_BLOCK_AT,
@@ -384,6 +385,15 @@ class MineflayerBridgeClient(AbstractBotAgent):
             "max_offset": max_offset,
             "timeout_ms": timeout_ms,
             "ignore_y": ignore_y,
+        }, timeout=timeout_ms / 1000 + 5.0)
+    async def walk_toward(self, x: int, z: int, timeout_ms: int = 8000) -> dict:
+        """行内小步直走（2026-08-15 第三批）：控制键直走到 (x, z)（不移动 y）。
+
+        仅用于直线相邻格（距离 ≤3）；失败（撞墙/超时/太远）时调用方回退 pathfinder。
+        """
+        return await self._send_request(METHOD_WALK_TOWARD, {
+            "x": x, "z": z,
+            "timeout_ms": timeout_ms,
         }, timeout=timeout_ms / 1000 + 5.0)
 
     async def look_at(self, x: int, y: int, z: int) -> dict:

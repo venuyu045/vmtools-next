@@ -26,6 +26,41 @@ function isLiquidBlock(block) {
   return name.includes('water') || name.includes('lava') || name.includes('bubble_column');
 }
 
+// ── 2026-08-15 第二批（对齐 litematica-printer Action.getValidSide）──
+// 可替换方块（点击其面会把方块放进去/替换掉它——不可作参考）。
+// 对齐 printer：参考方块必须「有碰撞箱（可点击）且不可替换（isReplaceable 为假）」。
+function isReplaceableBlock(block) {
+  if (!block || block.type === 0) return true; // 空气可替换
+  if (isLiquidBlock(block)) return true;
+  const name = block.name || '';
+  // 半砖/楼梯/按钮/压力板/火把/轨道/雪/花草/作物/地毯等可替换方块
+  return /slab|stairs|button|pressure_plate|torch|rail|snow|grass|flower|tall|short|fern|mushroom|carpet|sapling|vine|lily|air|fire|redstone|repeater|comparator|lever|tripwire|sign|root|crop|dead|seagrass|kelp|sugar_cane|bamboo|cocoa|propagule|petal|plant|sculk_vein|lichen/.test(name);
+}
+
+// 交互方块（点击触发 GUI/交互，需潜行；作为参考面时排在最后，防误开箱子/工作台）
+function isInteractiveBlock(block) {
+  if (!block) return false;
+  const name = block.name || '';
+  return /chest|barrel|furnace|blast_furnace|smoker|brewing|hopper|dispenser|dropper|crafting_table|enchanting|anvil|door|trapdoor|fence_gate|note_block|jukebox|beacon|lectern|shulker|ender_chest|grindstone|smithing|stonecutter|loom|cartography|composter|cake|dragon_egg|bell|campfire|respawn|lodestone|daylight|cauldron|button|lever|chiseled_bookshelf|decorated_pot/.test(name);
+}
+
+// 参考方块有效性：非空气非液体且不可替换（对齐 printer canBeClicked && !isReplaceable）
+function isUsableReference(block) {
+  if (!block || block.type === 0) return false;
+  if (isLiquidBlock(block)) return false;
+  if (isReplaceableBlock(block)) return false;
+  return true;
+}
+
+// 下落方块（对齐 printer FALLING_CHECK：下方无支撑时放置后立即下落错位）
+function isFallingBlockName(name) {
+  return name.includes('sand') || name === 'gravel' || name.includes('concrete_powder');
+}
+
+function isAirLikeName(name) {
+  return !name || name === 'air' || name === 'void_air' || name === 'cave_air';
+}
+
 /**
  * @param {import('mineflayer').Bot} bot
  */
@@ -46,23 +81,46 @@ function createBlockHandlers(bot) {
       let refPos = pos.minus(faceVec);
       let refBlock = bot.blockAt(refPos);
 
-      // 1. 自动选面：face='AUTO' 或指定面参考缺失时，遍历候选面
+      // 0. FALLING_CHECK（2026-08-15 第二批，对齐 litematica-printer）：
+      //    下落方块（沙/砾石/混凝土粉末）下方无支撑时放置后立即下落错位 → 跳过并提示。
+      const targetBlock = bot.blockAt(pos);
+      const targetName = (targetBlock && targetBlock.name) || '';
+      if (isFallingBlockName(targetName)) {
+        const below = bot.blockAt(pos.offset(0, -1, 0));
+        const belowName = (below && below.name) || 'air';
+        if (isAirLikeName(belowName) || isLiquidBlock(below)) {
+          return { success: false, error: `下落方块无支撑（${targetName} 下方为 ${belowName}），跳过` };
+        }
+      }
+
+      // 1. 自动选面：face='AUTO' 或指定面参考不可用时，遍历候选面。
+      //    2026-08-15 第二批升级（对齐 printer getValidSide）：
+      //    - 参考必须「非空气非液体且不可替换」（isUsableReference，半砖/楼梯/按钮不再误当参考）
+      //    - 优先「非交互方块」面（北面是箱子/工作台时不再误开 GUI，自动跳到其他面）
       const CANDIDATE_FACES = ['SOUTH', 'DOWN', 'NORTH', 'WEST', 'EAST', 'UP'];
-      if (face === 'AUTO' || !refBlock || refBlock.type === 0) {
+      if (face === 'AUTO' || !isUsableReference(refBlock)) {
+        let chosen = null;    // 首选：非交互方块面
+        let fallback = null;  // 兜底：第一个可用面（可能是交互方块）
         for (const f of CANDIDATE_FACES) {
           const fv = FACE_VECTORS[f];
           const rp = pos.minus(fv);
           const rb = bot.blockAt(rp);
-          if (rb && rb.type !== 0 && !isLiquidBlock(rb)) {
-            faceVec = fv;
-            refPos = rp;
-            refBlock = rb;
+          if (!isUsableReference(rb)) continue;
+          if (!fallback) fallback = { fv, rp, rb };
+          if (!isInteractiveBlock(rb)) {
+            chosen = { fv, rp, rb };
             break;
           }
         }
+        const finalRef = chosen || fallback;
+        if (finalRef) {
+          faceVec = finalRef.fv;
+          refPos = finalRef.rp;
+          refBlock = finalRef.rb;
+        }
       }
 
-      if (!refBlock || refBlock.type === 0) {
+      if (!isUsableReference(refBlock)) {
         // 2026-08-15 修复「No reference block near」：目标方块周围全是空气
         // （地图画建在平台边缘/悬空处，目标正下方无地面支撑）——参考面全失效。
         // 用背包方块先垫到目标正下方（参考 = bot 脚下/附近的相邻实心方块），
@@ -76,7 +134,7 @@ function createBlockHandlers(bot) {
         refPos = new Vec3(pos.x, pos.y - 1, pos.z);
         refBlock = bot.blockAt(refPos);
         faceVec = FACE_VECTORS.UP;
-        if (!refBlock || refBlock.type === 0) {
+        if (!isUsableReference(refBlock)) {
           return { success: false, error: `垫块后仍无参考（${pos}）` };
         }
       }

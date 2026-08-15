@@ -152,6 +152,12 @@ class MineflayerConfig(BaseModel):
     # 进食阈值：饱食度/血量低于该值（满 20）时吃副手食物
     map_art_eat_threshold_food: int = 15
     map_art_eat_threshold_health: int = 15
+    # ── 补货决策模型（2026-08-15 第一批重构，迁移 playercontrolpp target/have）──
+    # 每种材料一次补货补到多少组：目标持有量 = min(区域剩余需求, N组×64)。
+    # 4 组 = 256 个；128² 单色 10594 块 → 约 41 次补货（原"缺一组补一组"约 165 次，÷4）。
+    map_art_restock_stacks: int = 4  # 1-16
+    # 单 bot 两次补货最小间隔（秒）——防"取 64 用 165 块又传"的短周期反复（配合组数配置）
+    map_art_min_restock_interval_s: int = 90
     # ── 任务调度（2026-08-12，实施计划阶段 2） ──
     # 地图画任务并发上限（同时运行的任务数；排队任务完成后自动启动下一个）
     task_max_concurrent_build: int = 1

@@ -20,6 +20,8 @@ METHOD_SET_CONTROL_STATE = "set_control_state"
 METHOD_LOOK = "look"
 METHOD_JUMP = "jump"
 METHOD_SNEAK = "sneak"
+# 2026-08-15 第三批：行内小步直走（控制键直走，替代每格寻路）
+METHOD_WALK_TOWARD = "walk_toward"
 
 # Block operations
 METHOD_PLACE_BLOCK = "place_block"

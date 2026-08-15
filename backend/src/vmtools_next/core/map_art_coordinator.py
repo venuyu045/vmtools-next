@@ -25,6 +25,7 @@ from typing import Optional
 
 from vmtools_next.adapters.abstract.bot_agent import AbstractBotAgent
 from vmtools_next.config import get_config
+from vmtools_next.core.map_art_restock import Need, RestockPlanner, ShulkerRestocker
 from vmtools_next.data.db import sio
 
 logger = logging.getLogger("vmtools.map_art")
@@ -216,6 +217,22 @@ class BotBuildLoop:
         # 导致 mineflayer withdraw 读 null selectedItem 崩溃（实测 Cannot read
         # properties of null (reading 'type') + 日志重复出现）。
         self._restock_lock = asyncio.Lock()
+        # 2026-08-15 第一批重构（迁移 playercontrolpp target/have 模型）：
+        # 补货组数/最小间隔从 config 读取；区域材料需求缓存（懒计算一次）；
+        # 零收获计数（连续 N 轮补货无收获 → 区域终止，防缺料死循环）
+        try:
+            _mf_cfg = get_config().mineflayer
+            self._restock_stacks: int = max(1, min(16, int(
+                getattr(_mf_cfg, "map_art_restock_stacks", 4) or 4)))
+            self._min_restock_interval_s: float = max(0.0, float(
+                getattr(_mf_cfg, "map_art_min_restock_interval_s", 90) or 90))
+        except Exception:
+            self._restock_stacks = 4
+            self._min_restock_interval_s = 90.0
+        self._last_restock_at: float = 0.0
+        self._no_gain_cycles: int = 0
+        self._region_materials: Optional[dict] = None  # 区域材料需求（RestockPlanner 产出，懒缓存）
+        self._restocker: Optional[ShulkerRestocker] = None  # 懒创建
         self._supply_box: Optional[tuple[int, int, int]] = supply_box  # 分区补给箱坐标（None→用传送）
         # 2026-08-14：材料级潜影盒坐标（用户配置，优先级最高）+ 任务级三个传送指令
         self._supply_boxes: dict[str, list[tuple[int, int, int]]] = supply_boxes or {}
@@ -507,6 +524,11 @@ class BotBuildLoop:
 
         self.progress.state = "placing"
 
+        # 2026-08-15 第三批：行内相邻格直走优化——prev_x 跨颜色分组保持，
+        # 相邻格（|Δx|=1）用 walk_toward（控制键直走）替代 pathfinder，大图性能关键；
+        # 失败（撞墙/卡地形/超时）回退 pathfinder。
+        prev_x: Optional[int] = None
+
         # Place color by color
         for block_id, x_positions in row_blocks.items():
             await self._paused.wait()
@@ -530,8 +552,21 @@ class BotBuildLoop:
                 # 2026-08-14 修复：站立高度 = origin_y -1（地面层），避免悬空/与方块同层。
                 stand_z = world_z - 1
                 stand_y = self.origin_y - 1
-                if not await self._move_to(world_x, stand_y, stand_z,
-                                           max_offset=2, label=f"({world_x},{world_z})"):
+                moved_ok = False
+                if prev_x is not None and abs(x - prev_x) == 1:
+                    # 相邻格：控制键直走（不移动 y；目标在行内北侧站立点）
+                    try:
+                        wr = await self.mcp.walk_toward(world_x, stand_z, timeout_ms=8000)
+                        moved_ok = bool(wr.get("success"))
+                        if not moved_ok:
+                            self._activity("debug",
+                                           f"直走到 ({world_x},{stand_z}) 失败（{wr.get('reason', '?')}），回退寻路")
+                    except Exception:
+                        moved_ok = False
+                if not moved_ok:
+                    moved_ok = await self._move_to(world_x, stand_y, stand_z,
+                                                   max_offset=2, label=f"({world_x},{world_z})")
+                if not moved_ok:
                     # 2026-08-14：放置点移动失败（可能淹死复活到远处/掉坑）→
                     # 传送回建造点重试一次，避免直接区域失败
                     if await self._try_teleport_home("放置点移动失败"):
@@ -542,6 +577,7 @@ class BotBuildLoop:
                     else:
                         self.progress.state = "offline"
                         return
+                prev_x = x
 
                 # 2) Verify: skip if the target is already correct
                 if await self._verify_block(world_x, self.origin_y, world_z, block_id):
@@ -853,48 +889,59 @@ class BotBuildLoop:
             pass
 
     async def _get_player_pos(self) -> Optional[tuple[float, float]]:
-        """获取 bot 当前 X/Z 坐标（传送后验证是否回到建造区域）。
+        """获取 bot 当前 X/Z 坐标（实时优先，缓存兜底）。
 
-        优先 mcp.last_status（status 事件每 5s 推送 position），失败再调
-        get_player_state。返回 (x, z)，获取不到返回 None。
+        2026-08-15 第二批修复（D1/D14）：last_status 是 status 事件每 5s 推送的缓存，
+        传送后/刚启动时可能是旧位置——现改为「实时 get_player_state 优先」，
+        last_status 仅作为实时查询失败时的兜底（避免用过期数据误判"不在建造区域"）。
         """
-        def _extract(st: dict) -> Optional[tuple[float, float]]:
+        p = await self._get_player_pos_full()
+        return (p[0], p[1]) if p else None
+
+    async def _get_player_pos_full(self) -> Optional[tuple[float, float, float]]:
+        """获取 bot 当前位置 (x, z, y)（实时优先，缓存兜底）；获取不到返回 None。
+
+        y 供 _near_build_area 高度校验（D2）；实时 get_player_state 返回 location 字段。
+        """
+        def _extract3(st: dict) -> Optional[tuple[float, float, float]]:
             if not isinstance(st, dict):
                 return None
             pos = (st.get("position") or st.get("pos")
                    or st.get("location")  # 2026-08-15：get_player_state 返回的是 location 字段
                    or st.get("player") or st.get("entity") or {})
             if isinstance(pos, dict):
-                x, z = pos.get("x"), pos.get("z")
-                if isinstance(x, (int, float)) and isinstance(z, (int, float)):
-                    return (float(x), float(z))
+                x, y, z = pos.get("x"), pos.get("y"), pos.get("z")
+                if all(isinstance(v, (int, float)) for v in (x, y, z)):
+                    return (float(x), float(z), float(y))
             elif isinstance(pos, (list, tuple)) and len(pos) >= 3:
-                if isinstance(pos[0], (int, float)) and isinstance(pos[2], (int, float)):
-                    return (float(pos[0]), float(pos[2]))
+                if all(isinstance(v, (int, float)) for v in pos[:3]):
+                    return (float(pos[0]), float(pos[2]), float(pos[1]))
             return None
-        try:
-            p = _extract(getattr(self.mcp, "last_status", None) or {})
-            if p:
-                return p
-        except Exception:
-            pass
+        # 1) 实时查询优先（~几百 ms，避免用过期的 5s 推送缓存）
         try:
             r = await self.mcp.get_player_state()
             data = r.get("data", r) if isinstance(r, dict) else {}
             if isinstance(data, dict):
-                p = _extract(data)
+                p = _extract3(data)
                 if p:
                     return p
                 # 部分实现 position 在 data 的 status 子对象里
-                p = _extract(data.get("status") or data.get("bot_status") or {})
+                p = _extract3(data.get("status") or data.get("bot_status") or {})
                 if p:
                     return p
         except Exception:
             pass
+        # 2) 缓存兜底（实时查询失败时用 last_status，可能略旧但总比没有强）
+        try:
+            p = _extract3(getattr(self.mcp, "last_status", None) or {})
+            if p:
+                return p
+        except Exception:
+            pass
         return None
 
-    def _near_build_area(self, x: float, z: float) -> bool:
-        """判断 (x,z) 是否在建造区域附近（矩形区域，X/Z 半宽半高各自外扩自适应余量）。
+    def _near_build_area(self, x: float, z: float, y: Optional[float] = None) -> bool:
+        """判断 (x,z)（可选 y）是否在建造区域附近（矩形区域，X/Z 半宽半高各自外扩自适应余量）。
 
         2026-08-14 优化（为大地图画准备）：
         - 区域边界首次调用时计算并缓存（O(N) 一次 → 之后 O(1)）——原实现每次
@@ -903,6 +950,8 @@ class BotBuildLoop:
           对纵向长条/宽幅地图画会误判（区域远端被判"不在区域内"触发误兜底）。
         - 余量自适应：min(宽, 高) 的 10%，下限 40 格——小图（128）≈40 格、
           大图（512+）自动放大，覆盖传送落点偏差又不至于过度外扩。
+        2026-08-15 第二批（D2）：可选 y 高度校验——bot 站立层 = origin_y-1（地面），
+        偏离 >3 格视为不在建造区域（防止 x/z 正确但高度错误的传送落点误判）。
         """
         bounds = self._area_bounds
         if bounds is None:
@@ -924,6 +973,10 @@ class BotBuildLoop:
         cx, cz, half_w, half_h = bounds
         if half_w <= 0 or half_h <= 0:
             return True  # 未知区域不拦截（避免误判导致无限兜底）
+        if y is not None:
+            expected_y = self.origin_y - 1  # 站立层（地面）
+            if abs(y - expected_y) > 3.0:
+                return False
         return abs(x - cx) <= half_w and abs(z - cz) <= half_h
 
     async def _send_teleport(self, cmd: str) -> bool:
@@ -940,21 +993,32 @@ class BotBuildLoop:
             self._activity("warn", f"传送异常：{e}")
             return False
 
-    async def _verify_at_build_area(self) -> bool:
-        """传送后验证 bot 是否真的回到建造区域附近。
+    async def _verify_at_build_area(self, retries: int = 2) -> bool:
+        """传送后验证 bot 是否真的回到建造区域附近（2026-08-15 第二批增强）。
 
-        位置获取不到时不拦截（返回 True）——避免状态推送延迟导致误判；能获取到
-        且不在建造区域 → 判定传送失败（临时点可能被死亡/意外覆盖），需固定指令兜底。
+        - 位置获取失败时等 1.5s 重试（最多 retries 次），全部失败才视为"未知不拦截"——
+          避免传送失败被静默掩盖（原实现位置 None 直接放行，兜底链失效）。
+        - 带 y 校验（_near_build_area 的 y 参数）：x/z 正确但高度错误的落点判定为不在区域。
         """
-        pos = await self._get_player_pos()
-        if pos is None:
-            self._activity("debug", "传送后无法获取 bot 位置，视为成功（不拦截）")
-            return True
-        x, z = pos
-        if self._near_build_area(x, z):
-            self._activity("debug", f"传送后位置验证通过（{x:.0f},{z:.0f}）在建造区域附近")
-            return True
-        self._activity("warn", f"传送后位置不在建造区域（{x:.0f},{z:.0f}），需固定指令兜底")
+        for attempt in range(retries + 1):
+            if attempt > 0:
+                await asyncio.sleep(1.5)
+            p = await self._get_player_pos_full()
+            if p is None:
+                if attempt < retries:
+                    self._activity("debug",
+                                   f"传送后位置获取失败，{1.5}s 后重试（{attempt + 1}/{retries}）")
+                    continue
+                self._activity("debug", "传送后多次尝试仍无法获取 bot 位置，视为成功（不拦截）")
+                return True
+            x, z, y = p
+            if self._near_build_area(x, z, y):
+                self._activity("debug",
+                               f"传送后位置验证通过（{x:.0f},{z:.0f},y={y:.0f}）在建造区域附近")
+                return True
+            self._activity("warn",
+                           f"传送后位置不在建造区域（{x:.0f},{z:.0f},y={y:.0f}），需固定指令兜底")
+            return False
         return False
 
     async def _try_teleport_home(self, reason: str = "") -> bool:
@@ -1126,11 +1190,10 @@ class BotBuildLoop:
             }
 
     async def _restock_one_from_boxes(self, clean_id: str, needed_count: int = 64) -> bool:
-        """在仓库内取单个材料：遍历该材料的潜影盒坐标，寻路→开箱→取货→关箱。
+        """⚠️ 废弃（2026-08-15 第一批重构后不再被调用，保留防意外引用）。
 
-        2026-08-14：由 _do_full_restock 调用（传送已在仓库完成）。寻路用
-        allow_scaffold=False——仓库内寻路失败不再触发蹲搭（防"寻路→蹲搭→无方块→
-        补货→再寻路"递归）。每步打 debug 日志，失败时打印容器内容摘要定位原因。
+        原逻辑已由 map_art_restock.ShulkerRestocker 取代（dryTicks 取空记忆/背包满
+        检查/模块化）；后续清理批次可删除本方法。
         """
         boxes = self._supply_boxes_for(clean_id)
         if not boxes:
@@ -1218,32 +1281,57 @@ class BotBuildLoop:
 
     @_restock_serialized
     async def _do_full_restock(self, trigger_item: str) -> bool:
-        """全量补货（2026-08-14：缺的所有材料一次补齐再返回建造点）。
+        """全量补货（2026-08-15 第一批重构：target/have 模型 + 模块化执行）。
 
-        触发时遍历所有已配置潜影盒的材料，把背包存量 <64 的每种都从对应潜影盒
-        取一组补齐；传送只做一次（暂存→仓库→逐个取→返回），避免"缺A补A、
-        回建造点又缺B再传送"的反复奔波。trigger_item 即使未配置坐标也尝试补。
+        迁移 playercontrolpp AutoRestockFeature 的决策模型：
+        - 缺料判定：区域材料需求（RestockPlanner.region_material_count）中
+          背包散装量 < target（target = min(区域剩余需求, map_art_restock_stacks×64)，
+          默认 4 组 = 256）的材料，按满足度（have/target）最低优先排序取料
+        - 未配置潜影盒坐标的材料：提示并跳过（用户确认，不再静默失败）
+        - 执行：ShulkerRestocker（dryTicks 取空记忆 + 背包满检查 + withdraw 背包确认），
+          传送只做一次（暂存→仓库→逐个取→返回），补两轮 + 全量复查
+        - 零收获总闸：连续 3 轮补货无收获 → 终止本 bot 区域（防缺料死循环）
         """
         clean_trigger = self._normalize_item_id(trigger_item)
-        # 1) 找出所有缺失材料：配置了潜影盒坐标且背包存量不足的
-        #    （2026-08-14 修复：mat 归一化后检查背包，避免前缀不匹配判定全缺）
-        missing: list[str] = []
-        for mat, boxes in self._supply_boxes.items():
-            if not boxes:
-                continue
-            count = await self._check_inventory_level(mat)
-            if count < 64:
-                missing.append(mat)
-        # 2) 触发材料强制加入（本次就是要用它）
-        if not any(self._normalize_item_id(m) == clean_trigger for m in missing):
-            if self._supply_boxes_for(clean_trigger):
-                missing.append(clean_trigger)
-            else:
-                self._activity("warn", f"{clean_trigger} 未配置潜影盒坐标，无法补货")
-        if not missing:
+        self._last_restock_at = time.monotonic()
+
+        # 1) 区域材料需求 + 背包现状（target/have 模型；区域需求缓存一次）
+        if self._region_materials is None:
+            self._region_materials = RestockPlanner.region_material_count(
+                self.block_matrix, self.region, self.origin_x, self.origin_z)
+        have_counts: dict[str, int] = {}
+        for mat in self._region_materials:
+            have_counts[mat] = await self._check_inventory_level(mat)
+        planner = RestockPlanner(stacks_per_item=self._restock_stacks)
+        needs = planner.compute_needs(self._region_materials, have_counts, self._supply_boxes)
+
+        # 2) 触发材料强制加入（区域统计可能未覆盖/已满足但本次就是要用它）
+        if not any(n.item_id == clean_trigger for n in needs):
+            have_trigger = await self._check_inventory_level(clean_trigger)
+            if have_trigger < 64:  # 触发材料不足一组 → 补
+                needs.append(Need(
+                    item_id=clean_trigger,
+                    target=planner.plan_target(64, self._restock_stacks),
+                    have=have_trigger,
+                    boxes=self._supply_boxes_for(clean_trigger),
+                ))
+                needs.sort(key=lambda n: (n.ratio, n.item_id))
+        if not needs:
             self._activity("info", "背包材料充足，无需补货")
             return True
-        self._activity("warn", f"需补货材料（{len(missing)}种）：{'，'.join(missing)}")
+
+        # 未配置坐标的材料：提示并跳过（用户确认）
+        unboxed = [n.item_id for n in needs if not n.boxes]
+        if unboxed:
+            self._activity("warn",
+                           f"以下材料任务需要但未配置潜影盒坐标，将跳过：{'，'.join(unboxed)}")
+        need_with_boxes = [n for n in needs if n.boxes]
+        if not need_with_boxes:
+            self._activity("warn", "所有缺料均未配置潜影盒坐标，无法补货")
+            return False
+        self._activity("warn",
+                       f"需补货材料（{len(need_with_boxes)}种，按缺货程度排序）："
+                       f"{'，'.join(f'{n.item_id}({n.have}/{n.target})' for n in need_with_boxes)}")
 
         # 3) 暂存当前位置 → 传送仓库 → 等 chunk 加载
         self.progress.state = "restocking"
@@ -1263,31 +1351,45 @@ class BotBuildLoop:
             await asyncio.sleep(3.5)
             self._activity("debug", "等待完成，开始逐个取货")
 
-            # 4) 逐个补齐（缺的每种材料去对应潜影盒取一组；2026-08-15：取货后背包确认，
-            #    补完再全量复查，缺的补第二轮——确认全部补齐（或尽力而为）才传走，
-            #    不再"补一半就传走"）
-            missing_now = list(missing)
+            # 4) ShulkerRestocker 逐个补齐（满足度最低优先；dryTicks/背包满/背包确认；补两轮）
+            restocker = self._get_restocker()
+            restocker.reset_drained()
             for _round in range(2):
-                if not missing_now:
+                if not need_with_boxes:
                     break
-                for mat in missing_now:
-                    if await self._restock_one_from_boxes(mat, 64):
-                        continue  # 背包已确认有货（_restock_one_from_boxes 内部确认）
-                    self._activity("warn", f"{mat} 补货失败，继续下一个")
-                # 全量复查：仍缺的进入第二轮
-                missing_now = [m for m in missing_now
-                               if await self._check_inventory_level(m) < 64]
-                if missing_now:
-                    self._activity("warn", f"第一轮补货后仍缺：{missing_now}，再补一轮")
+                next_round: list = []
+                for need in need_with_boxes:
+                    have = await restocker.restock_material(need.item_id, need.target, need.boxes)
+                    if have < need.target:
+                        next_round.append(need)
+                need_with_boxes = next_round
+                if need_with_boxes:
+                    self._activity("warn",
+                                   f"第一轮补货后仍缺：{'，'.join(n.item_id for n in need_with_boxes)}，再补一轮")
+            still_missing = [n.item_id for n in need_with_boxes]
 
-            # 5) 返回建造点（2026-08-15：传走前报告最终缺失——若还有缺的，
-            #    说明盒子取空/坐标错，回建造点后会再次触发补货，避免无限卡仓库）
-            if missing_now:
+            # 5) 返回建造点（报告最终缺失 + 零收获总闸）
+            if still_missing:
                 self._activity("warn",
-                               f"补货结束仍有缺失（{len(missing_now)}种）：{'，'.join(missing_now)}——"
+                               f"补货结束仍有缺失（{len(still_missing)}种）：{'，'.join(still_missing)}——"
                                f"可能是潜影盒取空/坐标不符，回建造点后再试")
+                # 本次有收获（至少一种补到 target）→ 重置计数；全无收获 → 累计
+                gained = False
+                for n in needs:
+                    if n.boxes and await self._check_inventory_level(n.item_id) >= n.target:
+                        gained = True
+                        break
+                if not gained:
+                    self._no_gain_cycles += 1
+                    if self._no_gain_cycles >= 3:
+                        self._activity("error",
+                                       "连续 3 轮补货零收获，判定材料严重不足，终止本 bot 区域")
+                        self._stopped = True  # 主循环将退出（防缺料死循环）
+                else:
+                    self._no_gain_cycles = 0
             else:
-                self._activity("info", f"全部补齐（{len(missing)}种材料均已确认在背包）")
+                self._no_gain_cycles = 0
+                self._activity("info", f"全部补齐（{len(needs)}种材料均已确认在背包）")
             self._activity("info", f"传送返回建造点（{self._supply_cfg.get('return', '/ehomes dth')}）")
             try:
                 await self.mcp.send_chat(self._supply_cfg.get("return", "/ehomes dth"))
@@ -1297,11 +1399,27 @@ class BotBuildLoop:
             self._last_pos = None  # 传送后位置未知，强制下次寻路
             self.progress.state = "placing"
             await self._refresh_hotbar_map()
-            return not missing_now
+            return not still_missing
         except Exception as e:
             logger.warning("[%s] Full restock failed: %s", self.bot_id, e)
             self._activity("warn", f"全量补货异常：{e}")
             return False
+
+    def _get_restocker(self) -> ShulkerRestocker:
+        """懒创建 ShulkerRestocker（寻路包装 allow_scaffold=False 防递归补货）。"""
+        if self._restocker is None:
+            async def _move_to_box(x: int, y: int, z: int) -> bool:
+                return await self._move_to(x, y, z, max_offset=3,
+                                           label=f"shulker({x},{y},{z})",
+                                           timeout_ms=20000, allow_scaffold=False)
+            self._restocker = ShulkerRestocker(
+                mcp=self.mcp,
+                check_inventory=self._check_inventory_level,
+                move_to_cb=_move_to_box,
+                activity_cb=self._activity,
+                log_prefix=self.bot_id,
+            )
+        return self._restocker
 
     @_restock_serialized
     async def _do_restock(self, needed_block_id: str, needed_count: int = 64) -> bool:
