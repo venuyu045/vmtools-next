@@ -319,6 +319,17 @@ class BotBuildLoop:
         # 2026-08-14：保存建造点 home（/esethome dth），供寻路失败/淹死复活后
         # 用 /ehomes dth 传送回来。若 bot 当前不在建造点（如刚登录），此操作
         # 保存的是当前点——首次补货后 save 指令会覆盖为正确建造点。
+        # ⚠️ 2026-08-15 修复：必须在确认 bot 在建造区域后才保存 dth——否则 bot
+        # 从主城启动时会把主城存成 dth，后续所有 /ehomes dth 都回主城，传送链全断。
+        try:
+            _p0 = await self._get_player_pos_full()
+            if _p0 and not self._near_build_area(_p0[0], _p0[1], _p0[2]):
+                self._activity("warn",
+                               f"bot 当前不在建造区域（{_p0[0]:.0f},{_p0[1]:.0f},y={_p0[2]:.0f}），先传送回建造点再保存 home")
+                await self._try_teleport_home("启动时不在建造区域")
+                await asyncio.sleep(1.0)
+        except Exception:
+            pass
         try:
             r = await self.mcp.send_chat(self._supply_cfg.get("save", "/esethomes dth"))
             if isinstance(r, dict) and r.get("success") is False:
@@ -421,20 +432,25 @@ class BotBuildLoop:
         # 无法移动（实测 bot 在 69 层悬空，前进即掉落）。max_offset 2 更宽松防最后 1 格不可达。
         ok = await self._move_to(target_x, self.origin_y - 1, target_z,
                                  max_offset=2, label=f"row {row_z} edge",
-                                 timeout_ms=20000)
+                                 timeout_ms=20000, verify_height=True)
         if not ok:
             self.progress.state = "offline"
         return ok
 
     async def _move_to(self, x: int, y: int, z: int, max_offset: int = 1,
                        label: str = "", timeout_ms: int | None = None,
-                       ignore_y: bool = True, allow_scaffold: bool = True) -> bool:
+                       ignore_y: bool = True, allow_scaffold: bool = True,
+                       verify_height: bool = False) -> bool:
         """Move bot to within max_offset of (x, y, z) using pathfinder.
 
         2026-08-14：ignore_y 默认 True——地图画建造只关心 x/z 到位（bot 会落到实际
         地面），避免站立层悬空导致 3 维 GoalNear 永远无法满足而 timeout。
         allow_scaffold：补货/传送链路的内部寻路传 False——仓库内寻路失败时不应再
         触发蹲搭（蹲搭→背包无方块→又补货→又寻路，递归死循环），直接失败返回即可。
+        2026-08-15 修复（verify_height）：GoalNearXZ（ignore_y）不校验 y——bot 掉下
+        平台（如 y=57 vs 站立层 68）时 x/z 到位也"成功"，导致放置时 blockAt 全空气
+        （chunk 未加载）→ 参考全失效。建造侧移动传 verify_height=True：到位后检查
+        bot 实际 y 与目标 y 偏差，超差（>4）视为未真正到位（返回 False 触发传送兜底）。
         Returns True on arrival, False on failure (after retries).
         """
         await self._paused.wait()
@@ -463,6 +479,21 @@ class BotBuildLoop:
                     ignore_y=ignore_y,
                 )
                 if result.get("success"):
+                    if verify_height:
+                        # 2026-08-15 修复：校验 bot 实际高度（GoalNearXZ 不检查 y）
+                        try:
+                            st = await self.mcp.get_player_state()
+                            d2 = st.get("data", st) if isinstance(st, dict) else {}
+                            loc = d2.get("location") or {}
+                            by = loc.get("y")
+                            if isinstance(by, (int, float)) and abs(float(by) - y) > 4.0:
+                                self._activity(
+                                    "warn",
+                                    f"移动到位但高度不符（目标y={y}，实际y={by:.1f}）——"
+                                    f"bot 可能掉下/不在站立层，视为未到位")
+                                return False
+                        except Exception:
+                            pass
                     self._last_pos = (x, y, z)
                     return True
                 logger.warning("[%s] move_to %s (attempt %d/%d) failed: %s",
@@ -550,12 +581,14 @@ class BotBuildLoop:
                 stand_z = world_z - 1
                 stand_y = self.origin_y - 1
                 if not await self._move_to(world_x, stand_y, stand_z,
-                                           max_offset=2, label=f"({world_x},{world_z})"):
+                                           max_offset=2, label=f"({world_x},{world_z})",
+                                           verify_height=True):
                     # 2026-08-14：放置点移动失败（可能淹死复活到远处/掉坑）→
                     # 传送回建造点重试一次，避免直接区域失败
                     if await self._try_teleport_home("放置点移动失败"):
                         if not await self._move_to(world_x, stand_y, stand_z,
-                                                   max_offset=2, label=f"({world_x},{world_z})"):
+                                                   max_offset=2, label=f"({world_x},{world_z})",
+                                                   verify_height=True):
                             self.progress.state = "offline"
                             return
                     else:
@@ -1005,12 +1038,14 @@ class BotBuildLoop:
         return False
 
     async def _try_teleport_home(self, reason: str = "") -> bool:
-        """传送回建造点（2026-08-14 兜底链）：
+        """传送回建造点（2026-08-14 兜底链 + 2026-08-15 寻路走回增强）：
 
         1) 先用临时点 return（/ehomes dth）传送 → 等 2.5s → 验证位置在建造区域附近；
         2) 临时点传送失败/位置不对（死亡/意外导致 dth 不在地图画区域）→
            改用固定指令 return_fixed（/ehomes mapart 或 /tp x y z，可自定义）兜底；
-        3) 固定指令仍失败 → warn 并返回 False（调用方据此决定是否终止该 bot）。
+        3) 2026-08-15 新增：前两级都失败（如 /tp 被服务器忽略、mapart 家未设置）→
+           **pathfinder + 蹲搭走回建造区**（bot 掉到平台下方/远处时自愈），
+           目标 = 区域北缘站立点 (origin_x, origin_y-1, origin_z-1)。
         """
         # 1) 临时点传送
         cmd = self._supply_cfg.get("return", "/ehomes dth")
@@ -1026,7 +1061,24 @@ class BotBuildLoop:
             self._activity("warn", f"临时传送点不可用，改用固定指令兜底（{fixed}）")
             if await self._send_teleport(fixed) and await self._verify_at_build_area():
                 return True
-        self._activity("warn", "传送回建造点失败（临时点+固定指令均未到建造区域）")
+        # 3) 2026-08-15 新增：pathfinder + 蹲搭走回建造区（传送链全失败时的自愈）
+        self._activity("warn", "传送回建造点失败（临时点+固定指令均未到建造区域），尝试寻路走回")
+        try:
+            # 目标 = 区域北缘站立点（bot 站 z=origin_z-1，y=origin_y-1 地面层）
+            gx = self.origin_x + self.region.x_start
+            gz = self.origin_z + self.region.z_start - 1
+            gy = self.origin_y - 1
+            ok = await self._move_to(gx, gy, gz, max_offset=3,
+                                     label="walk back to build area",
+                                     timeout_ms=30000,
+                                     allow_scaffold=True,  # 允许蹲搭搭路（悬崖/落差）
+                                     verify_height=True)
+            if ok:
+                self._activity("info", f"寻路走回建造区成功（{gx},{gy},{gz}）")
+                return True
+        except Exception as e:
+            logger.warning("[%s] Walk-back to build area failed: %s", self.bot_id, e)
+        self._activity("warn", "传送与寻路走回均失败，无法返回建造点")
         return False
 
     @staticmethod
