@@ -192,6 +192,10 @@ class BotBuildLoop:
         self._stopped = False
         self._current_item: Optional[str] = None  # item currently in hand
         self._current_slot: Optional[int] = None  # 当前手持快捷栏槽位（模块B：动态识别）
+        # 2026-08-14 优化：建造区域边界缓存（矩形：cx, cz, half_w, half_h），
+        # 首次 _near_build_area 时计算一次（O(N)），之后 O(1)——大尺寸地图画
+        # （512/1024+ 格）不能每次全量遍历 block_matrix。
+        self._area_bounds: Optional[tuple[float, float, float, float]] = None
         self._supply_box: Optional[tuple[int, int, int]] = supply_box  # 分区补给箱坐标（None→用传送）
         # 2026-08-14：材料级潜影盒坐标（用户配置，优先级最高）+ 任务级三个传送指令
         self._supply_boxes: dict[str, list[tuple[int, int, int]]] = supply_boxes or {}
@@ -839,23 +843,38 @@ class BotBuildLoop:
             pass
         return None
 
-    def _near_build_area(self, x: float, z: float, margin: int = 40) -> bool:
-        """判断 (x,z) 是否在建造区域附近（以 block_matrix 中心为圆心，半径外扩 margin）。
+    def _near_build_area(self, x: float, z: float) -> bool:
+        """判断 (x,z) 是否在建造区域附近（矩形区域，X/Z 半宽半高各自外扩自适应余量）。
 
-        2026-08-14：死亡/意外导致临时传送点（dth）被覆盖/失效时，传送后位置可能
-        在远处（出生点/其他地点）——据此判断是否需要固定指令兜底。
+        2026-08-14 优化（为大地图画准备）：
+        - 区域边界首次调用时计算并缓存（O(N) 一次 → 之后 O(1)）——原实现每次
+          全量遍历 block_matrix，128²=1.6万 尚可，512²/1024²=26万~100万+ 会卡。
+        - 矩形判断（X、Z 分别算半宽半高）——原实现只用 X 方向半径（圆形），
+          对纵向长条/宽幅地图画会误判（区域远端被判"不在区域内"触发误兜底）。
+        - 余量自适应：min(宽, 高) 的 10%，下限 40 格——小图（128）≈40 格、
+          大图（512+）自动放大，覆盖传送落点偏差又不至于过度外扩。
         """
-        try:
-            xs = [k[0] for k in self.block_matrix]
-            zs = [k[1] for k in self.block_matrix]
-            if not xs or not zs:
-                return True  # 未知区域不拦截（避免误判导致无限兜底）
-            cx = self.origin_x + (min(xs) + max(xs)) / 2.0
-            cz = self.origin_z + (min(zs) + max(zs)) / 2.0
-            radius = (max(xs) - min(xs)) / 2.0 + margin
-            return (x - cx) ** 2 + (z - cz) ** 2 <= radius ** 2
-        except Exception:
-            return True
+        bounds = self._area_bounds
+        if bounds is None:
+            try:
+                xs = [k[0] for k in self.block_matrix]
+                zs = [k[1] for k in self.block_matrix]
+                if not xs or not zs:
+                    self._area_bounds = (0.0, 0.0, 0.0, 0.0)  # 未知区域：不拦截
+                    return True
+                w = float(max(xs) - min(xs))
+                h = float(max(zs) - min(zs))
+                margin = max(40.0, min(w, h) * 0.10)
+                cx = self.origin_x + (min(xs) + max(xs)) / 2.0
+                cz = self.origin_z + (min(zs) + max(zs)) / 2.0
+                bounds = (cx, cz, w / 2.0 + margin, h / 2.0 + margin)
+                self._area_bounds = bounds
+            except Exception:
+                return True
+        cx, cz, half_w, half_h = bounds
+        if half_w <= 0 or half_h <= 0:
+            return True  # 未知区域不拦截（避免误判导致无限兜底）
+        return abs(x - cx) <= half_w and abs(z - cz) <= half_h
 
     async def _send_teleport(self, cmd: str) -> bool:
         """发送传送指令并等待落地；失败返回 False。"""
