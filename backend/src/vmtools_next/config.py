@@ -165,7 +165,14 @@ class MineflayerConfig(BaseModel):
     #   （平台局部凸起），不代表建造区站立层，曾误导我把 offset 改成 0 导致 bot
     #   站 69 层悬空掉水。默认 -1 = 站立层 origin_y-1（15.2.11 验证结论）。
     #   若某任务平台顶确实=origin_y（方块放平台顶同层），服务器 config.yaml 设 0。
-    map_art_stand_y_offset: int = -1  # -1 | 0 | 1
+    map_art_stand_y_offset: int = 0  # -1 | 0 | 1
+    # ── 2026-08-15 环境检测整合（用户需求：维度+位置+附近领地结合）──
+    # 地图画建造领地（Residence 名，可自定义；空=不校验）。bot 启动建造前检查
+    # 当前所在领地是否匹配（用户主领地 venus，可按任务改成自己的领地）。
+    map_art_residence: str = ""
+    # 地图画建造维度（mineflayer dimension 值：overworld/world_nether/world_the_end）。
+    # bot 在错误维度（如补货后被留在末地仓库）启动时先告警/传送回主世界再建。
+    map_art_build_world: str = "overworld"
     # ── 任务调度（2026-08-12，实施计划阶段 2） ──
     # 地图画任务并发上限（同时运行的任务数；排队任务完成后自动启动下一个）
     task_max_concurrent_build: int = 1

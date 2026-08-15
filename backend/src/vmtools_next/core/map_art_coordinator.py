@@ -25,6 +25,7 @@ from typing import Optional
 
 from vmtools_next.adapters.abstract.bot_agent import AbstractBotAgent
 from vmtools_next.config import get_config
+from vmtools_next.core.bluemap_monitor import _point_in_polygon_2d
 from vmtools_next.core.map_art_restock import Need, RestockPlanner, ShulkerRestocker
 from vmtools_next.data.db import sio
 
@@ -231,12 +232,20 @@ class BotBuildLoop:
             self._min_restock_interval_s = 90.0
         self._last_restock_at: float = 0.0
         self._no_gain_cycles: int = 0
-        # 2026-08-15 决定性修复：bot 站立层相对 origin_y 的偏移（默认0=平台顶面=origin_y）
+        # 2026-08-15 决定性修复：bot 站立层相对 origin_y 的偏移（默认-1=平台顶=origin_y-1）
         try:
             self._stand_y_offset: int = int(
                 getattr(get_config().mineflayer, "map_art_stand_y_offset", 0) or 0)
         except Exception:
             self._stand_y_offset = 0
+        # 2026-08-15 环境检测整合（用户需求）：可自定义建造领地 + 建造维度
+        try:
+            _mf = get_config().mineflayer
+            self._build_residence: str = (getattr(_mf, "map_art_residence", "") or "").strip()
+            self._build_world: str = (getattr(_mf, "map_art_build_world", "overworld") or "overworld").strip()
+        except Exception:
+            self._build_residence = ""
+            self._build_world = "overworld"
         self._region_materials: Optional[dict] = None  # 区域材料需求（RestockPlanner 产出，懒缓存）
         self._restocker: Optional[ShulkerRestocker] = None  # 懒创建
         self._supply_box: Optional[tuple[int, int, int]] = supply_box  # 分区补给箱坐标（None→用传送）
@@ -321,6 +330,11 @@ class BotBuildLoop:
         self._food_task = asyncio.create_task(self._food_monitor_loop())
         # 2026-08-14 模块B：初始化快捷栏槽位映射（避免每色首次全背包搜索）
         await self._refresh_hotbar_map()
+
+        # 2026-08-15 环境检测整合（用户需求：维度 + 位置 + 附近领地结合）——
+        # 启动时输出 bot 当前维度/位置/所在领地/附近领地，校验建造维度与可自定义领地，
+        # 不符合预期（如 bot 被留在末地仓库）先告警，再由下方传送定位回主世界建造区。
+        await self._check_build_environment()
 
         # 2026-08-14：保存建造点 home（/esethome dth），供寻路失败/淹死复活后
         # 用 /ehomes dth 传送回来。
@@ -1049,6 +1063,104 @@ class BotBuildLoop:
         except Exception as e:
             self._activity("warn", f"传送异常：{e}")
             return False
+
+    # ── 环境检测整合（2026-08-15 用户需求：维度 + 位置 + 附近领地结合）──
+
+    async def _get_bot_environment(self) -> dict:
+        """读取 bot 当前维度/位置/所在领地/附近领地（结合后端 bluemap residences）。
+
+        返回 {dimension, location, current_residence, nearby_residences}；
+        任一项获取失败时为 None/[]，不影响主流程（只用于诊断与校验）。
+        """
+        env: dict = {
+            "dimension": None,
+            "location": None,
+            "current_residence": None,
+            "nearby_residences": [],
+        }
+        try:
+            st = await self.mcp.get_player_state()
+            d = st.get("data", st) if isinstance(st, dict) else {}
+            loc = d.get("location") or {}
+            env["location"] = loc or None
+            env["dimension"] = d.get("dimension") or None
+        except Exception:
+            pass
+        loc = env.get("location") or {}
+        x, z, y = loc.get("x"), loc.get("z"), loc.get("y", 64)
+        if x is None or z is None:
+            return env
+        try:
+            from vmtools_next.main import get_bluemap_monitor
+            mon = get_bluemap_monitor()
+            if mon is None:
+                return env
+            rs = mon.get_residences() or []
+            # mineflayer dimension 值 → bluemap 世界名（Residence marker 的 world 字段）
+            bm_world = {
+                "overworld": "world",
+                "world_nether": "world_nether",
+                "world_the_end": "world_the_end",
+            }.get(env.get("dimension") or "", env.get("dimension") or "")
+            dists: list = []
+            for r in rs:
+                w = r.get("world") or ""
+                if w and w != bm_world:
+                    continue
+                shape = r.get("shape") or []
+                if len(shape) >= 3:
+                    my = r.get("min_y", -1e9) or -1e9
+                    My = r.get("max_y", 1e9) or 1e9
+                    if my <= y <= My and _point_in_polygon_2d(x, z, shape):
+                        env["current_residence"] = {
+                            "name": r.get("label"),
+                            "owner": r.get("owner"),
+                            "area": r.get("area"),
+                        }
+                p = r.get("position") or {}
+                px, pz = p.get("x"), p.get("z")
+                if px is not None and pz is not None:
+                    d2 = (px - x) ** 2 + (pz - z) ** 2
+                    dists.append((d2, r.get("label"), r.get("owner")))
+            env["nearby_residences"] = [
+                {"name": n, "owner": o, "distance": round(d2 ** 0.5, 1)}
+                for d2, n, o in sorted(dists)[:5]
+            ]
+        except Exception:
+            pass
+        return env
+
+    async def _check_build_environment(self) -> dict:
+        """启动建造前检查：维度 + 可自定义领地（config.map_art_residence / map_art_build_world）。
+
+        只做诊断与告警（不符合预期不终止，由后续传送定位/兜底链继续处理）：
+        - bot 在错误维度（如补货后被留在末地仓库）→ 警告，提醒会尝试传送回建造点
+        - bot 所在领地 ≠ 配置的建造领地 → 警告（领地可自定义，空=不校验）
+        同时输出「附近领地」列表帮助确认 bot 当前位置。
+        """
+        env = await self._get_bot_environment()
+        loc = env.get("location") or {}
+        res = env.get("current_residence") or {}
+        res_name = res.get("name") or "无/未知"
+        nearby = env.get("nearby_residences") or []
+        nearby_names = "、".join(str(n.get("name")) for n in nearby[:5]) or "无"
+        self._activity(
+            "info",
+            f"环境检测：维度={env.get('dimension')} 位置=({loc.get('x', '?')},{loc.get('z', '?')}) "
+            f"所在领地={res_name} 附近领地={nearby_names}")
+        dim = env.get("dimension")
+        if dim and self._build_world and dim != self._build_world:
+            self._activity(
+                "warn",
+                f"⚠️ bot 维度 {dim} ≠ 建造维度 {self._build_world}——bot 可能在错误世界"
+                f"（如补货后被留在末地仓库），将尝试传送回建造点")
+        if self._build_residence and res_name not in ("无/未知", None):
+            if str(res_name).lower() != self._build_residence.lower():
+                self._activity(
+                    "warn",
+                    f"⚠️ bot 所在领地 {res_name} ≠ 配置的建造领地 {self._build_residence}"
+                    f"——若 bot 能传送回建造点则继续，否则检查领地权限/坐标")
+        return env
 
     async def _verify_at_build_area(self, retries: int = 2) -> bool:
         """传送后验证 bot 是否真的回到建造区域附近（2026-08-15 增强）。
