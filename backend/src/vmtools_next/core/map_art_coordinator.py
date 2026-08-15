@@ -231,6 +231,12 @@ class BotBuildLoop:
             self._min_restock_interval_s = 90.0
         self._last_restock_at: float = 0.0
         self._no_gain_cycles: int = 0
+        # 2026-08-15 决定性修复：bot 站立层相对 origin_y 的偏移（默认0=平台顶面=origin_y）
+        try:
+            self._stand_y_offset: int = int(
+                getattr(get_config().mineflayer, "map_art_stand_y_offset", 0) or 0)
+        except Exception:
+            self._stand_y_offset = 0
         self._region_materials: Optional[dict] = None  # 区域材料需求（RestockPlanner 产出，懒缓存）
         self._restocker: Optional[ShulkerRestocker] = None  # 懒创建
         self._supply_box: Optional[tuple[int, int, int]] = supply_box  # 分区补给箱坐标（None→用传送）
@@ -326,7 +332,7 @@ class BotBuildLoop:
         try:
             gx0 = self.origin_x + self.region.x_start
             gz0 = self.origin_z + self.region.z_start - 1
-            gy0 = self.origin_y - 1  # 站立层（平台顶 y=68）
+            gy0 = self.origin_y + self._stand_y_offset  # 站立层（平台顶 y=68）
             fixed0 = (self._supply_cfg.get("return_fixed") or "/ehomes mapart").strip()
             placed0 = False
             if fixed0:
@@ -455,7 +461,7 @@ class BotBuildLoop:
         # 2026-08-14 修复：bot 站立高度 = origin_y -1（地面层，与补给箱 y_offset 一致）。
         # 原用 origin_y（建造层）作站立高度 → bot 与建造层方块同层/悬空 → pathfinder
         # 无法移动（实测 bot 在 69 层悬空，前进即掉落）。max_offset 2 更宽松防最后 1 格不可达。
-        ok = await self._move_to(target_x, self.origin_y - 1, target_z,
+        ok = await self._move_to(target_x, self.origin_y + self._stand_y_offset, target_z,
                                  max_offset=2, label=f"row {row_z} edge",
                                  timeout_ms=20000, verify_height=True)
         if not ok:
@@ -604,7 +610,7 @@ class BotBuildLoop:
                 # ⚠️ 2026-08-15 回退：行内直走（walk_toward）实测导致 bot 掉下平台
                 # （y=58.5 vs 站立层68）→ 后续放置全失败，本轮回退为纯 _move_to。
                 stand_z = world_z - 1
-                stand_y = self.origin_y - 1
+                stand_y = self.origin_y + self._stand_y_offset
                 if not await self._move_to(world_x, stand_y, stand_z,
                                            max_offset=2, label=f"({world_x},{world_z})",
                                            verify_height=True):
@@ -1015,7 +1021,7 @@ class BotBuildLoop:
         if half_w <= 0 or half_h <= 0:
             return True  # 未知区域不拦截（避免误判导致无限兜底）
         if y is not None:
-            expected_y = self.origin_y - 1  # 站立层（地面）
+            expected_y = self.origin_y + self._stand_y_offset  # 站立层（地面）
             if abs(y - expected_y) > 3.0:
                 return False
         return abs(x - cx) <= half_w and abs(z - cz) <= half_h
@@ -1059,7 +1065,7 @@ class BotBuildLoop:
                 self._activity("debug", "传送后多次尝试仍无法获取 bot 位置，视为成功（不拦截）")
                 return True
             x, z, y = p
-            expected_y = self.origin_y - 1  # 站立层（平台顶 y=68）
+            expected_y = self.origin_y + self._stand_y_offset  # 站立层（平台顶 y=68）
             # 2026-08-15 决定性修复：y 严格校验（<1.0）——bot 站平台顶脚部 y≈68.0±0.5；
             # 悬空 y=69 / 掉水里 y=58 都判失败（此前 3 格容忍放行 y=69，bot 下一秒掉水里）
             if abs(float(y) - expected_y) >= 1.0:
@@ -1120,7 +1126,7 @@ class BotBuildLoop:
             # 目标 = 区域北缘站立点（bot 站 z=origin_z-1，y=origin_y-1 地面层）
             gx = self.origin_x + self.region.x_start
             gz = self.origin_z + self.region.z_start - 1
-            gy = self.origin_y - 1
+            gy = self.origin_y + self._stand_y_offset
             ok = await self._move_to(gx, gy, gz, max_offset=3,
                                      label="walk back to build area",
                                      timeout_ms=30000,

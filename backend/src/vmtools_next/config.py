@@ -159,6 +159,11 @@ class MineflayerConfig(BaseModel):
     map_art_restock_stacks: int = 1  # 1-16
     # 单 bot 两次补货最小间隔（秒）——防"取 64 用 165 块又传"的短周期反复（配合组数配置）
     map_art_min_restock_interval_s: int = 90
+    # ⚠️ 2026-08-15 决定性修复：bot 站立层相对 origin_y 的偏移。
+    #   默认 0 = 站立层 = origin_y（平台顶面高度 = 方块放置层，bot 站在平台顶放置同层
+    #   方块——当前任务实测平台顶 y=69=origin_y）。旧任务若平台顶 = origin_y-1
+    #   （方块放在平台上方一层），服务器 config.yaml 设 `map_art_stand_y_offset: -1`。
+    map_art_stand_y_offset: int = 0  # -1 | 0 | 1
     # ── 任务调度（2026-08-12，实施计划阶段 2） ──
     # 地图画任务并发上限（同时运行的任务数；排队任务完成后自动启动下一个）
     task_max_concurrent_build: int = 1
