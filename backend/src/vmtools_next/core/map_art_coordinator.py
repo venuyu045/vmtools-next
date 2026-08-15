@@ -1088,6 +1088,19 @@ class BotBuildLoop:
             if self._near_build_area(x, z):  # x/z 判断（y 已单独严格校验）
                 # 复查：等 1.5s 再确认位置没变（防悬空瞬间验证通过后掉下去）
                 await asyncio.sleep(1.5)
+                # 2026-08-15 决定性补充：检查 bot 是否真正落地（on_ground）——
+                # 传送到悬空处 y 值可能正确（如平台边缘外1格）但 bot 下一秒掉水里，
+                # is_on_ground=False 时判定未到位，走第 3 级寻路走回（pathfinder 会走能站的路）
+                try:
+                    st = await self.mcp.get_player_state()
+                    d2 = st.get("data", st) if isinstance(st, dict) else {}
+                    on_ground = d2.get("is_on_ground")
+                    if on_ground is False:
+                        self._activity("warn",
+                                       f"传送后 bot 未落地（on_ground=False，悬空/水中）——判定未到位，走兜底")
+                        return False
+                except Exception:
+                    pass
                 p2 = await self._get_player_pos_full()
                 if p2 is None:
                     self._activity("debug",
