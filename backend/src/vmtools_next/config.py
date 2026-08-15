@@ -154,8 +154,9 @@ class MineflayerConfig(BaseModel):
     map_art_eat_threshold_health: int = 15
     # ── 补货决策模型（2026-08-15 第一批重构，迁移 playercontrolpp target/have）──
     # 每种材料一次补货补到多少组：目标持有量 = min(区域剩余需求, N组×64)。
-    # 4 组 = 256 个；128² 单色 10594 块 → 约 41 次补货（原"缺一组补一组"约 165 次，÷4）。
-    map_art_restock_stacks: int = 4  # 1-16
+    # ⚠️ 2026-08-15 用户实测纠正：一种颜色一次拿【1 组】（64 个）——4 组会导致
+    # 背包被建材塞满、后续颜色装不下。默认 1。
+    map_art_restock_stacks: int = 1  # 1-16
     # 单 bot 两次补货最小间隔（秒）——防"取 64 用 165 块又传"的短周期反复（配合组数配置）
     map_art_min_restock_interval_s: int = 90
     # ── 任务调度（2026-08-12，实施计划阶段 2） ──

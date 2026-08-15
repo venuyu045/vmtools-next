@@ -193,29 +193,23 @@ class ShulkerRestocker:
             return 0
 
         try:
-            # 循环取货直到背包达标（每次一组；容器取空/背包满则停）
-            loops = 0
-            while True:
+            # 2026-08-15 用户实测纠正：一次只取【一组】（64），不循环到 target——
+            # 原循环在背包快照滞后时会把容器搬空（每种颜色拿 256+，背包塞满后续颜色装不下）。
+            if not await self._withdraw_once(clean_id, container_id, bx, by, bz):
                 have = await self._check_inventory(clean_id)
-                if have >= target_count:
+                if have > 0:
+                    self._activity("info", f"取到 {clean_id} ×{have}（{bx},{by},{bz}）")
                     return have
-                if not await self._has_free_slot():
-                    self._activity("warn", "背包已满，暂停补货（请先清理背包空间）")
-                    return have
-                if not await self._withdraw_once(clean_id, container_id, bx, by, bz):
-                    break
-                loops += 1
-                if loops >= 16:  # 安全上限（16×64=1024 > 4组256）
-                    break
+            else:
                 # withdraw 后背包轮询确认（防假成功）
                 for _i in range(CONFIRM_ROUNDS):
                     await asyncio.sleep(CONFIRM_INTERVAL_S)
                     if await self._check_inventory(clean_id) > 0:
                         break
-            have = await self._check_inventory(clean_id)
-            if have > 0:
-                self._activity("info", f"取到 {clean_id} ×{have}（{bx},{by},{bz}）")
-                return have
+                have = await self._check_inventory(clean_id)
+                if have > 0:
+                    self._activity("info", f"取到 {clean_id} ×{have}（{bx},{by},{bz}）")
+                    return have
         finally:
             await self._close_box(container_id)
 

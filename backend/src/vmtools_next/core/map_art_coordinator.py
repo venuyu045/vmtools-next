@@ -524,11 +524,6 @@ class BotBuildLoop:
 
         self.progress.state = "placing"
 
-        # 2026-08-15 第三批：行内相邻格直走优化——prev_x 跨颜色分组保持，
-        # 相邻格（|Δx|=1）用 walk_toward（控制键直走）替代 pathfinder，大图性能关键；
-        # 失败（撞墙/卡地形/超时）回退 pathfinder。
-        prev_x: Optional[int] = None
-
         # Place color by color
         for block_id, x_positions in row_blocks.items():
             await self._paused.wait()
@@ -550,23 +545,12 @@ class BotBuildLoop:
                 # 正北站立点（相邻格 = 1 格移动）。原实现 threshold=2 跳格、靠
                 # place_block(face=AUTO) 站桩斜放，触及范围边缘易失败且非「走一格」。
                 # 2026-08-14 修复：站立高度 = origin_y -1（地面层），避免悬空/与方块同层。
+                # ⚠️ 2026-08-15 回退：行内直走（walk_toward）实测导致 bot 掉下平台
+                # （y=58.5 vs 站立层68）→ 后续放置全失败，本轮回退为纯 _move_to。
                 stand_z = world_z - 1
                 stand_y = self.origin_y - 1
-                moved_ok = False
-                if prev_x is not None and abs(x - prev_x) == 1:
-                    # 相邻格：控制键直走（不移动 y；目标在行内北侧站立点）
-                    try:
-                        wr = await self.mcp.walk_toward(world_x, stand_z, timeout_ms=8000)
-                        moved_ok = bool(wr.get("success"))
-                        if not moved_ok:
-                            self._activity("debug",
-                                           f"直走到 ({world_x},{stand_z}) 失败（{wr.get('reason', '?')}），回退寻路")
-                    except Exception:
-                        moved_ok = False
-                if not moved_ok:
-                    moved_ok = await self._move_to(world_x, stand_y, stand_z,
-                                                   max_offset=2, label=f"({world_x},{world_z})")
-                if not moved_ok:
+                if not await self._move_to(world_x, stand_y, stand_z,
+                                           max_offset=2, label=f"({world_x},{world_z})"):
                     # 2026-08-14：放置点移动失败（可能淹死复活到远处/掉坑）→
                     # 传送回建造点重试一次，避免直接区域失败
                     if await self._try_teleport_home("放置点移动失败"):
@@ -577,7 +561,6 @@ class BotBuildLoop:
                     else:
                         self.progress.state = "offline"
                         return
-                prev_x = x
 
                 # 2) Verify: skip if the target is already correct
                 if await self._verify_block(world_x, self.origin_y, world_z, block_id):
@@ -1392,10 +1375,16 @@ class BotBuildLoop:
                 self._activity("info", f"全部补齐（{len(needs)}种材料均已确认在背包）")
             self._activity("info", f"传送返回建造点（{self._supply_cfg.get('return', '/ehomes dth')}）")
             try:
-                await self.mcp.send_chat(self._supply_cfg.get("return", "/ehomes dth"))
+                r_ret = await self.mcp.send_chat(self._supply_cfg.get("return", "/ehomes dth"))
+                # 2026-08-15 修复：检查返回指令是否真正发出（原 try/except 吞掉 success:false，
+                # 曾导致 save 指令错误（/esethome 单数）时 dth 家未保存、返回传送静默失败）
+                if isinstance(r_ret, dict) and r_ret.get("success") is False:
+                    self._activity("warn",
+                                   f"返回指令发送失败：{r_ret.get('error', '?')}（检查 supply_config 的 save/return 指令）")
                 await asyncio.sleep(1.5)
-            except Exception:
-                pass
+            except Exception as e:
+                self._activity("warn", f"返回指令异常：{e}")
+                await asyncio.sleep(1.5)
             self._last_pos = None  # 传送后位置未知，强制下次寻路
             self.progress.state = "placing"
             await self._refresh_hotbar_map()
