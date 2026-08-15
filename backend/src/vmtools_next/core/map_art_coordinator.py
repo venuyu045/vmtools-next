@@ -329,28 +329,18 @@ class BotBuildLoop:
         #   1) return_fixed（用户配置的可靠家，如 /ehomes mapart 在平台上）→ 传送 → 严格验证
         #   2) 无 return_fixed → 寻路（+蹲搭）走回北缘站立点 → verify_height 确认
         # 到位后才保存 dth（否则 dth=主城/水里等错误位置，传送链全断）。
-        # 2026-08-15 自适应站立层：平台结构不规则（mapart 家 69 能站、建造区北缘可能
-        # 68 能站）——传送固定点落地稳定后读 bot 实际 y，自动算 offset = y - origin_y，
-        # 后续站立层/高度校验全部用自适应值（不再硬编码 0/-1）。
+        # 2026-08-15 第二次修正：站立层固定用 config.map_art_stand_y_offset（默认 -1，
+        # 平台顶=origin_y-1=68）——mapart 家 69 能站只是局部高点，自适应会被误导。
         try:
             fixed0 = (self._supply_cfg.get("return_fixed") or "/ehomes mapart").strip()
+            placed0 = False
             if fixed0:
                 self._activity("info", f"启动定位：传送回固定建造点（{fixed0}）")
                 if await self._send_teleport(fixed0):
-                    await asyncio.sleep(4.0)  # 落地稳定（可能从高处下落）
-                    p0 = await self._get_player_pos_full()
-                    if p0:
-                        self._stand_y_offset = int(round(p0[2] - self.origin_y))
-                        self._activity(
-                            "info",
-                            f"自适应站立层：origin_y={self.origin_y} bot落地y={p0[2]:.1f} "
-                            f"→ stand_y_offset={self._stand_y_offset}（站立层={self.origin_y + self._stand_y_offset}）")
                     placed0 = await self._verify_at_build_area()
-            else:
-                placed0 = False
             gx0 = self.origin_x + self.region.x_start
             gz0 = self.origin_z + self.region.z_start - 1
-            gy0 = self.origin_y + self._stand_y_offset  # 站立层（自适应）
+            gy0 = self.origin_y + self._stand_y_offset  # 站立层（固定 offset）
             if not placed0:
                 self._activity("info", f"定位到建造点北缘（{gx0},{gy0},{gz0}）")
                 moved0 = await self._move_to(gx0, gy0, gz0, max_offset=2,
