@@ -213,6 +213,16 @@ class SupplyTemplateApply(BaseModel):
     task_id: str
 
 
+class SleepPointRequest(BaseModel):
+    """地图画建造睡觉点（2026-08-16）：床的方块坐标（世界坐标）。
+
+    未配置（x/y/z 任意为 0）→ 清空睡觉点（建造循环跳过自动睡觉）。
+    """
+    x: int = 0
+    y: int = 0
+    z: int = 0
+
+
 def _load_global_warehouse(db: Session) -> dict[str, list[tuple[int, int, int]]]:
     """读取全局补货仓库（材料 → 潜影盒坐标列表）。"""
     result: dict[str, list[tuple[int, int, int]]] = {}
@@ -534,6 +544,9 @@ def get_task(task_id: str, db: Session = Depends(get_db), user=Depends(require_a
         "error_message": task.error_message,
         "supply_config": _parse_supply_config(task.supply_config),
         "food_config": _parse_food_config(task.food_config),
+        "sleep_point": {
+            "x": task.sleep_x, "y": task.sleep_y, "z": task.sleep_z,
+        } if (task.sleep_x is not None and task.sleep_y is not None and task.sleep_z is not None) else None,
         "rotation": task.rotation or 0,
         "projection": {
             "file_path": task.projection_file_path,
@@ -1083,6 +1096,33 @@ def put_food_boxes(task_id: str, data: SupplyBoxesRequest, db: Session = Depends
     task = db.query(MapArtTask).filter(MapArtTask.task_id == task_id).first()
     if not task:
         raise HTTPException(status_code=404, detail="任务不存在")
+
+
+@router.get("/tasks/{task_id}/sleep-point")
+def get_sleep_point(task_id: str, db: Session = Depends(get_db), user=Depends(require_admin)):
+    """读取任务睡觉点（2026-08-16）：床的方块坐标；未配置返回 None。"""
+    task = db.query(MapArtTask).filter(MapArtTask.task_id == task_id).first()
+    if not task:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    if task.sleep_x is None or task.sleep_y is None or task.sleep_z is None:
+        return {"x": None, "y": None, "z": None}
+    return {"x": task.sleep_x, "y": task.sleep_y, "z": task.sleep_z}
+
+
+@router.put("/tasks/{task_id}/sleep-point")
+def put_sleep_point(task_id: str, data: SleepPointRequest, db: Session = Depends(get_db),
+                    user=Depends(require_admin)):
+    """保存任务睡觉点（床的方块坐标，世界坐标）；全 0 → 清空（跳过自动睡觉）。"""
+    task = db.query(MapArtTask).filter(MapArtTask.task_id == task_id).first()
+    if not task:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    if data.x == 0 and data.y == 0 and data.z == 0:
+        task.sleep_x = task.sleep_y = task.sleep_z = None
+    else:
+        task.sleep_x, task.sleep_y, task.sleep_z = int(data.x), int(data.y), int(data.z)
+    db.commit()
+    return {"status": "ok",
+            "sleep_point": {"x": task.sleep_x, "y": task.sleep_y, "z": task.sleep_z}}
     db.query(MapArtFoodBox).filter(MapArtFoodBox.task_id == task_id).delete()
     saved = 0
     for item in data.items:

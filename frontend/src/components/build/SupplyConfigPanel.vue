@@ -116,6 +116,21 @@
       </div>
     </el-card>
 
+    <!-- 睡觉点配置（2026-08-16：夜晚自动睡觉防怪物/幻翼） -->
+    <el-card class="panel" header="自动睡觉（夜晚防怪物 / 防幻翼）">
+      <el-form label-width="130px" size="small" class="cfg-form">
+        <el-form-item label="床的坐标（X Y Z）">
+          <el-input-number v-model="sleepPoint.x" :controls="false" size="small" class="box-input" placeholder="X" />
+          <el-input-number v-model="sleepPoint.y" :controls="false" size="small" class="box-input" placeholder="Y" />
+          <el-input-number v-model="sleepPoint.z" :controls="false" size="small" class="box-input" placeholder="Z" />
+        </el-form-item>
+        <el-form-item>
+          <el-button type="primary" size="small" :loading="savingSleepPoint" @click="saveSleepPointCfg">保存睡觉点</el-button>
+          <span class="cfg-hint">填床的方块坐标（世界坐标）；bot 夜晚暂停建造 → 寻路到床睡觉 → 天亮传回建造点。全 0 保存 = 清空（跳过自动睡觉）</span>
+        </el-form-item>
+      </el-form>
+    </el-card>
+
     <!-- 保存为模板（2026-08-14 二期） -->
     <el-dialog v-model="saveTplOpen" title="保存为补货模板" width="400px" append-to-body>
       <p class="tpl-desc">把当前任务的潜影盒配置保存为可复用模板（仅含已配置坐标的材料），下个任务可一键导入。</p>
@@ -172,6 +187,10 @@ const foodCfg = reactive({
 const foodBoxes = ref<Box[]>([])
 const savingFoodCfg = ref(false)
 const savingFoodBoxes = ref(false)
+
+// ── 睡觉点（2026-08-16：夜晚自动睡觉防怪物/幻翼）──
+const sleepPoint = reactive({ x: 0, y: 0, z: 0 })
+const savingSleepPoint = ref(false)
 
 // ── 模板保存/导入（2026-08-14 二期） ──
 const saveTplOpen = ref(false)
@@ -253,11 +272,12 @@ async function doImportTpl() {
 async function load() {
   loading.value = true
   try {
-    const [cfgResp, boxResp, foodCfgResp, foodBoxResp] = await Promise.all([
+    const [cfgResp, boxResp, foodCfgResp, foodBoxResp, sleepResp] = await Promise.all([
       mapArtApi.getSupplyConfig(props.taskId),
       mapArtApi.getSupplyBoxes(props.taskId),
       mapArtApi.getFoodConfig(props.taskId),
       mapArtApi.getFoodBoxes(props.taskId),
+      mapArtApi.getSleepPoint(props.taskId),
     ])
     const c = cfgResp.data || {}
     cfg.go = c.go || '/ehomes mdssj'
@@ -277,6 +297,11 @@ async function load() {
     foodCfg.eat_threshold_food = fc.eat_threshold_food ?? 15
     foodCfg.eat_threshold_health = fc.eat_threshold_health ?? 15
     foodBoxes.value = (foodBoxResp.data?.boxes || []).map((b: any) => ({ x: b.x, y: b.y, z: b.z }))
+    // 睡觉点（2026-08-16）
+    const sp = sleepResp.data || {}
+    sleepPoint.x = sp.x ?? 0
+    sleepPoint.y = sp.y ?? 0
+    sleepPoint.z = sp.z ?? 0
   } catch (e) {
     ElMessage.error(errMsg(e, '加载补货配置失败'))
   } finally {
@@ -309,6 +334,19 @@ async function saveFoodBoxes() {
     ElMessage.error(errMsg(e, '保存猪排潜影盒坐标失败'))
   } finally {
     savingFoodBoxes.value = false
+  }
+}
+
+async function saveSleepPointCfg() {
+  savingSleepPoint.value = true
+  try {
+    await mapArtApi.saveSleepPoint(props.taskId, { ...sleepPoint })
+    ElMessage.success('睡觉点已保存（全 0 = 清空）')
+    await load()
+  } catch (e) {
+    ElMessage.error(errMsg(e, '保存睡觉点失败'))
+  } finally {
+    savingSleepPoint.value = false
   }
 }
 

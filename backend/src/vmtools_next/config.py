@@ -165,6 +165,21 @@ class MineflayerConfig(BaseModel):
     #   与 2026-08-15 实测「bot 脚 69.0 = 站 68 层顶」一致）；后续行站方块顶 = origin_y+1。
     #   旧注释（-1 = 站立方块层 origin_y-1）是另一套语义，已废弃，勿再混用。
     map_art_stand_y_offset: int = 0  # 0 默认 | 旧任务平台结构特殊可 -1/1（谨慎）
+    # ── 地图画建造自动睡觉（2026-08-16，用户需求：夜晚受怪物攻击 + 幻翼）──
+    # 建造区无领地保护，夜晚怪物会攻击 bot；长时间不睡觉幻翼也会生成。
+    # 建造循环内独立协程检测服务器时间，进入可睡窗口（夜晚/雷暴）→ 暂停建造 →
+    # 保存当前位置(/esethomes dth) → 寻路到任务配置的床（sleep_x/y/z）睡觉 →
+    # 天亮醒来 → /ehomes dth 传回建造点 → 恢复建造。睡觉动作本身重置幻翼计时
+    # （即使服务器 doDaylightCycle=false 时间不跳，睡觉仍有效防幻翼）。
+    # 夜晚窗口（原版 tick：12542 起可睡，23458 后躺下立刻天亮；默认整窗）
+    map_art_sleep_night_start_tick: int = 12542
+    map_art_sleep_night_end_tick: int = 23458
+    # 睡觉检查间隔（秒，建造循环内协程轮询）
+    map_art_sleep_check_interval_s: int = 10
+    # 睡下后最短睡眠时长（秒）——保证幻翼计时重置再起床
+    map_art_sleep_min_sleep_s: int = 5
+    # 等天亮最长等待（秒），超时手动唤醒（doDaylightCycle=false 时间不跳时兜底）
+    map_art_sleep_max_wait_s: int = 300
     # ── 2026-08-16 P2：寻路/放置/兜底参数收敛（原散落硬编码）──
     # 寻路失败重试次数（baritone+旧 pathfinder 各自重试，默认 2）
     map_art_move_retries: int = 2

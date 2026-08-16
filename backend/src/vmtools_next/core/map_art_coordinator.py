@@ -186,6 +186,7 @@ class BotBuildLoop:
         supply_config: Optional[dict] = None,  # 2026-08-14：{go, save, return} 三个传送指令
         food_config: Optional[dict] = None,  # 2026-08-14 模块A：食物配置
         food_boxes: Optional[list[tuple[int, int, int]]] = None,  # 2026-08-14 模块A：猪排潜影盒坐标
+        sleep_point: Optional[tuple[int, int, int]] = None,  # 2026-08-16：睡觉点（床的世界坐标）
         on_done: Optional[callable] = None,  # 正常完成回调（coordinator 用于任务级完成判定）
         on_activity: Optional[callable] = None,  # 2026-08-14 终端：活动日志回调 (bot_id, bot_name, level, message)
     ):
@@ -260,6 +261,26 @@ class BotBuildLoop:
         self._food_task: Optional[asyncio.Task] = None  # 食物监控协程
         # 2026-08-14：溺水/坠落防护——记录上次血量，持续下降时传送回建造点
         self._last_health: Optional[float] = None
+
+        # ── 2026-08-16 自动睡觉（用户需求：夜晚怪物攻击 + 幻翼）──
+        # 睡觉点=床的世界坐标（任务级配置，DB map_art_tasks.sleep_x/y/z；未配置→跳过）。
+        # _sleep_event：set=可继续建造；clear=暂停（睡觉中）。_sleep_monitor_loop
+        # 检测到夜晚可睡窗口 → 暂停建造 → 存位置 → 寻路到床睡觉 → 天亮 → 传回 → 恢复。
+        self._sleep_point: Optional[tuple[int, int, int]] = sleep_point
+        self._sleeping: bool = False
+        self._sleep_event = asyncio.Event()
+        self._sleep_event.set()  # 初始可继续
+        self._sleep_task: Optional[asyncio.Task] = None  # 睡觉监控协程
+        try:
+            _mf_slp = get_config().mineflayer
+            self._sleep_night_start: int = max(0, min(24000, int(getattr(_mf_slp, "map_art_sleep_night_start_tick", 12542) or 12542)))
+            self._sleep_night_end: int = max(0, min(24000, int(getattr(_mf_slp, "map_art_sleep_night_end_tick", 23458) or 23458)))
+            self._sleep_check_interval: float = max(3.0, float(getattr(_mf_slp, "map_art_sleep_check_interval_s", 10) or 10))
+            self._sleep_min_sleep_s: float = max(2.0, float(getattr(_mf_slp, "map_art_sleep_min_sleep_s", 5) or 5))
+            self._sleep_max_wait_s: float = max(30.0, float(getattr(_mf_slp, "map_art_sleep_max_wait_s", 300) or 300))
+        except Exception:
+            self._sleep_night_start, self._sleep_night_end = 12542, 23458
+            self._sleep_check_interval, self._sleep_min_sleep_s, self._sleep_max_wait_s = 10.0, 5.0, 300.0
 
         # P2-26：EssentialsX 传送点名从 config 读取（保持类默认值兼容）
         try:
@@ -356,6 +377,8 @@ class BotBuildLoop:
 
         # 2026-08-14 模块A：启动食物监控协程（饱食度/血量低时吃副手猪排）
         self._food_task = asyncio.create_task(self._food_monitor_loop())
+        # 2026-08-16：启动睡觉监控协程（夜晚自动睡觉防怪物/幻翼；未配置睡觉点则空转）
+        self._sleep_task = asyncio.create_task(self._sleep_monitor_loop())
         # 2026-08-14 模块B：初始化快捷栏槽位映射（避免每色首次全背包搜索）
         await self._refresh_hotbar_map()
 
@@ -423,6 +446,10 @@ class BotBuildLoop:
 
         try:
             for row_z in range(self.region.z_start, self.region.z_end + 1):
+                if self._stopped:
+                    break
+                # 2026-08-16：睡觉中 → 阻塞等待（夜晚睡觉防怪物/幻翼，醒来后继续）
+                await self._sleep_event.wait()
                 if self._stopped:
                     break
 
@@ -510,6 +537,12 @@ class BotBuildLoop:
             if self._food_task:
                 self._food_task.cancel()
                 self._food_task = None
+            # 取消睡觉监控协程（2026-08-16）；唤醒阻塞中的建造循环
+            if self._sleep_task:
+                self._sleep_task.cancel()
+                self._sleep_task = None
+            self._sleeping = False
+            self._sleep_event.set()
             # P1-9：中断/异常时 flush 残留进度（防最后几行 DB 进度丢失；行内 offline 时
             # _place_row 未执行到行尾 flush）
             if self._db_updates:
@@ -733,6 +766,8 @@ class BotBuildLoop:
         # 逐格顺序放置（颜色切换由 _ensure_item_in_hand 的 hotbar_map 缓存零成本处理）
         for x in x_span:
             await self._paused.wait()
+            # 2026-08-16：睡觉中 → 阻塞等待（睡觉监控协程负责暂停/恢复，醒来后继续）
+            await self._sleep_event.wait()
             if self._stopped:
                 return
 
@@ -2747,6 +2782,11 @@ class BotBuildLoop:
                     threshold_food = int(self._food_cfg.get("eat_threshold_food", 15))
                     threshold_health = int(self._food_cfg.get("eat_threshold_health", 15))
 
+                    # 2026-08-16：睡觉中 → 本轮跳过（睡觉与补货都涉及传送/开箱，
+                    # 且 bot 在床上，触发补货会把 bot 拉走）。睡醒后下轮再检查。
+                    if self._sleeping:
+                        continue
+
                     # 2026-08-14 溺水/坠落防护：血量持续下降且低（掉水淹死/虚空坠落）→
                     # 立即传送回建造点，避免死亡后复活到远处丢失位置
                     if health < 8 and self._last_health is not None and health < self._last_health:
@@ -2782,6 +2822,141 @@ class BotBuildLoop:
                     pass  # 单次检查失败不影响建造
         except asyncio.CancelledError:
             pass
+
+    # ── 自动睡觉（2026-08-16，用户需求：夜晚怪物攻击 + 幻翼）──────────────
+
+    async def _sleep_monitor_loop(self) -> None:
+        """睡觉监控协程：轮询服务器时间，进入夜晚/雷暴可睡窗口 → 暂停建造去睡觉。
+
+        与补货同款往返：保存当前位置(/esethomes dth) → 寻路到任务配置的床睡觉 →
+        天亮醒来 → /ehomes dth 传回建造点 → 恢复建造。睡觉动作本身重置幻翼计时
+        （即使服务器 doDaylightCycle=false 时间不跳，睡觉仍有效防幻翼）。
+
+        未配置睡觉点（任务 sleep_x/y/z 为空）→ 空转，不打扰建造。
+        """
+        if not self._sleep_point:
+            return
+        try:
+            while not self._stopped:
+                await asyncio.sleep(self._sleep_check_interval)
+                if self._stopped or self._sleeping:
+                    continue
+                try:
+                    st = await self.mcp.get_time_status()
+                except Exception:
+                    continue
+                if not st.get("success"):
+                    continue
+                tod = st.get("time_of_day")
+                if tod is None:
+                    continue
+                # 已在睡（如服务器自动入睡/外部触发）→ 等醒来流程由 _do_sleep_cycle 处理
+                if st.get("is_sleeping"):
+                    continue
+                in_window = self._sleep_night_start <= tod <= self._sleep_night_end
+                thunderstorm = bool(st.get("is_raining")) and int(st.get("thunder_state") or 0) > 0
+                if not in_window and not thunderstorm:
+                    continue  # 白天/非雷暴：不需要睡觉
+                self._activity("info",
+                               f"检测到夜晚（timeOfDay={tod}），暂停建造前往睡觉（床 "
+                               f"{self._sleep_point}），防怪物攻击/幻翼")
+                await self._do_sleep_cycle()
+        except asyncio.CancelledError:
+            pass
+        finally:
+            self._sleeping = False
+            self._sleep_event.set()
+
+    async def _do_sleep_cycle(self) -> None:
+        """执行一次完整睡觉往返（与补货同款传送方式）：
+
+        暂停建造 → 保存当前位置(dth) → 寻路到床睡觉 → 睡足最短时长 → 等天亮/超时唤醒
+        → /ehomes dth 传回建造点 → 恢复建造。任何一步失败都尽量恢复建造，不阻塞任务。
+
+        用 _restock_lock 串行化：睡觉与补货都涉及传送/开箱，防并发互相打断
+        （如食物监控在 bot 睡觉时触发补货把 bot 拉走）。
+        """
+        async with self._restock_lock:
+            await self._do_sleep_cycle_locked()
+
+    async def _do_sleep_cycle_locked(self) -> None:
+        """睡觉往返实际执行（持锁版本，见 _do_sleep_cycle）。"""
+        self._sleeping = True
+        self._sleep_event.clear()
+        try:
+            # 1. 保存当前位置（补货同款：/esethomes dth）
+            try:
+                r = await self.mcp.send_chat(self._supply_cfg.get("save", "/esethomes dth"))
+                if isinstance(r, dict) and r.get("success") is False:
+                    self._activity("warn", f"睡觉前保存位置失败：{r.get('error', '?')}")
+                else:
+                    await asyncio.sleep(1.5)
+            except Exception as e:
+                logger.warning("[%s] Sleep save position error: %s", self.bot_id, e)
+
+            # 2. 寻路到床睡觉（sleep_at 内部：8 格内找床 → 寻路 → bot.sleep）
+            try:
+                sp = self._sleep_point
+                result = await self.mcp.sleep_at(x=sp[0], y=sp[1], z=sp[2], timeout_ms=45000)
+            except Exception as e:
+                self._activity("warn", f"sleep_at 调用异常：{e}，跳过本轮睡觉")
+                return
+            ok = bool(result.get("success"))
+            reason = result.get("reason") or ""
+            if not ok:
+                self._activity("warn", f"睡觉失败（{reason}），恢复建造")
+                return
+
+            # 3. 睡足最短时长（重置幻翼计时）
+            await asyncio.sleep(self._sleep_min_sleep_s)
+            self._activity("info", "已入睡，等待天亮")
+
+            # 4. 等天亮（is_sleeping=false 或 时间离开夜晚窗口）；超时手动唤醒
+            waited = 0.0
+            while waited < self._sleep_max_wait_s:
+                if self._stopped:
+                    break
+                await asyncio.sleep(5)
+                waited += 5
+                try:
+                    st = await self.mcp.get_time_status()
+                except Exception:
+                    continue
+                if not st.get("success"):
+                    continue
+                if not st.get("is_sleeping"):
+                    break  # 已醒
+                tod = st.get("time_of_day")
+                if tod is not None and not (self._sleep_night_start <= tod <= self._sleep_night_end):
+                    # 时间已离开夜晚窗口（天亮）但仍显示在睡 → 手动唤醒
+                    try:
+                        await self.mcp.wake_up()
+                    except Exception:
+                        pass
+                    break
+            else:
+                # 超时未醒（doDaylightCycle=false 时间锁夜晚）→ 手动唤醒
+                self._activity("warn", "等待天亮超时，手动唤醒")
+                try:
+                    await self.mcp.wake_up()
+                except Exception:
+                    pass
+
+            # 5. 传回建造点（补货同款：/ehomes dth），等 Via 背包/位置同步
+            try:
+                await self.mcp.send_chat(self._supply_cfg.get("return", "/ehomes dth"))
+                await asyncio.sleep(2.5)
+            except Exception as e:
+                logger.warning("[%s] Sleep return teleport error: %s", self.bot_id, e)
+            self._last_pos = None  # 传送后位置未知，强制下次寻路
+            self._activity("info", "睡觉完成，已传回建造点，恢复建造")
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.warning("[%s] Sleep cycle error: %s", self.bot_id, e)
+        finally:
+            self._sleeping = False
+            self._sleep_event.set()
 
 
 # ──────────────────────────────────────────────
@@ -2819,10 +2994,34 @@ class MapArtCoordinator:
         # 2026-08-14 模块A：食物配置 + 猪排潜影盒坐标（DB 加载）
         self._food_config: dict = {}
         self._food_boxes: list[tuple[int, int, int]] = []
+        # 2026-08-16：睡觉点（床的世界坐标，任务级配置；未配置→建造循环跳过睡觉）
+        self._sleep_point: Optional[tuple[int, int, int]] = None
         # 2026-08-14 终端：活动日志环形缓冲（最近 300 条，前端 join 时回放）
         self._activity_log: deque = deque(maxlen=300)
         self._load_supply_data()
         self._load_food_data()
+        self._load_sleep_data()
+
+    def _load_sleep_data(self) -> None:
+        """从 DB 加载任务睡觉点（map_art_tasks.sleep_x/y/z，2026-08-16）。
+
+        床的方块坐标（世界坐标）。未配置（任一为空）→ None（建造循环跳过睡觉）。
+        """
+        try:
+            from vmtools_next.data.db import get_session_factory
+            from vmtools_next.data.models.build_map_art import MapArtTask
+            db = get_session_factory()()
+            try:
+                task = db.query(MapArtTask).filter(MapArtTask.task_id == self.task_id).first()
+                if task is not None:
+                    sx, sy, sz = task.sleep_x, task.sleep_y, task.sleep_z
+                    if sx is not None and sy is not None and sz is not None:
+                        self._sleep_point = (int(sx), int(sy), int(sz))
+                        logger.info("[%s] Sleep point loaded: %s", self.task_id, self._sleep_point)
+            finally:
+                db.close()
+        except Exception as e:
+            logger.warning("[%s] Load sleep data failed: %s", self.task_id, e)
 
     def _load_supply_data(self) -> None:
         """从 DB 加载任务的补货配置（任务级潜影盒 + 全局仓库合并 + 三个传送指令）。
@@ -3006,6 +3205,7 @@ class MapArtCoordinator:
                 supply_config=self._supply_config,
                 food_config=self._food_config,
                 food_boxes=self._food_boxes,
+                sleep_point=self._sleep_point,
                 on_done=self._on_loop_done,
                 on_activity=self._on_loop_activity,
             )
@@ -3073,6 +3273,7 @@ class MapArtCoordinator:
             supply_config=self._supply_config,
             food_config=self._food_config,
             food_boxes=self._food_boxes,
+            sleep_point=self._sleep_point,
             on_done=self._on_loop_done,
             on_activity=self._on_loop_activity,
         )
@@ -3164,6 +3365,7 @@ class MapArtCoordinator:
                     from vmtools_next.data.models.build_map_art import MapArtTask
                     Session = get_session_factory()
                     db = Session()
+                    err_msg = ""
                     try:
                         # 2026-08-14 修复：failed 分支必须局部导入 datetime——
                         # 同函数 completed 分支有局部 import，整个函数内 datetime 被
@@ -3173,9 +3375,13 @@ class MapArtCoordinator:
                             MapArtTask.task_id == self.task_id).first()
                         if task and task.status == "running":
                             task.status = "failed"
-                            task.error_message = (
+                            # 2026-08-16 修复（避坑 #8）：db.close() 前先取基本类型——
+                            # 此前 create_task 闭包里访问 task.error_message（已 detached）
+                            # → "Instance is not bound to a Session" → 失败状态未落库
+                            err_msg = (
                                 f"{len(self._failed_loops)} 个 Bot 区域未完成"
                                 f"（补货或放置失败，实际放置 {task.placed_blocks or 0}/{task.total_blocks or 0} 方块）")
+                            task.error_message = err_msg
                             task.completed_at = datetime.now(timezone.utc)
                             db.commit()
                     finally:
@@ -3183,7 +3389,7 @@ class MapArtCoordinator:
                     asyncio.create_task(_sio.emit(
                         "build_progress",
                         {"task_id": self.task_id, "status": "failed",
-                         "error_message": task.error_message},
+                         "error_message": err_msg},
                         room=f"build_{self.task_id}",
                     ))
                     try:
@@ -3292,6 +3498,9 @@ class MapArtCoordinator:
                 "blocks_total": loop.progress.blocks_total,
                 "current_row": loop.progress.current_row,
                 "place_rate": loop.progress.place_rate,
+                # 2026-08-16 修复：前端模板读 bot.rate（与 _aggregate 的 bots 字段一致），
+                # 此前只有 place_rate → 前端 bot.rate 恒 undefined → 速率恒显示 0.0
+                "rate": loop.progress.place_rate,
             })
         await sio.emit("build_bot_status", {"task_id": self.task_id, "bots": bot_data}, room=room)
 

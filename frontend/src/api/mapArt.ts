@@ -74,6 +74,13 @@ export const mapArtApi = {
   saveFoodBoxes(taskId: string, items: { item_id: string; boxes: { x: number; y: number; z: number }[] }[]) {
     return client.put(`/build/map-art/tasks/${taskId}/food-boxes`, { items })
   },
+  /** 2026-08-16：睡觉点（床的方块坐标，世界坐标；未配置→跳过自动睡觉） */
+  getSleepPoint(taskId: string) {
+    return client.get(`/build/map-art/tasks/${taskId}/sleep-point`)
+  },
+  saveSleepPoint(taskId: string, sp: { x: number; y: number; z: number }) {
+    return client.put(`/build/map-art/tasks/${taskId}/sleep-point`, sp)
+  },
   /** 2026-08-14：补货潜影盒坐标（材料 ↔ 坐标，1 材料可配多坐标） */
   getSupplyBoxes(taskId: string) {
     return client.get(`/build/map-art/tasks/${taskId}/supply-boxes`)

@@ -79,11 +79,18 @@ class MapArtTask(Base):
     # {"go":"/ehomes mdssj","save":"/esethomes dth","return":"/ehomes dth"}
     # go=前往补给点指令 / save=暂存当前位置指令 / return=返回工作位置指令（均可自定义）
     supply_config = Column(Text, default="")
-
     # 食物配置（2026-08-14 模块A）：JSON，形如
     # {"item_id":"minecraft:cooked_porkchop","go_command":"/res tp lixiangxiang.qwp",
     #  "wait_after_go_ms":5000,"eat_threshold_food":15,"eat_threshold_health":15}
     food_config = Column(Text, default="")
+
+    # 睡觉点（2026-08-16，用户需求：夜晚自动睡觉防怪物/幻翼）：床的方块坐标
+    # （世界坐标）。建造循环检测到夜晚可睡窗口 → 暂停建造 → 寻路到该床睡觉 →
+    # 天亮醒来传回建造点。未配置（三个均为 NULL）→ 自动睡觉功能跳过。
+    sleep_x = Column(Integer, nullable=True)
+    sleep_y = Column(Integer, nullable=True)
+    sleep_z = Column(Integer, nullable=True)
+
 
     # Relationships
     materials = relationship(

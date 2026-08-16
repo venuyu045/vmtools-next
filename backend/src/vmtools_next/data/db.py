@@ -258,6 +258,18 @@ def _run_lightweight_migrations(engine) -> None:
                         conn.execute(text("ALTER TABLE mcc_bots ADD COLUMN sleep_z INTEGER"))
                 except Exception as _e:
                     logger.warning("mcc_bots manual_work migration check: {}", _e)
+                # map_art_tasks 睡觉点（2026-08-16，用户需求：夜晚自动睡觉防怪物/幻翼）：
+                # 床的方块坐标（世界坐标），建造循环夜晚自动前往睡觉。未配置→跳过。
+                try:
+                    t_columns = {row[1] for row in conn.execute(text("PRAGMA table_info(map_art_tasks)")).fetchall()}
+                    if "sleep_x" not in t_columns:
+                        conn.execute(text("ALTER TABLE map_art_tasks ADD COLUMN sleep_x INTEGER"))
+                    if "sleep_y" not in t_columns:
+                        conn.execute(text("ALTER TABLE map_art_tasks ADD COLUMN sleep_y INTEGER"))
+                    if "sleep_z" not in t_columns:
+                        conn.execute(text("ALTER TABLE map_art_tasks ADD COLUMN sleep_z INTEGER"))
+                except Exception as _e:
+                    logger.warning("map_art_tasks sleep migration check: {}", _e)
             # 定时任务：自动上线/下线开关（2026-08-13）
             try:
                 s_columns = {row[1] for row in conn.execute(text("PRAGMA table_info(scheduled_tasks)")).fetchall()}
