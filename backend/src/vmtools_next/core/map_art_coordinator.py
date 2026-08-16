@@ -824,11 +824,27 @@ class BotBuildLoop:
 
         非实体（air/water/lava）→ 返回 False（悬空/掉水），调用方跳过放置并记待补，
         不触发传送兜底（区别于移动到位后的脚下检查——那是防坠落强条件）。
+
+        ⚠️ 2026-08-16 修复：Via 不推送 blockUpdate，客户端 world 读到旧 air（服务器
+        实际有方块；bot 重启后 forceLocalBlock 本地标记丢失）→ 单看本地方块会把
+        bot 真站在方块上误判为"脚下非实体"→ 每格都跳过（卡死，placed 停滞）。
+        结合 on_ground（服务器真实物理状态）：on_ground=true → 数据旧容忍；
+        false → 真悬空/掉水才判不满足（保持防坠落）。
         """
         try:
             foot = await self.mcp.get_world_block_at(int(x), int(y) - 1, int(z))
             name = ((foot.get("name") or "air").split("[")[0])
-            return name not in ("air", "water", "lava", "flowing_water", "flowing_lava")
+            if name not in ("air", "water", "lava", "flowing_water", "flowing_lava"):
+                return True
+            # 客户端读 air/水：结合服务器物理状态判断
+            try:
+                _st = await self.mcp.get_player_state()
+                _d2 = _st.get("data", _st) if isinstance(_st, dict) else {}
+                if _d2.get("is_on_ground") is True:
+                    return True  # Via 数据旧，bot 实际站在方块上
+            except Exception:
+                pass
+            return False
         except Exception:
             return False  # 读取失败按不满足处理（安全侧）
 
