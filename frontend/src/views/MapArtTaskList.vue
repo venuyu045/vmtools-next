@@ -227,4 +227,11 @@ onMounted(() => { fetchTasks(); loadBots() })
 .page-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
 .header-actions { display: flex; gap: 8px; }
 .page-header h2 { margin: 0; font-size: 20px; }
+
+/* ============ 移动端适配 ============ */
+@media (max-width: 768px) {
+  .mapart-list-page { padding: 12px; }
+  .page-header { flex-direction: column; align-items: stretch; gap: 10px; }
+  .page-header .header-actions { justify-content: flex-end; }
+}
 </style>

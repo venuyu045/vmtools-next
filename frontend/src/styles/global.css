@@ -985,6 +985,7 @@ html {
 @media (max-width: 768px) {
   .page-header,
   .mcc-page-header {
+    flex-wrap: wrap;
     gap: 10px;
   }
 }

@@ -234,7 +234,7 @@ onMounted(async () => {
   .search-box { max-width: 100%; width: 100%; }
   .wh-cards { grid-template-columns: 1fr; }
   .item-main { gap: 8px; padding: 10px 12px; }
-  .item-icon { width: 34px; height: 34px; font-size: 18px; }
+  .item-icon-wrap :deep(.item-icon) { width: 34px !important; height: 34px !important; }
   .container-row { grid-template-columns: 1fr 60px 70px; font-size: 11px; }
 }
 
@@ -252,5 +252,7 @@ onMounted(async () => {
   }
   .count-lbl { display: inline; }
   .item-detail { padding: 10px 12px; }
+  .wh-stats { flex-wrap: wrap; }
+  .wh-stat { flex: 1 1 50%; padding-right: 8px; }
 }
 </style>

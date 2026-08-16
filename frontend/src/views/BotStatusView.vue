@@ -654,4 +654,10 @@ onBeforeUnmount(() => {
 .dist {
   color: var(--green-primary);
 }
+
+/* ============ 移动端适配 ============ */
+@media (max-width: 768px) {
+  .card-head { flex-wrap: wrap; row-gap: 6px; }
+  .bot-card { padding: 14px; }
+}
 </style>

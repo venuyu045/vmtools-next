@@ -489,4 +489,16 @@ onMounted(() => {
 .sched-type.map_art { background: rgba(217, 119, 87, 0.15); color: var(--accent); }
 .sched-bots { max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .auto-manage-tip { margin-left: 10px; font-size: 11px; color: var(--text-muted); line-height: 1.5; }
+
+/* ============ 移动端适配 ============ */
+@media (max-width: 768px) {
+  .page-header,
+  .sched-head { flex-direction: column; align-items: stretch; gap: 10px; }
+  .page-header .pixel-btn,
+  .sched-head .pixel-btn { align-self: flex-start; }
+  .bot-table-wrap,
+  .sched-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .bot-table { min-width: 640px; }
+  .sched-table { min-width: 900px; }
+}
 </style>

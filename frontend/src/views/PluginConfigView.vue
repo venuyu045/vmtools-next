@@ -214,4 +214,14 @@ onMounted(async () => {
   justify-content: flex-end;
   gap: 8px;
 }
+
+/* ============ 移动端适配 ============ */
+@media (max-width: 768px) {
+  .cfg-header { flex-wrap: wrap; gap: 8px; }
+  .kv-row { flex-wrap: wrap; gap: 6px; }
+}
+@media (max-width: 480px) {
+  .kv-row .el-input { flex: 1 1 100% !important; }
+  .kv-row .el-button { flex: 1 1 100%; margin-left: 0; }
+}
 </style>

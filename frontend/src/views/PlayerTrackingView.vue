@@ -201,4 +201,14 @@ const playerStore = useOnlinePlayersStore()
 .event-name { font-weight: 600; }
 .event-action { color: var(--text-secondary); }
 .event-world { color: var(--text-muted); font-size: 11px; }
+
+/* ============ 移动端适配 ============ */
+@media (max-width: 768px) {
+  .player-list-page { padding: 16px 12px; }
+  .event-time { min-width: 0; }
+}
+@media (max-width: 480px) {
+  .online-panel { padding: 12px; }
+  .event-item { flex-wrap: wrap; gap: 4px; }
+}
 </style>

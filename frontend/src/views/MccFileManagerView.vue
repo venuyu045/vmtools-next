@@ -83,4 +83,11 @@ onMounted(() => store.fetchInstances())
 .meta-line { display: flex; gap: 20px; color: var(--text-secondary); font-size: 13px; margin-bottom: 12px; }
 .empty-state { color: var(--text-muted); text-align: center; padding: 80px 0; }
 .pixel-btn:disabled { opacity: .45; cursor: not-allowed; }
+
+/* ============ 移动端适配 ============ */
+@media (max-width: 768px) {
+  .page-header { flex-direction: column; align-items: stretch; gap: 10px; }
+  .header-actions { flex-wrap: wrap; }
+  .meta-line { flex-wrap: wrap; gap: 8px; }
+}
 </style>

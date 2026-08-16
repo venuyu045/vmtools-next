@@ -777,4 +777,11 @@ function tpsClass(v: number | null): string {
   font-size: 14px;
   color: var(--text-secondary);
 }
+
+/* ============ 移动端适配 ============ */
+@media (max-width: 768px) {
+  .miaomiao-page { padding: 16px 12px; }
+  .tab-toolbar { flex-wrap: wrap; gap: 8px; }
+  .tab-toolbar .el-input { flex: 1 1 100%; width: 100% !important; }
+}
 </style>

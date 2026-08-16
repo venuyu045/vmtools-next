@@ -433,4 +433,10 @@ defineExpose({ refresh: render })
 .build2d-container:active { cursor: grabbing; }
 .canvas-stage { position: relative; }
 .map-canvas { display: block; }
+
+/* ============ 移动端适配 ============ */
+@media (max-width: 768px) {
+  .canvas-toolbar { width: 100%; flex-wrap: wrap; }
+  .tb-hint { display: none; }
+}
 </style>

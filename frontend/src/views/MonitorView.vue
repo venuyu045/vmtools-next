@@ -235,4 +235,7 @@ onBeforeUnmount(() => {
   .stat-row { grid-template-columns: 1fr 1fr; gap: 8px; }
   .stat-val { font-size: 16px; }
 }
+@media (max-width: 400px) {
+  .stat-row { grid-template-columns: 1fr; }
+}
 </style>

@@ -264,4 +264,11 @@ onMounted(() => pluginStore.fetchPlugins())
   text-align: center;
   font-size: 12px;
 }
+
+/* ============ 移动端适配 ============ */
+@media (max-width: 768px) {
+  .plugin-page :deep(.el-table__body td:last-child) { white-space: normal; }
+  .plugin-page :deep(.el-table__body td:last-child .el-button) { margin-bottom: 6px; }
+  .plugin-page :deep(.el-table__body td:last-child .el-button + .el-button) { margin-left: 0; }
+}
 </style>

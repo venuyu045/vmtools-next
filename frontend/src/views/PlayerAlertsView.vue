@@ -148,4 +148,12 @@ async function confirmPlayer() {
 .help-box { background: var(--bg-card); border: 1px solid var(--border-subtle); border-radius: var(--radius-lg); padding: 16px; margin-top: 24px; }
 .help-box p { margin: 8px 0; }
 .help-box code { background: var(--terminal-bg); color: var(--terminal-text); padding: 2px 6px; border-radius: 4px; font-size: 12px; display: block; margin: 8px 0; overflow-x: auto; }
+
+/* ============ 移动端适配 ============ */
+@media (max-width: 768px) {
+  .player-alerts-page { padding: 16px 12px; }
+  .settings-bar { flex-direction: column; align-items: stretch; gap: 8px; }
+  .owner-header { flex-wrap: wrap; gap: 8px; }
+  .owner-id { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+}
 </style>
