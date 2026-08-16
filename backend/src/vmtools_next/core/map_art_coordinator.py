@@ -470,6 +470,19 @@ class BotBuildLoop:
         # 未加载读到 air 全"待定"）。扫描失败/部分未加载由运行中 _verify_block 兜底。
         await self._reconcile_start()
 
+        # 2026-08-16 用户需求（填坑）：启动对账后先补放待补清单（对账读 air/其它方块的
+        # DB 已置位格=洞/放错），避免 bot 行内踩空掉水（用户实测溺水掉线）。
+        if self._pending_gaps:
+            self._activity("info", f"启动填坑：对账发现 {len(self._pending_gaps)} 格缺口，先补放")
+            filled_gaps = await self._fill_pending_gaps()
+            if filled_gaps > 0:
+                self._activity("info", f"启动填坑完成：补放 {filled_gaps} 格")
+            # 补放后重新对账一次（收敛 verified/placed 状态）
+            try:
+                await self._reconcile_start()
+            except Exception:
+                pass
+
         try:
             for row_z in range(resume_z, self.region.z_end + 1):
                 if self._stopped:
@@ -1311,8 +1324,15 @@ class BotBuildLoop:
                         self._verified_set.add((rx, ry, rz))
                     elif actual in ("air", ""):
                         stale_count += 1  # 客户端旧数据，保持弱确认
+                        # 2026-08-16 用户需求（填坑）：对账读到 air 的 DB 已置位格加入
+                        # 待补清单——可能是弱确认假阳性（放置发出但实际没放上=洞），
+                        # 不补放会让 bot 行内踩空掉水。启动对账后 _fill_pending_gaps 补放
+                        #（_verify_block 会先确认，若实际有方块则跳过）。
+                        self._pending_gaps.append((rx, ry, rz, expected))
                     else:
                         reset_count += 1
+                        # 2026-08-16：读到明确其它方块（被破坏/放错）→ 重置并加入待补
+                        self._pending_gaps.append((rx, ry, rz, expected))
                         row = db2.query(MapArtBlockState).filter(
                             MapArtBlockState.task_id == self.task_id,
                             MapArtBlockState.x == rx,
@@ -3071,11 +3091,18 @@ class BotBuildLoop:
                     if self._sleep_req.is_set():
                         continue
 
-                    # 2026-08-14 溺水/坠落防护：血量持续下降且低（掉水淹死/虚空坠落）→
+                    # 2026-08-16 溺水/坠落防护：血量持续下降且低（掉水淹死/虚空坠落）→
                     # 立即传送回建造点，避免死亡后复活到远处丢失位置
                     if health < 8 and self._last_health is not None and health < self._last_health:
                         self._activity("warn", f"血量持续下降（{self._last_health}→{health}），疑似溺水/坠落，传送回建造点")
                         await self._try_teleport_home("血量持续下降")
+                        self._last_health = health
+                        continue
+                    # 2026-08-16 用户实测溺水掉线：单次血量极低（<4）立即传送——溺水/骷髅
+                    # 连射可能在 2s 采样间隔内从高值直接打到低血，等"持续下降"来不及。
+                    if health < 4:
+                        self._activity("warn", f"血量过低（{health}），立即传送回建造点防死亡")
+                        await self._try_teleport_home("血量过低")
                         self._last_health = health
                         continue
                     self._last_health = health
