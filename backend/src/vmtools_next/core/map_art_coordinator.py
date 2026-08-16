@@ -2900,11 +2900,20 @@ class BotBuildLoop:
                 result = await self.mcp.sleep_at(x=sp[0], y=sp[1], z=sp[2], timeout_ms=45000)
             except Exception as e:
                 self._activity("warn", f"sleep_at 调用异常：{e}，跳过本轮睡觉")
+                await self._return_from_sleep()
                 return
             ok = bool(result.get("success"))
             reason = result.get("reason") or ""
             if not ok:
-                self._activity("warn", f"睡觉失败（{reason}），恢复建造")
+                # 2026-08-16：服务器 doDaylightCycle=false 时，玩家躺下会立即被唤醒
+                # （时间不跳），mineflayer 报 "bot is not sleeping"——但睡眠动作已发生，
+                # 幻翼计时已重置，视为完成。其它原因（床被占用/床边有怪物/床太远）则
+                # 记日志。无论成功与否，bot 已走到床边，需传回建造点再恢复建造。
+                self._activity("warn" if reason == "bot is not sleeping" else "warn",
+                               f"睡觉结果：{reason}（doDaylightCycle=false 躺下即醒属正常，"
+                               f"幻翼计时已重置）" if reason == "bot is not sleeping"
+                               else f"睡觉失败（{reason}），传回建造点继续建造")
+                await self._return_from_sleep()
                 return
 
             # 3. 睡足最短时长（重置幻翼计时）
@@ -2943,12 +2952,7 @@ class BotBuildLoop:
                     pass
 
             # 5. 传回建造点（补货同款：/ehomes dth），等 Via 背包/位置同步
-            try:
-                await self.mcp.send_chat(self._supply_cfg.get("return", "/ehomes dth"))
-                await asyncio.sleep(2.5)
-            except Exception as e:
-                logger.warning("[%s] Sleep return teleport error: %s", self.bot_id, e)
-            self._last_pos = None  # 传送后位置未知，强制下次寻路
+            await self._return_from_sleep()
             self._activity("info", "睡觉完成，已传回建造点，恢复建造")
         except asyncio.CancelledError:
             raise
@@ -2957,6 +2961,15 @@ class BotBuildLoop:
         finally:
             self._sleeping = False
             self._sleep_event.set()
+
+    async def _return_from_sleep(self) -> None:
+        """睡觉往返后传回建造点（/ehomes dth，补货同款 return），等 Via 位置同步。"""
+        try:
+            await self.mcp.send_chat(self._supply_cfg.get("return", "/ehomes dth"))
+            await asyncio.sleep(2.5)
+        except Exception as e:
+            logger.warning("[%s] Sleep return teleport error: %s", self.bot_id, e)
+        self._last_pos = None  # 传送后位置未知，强制下次寻路
 
 
 # ──────────────────────────────────────────────
