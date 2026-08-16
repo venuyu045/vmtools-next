@@ -343,6 +343,15 @@ class MineflayerBridgeClient(AbstractBotAgent):
             "x": x, "y": y, "z": z,
         }, timeout=DEFAULT_CMD_TIMEOUT)
 
+    async def scan_region_blocks(self, x_start: int, x_end: int, z_start: int, z_end: int,
+                                 y: int, max_count: int = 200000) -> dict:
+        """大范围平面扫描（2026-08-16）：一次读取区域内指定层所有方块 {x,z,block}，
+        供地图画启动对账与投影批量匹配（替代 16384 次逐格 WS 往返）。"""
+        return await self._send_request(METHOD_SCAN_REGION_BLOCKS, {
+            "x_start": x_start, "x_end": x_end, "z_start": z_start, "z_end": z_end,
+            "y": y, "max_count": max_count,
+        }, timeout=120.0)
+
     async def scan_nearby_blocks(self, radius: int = 16, max_count: int = 500000,
                                   matching: str = None, box: dict = None) -> dict:
         params = {"radius": radius, "max_count": max_count}

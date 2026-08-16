@@ -1098,47 +1098,65 @@ class BotBuildLoop:
             ok_count = 0
             reset_count = 0
             stale_count = 0
-            self._activity("info", f"启动对账：DB 已置位 {len(rows)} 块，逐块核对实际方块状态…")
+            self._activity("info", f"启动对账：DB 已置位 {len(rows)} 块，大范围扫描匹配投影…")
             db2 = get_session_factory()()
             try:
-                # 分批复核（每批 50，间隔 0.1s 防阻塞 WS 轮询）
-                for i in range(0, len(rows), 50):
-                    batch = rows[i:i + 50]
-                    for rx, ry, rz, expected in batch:
+                # ⚠️ 2026-08-16：优先用【大范围平面扫描】（一次 WS 往返读取区域
+                # 指定层所有方块 {x,z,block}）→ 内存与 DB 批量比对，替代 16384 次
+                # 逐格 get_world_block_at（重启后 bot world 从服务器重拉 = 权威）。
+                actual_map: dict[tuple[int, int], str] = {}
+                try:
+                    _snap = await self.mcp.scan_region_blocks(
+                        x_start=self.origin_x + self.region.x_start,
+                        x_end=self.origin_x + self.region.x_end,
+                        z_start=self.origin_z + self.region.z_start,
+                        z_end=self.origin_z + self.region.z_end,
+                        y=self.origin_y,
+                    )
+                    _blks = (_snap.get("data", _snap)).get("blocks", []) if isinstance(_snap, dict) else []
+                    for _b in _blks:
+                        actual_map[(_b.get("x"), _b.get("z"))] = self._normalize_item_id(
+                            (_b.get("block") or "air").split("[")[0])
+                    self._activity("debug", f"大范围扫描完成：{len(actual_map)} 格")
+                except Exception as _scan_err:
+                    logger.warning("[%s] Region scan failed (%s)，回退逐格对账", self.bot_id, _scan_err)
+                    actual_map = {}
+                for rx, ry, rz, expected in rows:
+                    if actual_map:
+                        actual = actual_map.get((rx, rz), "air")
+                    else:
                         try:
                             v = await self.mcp.get_world_block_at(rx, ry, rz)
                             actual = self._normalize_item_id((v.get("name") or "air").split("[")[0])
                         except Exception:
                             actual = "air"
-                        if actual == self._normalize_item_id(expected):
-                            ok_count += 1
-                            row = db2.query(MapArtBlockState).filter(
-                                MapArtBlockState.task_id == self.task_id,
-                                MapArtBlockState.x == rx,
-                                MapArtBlockState.y == ry,
-                                MapArtBlockState.z == rz,
-                            ).first()
-                            if row:
-                                row.verified = True
-                                row.verified_at = datetime.now(timezone.utc)
-                            self._verified_set.add((rx, ry, rz))
-                        elif actual in ("air", ""):
-                            stale_count += 1  # 客户端旧数据，保持弱确认
-                        else:
-                            reset_count += 1
-                            row = db2.query(MapArtBlockState).filter(
-                                MapArtBlockState.task_id == self.task_id,
-                                MapArtBlockState.x == rx,
-                                MapArtBlockState.y == ry,
-                                MapArtBlockState.z == rz,
-                            ).first()
-                            if row:
-                                row.placed = False
-                                row.verified = False
-                                row.actual_block = ""
-                    db2.commit()
-                    if i + 50 < len(rows):
-                        await asyncio.sleep(0.1)
+                    if actual == self._normalize_item_id(expected):
+                        ok_count += 1
+                        row = db2.query(MapArtBlockState).filter(
+                            MapArtBlockState.task_id == self.task_id,
+                            MapArtBlockState.x == rx,
+                            MapArtBlockState.y == ry,
+                            MapArtBlockState.z == rz,
+                        ).first()
+                        if row:
+                            row.verified = True
+                            row.verified_at = datetime.now(timezone.utc)
+                        self._verified_set.add((rx, ry, rz))
+                    elif actual in ("air", ""):
+                        stale_count += 1  # 客户端旧数据，保持弱确认
+                    else:
+                        reset_count += 1
+                        row = db2.query(MapArtBlockState).filter(
+                            MapArtBlockState.task_id == self.task_id,
+                            MapArtBlockState.x == rx,
+                            MapArtBlockState.y == ry,
+                            MapArtBlockState.z == rz,
+                        ).first()
+                        if row:
+                            row.placed = False
+                            row.verified = False
+                            row.actual_block = ""
+                db2.commit()
             finally:
                 db2.close()
             self.progress.blocks_placed = ok_count  # 以世界复核一致的计数为准

@@ -349,7 +349,30 @@ function createBlockHandlers(bot) {
     }
   }
 
-  // ── 扫描附近方块 ──
+  // ── 大范围平面扫描（2026-08-16：地图画启动对账/环境感知专用） ──
+  // 一次遍历区域内【指定层 y】所有方块，返回 {x, z, block}（block 为方块名或 air），
+  // 供 Python 端与投影 block_matrix 批量匹配（替代 16384 次逐格 get_world_block_at
+  // WS 往返 → 大幅缩短启动对账/重启后重走时间）。
+  // ⚠️ bot 重启后本地 world 从服务器重拉（权威状态），此扫描此时最准确。
+  function scan_region_blocks({ x_start, x_end, z_start, z_end, y, max_count = 200000 } = {}) {
+    try {
+      if (x_start == null || x_end == null || z_start == null || z_end == null || y == null) {
+        return { success: false, error: 'x_start/x_end/z_start/z_end/y required' };
+      }
+      const blocks = [];
+      const x0 = Math.min(x_start, x_end), x1 = Math.max(x_start, x_end);
+      const z0 = Math.min(z_start, z_end), z1 = Math.max(z_start, z_end);
+      for (let x = x0; x <= x1 && blocks.length < max_count; x++) {
+        for (let z = z0; z <= z1 && blocks.length < max_count; z++) {
+          const b = bot.blockAt(new Vec3(x, y, z));
+          blocks.push({ x, z, block: (b && b.name) ? b.name : 'air' });
+        }
+      }
+      return { success: true, count: blocks.length, blocks };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  }
   // 性能优化：按 chunk 的 section palette 快速过滤——只对含目标方块的 section
   // 逐格确认坐标，仓库类容器集中场景提速数十倍。
   // 支持两种范围模式：
@@ -589,7 +612,7 @@ function createBlockHandlers(bot) {
     }
   }
 
-  return { place_block, dig_block, get_world_block_at, scan_nearby_blocks, scan_loaded_containers };
+  return { place_block, dig_block, get_world_block_at, scan_nearby_blocks, scan_loaded_containers, scan_region_blocks };
 }
 
 module.exports = { createBlockHandlers };
