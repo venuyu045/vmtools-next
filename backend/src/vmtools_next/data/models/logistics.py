@@ -41,6 +41,10 @@ class MccBotModel(Base):
     # 手动标记「工作中」（2026-08-13 任务管理）：跨上下线保持，被标记 bot 不被自动调度派活
     manual_working = Column(Boolean, default=False, nullable=False)
     manual_task_name = Column(String, default="", nullable=False)
+    # 永昼睡觉点（2026-08-16）：per-bot 固定睡觉点（床的方块坐标）；auto_sleep 插件据此每晚前往睡觉
+    sleep_x = Column(Integer, nullable=True)
+    sleep_y = Column(Integer, nullable=True)
+    sleep_z = Column(Integer, nullable=True)
     organization_id = Column(String, nullable=True, index=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
 

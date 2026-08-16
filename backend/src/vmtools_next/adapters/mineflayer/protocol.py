@@ -78,6 +78,12 @@ METHOD_SET_GUARD = "set_guard"
 METHOD_GET_COMBAT_STATUS = "get_combat_status"
 METHOD_STOP_COMBAT = "stop_combat"
 
+# Sleep（永昼：夜晚自动睡觉跳过黑夜，2026-08-16）
+METHOD_GET_TIME_STATUS = "get_time_status"
+METHOD_FIND_BED = "find_bed"
+METHOD_SLEEP_AT = "sleep_at"
+METHOD_WAKE_UP = "wake_up"
+
 # ── Event names pushed by the bot process ──
 EVENT_BOT_READY = "bot_ready"
 EVENT_BOT_SPAWNED = "bot_spawned"
@@ -92,6 +98,8 @@ EVENT_COMBAT_DURABILITY_LOW = "combat_durability_low"
 # 容器窗口自动打开/关闭（2026-08-12：快捷潜影盒等服务器 GUI）
 EVENT_CONTAINER_OPENED = "container_opened"
 EVENT_CONTAINER_CLOSED = "container_closed"
+# 睡觉状态变化（2026-08-16：永昼插件；data={is_sleeping, time_of_day, dimension, position, event}）
+EVENT_SLEEP_STATE = "sleep_state"
 
 # ── Default timeout ──
 

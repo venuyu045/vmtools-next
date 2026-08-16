@@ -225,6 +225,13 @@
                 <div v-else class="empty-state">选择 Bot 实例查看攻击</div>
               </el-tab-pane>
 
+              <el-tab-pane v-if="isMf && selectedInstance?.bot_id" label="功能" name="features">
+                <div v-if="selectedInstance" class="inventory-tab">
+                  <FeaturePanel :bot-id="selectedInstance.bot_id" />
+                </div>
+                <div v-else class="empty-state">选择 Bot 实例查看功能</div>
+              </el-tab-pane>
+
               <el-tab-pane v-if="isMf && selectedInstance?.bot_id" label="插件" name="plugins">
                 <div v-if="selectedInstance" class="inventory-tab">
                   <PluginPanel :bot-id="selectedInstance.bot_id" />
@@ -328,13 +335,19 @@
                 <div v-else class="empty-state">选择 Bot 实例查看攻击</div>
               </el-tab-pane>
 
-            <el-tab-pane v-if="isMf && selectedInstance?.bot_id" label="插件" name="plugins">
-              <div v-if="selectedInstance" class="inventory-tab">
-                <PluginPanel :bot-id="selectedInstance.bot_id" />
-              </div>
-              <div v-else class="empty-state">选择 Bot 实例查看插件</div>
-            </el-tab-pane>
-          </el-tabs>
+              <el-tab-pane v-if="isMf && selectedInstance?.bot_id" label="功能" name="features">
+                <div v-if="selectedInstance" class="inventory-tab">
+                  <FeaturePanel :bot-id="selectedInstance.bot_id" />
+                </div>
+                <div v-else class="empty-state">选择 Bot 实例查看功能</div>
+              </el-tab-pane>
+              <el-tab-pane v-if="isMf && selectedInstance?.bot_id" label="插件" name="plugins">
+                <div v-if="selectedInstance" class="inventory-tab">
+                  <PluginPanel :bot-id="selectedInstance.bot_id" />
+                </div>
+                <div v-else class="empty-state">选择 Bot 实例查看插件</div>
+              </el-tab-pane>
+            </el-tabs>
         </template>
       </div>
     </el-drawer>
@@ -379,6 +392,7 @@ import InventoryGrid from '@/components/bot/InventoryGrid.vue'
 import MoveControlPad from '@/components/bot/MoveControlPad.vue'
 import CombatPanel from '@/components/bot/CombatPanel.vue'
 import PluginPanel from '@/components/bot/PluginPanel.vue'
+import FeaturePanel from '@/components/bot/FeaturePanel.vue'
 import { useMccInstanceStore } from '@/stores/mccInstance'
 import { useBotStore } from '@/stores/bot'
 import { botApi } from '@/api/bot'
@@ -413,7 +427,7 @@ const engineTotalCount = computed(() => engineInstances.value.length)
 const showCreate = ref(false)
 const showProfileCreate = ref(false)
 const detailOpen = ref(false)
-const activeTab = ref<'terminal' | 'account' | 'files' | 'inventory' | 'combat' | 'plugins'>('terminal')
+const activeTab = ref<'terminal' | 'account' | 'files' | 'inventory' | 'combat' | 'features' | 'plugins'>('terminal')
 
 // ── MF 实时预览 + 实时坐标（实例详情抽屉顶部） ──
 const isMf = computed(() => engine.value === 'mineflayer')

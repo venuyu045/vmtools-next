@@ -4,6 +4,7 @@ from __future__ import annotations
 import re
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from vmtools_next.api.deps import get_db, get_current_user, get_optional_user, require_admin
@@ -23,6 +24,13 @@ from vmtools_next.adapters.mcc.mcc_mcp_client import MccMcpClient, MccMcpError
 from vmtools_next.adapters.mineflayer.mineflayer_client import MineflayerError
 
 router = APIRouter(prefix="/api/mcc-bots", tags=["mcc-bots"])
+
+
+class SleepPointRequest(BaseModel):
+    """永昼固定睡觉点（床的方块坐标，2026-08-16）。"""
+    x: int
+    y: int
+    z: int
 
 
 def _scoped_bot_query(db: Session, user: UserModel):
@@ -1190,6 +1198,128 @@ async def combat_stop(bot_id: str, db: Session = Depends(get_db),
     try:
         result = await client.stop_combat()
         return {"success": True, "bot_id": bot_id, "result": result}
+    except (MccMcpError, MineflayerError) as e:
+        raise HTTPException(502, f"MCP error: {str(e) or repr(e)}")
+    finally:
+        if owned: await client.disconnect()
+
+
+# ── 永昼：睡觉（2026-08-16，仅 mineflayer） ──
+# 开关走插件体系（POST /api/plugins/auto_sleep/enable|disable?bot_id=xxx）；
+# 睡觉点 per-bot 存 mcc_bots.sleep_x/y/z；本段提供状态查询 / 睡觉点保存 / 手动睡一次。
+
+def _auto_sleep_plugin():
+    from vmtools_next.main import get_plugin_manager
+    pm = get_plugin_manager()
+    if pm is None:
+        return None, None
+    return pm, pm.plugins.get("auto_sleep")
+
+
+async def _get_sleep_client(bot_id: str, db: Session, user) -> tuple:
+    """获取睡觉 client（仅 mineflayer 引擎）。"""
+    _get_scoped_bot(db, user, bot_id)
+    from vmtools_next.core.bot_engine import resolve_bot_engine
+    engine = resolve_bot_engine(bot_id, db)
+    if engine != "mineflayer":
+        raise HTTPException(400, "永昼（睡觉）功能仅支持 mineflayer 引擎")
+    return await _get_mcp_client(bot_id)
+
+
+@router.get("/{bot_id}/sleep/status")
+async def sleep_status(bot_id: str, db: Session = Depends(get_db),
+                       user=Depends(require_admin)):
+    """永昼功能状态：开关（插件 per-bot）/ 配置 / 睡觉点 / 实时时间 / 忙碌 / 最近结果。
+
+    前端「功能」tab 轮询数据源（5s）：:
+        GET /api/mcc-bots/{bot_id}/sleep/status
+    """
+    bot = _get_scoped_bot(db, user, bot_id)
+    pm, plugin = _auto_sleep_plugin()
+    if pm is None:
+        raise HTTPException(503, "Plugin manager unavailable")
+    if plugin is None:
+        raise HTTPException(404, "auto_sleep 插件未加载（检查 backend/src/vmtools_next/plugins/builtin/auto_sleep.py）")
+
+    client, owned = await _get_sleep_client(bot_id, db, user)
+    try:
+        # 实时世界时间/睡觉状态（Node 端；bot 离线时容错）
+        time_status = None
+        try:
+            time_status = await client.get_time_status()
+        except Exception:
+            time_status = None
+
+        # 忙碌判定（复用状态页当前工作判定 + 战斗模式）
+        busy = None
+        task = _get_bot_current_task(db, bot_id)
+        combat_mode = None
+        try:
+            combat = await client.get_combat_status()
+            if combat.get("success") and combat.get("active_mode"):
+                combat_mode = combat.get("active_mode")
+        except Exception:
+            pass
+        busy = (task is not None) or (combat_mode is not None)
+
+        return {
+            "bot_id": bot_id,
+            "enabled": pm.is_enabled_for_bot("auto_sleep", bot_id),
+            "plugin_enabled": pm.is_enabled("auto_sleep"),
+            "config": pm.get_config("auto_sleep") or {},
+            "sleep_point": (
+                {"x": bot.sleep_x, "y": bot.sleep_y, "z": bot.sleep_z}
+                if bot.sleep_x is not None and bot.sleep_y is not None and bot.sleep_z is not None
+                else None
+            ),
+            "time_status": time_status,
+            "busy": busy,
+            "current_task": task,
+            "combat_mode": combat_mode,
+            "last_result": plugin.get_last_result(bot_id) if hasattr(plugin, "get_last_result") else None,
+        }
+    except (MccMcpError, MineflayerError) as e:
+        raise HTTPException(502, f"MCP error: {str(e) or repr(e)}")
+    finally:
+        if owned: await client.disconnect()
+
+
+@router.put("/{bot_id}/sleep/point")
+async def sleep_save_point(bot_id: str, body: SleepPointRequest,
+                           db: Session = Depends(get_db),
+                           user=Depends(require_admin)):
+    """保存该 bot 的固定睡觉点（床的方块坐标）。"""
+    bot = _get_scoped_bot(db, user, bot_id)
+    bot.sleep_x = int(body.x)
+    bot.sleep_y = int(body.y)
+    bot.sleep_z = int(body.z)
+    db.commit()
+    return {"success": True, "bot_id": bot_id,
+            "sleep_point": {"x": bot.sleep_x, "y": bot.sleep_y, "z": bot.sleep_z}}
+
+
+@router.delete("/{bot_id}/sleep/point")
+async def sleep_clear_point(bot_id: str, db: Session = Depends(get_db),
+                            user=Depends(require_admin)):
+    """清除该 bot 的固定睡觉点。"""
+    bot = _get_scoped_bot(db, user, bot_id)
+    bot.sleep_x = bot.sleep_y = bot.sleep_z = None
+    db.commit()
+    return {"success": True, "bot_id": bot_id, "sleep_point": None}
+
+
+@router.post("/{bot_id}/sleep")
+async def sleep_now(bot_id: str, db: Session = Depends(get_db),
+                    user=Depends(require_admin)):
+    """立即执行一次睡觉（到睡觉点）；用于测试/手动触发。"""
+    bot = _get_scoped_bot(db, user, bot_id)
+    if bot.sleep_x is None or bot.sleep_y is None or bot.sleep_z is None:
+        raise HTTPException(400, "未配置睡觉点，请先在「功能」tab 保存床的坐标")
+    client, owned = await _get_sleep_client(bot_id, db, user)
+    try:
+        result = await client.sleep_at(x=bot.sleep_x, y=bot.sleep_y, z=bot.sleep_z,
+                                       timeout_ms=45000)
+        return {"success": bool(result.get("success")), "bot_id": bot_id, "result": result}
     except (MccMcpError, MineflayerError) as e:
         raise HTTPException(502, f"MCP error: {str(e) or repr(e)}")
     finally:

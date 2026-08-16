@@ -1,0 +1,222 @@
+/**
+ * sleep.js — 睡觉 handler（永昼：夜晚自动睡觉跳过黑夜，2026-08-16）
+ *
+ * 方法：
+ *   get_time_status()                     → 世界时间/天气/维度/是否在睡
+ *   find_bed({radius})                    → 找附近最近的床（findBlock）
+ *   sleep_at({x, y, z, timeout_ms})       → 走到睡觉点的床旁并睡觉（等 sleep 事件）
+ *   wake_up()                             → 手动唤醒
+ *
+ * 事件（broadcast）：
+ *   sleep_state {is_sleeping, time_of_day, dimension, position, event}
+ *     — bot 入睡（event=sleep）/ 醒来（event=wake）时推送，供前端/插件实时感知。
+ *
+ * 说明：
+ * - mineflayer 内置 bed.js（node_modules/mineflayer/lib/plugins/bed.js）提供
+ *   bot.sleep()/bot.wake()/bot.isABed()，要求：夜晚（timeOfDay 12541~23458）或雷暴、
+ *   床 2 格点击范围内、未占用、附近无怪物（creative 除外）、仅主世界。
+ * - bot.time 由 time.js 维护（timeOfDay 0~24000 / isDay / day / doDaylightCycle），
+ *   「感知世界时间」完全可行。
+ */
+const { Vec3 } = require('vec3');
+const { GoalNear } = require('mineflayer-pathfinder').goals;
+const { pathTo } = require('../baritone-path/pathfinder');
+
+/**
+ * @param {import('mineflayer').Bot} bot
+ * @param {{broadcast?: Function, createEvent?: Function}} ctx
+ * @returns {object}
+ */
+function createSleepHandlers(bot, ctx = {}) {
+  const { broadcast = null, createEvent = null } = ctx;
+
+  // ── 入睡/醒来事件 → 广播（Python 插件决策 + 前端实时状态） ──
+  function emitSleepState(extra = {}) {
+    if (!broadcast || !createEvent) return;
+    broadcast(createEvent('sleep_state', {
+      is_sleeping: !!bot.isSleeping,
+      time_of_day: bot.time ? bot.time.timeOfDay : null,
+      dimension: bot.game?.dimension || 'unknown',
+      position: bot.entity ? {
+        x: Math.round(bot.entity.position.x * 100) / 100,
+        y: Math.round(bot.entity.position.y * 100) / 100,
+        z: Math.round(bot.entity.position.z * 100) / 100,
+      } : null,
+      ...extra,
+    }));
+  }
+  bot.on('sleep', () => emitSleepState({ event: 'sleep' }));
+  bot.on('wake', () => emitSleepState({ event: 'wake' }));
+
+  // ── 世界时间/状态 ──
+  function get_time_status({} = {}) {
+    const t = bot.time || {};
+    return {
+      success: true,
+      time_of_day: t.timeOfDay ?? null,        // 0~24000（0=6:00 日出）
+      is_day: t.isDay ?? null,                 // <13000
+      day: t.day ?? null,
+      do_daylight_cycle: t.doDaylightCycle ?? null, // false=服务器锁时间，睡觉不会跳
+      is_raining: !!bot.isRaining,
+      thunder_state: bot.thunderState ?? 0,    // >0 且 isRaining = 雷暴（也可睡）
+      dimension: bot.game?.dimension || 'unknown',
+      is_sleeping: !!bot.isSleeping,
+      position: bot.entity ? {
+        x: Math.round(bot.entity.position.x * 100) / 100,
+        y: Math.round(bot.entity.position.y * 100) / 100,
+        z: Math.round(bot.entity.position.z * 100) / 100,
+      } : null,
+    };
+  }
+
+  // ── 找附近最近的床 ──
+  function find_bed({ radius = 64 } = {}) {
+    if (!bot.entity) return { success: false, reason: 'no_entity' };
+    const r = Number(radius) || 64;
+    let bed = null;
+    try {
+      bed = bot.findBlock({
+        matching: (b) => bot.isABed(b),
+        maxDistance: r,
+      });
+    } catch (err) {
+      return { success: false, reason: 'find_block_error:' + err.message };
+    }
+    if (!bed) {
+      return { success: true, found: false, radius: r };
+    }
+    const dist = bed.position.distanceTo(bot.entity.position);
+    return {
+      success: true,
+      found: true,
+      block: {
+        x: bed.position.x,
+        y: bed.position.y,
+        z: bed.position.z,
+        name: bed.name,
+      },
+      distance: Math.round(dist * 100) / 100,
+    };
+  }
+
+  /**
+   * 到睡觉点睡觉：睡觉点坐标 = 床的方块坐标。
+   * 1) 在睡觉点附近（8 格）找床，找不到 → 明确失败（床未放置/被拆）
+   * 2) 距离 >2.5 格先寻路（远用 baritone，近用 pathfinder GoalNear 2 格）
+   * 3) bot.sleep(bed) 并等待 sleep 事件（内部 3s 超时）
+   */
+  async function sleep_at({ x, y, z, timeout_ms = 30000 } = {}) {
+    if (!bot.entity) return { success: false, reason: 'no_entity' };
+    if (bot.isSleeping) return { success: false, reason: 'already_sleeping' };
+
+    // 1. 可睡条件预检（提前返回友好原因；bot.sleep 内部也会再查一次）
+    const thunderstorm = bot.isRaining && (bot.thunderState > 0);
+    const tod = bot.time ? bot.time.timeOfDay : null;
+    if (!thunderstorm && (tod === null || !(tod >= 12541 && tod <= 23458))) {
+      return { success: false, reason: 'not_night', time_of_day: tod };
+    }
+
+    // 2. 睡觉点附近找床
+    const point = new Vec3(Math.floor(Number(x) || 0), Math.floor(Number(y) || 0), Math.floor(Number(z) || 0));
+    let bed = null;
+    try {
+      bed = bot.findBlock({
+        matching: (b) => bot.isABed(b),
+        maxDistance: 8,
+        point,
+      });
+    } catch (err) {
+      return { success: false, reason: 'find_block_error:' + err.message };
+    }
+    if (!bed) {
+      return {
+        success: false,
+        reason: 'bed_not_found_at_point',
+        point: { x: point.x, y: point.y, z: point.z },
+      };
+    }
+
+    // 3. 走到床边（2 格内可点击；bed.js 点击范围 x/z ±2、y ±2）
+    const dist = bot.entity.position.distanceTo(bed.position);
+    if (dist > 2.5) {
+      let moved = false;
+      try {
+        if (dist > 32) {
+          // 远距离：baritone 移植寻路（支持爬升/跳跃/下降）
+          const r = await pathTo(bot, bed.position.x, bed.position.y, bed.position.z, {
+            maxOffset: 2,
+            timeoutMs: Math.min(timeout_ms, 45000),
+            onLog: (m) => console.log(`[sleep][baritone] ${m}`),
+          });
+          moved = !!r.success;
+        } else {
+          // 近距离：pathfinder GoalNear（2 格容差）
+          moved = await new Promise((resolve) => {
+            let done = false;
+            let timer = null;
+            const cleanup = () => {
+              bot.removeListener('goal_reached', onGoal);
+              bot.removeListener('path_stop', onStop);
+              bot.removeListener('path_timeout', onTimeout);
+              if (timer) clearTimeout(timer);
+            };
+            const finish = (ok) => {
+              if (done) return;
+              done = true;
+              cleanup();
+              resolve(ok);
+            };
+            const onGoal = () => finish(true);
+            const onStop = () => finish(false);
+            const onTimeout = () => finish(false);
+            bot.once('goal_reached', onGoal);
+            bot.once('path_stop', onStop);
+            bot.once('path_timeout', onTimeout);
+            timer = setTimeout(() => {
+              try { bot.pathfinder.stop(); } catch (e) { /* ignore */ }
+              finish(false);
+            }, Math.min(timeout_ms, 20000));
+            try {
+              bot.pathfinder.setGoal(new GoalNear(bed.position.x, bed.position.y, bed.position.z, 2));
+            } catch (e) {
+              finish(false);
+            }
+          });
+        }
+      } catch (err) {
+        return { success: false, reason: 'path_error:' + err.message };
+      }
+      if (!moved) {
+        return { success: false, reason: 'path_failed', target: { x: bed.position.x, y: bed.position.y, z: bed.position.z } };
+      }
+    }
+
+    // 4. 睡觉（等待 sleep 事件；内部 3s 超时抛「bot is not sleeping」）
+    try {
+      await bot.sleep(bed);
+      return {
+        success: true,
+        reason: 'sleeping',
+        bed: { x: bed.position.x, y: bed.position.y, z: bed.position.z },
+      };
+    } catch (err) {
+      // 常见失败：床被占用 / 附近有怪物 / 点击太远 / 点击被拒
+      return { success: false, reason: 'sleep_error:' + err.message };
+    }
+  }
+
+  // ── 手动唤醒 ──
+  async function wake_up({} = {}) {
+    if (!bot.isSleeping) return { success: false, reason: 'already_awake' };
+    try {
+      await bot.wake();
+      return { success: true };
+    } catch (err) {
+      return { success: false, reason: err.message };
+    }
+  }
+
+  return { get_time_status, find_bed, sleep_at, wake_up };
+}
+
+module.exports = { createSleepHandlers };

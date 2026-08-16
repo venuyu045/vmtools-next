@@ -20,6 +20,7 @@ const { createWorldHandlers } = require('./handlers/world');
 const { createChatHandlers } = require('./handlers/chat');
 const { createServuxHandlers } = require('./handlers/servux');
 const { createCombatHandlers } = require('./handlers/combat');
+const { createSleepHandlers } = require('./handlers/sleep');
 const {
   createSuccessResponse,
   createErrorResponse,
@@ -332,6 +333,8 @@ async function createBotProcess(options) {
         ...servuxHandlers,
         // 战斗 handler 需要广播能力（耐久低事件），传入 broadcast/createEvent 闭包
         ...createCombatHandlers(bot, { broadcast, createEvent }),
+        // 睡觉 handler（永昼：夜晚自动睡觉跳过黑夜，2026-08-16）
+        ...createSleepHandlers(bot, { broadcast, createEvent }),
       };
 
       // 注册所有方法

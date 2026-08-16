@@ -131,4 +131,17 @@ export const botApi = {
   closeContainer(botId: string, containerId: string) {
     return client.post(`/mcc-bots/${botId}/inventory/container/${containerId}/close`)
   },
+  // 永昼：睡觉（mineflayer only，2026-08-16）
+  sleepStatus(botId: string) {
+    return client.get(`/mcc-bots/${botId}/sleep/status`)
+  },
+  saveSleepPoint(botId: string, point: { x: number; y: number; z: number }) {
+    return client.put(`/mcc-bots/${botId}/sleep/point`, point)
+  },
+  clearSleepPoint(botId: string) {
+    return client.delete(`/mcc-bots/${botId}/sleep/point`)
+  },
+  sleepNow(botId: string) {
+    return client.post(`/mcc-bots/${botId}/sleep`)
+  },
 }

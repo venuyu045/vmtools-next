@@ -64,6 +64,11 @@ METHOD_MOVE_TO,
     METHOD_SET_GUARD,
     METHOD_GET_COMBAT_STATUS,
     METHOD_STOP_COMBAT,
+    # 2026-08-16 永昼（夜晚自动睡觉跳过黑夜）
+    METHOD_GET_TIME_STATUS,
+    METHOD_FIND_BED,
+    METHOD_SLEEP_AT,
+    METHOD_WAKE_UP,
     DEFAULT_CMD_TIMEOUT,
     MOVE_TIMEOUT,
     CONTAINER_TIMEOUT,
@@ -530,6 +535,39 @@ class MineflayerBridgeClient(AbstractBotAgent):
 
     async def stop_combat(self) -> dict:
         return await self._send_request(METHOD_STOP_COMBAT, {},
+                                        timeout=5.0)
+
+    # ── 睡觉（永昼：夜晚自动睡觉跳过黑夜，2026-08-16） ──
+    async def get_time_status(self) -> dict:
+        """查询世界时间/天气/维度/是否在睡（Node 端 get_time_status）。
+
+        返回 {success, time_of_day, is_day, day, do_daylight_cycle,
+              is_raining, thunder_state, dimension, is_sleeping, position}
+        """
+        return await self._send_request(METHOD_GET_TIME_STATUS, {},
+                                        timeout=DEFAULT_CMD_TIMEOUT)
+
+    async def find_bed(self, radius: int = 64) -> dict:
+        """找 bot 附近最近的床。返回 {success, found, block:{x,y,z,name}, distance}"""
+        return await self._send_request(METHOD_FIND_BED, {
+            "radius": radius,
+        }, timeout=DEFAULT_CMD_TIMEOUT)
+
+    async def sleep_at(self, x: int, y: int, z: int,
+                       timeout_ms: int = 30000) -> dict:
+        """到睡觉点（床的方块坐标）睡觉：寻路 + bot.sleep + 等 sleep 事件。
+
+        返回 {success, reason, ...}；失败 reason 含具体原因（not_night /
+        bed_not_found_at_point / path_failed / sleep_error:...）。
+        """
+        return await self._send_request(METHOD_SLEEP_AT, {
+            "x": x, "y": y, "z": z,
+            "timeout_ms": timeout_ms,
+        }, timeout=timeout_ms / 1000 + 10.0)
+
+    async def wake_up(self) -> dict:
+        """手动唤醒（天亮后 bot 自动醒，一般无需调用）。"""
+        return await self._send_request(METHOD_WAKE_UP, {},
                                         timeout=5.0)
 
     # ── 玩家操控（背包页移动控制台：前后左右/跳跃/蹲下/视角） ──

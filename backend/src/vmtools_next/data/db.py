@@ -248,6 +248,14 @@ def _run_lightweight_migrations(engine) -> None:
                         conn.execute(text("ALTER TABLE mcc_bots ADD COLUMN manual_working BOOLEAN DEFAULT 0"))
                     if "manual_task_name" not in b_columns:
                         conn.execute(text("ALTER TABLE mcc_bots ADD COLUMN manual_task_name VARCHAR DEFAULT ''"))
+                    # 永昼睡觉点（2026-08-16）：per-bot 固定睡觉点（床的方块坐标），
+                    # 前端「功能」tab 配置；auto_sleep 插件据此每晚前往睡觉。
+                    if "sleep_x" not in b_columns:
+                        conn.execute(text("ALTER TABLE mcc_bots ADD COLUMN sleep_x INTEGER"))
+                    if "sleep_y" not in b_columns:
+                        conn.execute(text("ALTER TABLE mcc_bots ADD COLUMN sleep_y INTEGER"))
+                    if "sleep_z" not in b_columns:
+                        conn.execute(text("ALTER TABLE mcc_bots ADD COLUMN sleep_z INTEGER"))
                 except Exception as _e:
                     logger.warning("mcc_bots manual_work migration check: {}", _e)
             # 定时任务：自动上线/下线开关（2026-08-13）
