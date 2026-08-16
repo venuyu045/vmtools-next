@@ -3087,11 +3087,12 @@ class BotBuildLoop:
                     continue
                 if slept_this_night:
                     continue  # 本晚已睡过（防 doDaylightCycle=false 锁夜晚死循环）
-                # 2026-08-16：夜晚睡觉优先级最高——即使补货中（锁占用）也直接请求，
-                # 补货协程在安全点检查 _sleep_req 提前让路（传送等待/开箱前），
-                # 不再因锁占用跳过（此前补货失败循环会让 bot 整个夜晚不睡觉）。
-                # 主循环安全点响应后，_do_sleep_cycle 内部再获取 _restock_lock 保证
-                # 与补货串行（补货已让路 → 锁应很快可用）。
+                # 2026-08-16 用户明确：补货中【不要】请求睡觉——补货（含拿猪排）在
+                # 末地仓库，末地恒夜晚（doDaylightCycle=false），若按 timeOfDay 判断会
+                # 误触发睡觉且跨维度寻路失败。补货是原子操作：要么补货前睡、要么
+                # 补货后睡，绝不在补货中打断。_restock_lock 占用 = 补货中 → 本轮跳过。
+                if self._restock_lock.locked():
+                    continue
                 slept_this_night = True
                 self._activity("info",
                                f"检测到夜晚（timeOfDay={tod}），请求暂停建造去睡觉（床 "
