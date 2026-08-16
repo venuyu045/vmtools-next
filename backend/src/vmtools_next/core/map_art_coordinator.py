@@ -270,6 +270,11 @@ class BotBuildLoop:
         self._sleeping: bool = False
         self._sleep_event = asyncio.Event()
         self._sleep_event.set()  # 初始可继续
+        # 2026-08-16 睡觉请求排队：监控协程 set _sleep_req → 主循环到达安全点
+        # （行/格循环开头）确认暂停（clear _sleep_event + set _sleep_hold）→ 监控协程
+        # 等到 _sleep_hold 才开始传送睡觉——避免睡觉传送打断正在进行的移动/放置。
+        self._sleep_req = asyncio.Event()
+        self._sleep_hold = asyncio.Event()
         self._sleep_task: Optional[asyncio.Task] = None  # 睡觉监控协程
         try:
             _mf_slp = get_config().mineflayer
@@ -448,8 +453,12 @@ class BotBuildLoop:
             for row_z in range(self.region.z_start, self.region.z_end + 1):
                 if self._stopped:
                     break
-                # 2026-08-16：睡觉中 → 阻塞等待（夜晚睡觉防怪物/幻翼，醒来后继续）
-                await self._sleep_event.wait()
+                # 2026-08-16：睡觉请求到达 → 暂停建造等睡觉完成（安全点：行循环开头）
+                if self._sleep_req.is_set():
+                    self._sleep_req.clear()
+                    self._sleep_event.clear()  # 暂停建造
+                    self._sleep_hold.set()     # 通知监控协程已暂停，可执行睡觉
+                    await self._sleep_event.wait()  # 等睡觉完成恢复
                 if self._stopped:
                     break
 
@@ -543,6 +552,8 @@ class BotBuildLoop:
                 self._sleep_task = None
             self._sleeping = False
             self._sleep_event.set()
+            self._sleep_req.clear()
+            self._sleep_hold.clear()
             # P1-9：中断/异常时 flush 残留进度（防最后几行 DB 进度丢失；行内 offline 时
             # _place_row 未执行到行尾 flush）
             if self._db_updates:
@@ -766,8 +777,12 @@ class BotBuildLoop:
         # 逐格顺序放置（颜色切换由 _ensure_item_in_hand 的 hotbar_map 缓存零成本处理）
         for x in x_span:
             await self._paused.wait()
-            # 2026-08-16：睡觉中 → 阻塞等待（睡觉监控协程负责暂停/恢复，醒来后继续）
-            await self._sleep_event.wait()
+            # 2026-08-16：睡觉请求到达 → 暂停建造等睡觉完成（安全点：每格循环开头）
+            if self._sleep_req.is_set():
+                self._sleep_req.clear()
+                self._sleep_event.clear()
+                self._sleep_hold.set()
+                await self._sleep_event.wait()  # 等睡觉完成恢复
             if self._stopped:
                 return
 
@@ -2832,10 +2847,14 @@ class BotBuildLoop:
         天亮醒来 → /ehomes dth 传回建造点 → 恢复建造。睡觉动作本身重置幻翼计时
         （即使服务器 doDaylightCycle=false 时间不跳，睡觉仍有效防幻翼）。
 
+        防循环：一晚只睡一次（_slept_this_night）。doDaylightCycle=false 时间锁
+        夜晚时，睡一次后跳过直到时间离开夜晚窗口（白天）才重置——避免"睡→醒→
+        又检测到夜晚→再睡"死循环。
         未配置睡觉点（任务 sleep_x/y/z 为空）→ 空转，不打扰建造。
         """
         if not self._sleep_point:
             return
+        slept_this_night = False
         try:
             while not self._stopped:
                 await asyncio.sleep(self._sleep_check_interval)
@@ -2856,10 +2875,25 @@ class BotBuildLoop:
                 in_window = self._sleep_night_start <= tod <= self._sleep_night_end
                 thunderstorm = bool(st.get("is_raining")) and int(st.get("thunder_state") or 0) > 0
                 if not in_window and not thunderstorm:
-                    continue  # 白天/非雷暴：不需要睡觉
+                    slept_this_night = False  # 白天/非雷暴：重置"已睡"标记，等待下一晚
+                    continue
+                if slept_this_night:
+                    continue  # 本晚已睡过（防 doDaylightCycle=false 锁夜晚死循环）
+                slept_this_night = True
                 self._activity("info",
-                               f"检测到夜晚（timeOfDay={tod}），暂停建造前往睡觉（床 "
+                               f"检测到夜晚（timeOfDay={tod}），请求暂停建造去睡觉（床 "
                                f"{self._sleep_point}），防怪物攻击/幻翼")
+                # 排队：通知主循环在下一个安全点暂停，等它确认（_sleep_hold）后再执行
+                self._sleep_req.set()
+                try:
+                    await asyncio.wait_for(self._sleep_hold.wait(), timeout=20)
+                except asyncio.TimeoutError:
+                    # 主循环 20s 内未到达安全点（可能正卡在移动/放置）→ 取消本次请求
+                    self._sleep_req.clear()
+                    slept_this_night = False  # 允许下轮重试
+                    self._activity("warn", "睡觉请求等待主循环暂停超时，本轮跳过")
+                    continue
+                self._sleep_hold.clear()
                 await self._do_sleep_cycle()
         except asyncio.CancelledError:
             pass
@@ -2960,7 +2994,9 @@ class BotBuildLoop:
             logger.warning("[%s] Sleep cycle error: %s", self.bot_id, e)
         finally:
             self._sleeping = False
-            self._sleep_event.set()
+            self._sleep_event.set()       # 恢复建造
+            self._sleep_req.clear()       # 清理请求标记
+            self._sleep_hold.clear()      # 清理确认标记
 
     async def _return_from_sleep(self) -> None:
         """睡觉往返后传回建造点（/ehomes dth，补货同款 return），等 Via 位置同步。"""
