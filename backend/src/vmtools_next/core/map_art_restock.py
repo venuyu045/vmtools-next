@@ -209,6 +209,10 @@ class ShulkerRestocker:
             withdraw_ok = await self._withdraw_once(clean_id, container_id, bx, by, bz)
         finally:
             await self._close_box(container_id)
+        # ⚠️ 2026-08-16：关箱是异步（服务器确认窗口关闭后才把背包数据同步给客户端），
+        # 立即读背包可能读到【窗口残留数据】→ 误判"取到"（实际背包无货 → 后续 select 失败）。
+        # 等 0.8s（Via 关箱同步）再确认。
+        await asyncio.sleep(0.8)
 
         if withdraw_ok:
             # 关箱后（Via 客户端背包已同步）轮询确认
