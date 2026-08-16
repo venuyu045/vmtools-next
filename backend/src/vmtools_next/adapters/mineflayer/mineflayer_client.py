@@ -147,8 +147,13 @@ class MineflayerBridgeClient(AbstractBotAgent):
             self._ws = await asyncio.wait_for(
             websockets.connect(
                 self._ws_url,
-                ping_interval=10,
-                ping_timeout=5,
+                # ⚠️ 2026-08-16 修复：原 ping_interval=10/ping_timeout=5 过严——
+                # baritone 寻路 / 对账批量 get_world_block_at 会让 Node 事件循环
+                # 短暂阻塞数秒，10s 内未收到 pong 即被关（keepalive ping timeout
+                # 1011），实测 bot 转行掉水寻路时每 ~5 分钟掉线一次。放宽到
+                # 20s/10s（Node 阻塞 <15s 不触发），连接稳定性显著提升。
+                ping_interval=20,
+                ping_timeout=10,
                 max_size=64 * 1024 * 1024,   # 64MB：超大仓库容器发现（1.4万+坐标）单响应可能超默认1MB
                 max_queue=256,
             ),
