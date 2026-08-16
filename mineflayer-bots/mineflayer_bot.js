@@ -171,7 +171,12 @@ async function createBotProcess(options) {
 
     try {
       const result = await handler(params);
-      ws.send(JSON.stringify(createSuccessResponse(request_id, result)));
+      const respJson = JSON.stringify(createSuccessResponse(request_id, result));
+      // ── 2026-08-16 诊断：记录超大响应（284MB message too big 排查）──
+      if (respJson.length > 200 * 1024) {
+        console.log(`[WS-BIG-RESP] method=${method} size=${(respJson.length / 1024 / 1024).toFixed(2)}MB req=${request_id} head=${respJson.slice(0, 300)}`);
+      }
+      ws.send(respJson);
     } catch (err) {
       ws.send(JSON.stringify(createErrorResponse(request_id, err.message)));
     }
@@ -376,6 +381,10 @@ async function createBotProcess(options) {
   // ── 广播消息到所有 WebSocket 客户端 ──
   function broadcast(data) {
     const json = JSON.stringify(data);
+    // ── 2026-08-16 诊断：记录超大广播（284MB message too big 排查）──
+    if (json.length > 200 * 1024) {
+      console.log(`[WS-BIG-BROADCAST] event=${data && data.event} type=${data && data.type} size=${(json.length / 1024 / 1024).toFixed(2)}MB head=${json.slice(0, 300)}`);
+    }
     for (const ws of wss.clients) {
       if (ws.readyState === 1) { // WebSocket.OPEN
         ws.send(json);

@@ -965,10 +965,10 @@ class BotBuildLoop:
                 for x, y, z, block_id in row_pending:
                     try:
                         v = await self.mcp.get_world_block_at(x, y, z)
-                        actual = ((v.get("name") or "air").split("[")[0])
+                        actual = self._normalize_item_id((v.get("name") or "air").split("[")[0])
                     except Exception:
                         actual = "air"  # 读取失败按旧数据处理
-                    if actual == block_id.split("[")[0]:
+                    if actual == self._normalize_item_id(block_id):
                         ok_count += 1
                         row = db.query(MapArtBlockState).filter(
                             MapArtBlockState.task_id == self.task_id,
@@ -1049,10 +1049,10 @@ class BotBuildLoop:
                     for rx, ry, rz, expected in batch:
                         try:
                             v = await self.mcp.get_world_block_at(rx, ry, rz)
-                            actual = ((v.get("name") or "air").split("[")[0])
+                            actual = self._normalize_item_id((v.get("name") or "air").split("[")[0])
                         except Exception:
                             actual = "air"
-                        if actual == expected.split("[")[0]:
+                        if actual == self._normalize_item_id(expected):
                             ok_count += 1
                             row = db2.query(MapArtBlockState).filter(
                                 MapArtBlockState.task_id == self.task_id,
@@ -1146,10 +1146,10 @@ class BotBuildLoop:
                         continue
                     try:
                         v = await self.mcp.get_world_block_at(rx, ry, rz)
-                        actual = ((v.get("name") or "air").split("[")[0])
+                        actual = self._normalize_item_id((v.get("name") or "air").split("[")[0])
                     except Exception:
                         actual = "air"
-                    if actual == expected.split("[")[0]:
+                    if actual == self._normalize_item_id(expected):
                         ok_count += 1
                         row = db2.query(MapArtBlockState).filter(
                             MapArtBlockState.task_id == self.task_id,
@@ -1215,8 +1215,12 @@ class BotBuildLoop:
         key = (x, y, z)
         try:
             result = await self.mcp.get_world_block_at(x, y, z)
-            actual = (result.get("name") or "air").split("[")[0]
-            expected = block_id.split("[")[0]
+            # 2026-08-16 修复：get_world_block_at 返回 name 无前缀（如 black_concrete），
+            # 而 block_id 带 minecraft: 前缀 → 直接 == 永远不相等 → 放置成功却被判
+            # WRONG 重试（本轮实测 "Place confirmed WRONG: got black_concrete want
+            # minecraft:black_concrete" 的根因）。统一 _normalize_item_id 比较。
+            actual = self._normalize_item_id((result.get("name") or "air").split("[")[0])
+            expected = self._normalize_item_id(block_id)
             if actual == expected:
                 self._verified_set.add(key)
                 return True
@@ -1238,7 +1242,10 @@ class BotBuildLoop:
             信任 place_block 发出（服务器已接受），坐标记入 _pending_confirm，
             由行尾复核（_reconcile_row）/启动对账收敛 verified，防止进度虚高。
         """
-        expected = block_id.split("[")[0]
+        # 2026-08-16 修复：统一 _normalize_item_id 比较（get_world_block_at 返回
+        # name 无前缀，block_id 带 minecraft: 前缀，直接 == 永远不相等 → 放置成功
+        # 却被判 WRONG 重试，进度不记录、方块漏计）。
+        expected = self._normalize_item_id(block_id)
         for attempt in range(self._place_retries):
             await self._paused.wait()
             if self._stopped:
@@ -1266,7 +1273,7 @@ class BotBuildLoop:
                     # P0-5 放置后确认（分层）
                     try:
                         v = await self.mcp.get_world_block_at(x, y, z)
-                        actual = ((v.get("name") or "air").split("[")[0])
+                        actual = self._normalize_item_id((v.get("name") or "air").split("[")[0])
                         if actual == expected:
                             # 强确认（服务器真实或本地已同步）
                             self._verified_set.add((x, y, z))

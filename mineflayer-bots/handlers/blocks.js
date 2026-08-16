@@ -70,7 +70,11 @@ function createBlockHandlers(bot) {
       const def = reg.blocksByName[heldItem.name];
       if (!def) return;
       // 构造本地方块（biome=0, metadata=0；世界刷新后服务器会覆盖为真实值）
-      const nb = new Block(def.id, 0, 0, reg);
+      // ⚠️ 2026-08-16 修复：第4参 stateId 必须传数字（def.defaultState），
+      // 此前误传 reg（注册表对象）→ nb.stateId = 整个注册表 → 后续
+      // get_world_block_at 返回 state_id 序列化出 271MB 帧 → Python 端
+      // websockets max_size 64MB 超限强制关闭连接 → bot 掉线（#50 根因）。
+      const nb = new Block(def.id, 0, 0, typeof def.defaultState === 'number' ? def.defaultState : undefined);
       nb.position = pos;
       bot.world.setBlock(pos, nb);
       // 同时广播 blockUpdate（让依赖该事件的逻辑感知）
@@ -333,7 +337,9 @@ function createBlockHandlers(bot) {
         exists: true,
         name: block.name,
         type: block.type,
-        state_id: block.stateId,
+        // ⚠️ 2026-08-16 防御：stateId 必须数字；若异常（如本地坏 block）返回 null，
+        // 严禁把对象（注册表）序列化进响应（曾产生 271MB 帧导致连接被强制关闭）
+        state_id: typeof block.stateId === 'number' ? block.stateId : null,
         metadata: block.metadata,
         light: block.light,
         sky_light: block.skyLight,
