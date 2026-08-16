@@ -2199,14 +2199,14 @@ class BotBuildLoop:
                 await asyncio.sleep(1.5)
             self._last_pos = None  # 传送后位置未知，强制下次寻路
             self.progress.state = "placing"
-            # ⚠️ 2026-08-16 修复：Via 传送后客户端背包数据延迟同步（实测约 2.5s 才就绪），
-            # 原等 1.5s 就 _refresh_hotbar_map → 背包读空 → hotbar_map 空 → 后续 select
-            # 失败 → "无法获取材料" → 放置缺块 → 转行踩空掉水。轮询等待背包非空（最多 5s）。
-            for _wait in range(10):
+            # ⚠️ 2026-08-16 修复：Via 传送后客户端背包数据延迟且可能【部分】同步
+            # （不同槽位数据到达时间不一）——原"等背包非空就 break"可能只等到部分
+            # 材料（如 gray/white 在、black 未到）→ check(black)=0 → 误判补货失败。
+            # 改为【轮询等待目标材料（clean_id）出现】（最多 10s），确保 select 前
+            # 该材料数据已就绪。
+            for _wait in range(20):
                 try:
-                    _snap = await self.mcp.get_inventory_snapshot(inventory_id=0)
-                    _items = (_snap.get("data", _snap)).get("items", [])
-                    if _items:
+                    if (await self._check_inventory_level(clean_id)) > 0:
                         break
                 except Exception:
                     pass
