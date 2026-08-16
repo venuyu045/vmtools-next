@@ -1376,7 +1376,11 @@ class BotBuildLoop:
                 _st = await self.mcp.get_player_state()
                 _d2 = _st.get("data", _st) if isinstance(_st, dict) else {}
                 _held = _d2.get("held_item") or ""
-                if _held and self._normalize_item_id(_held) != self._normalize_item_id(block_id):
+                if not _held:
+                    # 手持空（切换中/物品消耗完）→ 不信任缓存，走下方 select 流程
+                    # （否则 place 时 No item in hand 连续失败）
+                    self._current_item = None
+                elif self._normalize_item_id(_held) != self._normalize_item_id(block_id):
                     self._activity("debug",
                                    f"手持缓存失效（实际 {_held}，期望 {block_id}）→ 重新选择")
                     self._current_item = None
@@ -1403,9 +1407,9 @@ class BotBuildLoop:
                             _st2 = await self.mcp.get_player_state()
                             _d2b = _st2.get("data", _st2) if isinstance(_st2, dict) else {}
                             _held2 = _d2b.get("held_item") or ""
-                            if _held2 and self._normalize_item_id(_held2) != norm_id:
+                            if not _held2 or self._normalize_item_id(_held2) != norm_id:
                                 self._activity("debug",
-                                               f"hotbar_map 槽位 {slot} 内容过期（实际 {_held2}，期望 {clean_id}）→ 缓存失效")
+                                               f"hotbar_map 槽位 {slot} 内容过期（实际 {_held2 or '空'}，期望 {clean_id}）→ 缓存失效")
                                 del self._hotbar_map[slot]
                                 break
                         except Exception:
@@ -1459,9 +1463,9 @@ class BotBuildLoop:
                     _st = await self.mcp.get_player_state()
                     _d2 = _st.get("data", _st) if isinstance(_st, dict) else {}
                     _held = _d2.get("held_item") or ""
-                    if _held and self._normalize_item_id(_held) != self._normalize_item_id(clean_id):
-                        logger.warning("[%s] select %s 后手持仍是 %s（切换未生效）→ 视为失败",
-                                       self.bot_id, clean_id, _held)
+                    if not _held or self._normalize_item_id(_held) != self._normalize_item_id(clean_id):
+                        logger.warning("[%s] select %s 后手持 %s（切换未生效）→ 视为失败",
+                                       self.bot_id, clean_id, _held or "空")
                         return False
                 except Exception:
                     pass  # 读取失败不拦截（保持原行为）
