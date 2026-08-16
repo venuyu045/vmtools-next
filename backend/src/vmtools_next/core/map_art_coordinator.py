@@ -416,6 +416,11 @@ class BotBuildLoop:
         except Exception as e:
             logger.warning("[%s] save build home error: %s", self.bot_id, e)
 
+        # ⚠️ 2026-08-16：真实世界对账移到【传送定位后】（bot 到建造区、world 从
+        # 服务器重拉、chunk 加载）——大范围扫描才准确（在传送前扫描会因区域 chunk
+        # 未加载读到 air 全"待定"）。扫描失败/部分未加载由运行中 _verify_block 兜底。
+        await self._reconcile_start()
+
         try:
             for row_z in range(self.region.z_start, self.region.z_end + 1):
                 if self._stopped:
@@ -1172,11 +1177,13 @@ class BotBuildLoop:
     async def _restore_progress(self) -> None:
         """Restore previously persisted progress from DB (breakpoint resume).
 
-        2026-08-16 P0-5：改由 _reconcile_start 做真实世界对账（以实际方块状态
-        为唯一权威），此处仅保留进度计数兜底（对账失败时仍以 DB 计数启动，
-        运行中 _verify_block 逐格纠偏）。
+        2026-08-16 P0-5：真实世界对账（_reconcile_start）已移到 run() 传送定位
+        之后调用（bot 到建造区、world 从服务器重拉后大范围扫描才准确——
+        在传送前对账会因区域 chunk 未加载读到 air 全"待定"）。此处仅保留进度
+        计数兜底（对账失败时仍以 DB 计数启动，运行中 _verify_block 逐格纠偏）。
         """
-        await self._reconcile_start()
+        # 对账已移至 run() 传送定位后，这里不再调用 _reconcile_start
+        pass
 
     async def _reconcile_region_final(self) -> tuple[int, int]:
         """区域完成前对账（2026-08-16 P0-5）：对 DB 中本区域 placed=True 的行复核。
