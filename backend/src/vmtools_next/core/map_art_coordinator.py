@@ -259,6 +259,10 @@ class BotBuildLoop:
         # 2026-08-14 模块B：快捷栏槽位 → 材料映射缓存（避免每次全背包搜索）
         self._hotbar_map: dict[int, str] = {}  # slot(0-8) → clean_item_id
         self._food_task: Optional[asyncio.Task] = None  # 食物监控协程
+        # 2026-08-16：食物补货失败冷却（秒）——补货失败（如盒子未给权限/寻路失败）后
+        # 冷却期内不再重复触发，防「food低→补货→失败→food更低→再补货」死循环拖垮建造。
+        self._food_restock_cooldown_s: float = 120.0
+        self._food_restock_cooldown_until: float = 0.0
         # 2026-08-14：溺水/坠落防护——记录上次血量，持续下降时传送回建造点
         self._last_health: Optional[float] = None
 
@@ -691,6 +695,25 @@ class BotBuildLoop:
                                             f"（bot 悬空/掉水）——判定未到位")
                                         return False
                                 if dy > self._verify_y_tol:
+                                    # 2026-08-16 用户反馈：bot「移动到位却高度不符」但
+                                    # 实际站的位置是对的——根因是 bot 不在建造区时（如
+                                    # 异步食物补货去仓库 y≈57），主循环仍以建造层 y=69
+                                    # 校验高度 → 误判。改为：先查 bot 是否在建造区附近，
+                                    # 不在 → 不报"高度不符"，交上层传送兜底拉回（防坠落
+                                    # 强条件仍是脚下实体检查，不受影响）。
+                                    try:
+                                        bx2 = float(loc.get("x", x))
+                                        bz2 = float(loc.get("z", z))
+                                        if not self._near_build_area(bx2, bz2):
+                                            self._last_move_fail_reason = "away"
+                                            self._activity(
+                                                "debug",
+                                                f"移动到位但 bot 不在建造区附近"
+                                                f"（{bx2:.0f},{bz2:.0f}，目标y={y}实际y={by:.1f}），"
+                                                f"交上层传送兜底")
+                                            return False
+                                    except Exception:
+                                        pass
                                     self._last_move_fail_reason = "height"
                                     self._activity(
                                         "warn",
@@ -2812,12 +2835,22 @@ class BotBuildLoop:
                     self._last_health = health
 
                     if food < threshold_food or health < threshold_health:
+                        # 2026-08-16：补货失败冷却——上次补货失败后冷却期内不再重复触发
+                        #（防「food低→补货→失败→food更低→再补货」死循环；盒子权限
+                        # 未配置/寻路失败时尤其明显）
+                        if time.monotonic() < self._food_restock_cooldown_until:
+                            continue
                         self._activity("info", f"饱食度 {food}/血量 {health} 低，准备进食")
                         # 优先确保副手有食物
                         has_food = await self._ensure_food_offhand()
                         if not has_food:
-                            logger.warning("[%s] 食物不足且补货失败（food=%d, health=%d）",
-                                           self.bot_id, food, health)
+                            # 补货失败 → 进入冷却（避免疯狂重试；权限/寻路修好后冷却自然过期）
+                            self._food_restock_cooldown_until = (
+                                time.monotonic() + self._food_restock_cooldown_s)
+                            logger.warning("[%s] 食物不足且补货失败（food=%d, health=%d），"
+                                           "进入 %ds 冷却",
+                                           self.bot_id, food, health,
+                                           int(self._food_restock_cooldown_s))
                             continue
                         # 吃副手食物
                         try:
