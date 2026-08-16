@@ -30,11 +30,11 @@
       <div class="lx-hero-main">
         <p class="lx-hero-eyebrow">Minecraft 玩家组织 · 二〇二四年至今</p>
         <h1 class="lx-hero-title">理想乡</h1>
-        <p class="lx-hero-slogan">{{ slogan || '愿思念伴随你进入理想乡' }}</p>
+        <p class="lx-hero-slogan">{{ slogan || '此心安处，便是理想乡' }}</p>
         <p class="lx-hero-sub">
-          自 2024 年 12 月成立至今，我们建起了完善的基础生产体系、收容了大部分游戏内生物，
-          划分建筑区与工业区，坚持以中世纪幻想风格打造每一座家园——
-          理想乡没有苛捐杂税，大家因为热爱而相聚。
+          自 2024 年 12 月肇建，我们筑起完善的基础生产体系，收容四方生灵，
+          划分建筑与工业两区，以中世纪幻想之风营建每一座家园——
+          理想乡无苛捐杂税，唯因热爱，所以相聚。
         </p>
         <div class="lx-hero-cta">
           <a class="lx-cta-primary" href="#intro">了解我们</a>
@@ -45,8 +45,8 @@
       <div class="lx-hero-side" aria-hidden="true">
         <div class="lx-pin-card lx-pin-1">
           <span class="lx-pin-dot"></span>
-          <span class="lx-pin-value">2023</span>
-          <span class="lx-pin-label">建服 · 初春</span>
+          <span class="lx-pin-value">2024</span>
+          <span class="lx-pin-label">肇建 · 初冬</span>
         </div>
         <div class="lx-pin-card lx-pin-2">
           <span class="lx-pin-dot"></span>
@@ -60,7 +60,7 @@
         </div>
         <div class="lx-seal-caption">
           <span class="lx-seal-caption-zh">理想乡 · 领地测绘</span>
-          <span class="lx-seal-caption-en">LIXIANGXIANG EST. 2023 · X:-2673 Z:9627</span>
+          <span class="lx-seal-caption-en">LIXIANGXIANG EST. 2024 · X:-2673 Z:9627</span>
         </div>
       </div>
     </div>

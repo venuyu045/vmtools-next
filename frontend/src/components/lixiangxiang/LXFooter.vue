@@ -4,7 +4,7 @@
       <div class="lx-footer-brand">
         <span class="lx-footer-logo">理</span>
         <span class="lx-footer-name">理想乡</span>
-        <span class="lx-footer-sub">LIXIANGXIANG · EST. 2023</span>
+        <span class="lx-footer-sub">LIXIANGXIANG · EST. 2024</span>
       </div>
 
       <nav class="lx-footer-links">

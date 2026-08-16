@@ -1,8 +1,8 @@
 <template>
   <section id="members" ref="rootRef" class="lx-section lx-members" :class="{ 'is-revealed': revealed }">
     <div class="lx-section-inner">
-      <p class="lx-eyebrow">Members</p>
-      <h2 class="lx-section-title">理想乡的 {{ members.length }} 位成员</h2>
+      <p class="lx-eyebrow">Members · 同乡</p>
+      <h2 class="lx-section-title">共聚理想乡 · {{ members.length }} 位成员</h2>
 
       <div class="lx-toolbar">
         <div class="lx-filter" role="tablist" aria-label="按职位筛选">

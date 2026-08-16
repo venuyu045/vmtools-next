@@ -3,7 +3,7 @@
     <div class="lx-section-inner">
       <p class="lx-eyebrow">Gallery · 光影集</p>
       <h2 class="lx-section-title">光影集</h2>
-      <p class="lx-section-desc">记录理想乡的每一帧光与影，点击图片可放大查看。</p>
+      <p class="lx-section-desc">帧帧光影，皆为理想乡的日常注脚；点击图片，可放大细览。</p>
 
       <div class="lx-gallery-tabs" role="tablist" aria-label="相册分类">
         <button

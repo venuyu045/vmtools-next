@@ -2,8 +2,8 @@
   <section id="bases" ref="rootRef" class="lx-section lx-bases" :class="{ 'is-revealed': revealed }">
     <div class="lx-section-inner">
       <p class="lx-eyebrow">Bases · 领地</p>
-      <h2 class="lx-section-title">领地分区 · 家园布局</h2>
-      <p class="lx-section-desc">建筑区与工业区各司其职，生物收容园为家园添上生机。</p>
+      <h2 class="lx-section-title">三区并立 · 家园如画</h2>
+      <p class="lx-section-desc">建筑安家，工业造血，生灵增色——各司其职，共绘家园生机。</p>
 
       <div v-if="bases.length === 0" class="lx-empty">基地资料整理中…</div>
 

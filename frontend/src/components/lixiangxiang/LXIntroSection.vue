@@ -2,7 +2,7 @@
   <section id="intro" ref="rootRef" class="lx-section lx-intro" :class="{ 'is-revealed': revealed }">
     <div class="lx-section-inner">
       <p class="lx-eyebrow">About · 组织介绍</p>
-      <h2 class="lx-section-title">一个让每位成员拥有心仪家园的玩家组织</h2>
+      <h2 class="lx-section-title">筑一方家园，聚四海同好</h2>
 
       <div class="lx-intro-grid">
         <div class="lx-intro-main">
