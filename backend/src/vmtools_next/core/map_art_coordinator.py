@@ -2212,7 +2212,15 @@ class BotBuildLoop:
                     pass
                 await asyncio.sleep(0.5)
             await self._refresh_hotbar_map()
-            return not still_missing
+            # ⚠️ 2026-08-16 修复：返回「目标材料（clean_id）是否已取到」，而非
+            # not still_missing——个别材料缺失（如 cyan 盒子放错成 orange，供应链
+            # 问题）会导致整体返回 False → 调用方 `_ensure_item_in_hand` 误判
+            # 目标材料补货失败 → 连 select 都不执行 → "补货后仍无法装备" → 缺块。
+            try:
+                _have_target = (await self._check_inventory_level(clean_id)) > 0
+            except Exception:
+                _have_target = not still_missing
+            return _have_target
         except Exception as e:
             logger.warning("[%s] Full restock failed: %s", self.bot_id, e)
             self._activity("warn", f"全量补货异常：{e}")
