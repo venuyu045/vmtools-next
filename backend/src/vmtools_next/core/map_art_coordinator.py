@@ -619,12 +619,25 @@ class BotBuildLoop:
                                              .split("[")[0])
                                 if foot_name in ("air", "water", "lava",
                                                  "flowing_water", "flowing_lava"):
-                                    self._last_move_fail_reason = "fall"
-                                    self._activity(
-                                        "warn",
-                                        f"移动到位但脚下是 {foot_name}（bot 悬空/掉水）"
-                                        f"——判定未到位")
-                                    return False
+                                    # 2026-08-16 修复：Via 不推送 blockUpdate，客户端
+                                    # world 可能读到旧 air（服务器实际有方块；bot 重启后
+                                    # forceLocalBlock 本地标记丢失）→ 不能只看本地方块。
+                                    # 结合 on_ground（服务器真实物理状态）判断：
+                                    #   on_ground=True → 客户端数据旧，容忍通过；
+                                    #   on_ground=False → 真悬空/掉水，判未到位（防坠落）。
+                                    on_ground = d2.get("is_on_ground")
+                                    if on_ground is True:
+                                        self._activity(
+                                            "debug",
+                                            f"脚下客户端读 {foot_name} 但 on_ground=true"
+                                            f"（Via 数据旧），容忍通过")
+                                    else:
+                                        self._last_move_fail_reason = "fall"
+                                        self._activity(
+                                            "warn",
+                                            f"移动到位但脚下是 {foot_name} 且未落地"
+                                            f"（bot 悬空/掉水）——判定未到位")
+                                        return False
                                 if dy > self._verify_y_tol:
                                     self._last_move_fail_reason = "height"
                                     self._activity(
