@@ -1130,7 +1130,28 @@ def get_task_placed_blocks(task_id: str, db: Session = Depends(get_db),
 
     相比全量 blocks（16384+ 条），placed 子集通常远小；前端每 5s 拉一次
     增量涂色，避免画布停留在页面加载快照。
+
+    ⚠️ 2026-08-16：运行中【优先读 coordinator 内存 _placed_coords】（放置成功即
+    记录，不依赖 DB 行尾 flush）→ 前端预览像素实时变深；任务结束（无 coordinator）
+    回退读 DB。
     """
+    from vmtools_next.core.map_art_coordinator import get_coordinator
+    coord = get_coordinator(task_id)
+    if coord is not None:
+        coords = getattr(coord, "_placed_coords", None)
+        if coords is not None:
+            blocks = [
+                {"x": c[0], "y": c[1], "z": c[2],
+                 "block": "placed"}
+                for c in coords
+            ]
+            return {
+                "task_id": task_id,
+                "blocks": blocks,
+                "placed": len(blocks),
+                "total": coord.total_blocks if hasattr(coord, "total_blocks") else 0,
+            }
+
     task = db.query(MapArtTask).filter(MapArtTask.task_id == task_id).first()
     if not task:
         raise HTTPException(status_code=404, detail="任务不存在")

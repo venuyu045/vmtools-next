@@ -312,6 +312,9 @@ class BotBuildLoop:
         self._pending_confirm: list[tuple[int, int, int, str]] = []
         # P0-2：站立格前提校验失败的坐标（悬空/缺方块，跳过放置，记入待补清单）
         self._pending_gaps: list[tuple[int, int, int, str]] = []
+        # 2026-08-16：运行中已放置坐标集合（世界坐标）——供 blocks/placed 接口
+        # 实时返回（不依赖 DB 行尾 flush），前端预览像素即时变深。
+        self._placed_coords: set[tuple[int, int, int]] = set()
         # P0-5：对账统计（启动/行/完成）
         self._reconcile_stats: dict = {"start": {}, "row": {}, "done": {}}
 
@@ -740,8 +743,19 @@ class BotBuildLoop:
                 # 行首：北缘（第一行=平台顶；后续行=上一行方块顶，bot 行末转行时已在附近）
                 stand = (world_x, first_stand_y, world_z - 1)
             # 行内/转行：stand 已 = 上一格方块顶（放置成功后更新）
-            if not await self._move_to_step(stand[0], stand[1], stand[2],
-                                            label=f"stand({world_x},{world_z})"):
+            _mv = await self._move_to_step(stand[0], stand[1], stand[2],
+                                           label=f"stand({world_x},{world_z})")
+            if _mv == "gap":
+                # 2026-08-16：目标站立点脚下非实体（上一格未放成功/缺块）→ 跳过该格
+                # 记待补，不回退 baritone（防掉水→传送死循环）。
+                self._pending_gaps.append((world_x, self.origin_y, world_z, block_id))
+                row_gap += 1
+                row_audit.append({"x": world_x, "z": world_z, "result": "gap"})
+                self._activity("warn",
+                               f"站立点 ({stand[0]},{stand[1]},{stand[2]}) 缺块（上一格未放成功），"
+                               f"跳过放置 ({world_x},{world_z})")
+                continue
+            if not _mv:
                 # 站立点不可达（可能 bot 被传送/卡走）→ 传送兜底一次再试
                 if await self._try_teleport_home("站立点移动失败"):
                     if not await self._move_to(stand[0], stand[1], stand[2], max_offset=1,
@@ -768,6 +782,7 @@ class BotBuildLoop:
                 self.progress.record_place()
                 self.progress.last_completed_x = x
                 self._db_updates.append((world_x, self.origin_y, world_z, block_id))
+                self._placed_coords.add((world_x, self.origin_y, world_z))  # 实时预览
                 row_placed += 1
                 stand = (world_x, self.origin_y + 1, world_z)  # 踩上（已放）
                 self._activity("debug", f"({world_x},{world_z}) 已放置，跳过")
@@ -787,6 +802,7 @@ class BotBuildLoop:
                 self.progress.record_place()
                 self.progress.last_completed_x = x
                 self._db_updates.append((world_x, self.origin_y, world_z, block_id))
+                self._placed_coords.add((world_x, self.origin_y, world_z))  # 实时预览
                 row_placed += 1
                 row_audit.append({"x": world_x, "z": world_z, "result": "placed"})
                 self._activity("debug", f"放置成功 ({world_x},{world_z}) {self._normalize_item_id(block_id)}")
@@ -852,6 +868,11 @@ class BotBuildLoop:
         """轻量行内移动（P0-2/P0-1）：距离 ≤3 用 walk_toward 控制键直走（带护栏，
         Node 侧校验目标格脚下实体 + 此处校验 y 偏差，非实体/高度不符拒绝直走防踩空）；
         失败/超距离回退 _move_to。
+
+        返回值：
+          True = 到位；False = 失败（调用方传送兜底/重试）；
+          "gap" = 目标站立点脚下非实体（上一格未放成功/缺块）——直接跳过该格，
+                  不回退 baritone（回退只会反复掉水→传送死循环→区域 failed）。
         """
         try:
             p = await self._get_player_pos_full()
@@ -872,6 +893,14 @@ class BotBuildLoop:
                                                            label=label or f"step({x},{z})",
                                                            verify_height=True)
                             return True
+                        # 2026-08-16：walk_toward 失败——目标是【脚下非实体】（缺块/悬空）
+                        # → 直接跳过该格（gap），不回退 baritone（防掉水死循环）。
+                        _why = str(r.get("reason") or "")
+                        if _why in ("unsafe_foot", "foot_check_error"):
+                            self._last_move_fail_reason = "gap"
+                            self._activity("debug",
+                                           f"walk_toward 目标脚下非实体（{_why}）→ 跳过该格 ({x},{z})")
+                            return "gap"
                     except Exception:
                         pass
             return await self._move_to(x, y, z, max_offset=1,
