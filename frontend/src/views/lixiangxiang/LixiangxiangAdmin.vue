@@ -418,7 +418,9 @@ function fmtEta(sec: number): string {
 
 /** 上传文件并回调设置 URL；显示进度条 + 已传/总大小 + 网速 + 剩余时间 + 失败原因 */
 async function uploadAndSet(key: string, file: File, setUrl: (url: string) => void) {
-  const st: UploadState = { active: true, percent: 0, loaded: 0, total: file.size || 0, speedKBps: 0, etaSec: null, error: '' }
+  // ⚠️ 必须用 reactive() 创建：普通对象赋给 reactive 容器后，后续 st.percent 等修改作用于
+  // 原始对象（绕过代理 set trap），不触发 Vue3 响应式 → 进度条不会实时刷新（只在开始/结束时重渲染跳变）
+  const st = reactive<UploadState>({ active: true, percent: 0, loaded: 0, total: file.size || 0, speedKBps: 0, etaSec: null, error: '' })
   uploadStates[key] = st
   let lastLoaded = 0
   let lastTime = performance.now()
@@ -610,14 +612,15 @@ const imageDialog = reactive({
   visible: false,
   isEdit: false,
   saving: false,
-  form: {} as Omit<LxImage, 'id' | 'uploaded_at'>,
+  // ⚠️ form 必须包含 id：saveImage 用 form.id 调 PUT /images/{id}，漏 id 会请求 /images/undefined → 404「图片不存在」
+  form: {} as Omit<LxImage, 'uploaded_at'>,
 })
 
 function openImageDialog(row?: LxImage) {
   imageDialog.isEdit = !!row
   imageDialog.form = row
-    ? { image_path: row.image_path, category_id: row.category_id, title: row.title, description: row.description }
-    : { image_path: '', category_id: null, title: '', description: '' }
+    ? { id: row.id, image_path: row.image_path, category_id: row.category_id, title: row.title, description: row.description }
+    : { id: '', image_path: '', category_id: null, title: '', description: '' }
   imageDialog.visible = true
 }
 
@@ -629,7 +632,7 @@ async function saveImage() {
   imageDialog.saving = true
   try {
     if (imageDialog.isEdit) {
-      await lxAdminApi.updateImage((imageDialog.form as LxImage).id, imageDialog.form)
+      await lxAdminApi.updateImage(imageDialog.form.id, imageDialog.form)
     } else {
       await lxAdminApi.createImage(imageDialog.form)
     }

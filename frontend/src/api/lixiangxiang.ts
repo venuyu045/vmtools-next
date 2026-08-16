@@ -114,8 +114,9 @@ export const lxAdminApi = {
     const { data } = await client.post<{ url: string }>('/lixiangxiang/upload', form, {
       timeout: 120000,
       onUploadProgress: (e) => {
-        if (onProgress && e.total) {
-          onProgress({ loaded: e.loaded, total: e.total })
+        // e.total 在个别环境可能为 undefined/0 → 用 file.size 兜底，保证进度回调始终触发（进度条实时刷新）
+        if (onProgress) {
+          onProgress({ loaded: e.loaded, total: e.total || file.size })
         }
       },
     })
