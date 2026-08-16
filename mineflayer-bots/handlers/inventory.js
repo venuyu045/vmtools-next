@@ -984,6 +984,9 @@ function createInventoryHandlers(bot, opts = {}) {
 
   // ── 装备物品到副手（2026-08-14 模块A：猪排等食物放副手） ──
   // 从背包任意位置（主背包/快捷栏）找 item_type 并装备到副手（slot 45）。
+  // ⚠️ 2026-08-16 修复：原比较 it.name===item_type——Python 传 "minecraft:cooked_porkchop"，
+  // it.name 是 "cooked_porkchop"（无前缀）→ 永远不匹配 → equip 永远失败 → _ensure_food_offhand
+  // 误判"背包没猪排"→ 反复补货（用户实测死循环）。统一用 itemMatches（去 minecraft: 前缀）。
   async function equip_offhand({ item_type } = {}) {
     try {
       if (!item_type) {
@@ -993,7 +996,7 @@ function createInventoryHandlers(bot, opts = {}) {
       let target = null;
       for (let i = 0; i < bot.inventory.slots.length; i++) {
         const it = bot.inventory.slots[i];
-        if (it && (it.name === item_type || it.type?.toString() === item_type)) {
+        if (it && (itemMatches(it, item_type) || it.type?.toString() === String(item_type).replace(/^minecraft:/, ''))) {
           target = it;
           break;
         }
@@ -1002,12 +1005,16 @@ function createInventoryHandlers(bot, opts = {}) {
         return { success: false, error: `Item ${item_type} not found in inventory` };
       }
       await bot.equip(target, 'off-hand');
-      // 等待副手槽位更新
-      await new Promise(r => setTimeout(r, 400));
+      // 等待副手槽位更新（Via 延迟，等 0.8s）
+      await new Promise(r => setTimeout(r, 800));
       const offhand = bot.inventory.slots[45];
+      const equipped = offhand && (itemMatches(offhand, item_type) || offhand.type?.toString() === String(item_type).replace(/^minecraft:/, ''));
+      if (!equipped) {
+        return { success: false, error: `Equip ${item_type} to off-hand failed (offhand=${offhand ? offhand.name : 'empty'})` };
+      }
       return {
         success: true,
-        item: (offhand && offhand.name) || target.name,
+        item: offhand.name || target.name,
         slot: 45,
       };
     } catch (err) {

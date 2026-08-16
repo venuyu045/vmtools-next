@@ -380,9 +380,10 @@ class BotBuildLoop:
                      self.bot_id, self.region.z_start, self.region.z_end)
         self._activity("info", f"开始建造区域 z[{self.region.z_start}..{self.region.z_end}]")
 
-        # 断点续建：恢复 DB 中已放置进度（已 placed 坐标加载到 _verified_set，
-        # 信任 DB 跳过重复 verify——避免 16384 块全量 WS 往返，仅「重新开始」全量核对）
-        await self._restore_progress()
+        # 断点续建：恢复 DB 中已放置进度（2026-08-16 用户需求：不重走已建行）——
+# 返回起始行号（region 相对坐标），行循环从该行开始；起始行内已放格由
+# _verify_block 快速跳过（读取确认已放），未放格正常补放。
+        resume_z = await self._restore_progress()
 
         # 2026-08-14 模块A：启动食物监控协程（饱食度/血量低时吃副手猪排）
         self._food_task = asyncio.create_task(self._food_monitor_loop())
@@ -454,7 +455,7 @@ class BotBuildLoop:
         await self._reconcile_start()
 
         try:
-            for row_z in range(self.region.z_start, self.region.z_end + 1):
+            for row_z in range(resume_z, self.region.z_end + 1):
                 if self._stopped:
                     break
                 # 2026-08-16：睡觉请求到达 → 暂停建造等睡觉完成（安全点：行循环开头）
@@ -497,6 +498,13 @@ class BotBuildLoop:
                     break  # 行内移动/放置中断 → 终止循环
 
             if not self._stopped:
+                # 2026-08-16 用户需求：破洞优先补——区域循环跑完后，先补放
+                # _pending_gaps（放置失败/缺材料/悬空跳过的格），再对账判定。
+                # 材料在手/背包有就补，失败不强求（保留在清单由下次续建兜底）。
+                if self._pending_gaps:
+                    filled_gaps = await self._fill_pending_gaps()
+                    if filled_gaps > 0:
+                        self._activity("info", f"补放破洞 {filled_gaps} 格，重新对账")
                 # 2026-08-16 P0-5：完成前对账——以实际方块状态为准判定完成。
                 # 弱确认（_genericPlace 发出但本地复核读到 air/读取失败）的坐标可能
                 # 因 Via 不推送块更新而无法在运行中收敛 → 区域结束时先对账 DB 中
@@ -912,6 +920,71 @@ class BotBuildLoop:
         # 2026-08-14 终端：行完成埋点（低频，每行一条）
         if row_z == self.region.z_start or row_z % 10 == 0 or row_z == self.region.z_end:
             self._activity("info", f"第 {row_z} 行完成")
+    async def _fill_pending_gaps(self) -> int:
+        """补放破洞（2026-08-16 用户需求）：区域循环跑完后，对 _pending_gaps 逐格补放。
+
+        站位：优先该格 4 个相邻方向中脚下为实体的格（站在已放方块/平台上，面朝洞放置）；
+        材料不足/不可达/放置失败 → 保留在清单（下次续建兜底），不阻塞。
+        返回成功补放格数。
+        """
+        if not self._pending_gaps:
+            return 0
+        filled = 0
+        remaining: list[tuple[int, int, int, str]] = []
+        self._activity("info", f"开始补放破洞（共 {len(self._pending_gaps)} 格）")
+        for wx, wy, wz, block_id in self._pending_gaps:
+            if self._stopped:
+                remaining.append((wx, wy, wz, block_id))
+                continue
+            try:
+                # 已放（对账/并发补过）→ 跳过
+                if await self._verify_block(wx, wy, wz, block_id):
+                    filled += 1
+                    continue
+                # 找相邻可站立格（脚下实体），4 方向优先
+                stand: Optional[tuple[int, int, int]] = None
+                for sx, sz in ((wx, wz - 1), (wx - 1, wz), (wx + 1, wz), (wx, wz + 1)):
+                    try:
+                        foot = await self.mcp.get_world_block_at(sx, wy - 1, sz)
+                        fname = ((foot.get("name") or "air").split("[")[0])
+                        if fname not in ("air", "water", "lava",
+                                         "flowing_water", "flowing_lava"):
+                            stand = (sx, wy, sz)
+                            break
+                    except Exception:
+                        continue
+                if stand is None:
+                    remaining.append((wx, wy, wz, block_id))
+                    continue
+                # 移动到站立格
+                mv = await self._move_to(stand[0], stand[1], stand[2], max_offset=1,
+                                         label=f"gap-fill({wx},{wz})", verify_height=True)
+                if not mv:
+                    remaining.append((wx, wy, wz, block_id))
+                    continue
+                if not await self._ensure_item_in_hand(block_id):
+                    remaining.append((wx, wy, wz, block_id))
+                    continue
+                if await self._place_with_retry(wx, wy, wz, block_id):
+                    self.progress.record_place()
+                    self._db_updates.append((wx, wy, wz, block_id))
+                    self._placed_coords.add((wx, wy, wz))
+                    filled += 1
+                else:
+                    remaining.append((wx, wy, wz, block_id))
+                await asyncio.sleep(self._place_interval)
+            except Exception as e:
+                logger.warning("[%s] Gap fill (%d,%d,%d) error: %s",
+                               self.bot_id, wx, wy, wz, e)
+                remaining.append((wx, wy, wz, block_id))
+        self._pending_gaps = remaining
+        if filled and self._db_updates:
+            try:
+                await self._flush_db(self.progress.current_row)
+            except Exception:
+                pass
+        self._activity("info", f"补放破洞完成：成功 {filled} 格，剩余 {len(remaining)} 格")
+        return filled
 
     async def _stand_solid(self, x: int, y: int, z: int) -> bool:
         """站立格前提校验（P0-2）：bot 站立点 (x, y, z) 脚下 (x, y-1, z) 必须是实体方块。
@@ -1247,16 +1320,46 @@ class BotBuildLoop:
         except Exception as e:
             logger.warning("[%s] Start reconcile failed: %s", self.bot_id, e)
 
-    async def _restore_progress(self) -> None:
-        """Restore previously persisted progress from DB (breakpoint resume).
+    async def _restore_progress(self) -> int:
+        """断点续建（2026-08-16 用户需求）：从 DB 已 placed 的最大行继续，不重走已建行。
 
-        2026-08-16 P0-5：真实世界对账（_reconcile_start）已移到 run() 传送定位
-        之后调用（bot 到建造区、world 从服务器重拉后大范围扫描才准确——
-        在传送前对账会因区域 chunk 未加载读到 air 全"待定"）。此处仅保留进度
-        计数兜底（对账失败时仍以 DB 计数启动，运行中 _verify_block 逐格纠偏）。
+        返回起始行号（region 相对坐标）。重新开始任务时，行循环从该行开始：
+        - 之前的行（已建）完全跳过（不再 move_to_row_edge / 逐格走）
+        - 起始行内已放的格由 _verify_block 快速跳过（读取确认已放），未放格正常补放
+        - 若 DB 无 placed 记录 → 从 region.z_start 开始
+
+        真实世界对账（_reconcile_start）仍在 run() 传送定位后执行（扫描比对权威状态）。
         """
-        # 对账已移至 run() 传送定位后，这里不再调用 _reconcile_start
-        pass
+        try:
+            from vmtools_next.data.db import get_session_factory
+            from vmtools_next.data.models.build_map_art import MapArtBlockState
+            from sqlalchemy import func
+            db = get_session_factory()()
+            try:
+                max_wz = db.query(func.max(MapArtBlockState.z)).filter(
+                    MapArtBlockState.task_id == self.task_id,
+                    MapArtBlockState.placed.is_(True),
+                    MapArtBlockState.x >= self.origin_x + self.region.x_start,
+                    MapArtBlockState.x <= self.origin_x + self.region.x_end,
+                    MapArtBlockState.z >= self.origin_z + self.region.z_start,
+                    MapArtBlockState.z <= self.origin_z + self.region.z_end,
+                ).scalar()
+                if max_wz is not None:
+                    resume = int(max_wz) - self.origin_z
+                    resume = max(self.region.z_start, min(resume, self.region.z_end))
+                    if resume > self.region.z_start:
+                        self.progress.current_row = resume
+                        self._activity(
+                            "info",
+                            f"断点续建：从第 {resume} 行继续（跳过 {resume - self.region.z_start} 个已建行）")
+                        logger.info("[%s] Resume from row %d (DB max placed z=%d)",
+                                    self.bot_id, resume, max_wz)
+                        return resume
+            finally:
+                db.close()
+        except Exception as e:
+            logger.warning("[%s] Restore progress failed: %s", self.bot_id, e)
+        return self.region.z_start
 
     async def _reconcile_region_final(self) -> tuple[int, int]:
         """区域完成前对账（2026-08-16 P0-5）：对 DB 中本区域 placed=True 的行复核。
@@ -2668,31 +2771,82 @@ class BotBuildLoop:
     # ── 食物监控 + 补货（2026-08-14 模块A）──────────────────────────────
 
     async def _ensure_food_offhand(self) -> bool:
-        """确保副手 (slot 45) 有食物（猪排），没有则补货。
+        """确保副手 (slot 40 归一化 = 原始45) 有食物（猪排），没有则补货。
 
         返回 True 表示副手已有食物或补货成功，False 表示补货失败（不影响建造）。
+
+        ⚠️ 2026-08-16 修复（用户实测死循环）：原 item_id 比较用 "minecraft:xxx" vs
+        snapshot type（无前缀 "cooked_porkchop"）→ 永远不匹配 → 副手有猪排也检测不到
+        → 反复补货。统一 _normalize_item_id 去前缀比较。
         """
         food_item = self._food_cfg.get("item_id", "minecraft:cooked_porkchop")
-        # 检查副手是否已有食物
+        food_norm = self._normalize_item_id(food_item)
+
+        # 检查副手是否已有食物（slot 40 = 归一化后副手；type 已归一化为 name 无前缀）
         try:
             snap = await self.mcp.get_inventory_snapshot(inventory_id=0)
             items = (snap.get("data", snap)).get("items", [])
             for s in items:
                 if s.get("slot") == 40:  # 前端归一化后副手=40
-                    item_id = (s.get("type", "") or "").split("[")[0]
-                    if item_id == food_item and s.get("count", 0) > 0:
+                    item_id = self._normalize_item_id(
+                        (s.get("type", "") or "").split("[")[0])
+                    if item_id == food_norm and s.get("count", 0) > 0:
                         return True
         except Exception:
             pass
 
-        # 副手无食物 → 尝试从背包装备
+        # 副手无食物 → 尝试从背包装备（装备后验证副手，防 Via 假成功）
         try:
             r = await self.mcp.equip_offhand(food_item)
             if r.get("success"):
-                logger.info("[%s] Equipped %s to offhand from inventory", self.bot_id, food_item)
-                return True
+                # 2026-08-16：equip 返回 success 但副手可能未同步（Via 延迟）——
+                # 等 0.8s 再验证实际副手（避免"假装备"→下轮又补货）
+                await asyncio.sleep(0.8)
+                try:
+                    snap2 = await self.mcp.get_inventory_snapshot(inventory_id=0)
+                    items2 = (snap2.get("data", snap2)).get("items", [])
+                    for s2 in items2:
+                        if s2.get("slot") == 40 and self._normalize_item_id(
+                                (s2.get("type", "") or "").split("[")[0]) == food_norm:
+                            logger.info("[%s] Equipped %s to offhand from inventory",
+                                        self.bot_id, food_item)
+                            return True
+                except Exception:
+                    pass
+                # 副手验证失败（可能装备到别的槽/物品不足）→ 继续走补货流程
+                logger.warning("[%s] equip_offhand 返回成功但副手未检测到 %s（Via 同步延迟），重试装备",
+                               self.bot_id, food_item)
+                try:
+                    r2 = await self.mcp.equip_offhand(food_item)
+                    if r2.get("success"):
+                        await asyncio.sleep(0.8)
+                        try:
+                            snap3 = await self.mcp.get_inventory_snapshot(inventory_id=0)
+                            items3 = (snap3.get("data", snap3)).get("items", [])
+                            for s3 in items3:
+                                if s3.get("slot") == 40 and self._normalize_item_id(
+                                        (s3.get("type", "") or "").split("[")[0]) == food_norm:
+                                    return True
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
         except Exception as e:
             logger.warning("[%s] equip_offhand %s failed: %s", self.bot_id, food_item, e)
+
+        # 装备失败 → 先查背包是否有猪排：有则只差装备（等 Via 同步后重试），
+        # 没有才去补货（防"背包有猪排却反复补货"循环）
+        try:
+            snap_b = await self.mcp.get_inventory_snapshot(inventory_id=0)
+            items_b = (snap_b.get("data", snap_b)).get("items", [])
+            for sb in items_b:
+                if sb.get("slot") != 40 and self._normalize_item_id(
+                        (sb.get("type", "") or "").split("[")[0]) == food_norm:
+                    logger.info("[%s] 背包已有 %s，等待 Via 同步后重试装备副手",
+                                self.bot_id, food_item)
+                    return False  # 不补货（背包有猪排），等下轮监控重试装备
+        except Exception:
+            pass
 
         # 背包也没有 → 食物补货
         logger.info("[%s] 猪排不足，开始食物补货...", self.bot_id)
@@ -2735,9 +2889,19 @@ class BotBuildLoop:
                 return False
             await asyncio.sleep(wait_ms / 1000.0)
 
+            # 2026-08-16：睡觉请求优先——传送等待期间到达夜晚 → 提前让路（不寻路开箱），
+            # 由主循环安全点响应睡觉；补货中断不视为失败（背包已有材料时下轮跳过补货）。
+            if self._sleep_req.is_set():
+                self._activity("info", "补货传送等待期间收到睡觉请求，中断补货让路睡觉")
+                return False
+
             # 3. 按顺序尝试每个潜影盒坐标（先显式寻路触发 chunk 加载，再开箱）
             taken = False
             for bx, by, bz in boxes:
+                # 开箱前再检查一次睡觉请求（寻路可能耗时，期间夜晚到达）
+                if self._sleep_req.is_set():
+                    self._activity("info", "开箱前检测到睡觉请求，中断补货让路睡觉")
+                    return False
                 # 显式寻路到潜影盒附近（触发 chunk 加载 + bot 到位）
                 moved = await self._move_to(bx, by, bz, max_offset=3,
                                             label=f"food-shulker({bx},{by},{bz})",
@@ -2823,6 +2987,9 @@ class BotBuildLoop:
                     # 2026-08-16：睡觉中 → 本轮跳过（睡觉与补货都涉及传送/开箱，
                     # 且 bot 在床上，触发补货会把 bot 拉走）。睡醒后下轮再检查。
                     if self._sleeping:
+                        continue
+                    # 2026-08-16：睡觉请求已挂起（夜晚优先）→ 不触发补货，让位睡觉
+                    if self._sleep_req.is_set():
                         continue
 
                     # 2026-08-14 溺水/坠落防护：血量持续下降且低（掉水淹死/虚空坠落）→
@@ -2920,12 +3087,11 @@ class BotBuildLoop:
                     continue
                 if slept_this_night:
                     continue  # 本晚已睡过（防 doDaylightCycle=false 锁夜晚死循环）
-                # 2026-08-16 补货中不触发睡觉：_do_full_restock/_do_food_restock
-                # 持 _restock_lock（bot 可能在仓库维度/跨维度），此时请求睡觉会让主
-                # 循环 20s 等不到安全点超时，且睡觉寻路会跨维度失败。锁空闲=主循环
-                # 在正常建造中（安全点可达），才请求。
-                if self._restock_lock.locked():
-                    continue
+                # 2026-08-16：夜晚睡觉优先级最高——即使补货中（锁占用）也直接请求，
+                # 补货协程在安全点检查 _sleep_req 提前让路（传送等待/开箱前），
+                # 不再因锁占用跳过（此前补货失败循环会让 bot 整个夜晚不睡觉）。
+                # 主循环安全点响应后，_do_sleep_cycle 内部再获取 _restock_lock 保证
+                # 与补货串行（补货已让路 → 锁应很快可用）。
                 slept_this_night = True
                 self._activity("info",
                                f"检测到夜晚（timeOfDay={tod}），请求暂停建造去睡觉（床 "
