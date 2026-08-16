@@ -1394,6 +1394,22 @@ class BotBuildLoop:
                 try:
                     r = await self.mcp.set_quick_bar_slot(slot)
                     if r.get("success"):
+                        # ⚠️ 2026-08-16：Via 下 set_quick_bar_slot 后客户端 heldItem
+                        # 可能延迟更新，且 hotbar_map 槽位内容可能已过期（如补货/背包
+                        # 变化后旧槽位变成 cyan）→ 等 0.5s 后验证实际手持，不符则
+                        # 缓存失效，走下方 select 全背包搜索（防手持错误物品放置）。
+                        await asyncio.sleep(0.5)
+                        try:
+                            _st2 = await self.mcp.get_player_state()
+                            _d2b = _st2.get("data", _st2) if isinstance(_st2, dict) else {}
+                            _held2 = _d2b.get("held_item") or ""
+                            if _held2 and self._normalize_item_id(_held2) != norm_id:
+                                self._activity("debug",
+                                               f"hotbar_map 槽位 {slot} 内容过期（实际 {_held2}，期望 {clean_id}）→ 缓存失效")
+                                del self._hotbar_map[slot]
+                                break
+                        except Exception:
+                            pass  # 读取失败不拦截
                         self._current_item = block_id
                         self._current_slot = slot
                         return True
@@ -1436,6 +1452,19 @@ class BotBuildLoop:
         try:
             result = await self.mcp.select_hotbar_item(clean_id)
             if result.get("success"):
+                # ⚠️ 2026-08-16：Via 下 select 可能"假成功"（服务器切换后客户端
+                # heldItem 未同步/equip 未生效）——成功后用 get_player_state.held_item
+                # 验证实际手持，不符则视为失败（防手持错误物品放置 → WRONG abort）。
+                try:
+                    _st = await self.mcp.get_player_state()
+                    _d2 = _st.get("data", _st) if isinstance(_st, dict) else {}
+                    _held = _d2.get("held_item") or ""
+                    if _held and self._normalize_item_id(_held) != self._normalize_item_id(clean_id):
+                        logger.warning("[%s] select %s 后手持仍是 %s（切换未生效）→ 视为失败",
+                                       self.bot_id, clean_id, _held)
+                        return False
+                except Exception:
+                    pass  # 读取失败不拦截（保持原行为）
                 self._current_item = block_id
                 # 2026-08-14 模块B：记录实际槽位到 hotbar_map（存归一化 ID）
                 slot = result.get("slot")

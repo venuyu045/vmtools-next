@@ -23,7 +23,16 @@ logger = get_logger("db")
 
 # ── Socket.IO Server ────────────────────────────────────────────────────
 
-sio = socketio.AsyncServer(async_mode="asgi", cors_allowed_origins="*")
+# ⚠️ 2026-08-16：放宽 ping 参数（默认 ping_interval=25s/ping_timeout=20s）——
+# 地图画建造/补货/对账时后端事件循环繁忙（大量 WS/DB 操作），若 ping 响应
+# 延迟超过 pingTimeout 前端 socket 被断开 → 推送（build_progress 等）丢失
+# → 前端统计/速度/bot 位置全 0。放宽到 30s/60s（后端阻塞 <30s 不触发）。
+sio = socketio.AsyncServer(
+    async_mode="asgi",
+    cors_allowed_origins="*",
+    ping_interval=30,
+    ping_timeout=60,
+)
 
 # ── Lazy Engine & Session ───────────────────────────────────────────────
 

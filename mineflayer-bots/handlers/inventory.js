@@ -348,6 +348,10 @@ function createInventoryHandlers(bot, opts = {}) {
         // 计算快捷栏索引 (slot 36-44 → index 0-8)
         const hotbarIndex = match.slot - 36;
         bot.setQuickBarSlot(hotbarIndex);
+        // ⚠️ 2026-08-16：Via 下 setQuickBarSlot 只发包、服务器切换后客户端
+        // heldItem 可能延迟更新——立即读 heldItem 仍是旧物品（手持缓存校验误判/
+        // 放置用错物品）。等 0.5s 让服务器切换生效（对齐后续 Python 端手持验证）。
+        await delay(500);
         return {
           success: true,
           slot: hotbarIndex,
@@ -360,6 +364,9 @@ function createInventoryHandlers(bot, opts = {}) {
       if (invMatch) {
         try {
           await bot.equip(invMatch.type, 'hand');
+          // Via 下 equip 可能假成功（客户端 heldItem 未同步）→ 等 0.5s 再返回，
+          // 由 Python 端 get_player_state.held_item 验证实际手持。
+          await delay(500);
           return {
             success: true,
             slot: -1,  // 非快捷栏（直接装备到主手）
