@@ -1322,7 +1322,23 @@ class BotBuildLoop:
         # 2026-08-14 模块B：快捷栏动态识别 —— 先查 _hotbar_map 缓存，命中则直接切槽（零搜索），
         # 未命中才走 select_hotbar_item 全背包搜索，成功后回填缓存。
         if self._current_item == block_id:
-            return True
+            # ⚠️ 2026-08-16 修复：_current_item 缓存可能失效（手持被服务器/补货/
+            # 掉落等操作改变）——直接返回 True 会导致手持错误物品放置（实测
+            # "Place used WRONG item: held light_gray_concrete want black_concrete"）。
+            # 缓存命中时用 get_player_state.held_item（服务器真实手持）快速校验，
+            # 不一致 → 缓存失效 → 走下方 select 流程。
+            try:
+                _st = await self.mcp.get_player_state()
+                _d2 = _st.get("data", _st) if isinstance(_st, dict) else {}
+                _held = _d2.get("held_item") or ""
+                if _held and self._normalize_item_id(_held) != self._normalize_item_id(block_id):
+                    self._activity("debug",
+                                   f"手持缓存失效（实际 {_held}，期望 {block_id}）→ 重新选择")
+                    self._current_item = None
+                else:
+                    return True
+            except Exception:
+                return True  # 读取失败容忍（保持原行为）
         clean_id = block_id.split("[")[0] if "[" in block_id else block_id
 
         # 1) 查缓存：_hotbar_map 里有 → 直接 set_quick_bar_slot（零成本）

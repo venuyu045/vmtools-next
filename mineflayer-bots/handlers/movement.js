@@ -167,6 +167,9 @@ function createMovementHandlers(bot) {
       game_mode: bot.game?.gameMode || 'unknown',
       is_on_ground: bot.entity.onGround,
       ping: bot.player?.ping ?? -1,  // 往返延迟(ms)，供建造侧 RTT 自适应限速
+      // 2026-08-16：手持物品名（供建造侧校验 _current_item 缓存是否失效——
+      // 手持被服务器/操作改变时缓存误判导致"手持错误物品放置"）
+      held_item: bot.heldItem ? bot.heldItem.name : null,
     };
   }
 

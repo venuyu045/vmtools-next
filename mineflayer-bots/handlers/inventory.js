@@ -319,10 +319,26 @@ function createInventoryHandlers(bot, opts = {}) {
   // 对齐 litematica-printer InventoryUtils.switchToItems：物品在背包任意位置
   // 都能装备，而不只限快捷栏——否则建造切换物品会因"不在快捷栏"失败。
   async function select_hotbar_item({ item_type, prefer_lowest_slot = true } = {}) {
-    try {
-      const items = bot.inventory.items();
-      // 2026-08-14：itemMatches 兼容 minecraft: 前缀（item.name 不带前缀）
-      const matchName = (it) => itemMatches(it, item_type);
+    // ⚠️ 2026-08-16 修复：Via 传送/关箱后客户端背包数据可能短暂未同步
+    // （bot.inventory 瞬时为空），原逻辑一次找不到即失败 → 建造缺材料误判
+    // → 放置缺块 → 转行踩空掉水。背包找不到时等待 0.8s 重试（最多 3 次）。
+    const delay = (ms) => new Promise(r => setTimeout(r, ms));
+    let lastResult = null;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      lastResult = await selectOnce(item_type);
+      if (lastResult && (lastResult.success || !/not found in inventory/.test(lastResult.error || ''))) {
+        return lastResult;
+      }
+      // Item not found → 可能数据未同步，等待重试
+      if (attempt < 2) await delay(800);
+    }
+    return lastResult || { success: false, error: `Item ${item_type} not found in inventory` };
+
+    async function selectOnce(item_type) {
+      try {
+        const items = bot.inventory.items();
+        // 2026-08-14：itemMatches 兼容 minecraft: 前缀（item.name 不带前缀）
+        const matchName = (it) => itemMatches(it, item_type);
 
       // 1. 快捷栏优先（槽位 36-44，零成本切换）
       const hotbarItems = items.filter(item => item.slot >= 36 && item.slot <= 44);
@@ -363,6 +379,7 @@ function createInventoryHandlers(bot, opts = {}) {
       return { success: false, error: `Item ${item_type} not found in inventory` };
     } catch (err) {
       return { success: false, error: err.message };
+    }
     }
   }
 
