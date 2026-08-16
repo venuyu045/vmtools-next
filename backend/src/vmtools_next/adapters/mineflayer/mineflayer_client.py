@@ -34,6 +34,9 @@ METHOD_MOVE_TO,
     METHOD_GET_WORLD_BLOCK_AT,
     METHOD_SCAN_NEARBY_BLOCKS,
     METHOD_SCAN_LOADED_CONTAINERS,
+    # 2026-08-16 大范围平面扫描（scan_region_blocks）——启动对账一次 WS 往返读
+    # 区域所有方块；⚠️ 必须在此 import（漏了 → NameError 伪装成"扫描失败回退逐格"）
+    METHOD_SCAN_REGION_BLOCKS,
     METHOD_SELECT_HOTBAR_ITEM,
     METHOD_SET_QUICK_BAR_SLOT,
     METHOD_GET_INVENTORY_SNAPSHOT,

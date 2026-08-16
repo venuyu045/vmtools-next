@@ -2879,6 +2879,12 @@ class BotBuildLoop:
                     continue
                 if slept_this_night:
                     continue  # 本晚已睡过（防 doDaylightCycle=false 锁夜晚死循环）
+                # 2026-08-16 补货中不触发睡觉：_do_full_restock/_do_food_restock
+                # 持 _restock_lock（bot 可能在仓库维度/跨维度），此时请求睡觉会让主
+                # 循环 20s 等不到安全点超时，且睡觉寻路会跨维度失败。锁空闲=主循环
+                # 在正常建造中（安全点可达），才请求。
+                if self._restock_lock.locked():
+                    continue
                 slept_this_night = True
                 self._activity("info",
                                f"检测到夜晚（timeOfDay={tod}），请求暂停建造去睡觉（床 "
@@ -2886,9 +2892,9 @@ class BotBuildLoop:
                 # 排队：通知主循环在下一个安全点暂停，等它确认（_sleep_hold）后再执行
                 self._sleep_req.set()
                 try:
-                    await asyncio.wait_for(self._sleep_hold.wait(), timeout=20)
+                    await asyncio.wait_for(self._sleep_hold.wait(), timeout=60)
                 except asyncio.TimeoutError:
-                    # 主循环 20s 内未到达安全点（可能正卡在移动/放置）→ 取消本次请求
+                    # 主循环 60s 内未到达安全点（可能正卡在移动/放置）→ 取消本次请求
                     self._sleep_req.clear()
                     slept_this_night = False  # 允许下轮重试
                     self._activity("warn", "睡觉请求等待主循环暂停超时，本轮跳过")
