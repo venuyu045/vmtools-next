@@ -289,6 +289,13 @@ class BotBuildLoop:
         self._sleep_req = asyncio.Event()
         self._sleep_hold = asyncio.Event()
         self._sleep_task: Optional[asyncio.Task] = None  # 睡觉监控协程
+        # 2026-08-16 死亡兜底：注册 bot_death 事件（Node 端广播）——血量轮询 2s 采样
+        # 可能错过瞬间击杀（骷髅连射 health 20→0），死亡事件即时兜底：复活后传送回
+        # 固定建造点 + 记日志。此前 EVENT_BOT_DEATH 只定义未消费（用户实测被打死）。
+        try:
+            mcp.on_event(self._on_bot_event)
+        except Exception:
+            pass
         try:
             _mf_slp = get_config().mineflayer
             self._sleep_night_start: int = max(0, min(24000, int(getattr(_mf_slp, "map_art_sleep_night_start_tick", 12542) or 12542)))
@@ -3111,6 +3118,41 @@ class BotBuildLoop:
             pass
 
     # ── 自动睡觉（2026-08-16，用户需求：夜晚怪物攻击 + 幻翼）──────────────
+
+    def _on_bot_event(self, event_name: str, data: dict) -> None:
+        """bot 事件回调（2026-08-16 死亡兜底）：Node 端广播 bot_death 等事件。
+
+        同步回调（_handle_event 不 await handler），异步逻辑用 create_task 调度。
+        """
+        try:
+            if event_name == "bot_death":
+                self._activity("warn", "⚠️ bot 死亡（可能被怪物击杀）——等待复活后传送回建造点")
+                logger.warning("[%s] bot_death event received, scheduling recovery", self.bot_id)
+                asyncio.create_task(self._handle_death())
+        except Exception as e:
+            logger.warning("[%s] bot event handler error: %s", self.bot_id, e)
+
+    async def _handle_death(self) -> None:
+        """死亡恢复（2026-08-16）：复活后传送回固定建造点 + 记录。
+
+        血量轮询（2s 采样）可能错过瞬间击杀（骷髅连射），死亡事件即时兜底。
+        死亡后 bot 在主城/出生点复活（不在建造区）——传送回 return_fixed
+        （/ehomes mapart 固定点）恢复位置；主循环状态由上层重新开始/续建处理。
+        """
+        try:
+            await asyncio.sleep(3.0)  # 等复活动画/重生点加载
+            fixed = (self._supply_cfg.get("return_fixed") or "/ehomes mapart").strip()
+            self._activity("info", f"死亡恢复：传送回固定建造点（{fixed}）")
+            await self.mcp.send_chat(fixed)
+            await asyncio.sleep(2.5)
+            self._last_pos = None  # 传送后位置未知，强制下次寻路
+            try:
+                await self._verify_at_build_area()
+            except Exception:
+                pass
+            self._activity("info", "死亡恢复：已传送回建造点")
+        except Exception as e:
+            logger.warning("[%s] Death recovery error: %s", self.bot_id, e)
 
     async def _sleep_monitor_loop(self) -> None:
         """睡觉监控协程：轮询服务器时间，进入夜晚/雷暴可睡窗口 → 暂停建造去睡觉。
