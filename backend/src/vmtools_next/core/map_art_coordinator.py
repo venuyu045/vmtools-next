@@ -3243,13 +3243,24 @@ class BotBuildLoop:
                 try:
                     await asyncio.wait_for(self._sleep_hold.wait(), timeout=60)
                 except asyncio.TimeoutError:
-                    # 主循环 60s 内未到达安全点（可能正卡在移动/放置）→ 取消本次请求
+                    # 主循环 60s 内未到达安全点（补货/移动卡住）→ 取消本次请求；
+                    # 同时清理 _sleep_hold 残留（防主循环响应晚到后 _sleep_event 无人恢复）
                     self._sleep_req.clear()
+                    self._sleep_hold.clear()
                     slept_this_night = False  # 允许下轮重试
                     self._activity("warn", "睡觉请求等待主循环暂停超时，本轮跳过")
                     continue
                 self._sleep_hold.clear()
-                await self._do_sleep_cycle()
+                try:
+                    await self._do_sleep_cycle()
+                except Exception as _sleep_cycle_err:
+                    # 2026-08-16 修复：_do_sleep_cycle 异常必须在循环内捕获——
+                    # 否则睡觉协程崩溃退出 → 整晚不再睡觉（用户实测夜晚不睡被怪物打）。
+                    logger.error("[%s] do_sleep_cycle error: %s", self.bot_id, _sleep_cycle_err)
+                    self._sleeping = False
+                    self._sleep_event.set()
+                    self._sleep_req.clear()
+                    self._sleep_hold.clear()
         except asyncio.CancelledError:
             pass
         finally:
