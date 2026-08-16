@@ -1356,11 +1356,18 @@ class BotBuildLoop:
                 if max_wz is not None:
                     resume = int(max_wz) - self.origin_z
                     resume = max(self.region.z_start, min(resume, self.region.z_end))
+                    # 2026-08-16 修复（用户实测乱走）：resume 行可能是【半建行】（只放了
+                    # 部分 x 就中断），行内缺口多 → bot 踩空掉水 → 寻路失败 → 低处乱走。
+                    # 从 max_z-1 行开始（完整行，已放格 _verify_block 跳过），走到半建行
+                    # 再补完——多走一行但绝不踩半建行缺口。
+                    if resume > self.region.z_start:
+                        resume -= 1
                     if resume > self.region.z_start:
                         self.progress.current_row = resume
                         self._activity(
                             "info",
-                            f"断点续建：从第 {resume} 行继续（跳过 {resume - self.region.z_start} 个已建行）")
+                            f"断点续建：从第 {resume} 行继续（跳过 {resume - self.region.z_start} 个已建行，"
+                            f"避免半建行缺口踩空）")
                         logger.info("[%s] Resume from row %d (DB max placed z=%d)",
                                     self.bot_id, resume, max_wz)
                         return resume
@@ -1946,7 +1953,17 @@ class BotBuildLoop:
         返回 None = 验证通过；否则返回失败原因标签（供 _try_teleport_home 分流）：
           - "teleport_no_effect"  ：多次无法获取位置 / 位置不在建造区域（传送未生效或传错位置）
           - "fall_after_teleport" ：位置对但高度不符 / 未落地 / 复查漂移（传回后再次坠落/悬空）
+
+        2026-08-16 修复（用户实测乱走）：传送后 bot 可能还在下落（传送到平台顶前有
+        落差），立即读位置 y 偏低（如 62.8 vs 站立层 69）→ 误判"高度不符"→ fall_after_teleport
+        → 反复传送死循环。开头先等落地稳定（on_ground + 位置稳定）再验证。
         """
+        # 先等落地稳定（上限 5s）：传送到平台顶很快通过；传送到高空等落地；水上浮着
+        # on_ground=true 但高度仍不符 → 由下方高度校验判失败（正确）。
+        try:
+            await self._wait_landed(timeout_s=5.0)
+        except Exception:
+            pass
         for attempt in range(retries + 1):
             if attempt > 0:
                 await asyncio.sleep(1.5)
