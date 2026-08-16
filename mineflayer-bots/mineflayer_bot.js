@@ -249,8 +249,14 @@ async function createBotProcess(options) {
     });
 
     bot.on('kicked', (reason) => {
-      console.log(`${ANSI.red}[bot] kicked:${ANSI.reset}`, reason);
-      broadcast(createEvent('bot_kicked', { reason: String(reason) }));
+      // reason 可能是字符串或 {text, extra...} 对象——String() 会输出 [object Object]
+      // 导致后端看不到真实踢出原因（如「登录过于频繁」）。优先取 text 字段。
+      let rs = reason;
+      if (typeof reason === 'object' && reason !== null) {
+        rs = reason.text || JSON.stringify(reason);
+      }
+      console.log(`${ANSI.red}[bot] kicked:${ANSI.reset}`, rs);
+      broadcast(createEvent('bot_kicked', { reason: String(rs) }));
     });
 
     bot.on('error', (err) => {
@@ -259,8 +265,12 @@ async function createBotProcess(options) {
     });
 
     bot.on('end', (reason) => {
-      console.log(`${ANSI.yellow}[bot] disconnected:${ANSI.reset}`, reason);
-      broadcast(createEvent('bot_disconnected', { reason }));
+      let rs = reason;
+      if (typeof reason === 'object' && reason !== null) {
+        rs = reason.text || JSON.stringify(reason);
+      }
+      console.log(`${ANSI.yellow}[bot] disconnected:${ANSI.reset}`, rs);
+      broadcast(createEvent('bot_disconnected', { reason: String(rs) }));
       // 游戏连接已断开：进程不退出会导致 Python 端 _watch_exit_loop 永远等不到
       // 退出码而无法自动重启（历史 bug：bot 卡在"假在线"状态）。这里延迟退出，
       // 让 Python 端进程管理器检测到退出后按 desired_state 自动重启（含退避）。
