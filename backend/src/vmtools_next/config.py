@@ -180,6 +180,9 @@ class MineflayerConfig(BaseModel):
     map_art_sleep_min_sleep_s: int = 5
     # 等天亮最长等待（秒），超时手动唤醒（doDaylightCycle=false 时间不跳时兜底）
     map_art_sleep_max_wait_s: int = 300
+    # 睡觉前传回初始点的传送指令（默认空 → 用 return_fixed，如 /ehomes mapart；
+    # 床在初始点附近，站初始点上面可直接点到床，再寻路保险）
+    map_art_sleep_go_command: str = ""
     # ── 2026-08-16 P2：寻路/放置/兜底参数收敛（原散落硬编码）──
     # 寻路失败重试次数（baritone+旧 pathfinder 各自重试，默认 2）
     map_art_move_retries: int = 2

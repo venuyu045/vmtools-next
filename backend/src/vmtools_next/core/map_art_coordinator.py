@@ -271,6 +271,15 @@ class BotBuildLoop:
         # _sleep_event：set=可继续建造；clear=暂停（睡觉中）。_sleep_monitor_loop
         # 检测到夜晚可睡窗口 → 暂停建造 → 存位置 → 寻路到床睡觉 → 天亮 → 传回 → 恢复。
         self._sleep_point: Optional[tuple[int, int, int]] = sleep_point
+        # 2026-08-16 用户需求：睡觉先【传送回初始点】（床在初始点附近，站上面可直接
+        # 点到），再寻路保险。传送指令默认用 return_fixed（固定建造点，如 /ehomes mapart），
+        # config 可覆盖（map_art_sleep_go_command）。
+        self._sleep_go_command: str = ""
+        try:
+            _sleep_go = getattr(get_config().mineflayer, "map_art_sleep_go_command", "") or ""
+            self._sleep_go_command = str(_sleep_go).strip()
+        except Exception:
+            pass
         self._sleeping: bool = False
         self._sleep_event = asyncio.Event()
         self._sleep_event.set()  # 初始可继续
@@ -3142,7 +3151,17 @@ class BotBuildLoop:
             except Exception as e:
                 logger.warning("[%s] Sleep save position error: %s", self.bot_id, e)
 
-            # 2. 寻路到床睡觉（sleep_at 内部：8 格内找床 → 寻路 → bot.sleep）
+            # 2. 传送回初始点（用户需求：床在初始点附近，站初始点上面可直接点到；补货同款
+            #    传送方式），再寻路到床睡觉（sleep_at 自带寻路保险：8 格内找床 → 寻路 → bot.sleep）
+            sleep_go = (self._sleep_go_command
+                        or self._supply_cfg.get("return_fixed")
+                        or "/ehomes mapart").strip()
+            try:
+                self._activity("info", f"传送回初始点（{sleep_go}）准备睡觉")
+                await self.mcp.send_chat(sleep_go)
+                await asyncio.sleep(2.5)  # Via 传送后位置同步
+            except Exception as e:
+                logger.warning("[%s] Sleep go teleport error: %s", self.bot_id, e)
             try:
                 sp = self._sleep_point
                 result = await self.mcp.sleep_at(x=sp[0], y=sp[1], z=sp[2], timeout_ms=45000)
