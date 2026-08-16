@@ -2514,6 +2514,29 @@ class BotBuildLoop:
             logger.warning("[%s] Full restock failed: %s", self.bot_id, e)
             self._activity("warn", f"全量补货异常：{e}")
             return False
+    async def _verify_warehouse_arrived(self, boxes: list, timeout_s: float = 10.0) -> bool:
+        """传送后验证 bot 是否真的到了仓库（2026-08-16 用户反馈修复）。
+
+        仓库在末地（mdssj/zhurou 传送点），若传送失败/未生效 bot 还在主世界，却去
+        寻路/开箱末地盒子坐标 → "No container near" → 补货失败（状态显示 restocking
+        但实际在主世界，状态与位置矛盾）。以「与任一目标盒子水平距离 < 100 格」判断
+        是否到位（不同维度的坐标水平距离必远超 100，天然区分维度）。
+        """
+        try:
+            t0 = time.monotonic()
+            while time.monotonic() - t0 < timeout_s:
+                st = await self.mcp.get_player_state()
+                d2 = st.get("data", st) if isinstance(st, dict) else {}
+                loc = d2.get("location") or {}
+                px, pz = loc.get("x"), loc.get("z")
+                if isinstance(px, (int, float)) and isinstance(pz, (int, float)):
+                    for bx, _by, bz in boxes:
+                        if (float(px) - bx) ** 2 + (float(pz) - bz) ** 2 < 100 ** 2:
+                            return True
+                await asyncio.sleep(1.5)
+        except Exception as e:
+            logger.warning("[%s] Verify warehouse arrived error: %s", self.bot_id, e)
+        return False
 
     def _get_restocker(self) -> ShulkerRestocker:
         """懒创建 ShulkerRestocker（寻路包装 allow_scaffold=False 防递归补货）。"""
@@ -2572,6 +2595,19 @@ class BotBuildLoop:
                 self._activity("debug", "传送指令已发出，等待 3.5s 让 chunk 加载、bot 落地...")
                 await asyncio.sleep(3.5)
                 self._activity("debug", "等待完成，开始寻路到潜影盒")
+
+                # 2026-08-16 用户反馈修复：传送后必须验证 bot 真的到了仓库（维度/位置）。
+                # 此前 /ehomes mdssj 传送失败/未生效时 bot 还在主世界，却去寻路/开箱
+                # 末地的盒子坐标 → "No container near" → 补货失败；同时 bot 显示
+                # restocking 状态却在主世界（状态与位置矛盾）。验证不过 → 重试传送一次
+                # → 仍失败则放弃本轮补货（不盲目开箱）。
+                if not await self._verify_warehouse_arrived(boxes, timeout_s=10.0):
+                    self._activity("warn", "传送后未到仓库（维度/位置不符），重试传送一次")
+                    await self.mcp.send_chat(self._supply_cfg.get("go", "/ehomes mdssj"))
+                    await asyncio.sleep(4.0)
+                    if not await self._verify_warehouse_arrived(boxes, timeout_s=10.0):
+                        self._activity("warn", "重试传送后仍未到仓库，放弃本轮补货（不盲目开箱）")
+                        return False
 
                 # 3. 按顺序尝试每个潜影盒坐标（先显式寻路到坐标附近触发 chunk 加载，再开箱）
                 taken = False
@@ -2920,6 +2956,16 @@ class BotBuildLoop:
             if self._sleep_req.is_set():
                 self._activity("info", "补货传送等待期间收到睡觉请求，中断补货让路睡觉")
                 return False
+
+            # 2026-08-16 用户反馈修复：传送后验证 bot 真的到了猪排仓库（末地）。
+            # /ehomes zhurou 失败/未生效时 bot 还在主世界却去开末地盒子 → 补货失败。
+            if not await self._verify_warehouse_arrived(boxes, timeout_s=10.0):
+                self._activity("warn", "食物传送后未到仓库（维度/位置不符），重试传送一次")
+                await self.mcp.send_chat(go_cmd)
+                await asyncio.sleep(4.0)
+                if not await self._verify_warehouse_arrived(boxes, timeout_s=10.0):
+                    self._activity("warn", "食物重试传送后仍未到仓库，放弃本轮补货")
+                    return False
 
             # 3. 按顺序尝试每个潜影盒坐标（先显式寻路触发 chunk 加载，再开箱）
             taken = False
