@@ -1643,7 +1643,11 @@ class BotBuildLoop:
                 return "teleport_no_effect"
             x, z, y = p
             expected_y = self.origin_y + self._stand_y_offset  # 站立层（平台顶）
-            if abs(float(y) - expected_y) >= 1.0:
+            # ⚠️ 2026-08-16 修复：bot 坐标 y = 脚的位置。站在地图画方块（y=69）上
+            # 脚 y=70（偏差1.0）是正常位置（边放边踩后站在已放方块上），
+            # 原 `>=1.0` 把 1.0 判为不符 → 传送后反复误判"高度不符"兜底循环。
+            # 统一用 _verify_y_tol（>容差才失败），与 _move_to verify_height 一致。
+            if abs(float(y) - expected_y) > self._verify_y_tol:
                 self._activity("warn",
                                f"传送后高度不符（站立层={expected_y}，实际y={y:.1f}）——"
                                f"判定未到位（可能悬空/掉水），走兜底")
@@ -1668,7 +1672,7 @@ class BotBuildLoop:
                     return None
                 x2, z2, y2 = p2
                 if (abs(x2 - x) > 3.0 or abs(z2 - z) > 3.0
-                        or abs(float(y2) - expected_y) >= 1.0):
+                        or abs(float(y2) - expected_y) > self._verify_y_tol):
                     self._activity("warn",
                                    f"传送后位置复查异常（初始{x:.0f},{z:.0f},y={y:.0f}→复查"
                                    f"{x2:.0f},{z2:.0f},y={y2:.0f}）——bot 未稳定，判定未到位")
