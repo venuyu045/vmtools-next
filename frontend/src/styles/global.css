@@ -1010,6 +1010,7 @@ html {
 }
 
 /* 暗色：Element Plus 表单校验消息/日期选择等浮层文字随主题（EP 暗色变量已覆盖，这里兜底） */
-[data-theme="dark"] .el-form-item__error {
+[data-theme="dark"] .el-form-item__error,
+html.dark .el-form-item__error {
   color: var(--danger) !important;
 }

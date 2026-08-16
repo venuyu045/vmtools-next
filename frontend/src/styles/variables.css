@@ -103,7 +103,7 @@
 }
 
 /* ============ 暗色模式 ============ */
-[data-theme="dark"] {
+[data-theme="dark"], html.dark {
   /* 背景 */
   --bg-page: #1A1916;
   --bg-card: #222119;

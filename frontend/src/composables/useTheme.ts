@@ -79,6 +79,19 @@ if (typeof media.addEventListener === 'function') {
 // 初始化：与防闪白脚本结果对齐（确保 localStorage 异常场景下状态一致）
 apply()
 
+/** 运行时自愈：监听 html 属性变化，确保 data-theme 与 html.dark 永远同步。
+ * 根因背景：EP 暗色 css-vars 只认 html.dark，自定义变量认 [data-theme="dark"]；
+ * 若两者脱节（旧缓存 HTML / 第三方脚本 / 异常切换），会出现「EP 组件亮色 + 自定义卡片暗色」
+ * 或反向的混合态（移动端深色下卡片泛白即此症状）。此处以 data-theme 为唯一权威，纠正 class。 */
+const _htmlRoot = document.documentElement
+const _themeObserver = new MutationObserver(() => {
+  const attr = _htmlRoot.getAttribute('data-theme')
+  const hasDark = _htmlRoot.classList.contains('dark')
+  if (attr === 'dark' && !hasDark) _htmlRoot.classList.add('dark')
+  else if (attr !== 'dark' && hasDark) _htmlRoot.classList.remove('dark')
+})
+_themeObserver.observe(_htmlRoot, { attributes: true, attributeFilter: ['data-theme', 'class'] })
+
 export function useTheme() {
   return { mode, resolved, setThemeMode, toggleTheme }
 }
