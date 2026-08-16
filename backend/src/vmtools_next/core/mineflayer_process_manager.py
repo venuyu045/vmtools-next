@@ -57,6 +57,11 @@ class MineflayerProcessManager:
         self._instance_root = pathlib.Path(config.instance_root)
         self._processes: dict[str, ProcessHandle] = {}
         self._locks: dict[str, asyncio.Lock] = {}
+        # 连续崩溃退避（2026-08-16 用户实测）：服务器"登录过于频繁"限流可能持续数分钟，
+        # 固定 30s 重启会被持续踢出（踢→重启→登录频繁→再踢死循环）。连续崩溃时退避
+        # 递增：30s→60s→120s→300s 封顶；稳定运行一段时间后重置。
+        self._crash_ts: dict[str, float] = {}
+        self._crash_backoff: dict[str, float] = {}
         # 端口分配全局锁（WS/viewer 分配串行化，避免并发恢复时 socket 探测竞态互换/撞车）
         self._alloc_lock = asyncio.Lock()
         self._port_allocator = MccPortAllocator(
@@ -639,9 +644,25 @@ class MineflayerProcessManager:
                         instance_id[:8],
                     )
                     # 重启退避：登录过于频繁/服务器限流时，立即重启会触发
-                    # 「踢→秒重启→登录频繁→再踢」死循环。统一等待 30s 让
-                    # 服务器限流窗口过去、多个实例错开重连。
-                    await asyncio.sleep(30)
+                    # 「踢→秒重启→登录频繁→再踢」死循环。固定 30s 不足（限流可能
+                    # 持续数分钟）→ 连续崩溃退避递增 30s→60s→120s→300s 封顶；
+                    # 距上次崩溃 >10min 视为稳定，重置回 30s。
+                    import time as _time
+                    _now = _time.time()
+                    _last_crash = self._crash_ts.get(instance_id, 0.0)
+                    if _now - _last_crash > 600:
+                        self._crash_backoff[instance_id] = 30.0
+                    else:
+                        self._crash_backoff[instance_id] = min(
+                            self._crash_backoff.get(instance_id, 30.0) * 2, 300.0)
+                    self._crash_ts[instance_id] = _now
+                    _delay = self._crash_backoff[instance_id]
+                    logger.warning(
+                        "Mineflayer bot %s crash backoff: waiting %.0fs before restart "
+                        "(连续崩溃，防登录频繁被踢)",
+                        instance_id[:8], _delay,
+                    )
+                    await asyncio.sleep(_delay)
                     await self.start_instance(instance_id)
         except Exception as exc:
             logger.warning("Auto-restart failed for %s: %s", instance_id[:8], exc)

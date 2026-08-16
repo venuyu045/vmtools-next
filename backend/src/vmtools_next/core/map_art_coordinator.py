@@ -965,6 +965,14 @@ class BotBuildLoop:
             if self._stopped:
                 remaining.append((wx, wy, wz, block_id))
                 continue
+            # 2026-08-16 用户需求（睡觉不被填坑阻塞）：夜晚睡觉请求到达 → 暂停填坑去
+            # 睡觉（睡完 set _sleep_event 继续填）。否则填坑 59 格耗时长，夜晚一直
+            # 不睡 → bot 被骷髅/怪物打死（实测）。
+            if self._sleep_req.is_set():
+                self._sleep_req.clear()
+                self._sleep_event.clear()
+                self._sleep_hold.set()
+                await self._sleep_event.wait()  # 睡觉完成恢复
             try:
                 # 已放（对账/并发补过）→ 跳过
                 if await self._verify_block(wx, wy, wz, block_id):
