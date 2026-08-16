@@ -179,7 +179,7 @@ class ShulkerRestocker:
 
     async def _restock_from_one(self, clean_id: str, target_count: int,
                                 bx: int, by: int, bz: int) -> int:
-        """单个坐标取货（寻路→开箱→循环取→关箱→确认）。返回背包确认后的持有量（>0=有收获）。"""
+        """单个坐标取货（寻路→开箱→取→关箱→确认）。返回背包确认后的持有量（>0=有收获）。"""
         self._activity("info", f"寻路到潜影盒 ({bx},{by},{bz}) 取 {clean_id}")
         t0 = time.monotonic()
         moved = await self._move_to_cb(bx, by, bz)
@@ -195,28 +195,40 @@ class ShulkerRestocker:
         if not container_id:
             return 0
 
+        # ⚠️ 2026-08-16 修复：Via 不推送窗口/背包更新——容器【打开期间】
+        # get_inventory_snapshot 读到的玩家背包恒为空（客户端未同步），
+        # 只有【关箱后】服务器才把背包数据同步给客户端。
+        # 原实现 with withdraw 后立即 check_inventory（窗口开着）→ 永远读到 0
+        # → 明明取到货却误判"未取到"→ 标记 drained → 补货全部失败（真机复现：
+        # withdraw success + 关箱后背包有 white_concrete×64，但日志报"未取到"）。
+        # 修复：先关箱，再轮询确认背包。
+        withdraw_ok = False
         try:
             # 2026-08-15 用户实测纠正：一次只取【一组】（64），不循环到 target——
             # 原循环在背包快照滞后时会把容器搬空（每种颜色拿 256+，背包塞满后续颜色装不下）。
-            if not await self._withdraw_once(clean_id, container_id, bx, by, bz):
-                have = await self._check_inventory(clean_id)
-                if have > 0:
-                    self._activity("info", f"取到 {clean_id} ×{have}（{bx},{by},{bz}）")
-                    return have
-            else:
-                # withdraw 后背包轮询确认（防假成功）
-                for _i in range(CONFIRM_ROUNDS):
-                    await asyncio.sleep(CONFIRM_INTERVAL_S)
-                    if await self._check_inventory(clean_id) > 0:
-                        break
-                have = await self._check_inventory(clean_id)
-                if have > 0:
-                    self._activity("info", f"取到 {clean_id} ×{have}（{bx},{by},{bz}）")
-                    return have
+            withdraw_ok = await self._withdraw_once(clean_id, container_id, bx, by, bz)
         finally:
             await self._close_box(container_id)
 
-        # 开箱成功但没取到 → 判定该坐标无货（dryTicks 记忆，本轮跳过）
+        if withdraw_ok:
+            # 关箱后（Via 客户端背包已同步）轮询确认
+            for _i in range(CONFIRM_ROUNDS):
+                await asyncio.sleep(CONFIRM_INTERVAL_S)
+                if await self._check_inventory(clean_id) > 0:
+                    break
+            have = await self._check_inventory(clean_id)
+            if have > 0:
+                self._activity("info", f"取到 {clean_id} ×{have}（{bx},{by},{bz}）")
+                return have
+        else:
+            # withdraw 返回失败（Node 端找不到物品等）：关箱后仍确认一次背包
+            # （防 Node 端误报——点击成功但客户端 selectedItem 未同步）
+            have = await self._check_inventory(clean_id)
+            if have > 0:
+                self._activity("info", f"取到 {clean_id} ×{have}（{bx},{by},{bz}）")
+                return have
+
+        # 关箱后确认仍无 → 判定该坐标无货（dryTicks 记忆，本轮跳过）
         self._drained.add((bx, by, bz))
         self._activity("warn", f"{clean_id} 在 ({bx},{by},{bz}) 未取到（可能取空/放错/坐标不符），标记跳过")
         return 0
