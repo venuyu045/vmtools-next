@@ -30,6 +30,8 @@
           root.classList.toggle('dark', theme === 'dark');
           var meta = document.querySelector('meta[name="theme-color"]');
           if (meta) meta.setAttribute('content', theme === 'dark' ? '#1A1916' : '#ECE9E0');
+          var statusBar = document.querySelector('meta[name="apple-mobile-web-app-status-bar-style"]');
+          if (statusBar) statusBar.setAttribute('content', theme === 'dark' ? 'black-translucent' : 'default');
         } catch (e) { /* 隐私模式等异常场景，默认亮色 */ }
       })();
     </script>

@@ -31,6 +31,7 @@ function toKbps(n: number | undefined): number {
 
 const { resolved: themeResolved } = useTheme()
 const isDark = computed(() => themeResolved.value === 'dark')
+const isNarrow = window.matchMedia('(max-width: 480px)').matches
 
 const chartOption = computed(() => {
   // 图表配色跟随主题（亮：暖米底 + 深灰文字；暗：暖墨底 + 浅色文字）
@@ -73,12 +74,12 @@ const chartOption = computed(() => {
     },
     legend: {
       data: ['CPU', '内存', '磁盘', '上行', '下行'],
-      textStyle: { color: labelColor },
+      textStyle: { color: labelColor, fontSize: isNarrow ? 10 : 12 },
       top: 0,
     },
     grid: {
-      left: 50,
-      right: 50,
+      left: isNarrow ? 36 : 50,
+      right: isNarrow ? 30 : 50,
       top: 40,
       bottom: 30,
     },

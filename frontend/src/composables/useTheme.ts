@@ -51,6 +51,9 @@ function apply() {
   // 浏览器地址栏/状态栏颜色随主题切换（亮=暖米 / 暗=暖墨）
   const meta = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]')
   if (meta) meta.content = dark ? '#1A1916' : '#ECE9E0'
+  // iOS PWA 状态栏文字色随主题：暗=白字透明 / 亮=黑字
+  const statusBar = document.querySelector<HTMLMetaElement>('meta[name="apple-mobile-web-app-status-bar-style"]')
+  if (statusBar) statusBar.setAttribute('content', dark ? 'black-translucent' : 'default')
 }
 
 /** 设置模式并持久化 */
