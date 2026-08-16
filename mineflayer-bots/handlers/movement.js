@@ -277,6 +277,19 @@ async function walk_toward({ x, z, timeout_ms = 8000 } = {}) {
     const dist = Math.hypot(dx, dz);
     if (dist > 3.0) return resolve({ success: false, reason: 'too_far' });
 
+    // 2026-08-16 P0-1 护栏：目标格脚下必须是实体（air/water/lava → 拒绝直走，
+    // 防「行内直走掉下平台」复现——调用方回退 pathfinder 找安全路径）。
+    // bot 脚部 y = pos.y；目标站立格 (floor(x), floor(pos.y), floor(z)) 脚下
+    // (floor(x), floor(pos.y)-1, floor(z)) 需实体。
+    try {
+      const foot = bot.blockAt(new Vec3(Math.floor(x), Math.floor(pos.y) - 1, Math.floor(z)));
+      if (!foot || foot.type === 0 || /water|lava|bubble_column/.test(foot.name || '')) {
+        return resolve({ success: false, reason: 'unsafe_foot' });
+      }
+    } catch (e) {
+      return resolve({ success: false, reason: 'foot_check_error' });
+    }
+
     let finished = false;
     const cleanup = () => {
       bot.setControlState('forward', false);

@@ -118,7 +118,7 @@
             </div>
             <div class="bot-progress">
               <el-progress
-                :percentage="bot.total ? Math.round(bot.placed / bot.total * 100) : 0"
+                :percentage="botPct(bot)"
                 :stroke-width="6"
                 :show-text="false"
               />
@@ -349,6 +349,13 @@ function formatTime(secs: number): string {
   const m = Math.floor(secs / 60)
   const s = Math.floor(secs % 60)
   return `${m}分 ${s}秒`
+}
+
+/** 2026-08-16 审查修复：bot 进度百分比防 NaN/越界（total=0 或 placed>total） */
+function botPct(b: any): number {
+  if (!b || !b.total) return 0
+  const p = Math.round(((b.placed || 0) / b.total) * 100)
+  return Math.min(100, Math.max(0, p))
 }
 
 function onCanvasReady() {

@@ -278,17 +278,42 @@ class BotBuildLoop:
             self._place_interval: float = max(0.15, int(_ticks) / 20.0)
         except Exception:
             self._place_interval: float = 0.25
-        self._move_retries: int = 2             # 寻路失败重试次数
-        self._place_retries: int = 3            # 放置失败重试次数
+        # 2026-08-16 P2：寻路/放置/兜底参数收敛到 config（config.py mineflayer 段）
+        try:
+            _mf_cfg2 = get_config().mineflayer
+            self._move_retries: int = max(1, int(getattr(_mf_cfg2, "map_art_move_retries", 2) or 2))
+            self._place_retries: int = max(1, int(getattr(_mf_cfg2, "map_art_place_retries", 3) or 3))
+            # P1-3：高度校验 y 容差（原硬编码 0.6 过严，浮点/台阶抖动误判；双条件改为 y 偏差 + 脚下实体）
+            self._verify_y_tol: float = max(0.5, float(getattr(_mf_cfg2, "map_art_verify_y_tol", 1.0) or 1.0))
+            # P0-4：传送兜底重试上限（每级 / 总上限）
+            self._tp_retry_each: int = max(1, int(getattr(_mf_cfg2, "map_art_tp_retry_each", 3) or 3))
+            self._tp_retry_total: int = max(1, int(getattr(_mf_cfg2, "map_art_tp_retry_total", 8) or 8))
+        except Exception:
+            self._move_retries: int = 2
+            self._place_retries: int = 3
+            self._verify_y_tol: float = 1.0
+            self._tp_retry_each: int = 3
+            self._tp_retry_total: int = 8
         self._move_timeout_ms: int = 20000      # 单次寻路超时
         self._place_sample_count: int = 0       # 放置采样计数（RTT 自适应）
         self._last_pos: Optional[tuple[int, int, int]] = None  # 最近一次移动到达的坐标（跳过重复寻路）
+        # 2026-08-16 P0-4：最近一次 _move_to 失败原因标签（供兜底分流：no_path/stuck/timeout/height/fall/...）
+        self._last_move_fail_reason: str = ""
 
         # ── 断点续建（DB 持久化）：放置成功/已正确的方块批量写库，行完成 flush ──
         self._db_updates: list[tuple[int, int, int, str]] = []
         self._db_flushed_rows: int = 0
         # P2-9：同 run 内已验证正确的方块集合（跳过重复 get_world_block_at WS 往返）
         self._verified_set: set[tuple[int, int, int]] = set()
+
+        # 2026-08-16 P0-5：放置后校验分层状态
+        # _pending_confirm：弱确认（_genericPlace 发出 + 本地复核通过）但尚无服务器权威确认的坐标
+        #（行尾复核/启动对账时收敛 verified）
+        self._pending_confirm: list[tuple[int, int, int, str]] = []
+        # P0-2：站立格前提校验失败的坐标（悬空/缺方块，跳过放置，记入待补清单）
+        self._pending_gaps: list[tuple[int, int, int, str]] = []
+        # P0-5：对账统计（启动/行/完成）
+        self._reconcile_stats: dict = {"start": {}, "row": {}, "done": {}}
 
     # ── 蛇形寻路：偶数相对行正向（x_start→x_end），奇数行反向（x_end→x_start） ──
     #    行间只需移动 1 格（z+1，x 不变），省掉每行从 x_end 走回 x_start 的 128 格回程。
@@ -351,7 +376,8 @@ class BotBuildLoop:
             if fixed0:
                 self._activity("info", f"启动定位：传送回固定建造点（{fixed0}）")
                 if await self._send_teleport(fixed0):
-                    placed0 = await self._verify_at_build_area()
+                    # 2026-08-16 P0-4：_verify_at_build_area 返回 Optional[str]（None=通过）
+                    placed0 = (await self._verify_at_build_area()) is None
             gx0 = self.origin_x + self.region.x_start
             gz0 = self.origin_z + self.region.z_start - 1
             gy0 = self.origin_y + self._stand_y_offset  # 站立层（固定 offset）
@@ -423,9 +449,29 @@ class BotBuildLoop:
                     break  # 行内移动/放置中断 → 终止循环
 
             if not self._stopped:
-                placed = self.progress.blocks_placed
+                # 2026-08-16 P0-5：完成前对账——以实际方块状态为准判定完成。
+                # 弱确认（_genericPlace 发出但本地复核读到 air/读取失败）的坐标可能
+                # 因 Via 不推送块更新而无法在运行中收敛 → 区域结束时先对账 DB 中
+                # placed=True 且 verified=False 的行（读真实 world），未确认块不得
+                # 静默计入 completed（防「0/16384 却 completed」类进度虚高）。
+                ok_count, pending = await self._reconcile_region_final()
+                if pending > 0:
+                    # 给服务器同步/客户端刷新一次机会后复对账
+                    await asyncio.sleep(3)
+                    ok_count, pending = await self._reconcile_region_final()
+                self.progress.blocks_placed = ok_count
+                placed = ok_count
                 total = self.progress.blocks_total
-                if total > 0 and placed < total:
+                if pending > 0:
+                    # 仍存在未确认块（客户端数据旧）：不误报 completed，置 failed
+                    # 提示重启 bot 后重新开始对账（权威对账依赖重启后 world 真实）。
+                    self.progress.state = "failed"
+                    self._activity("error",
+                                   f"区域结束仍有 {pending} 块放置状态未确认（客户端数据旧），"
+                                   f"已按 {placed}/{total} 记录，请重启 bot 后重新开始对账")
+                    logger.warning("[%s] Region has %d unconfirmed blocks (%d/%d placed)",
+                                   self.bot_id, pending, placed, total)
+                elif total > 0 and placed < total:
                     # 2026-08-14 修复：循环跑完但方块未放完（补货失败/放置失败跳过）
                     # → 标记区域失败，不再误报 completed（此前 0/16384 也 completed）。
                     # 仍回调 on_done，由 coordinator 据 state 判定任务 failed。
@@ -465,14 +511,14 @@ class BotBuildLoop:
                     pass
 
     def _stand_y_for_row(self, row_z: int) -> int:
-        """bot 站立高度（2026-08-15「踩在地图画上建造」，Baritone mapArt 模式）：
+        """行首站立高度（2026-08-16 P0-2「边放边踩」蛇形模式）：
 
-        - 第一行（row_z == z_start）：站平台顶（68 层 white_concrete 顶面 = origin_y，
-          默认 map_art_stand_y_offset=0）；第一行没有"上一行已放方块"可踩。
-        - 后续行：站【上一行已放置的地图画方块】顶（69 层方块顶 = origin_y + 1）。
+        - 第一行（row_z == z_start）：站平台顶北缘（bot 脚部 y = origin_y +
+          map_art_stand_y_offset，默认 0 → 脚 y = origin_y = 平台 68 层顶面）。
+        - 后续行：行首站上一行方块顶（脚 y = origin_y + 1）。
 
-        bot 脚下始终是实体方块（平台 / 已放地图画），行内沿 X 移动不会走到
-        平台外/海里——用户实测"bot 站在建造方块边上一格掉海里"由此修复。
+        ⚠️ 行内站立高度由 _place_row 统一按「上一格方块顶」= origin_y + 1 处理
+        （bot 脚下恒为已放方块，永不踩空），本方法仅用于行首北缘定位。
         """
         if row_z > self.region.z_start:
             return self.origin_y + 1
@@ -530,46 +576,42 @@ class BotBuildLoop:
         except Exception:
             pass
         timeout = timeout_ms or self._move_timeout_ms
+        self._last_move_fail_reason = ""  # 2026-08-16 P0-4：每次调用重置失败原因标签
         for attempt in range(self._move_retries + 1):
             if self._stopped:
                 return False
             try:
                 # 2026-08-15 P1：优先 baritone 移植寻路（A* + Moves，支持爬升/跳跃/
                 # 下降，寻路天然校验站立面——平台边缘无方块不会走）。失败回退旧 pathfinder。
+                # 2026-08-16 P1-2：双寻路 max_offset 语义统一（不再对 baritone 放宽到 2）——
+                # 行内精确站立（max_offset=1）必须同格，宽放会导致 bot 停在错误格放置。
                 result = await self.mcp.baritone_move(
-                    x, y, z, max_offset=min(max_offset, 2), timeout_ms=timeout)
+                    x, y, z, max_offset=max_offset, timeout_ms=timeout)
                 if not result.get("success"):
+                    _bt_reason = str(result.get("reason") or "")
                     self._activity(
                         "debug",
-                        f"baritone 寻路失败（{result.get('reason') or '?'}），回退旧 pathfinder")
+                        f"baritone 寻路失败（{_bt_reason}），回退旧 pathfinder")
                     result = await self.mcp.move_to(
                         x, y, z, max_offset=max_offset, timeout_ms=timeout,
                         ignore_y=ignore_y,
                     )
                 if result.get("success"):
                     if verify_height:
-                        # 2026-08-15 修复（第二次收紧）：校验 bot 实际高度与目标站立层。
-                        #   原阈值 >4.0 太宽松：bot 在 69 层高台（mapart 侧）vs 目标 68 层
-                        #   偏差 1 也被放行 → bot 在错误层"到位"→ 放置时参考/距离不对全失败
-                        #   （实测 move_to 返回 success 但 bot 停 69 层 5396.35，放置 5398
-                        #   视线被挡/距离边缘 → blockUpdate 不触发）。收紧到 >0.6：
-                        #   bot 脚部 y 必须贴近目标站立层（68.0±0.6），否则视为未到位，
-                        #   由 _move_to 重试/传送兜底继续逼近（13:30 实测 bot 能寻路到 68 层）。
+                        # 2026-08-16 P1-3：高度校验改为「y 偏差 + 脚下实体」双条件——
+                        #   · y 偏差 ≤ map_art_verify_y_tol（默认 1.0）：容忍浮点/半砖/台阶抖动
+                        #     （原硬编码 0.6 过严，bot 行进中微抖即误判未到位 → 频繁传送兜底）；
+                        #   · 脚下必须实体（air/water/lava = 悬空/掉水，无论如何判未到位）——
+                        #     这是防坠落的核心强条件，不受 y 容差放宽影响。
+                        # 失败时写入 self._last_move_fail_reason 供 P0-4 兜底分流。
                         try:
                             st = await self.mcp.get_player_state()
                             d2 = st.get("data", st) if isinstance(st, dict) else {}
                             loc = d2.get("location") or {}
                             by = loc.get("y")
-                            if isinstance(by, (int, float)) and abs(float(by) - y) > 0.6:
-                                self._activity(
-                                    "warn",
-                                    f"移动到位但高度不符（目标y={y}，实际y={by:.1f}）——"
-                                    f"bot 可能掉下/不在站立层，视为未到位")
-                                return False
-                            # 2026-08-15 P4 边缘检测：bot 脚下必须有实体方块
-                            # （防悬空/掉水后误判"到位"；baritone 寻路已保证路径安全，
-                            #  此处兜底校验落地）
                             if isinstance(by, (int, float)):
+                                dy = abs(float(by) - y)
+                                # 脚下实体检查（强条件）
                                 foot = await self.mcp.get_world_block_at(
                                     int(round(loc.get("x", x))), int(by) - 1,
                                     int(round(loc.get("z", z))))
@@ -577,19 +619,36 @@ class BotBuildLoop:
                                              .split("[")[0])
                                 if foot_name in ("air", "water", "lava",
                                                  "flowing_water", "flowing_lava"):
+                                    self._last_move_fail_reason = "fall"
                                     self._activity(
                                         "warn",
                                         f"移动到位但脚下是 {foot_name}（bot 悬空/掉水）"
                                         f"——判定未到位")
                                     return False
+                                if dy > self._verify_y_tol:
+                                    self._last_move_fail_reason = "height"
+                                    self._activity(
+                                        "warn",
+                                        f"移动到位但高度不符（目标y={y}，实际y={by:.1f}，"
+                                        f"容差{self._verify_y_tol}）——bot 可能掉下/不在站立层")
+                                    return False
+                                if dy > 0.5:
+                                    self._activity(
+                                        "debug",
+                                        f"到位高度偏差 {dy:.2f} 格但脚下实体，容忍通过")
                         except Exception:
                             pass
                     self._last_pos = (x, y, z)
                     return True
+                _reason = str(result.get("reason") or "unknown")
+                if not self._last_move_fail_reason:
+                    self._last_move_fail_reason = _reason.split(":")[0].strip()
                 logger.warning("[%s] move_to %s (attempt %d/%d) failed: %s",
                                self.bot_id, label or f"({x},{y},{z})",
                                attempt + 1, self._move_retries + 1, result)
             except Exception as e:
+                if not self._last_move_fail_reason:
+                    self._last_move_fail_reason = "error"
                 logger.warning("[%s] move_to %s (attempt %d/%d) error: %s",
                                self.bot_id, label or f"({x},{y},{z})",
                                attempt + 1, self._move_retries + 1, e)
@@ -625,102 +684,174 @@ class BotBuildLoop:
         return False
 
     async def _place_row(self, row_z: int, world_z: int):
-        """Place all blocks in a single row, grouped by color.
+        """Place all blocks in a single row — 「边放边踩」蛇形逐格连续模式（2026-08-16 P0-2）。
 
-        Plan D + snake: bot stands 1 block north of each target (z-1), walks
-        along X (direction alternates per row), verifies the target state,
-        places with retry, and persists progress to DB (row-complete flush).
+        用户设计前提：bot 站在已建面上前搭一格、踩上前进，蛇形逐行、行末侧移掉头。
+        站立序列（bot 脚下恒为已放方块 / 平台顶，永不踩空）：
+          - 行首：站北缘（第一行=平台顶 origin_y+offset；后续行=上一行方块顶 origin_y+1）
+          - 每格放置后：站立点更新为本格方块顶 (world_x, origin_y+1, world_z)，
+            下一格直接从该顶上放置相邻格（参考面 AUTO 优先 bot 脚下/北面/平台）；
+          - 蛇形转行：行末方块顶直接放下一行行首（零额外移动，bot 已在其上）。
+        放置失败/材料缺失/站立格悬空 → 跳过该格并记入待补清单（不中断，行尾/区域判定兜底）。
         """
         await self._paused.wait()
         if self._stopped:
             return
 
-        # Gather blocks for this row, ordered by snake direction
         x_span = self._row_x_span()
-        row_blocks: dict[str, list[int]] = {}  # color → [x, ...]
-        for x in x_span:
-            block_id = self.block_matrix.get((x, row_z))
-            if block_id and block_id != "minecraft:air":
-                row_blocks.setdefault(block_id, []).append(x)
-
         self.progress.state = "placing"
 
-        # Place color by color
-        for block_id, x_positions in row_blocks.items():
+        # 行首站立高度（第一行=平台顶；后续行=上一行方块顶）
+        first_stand_y = self._stand_y_for_row(row_z)
+        stand: Optional[tuple[int, int, int]] = None   # 当前 bot 应在的站立点（世界坐标，含脚部 y）
+        row_placed = 0
+        row_failed = 0
+        row_gap = 0
+        row_audit: list[dict] = []  # P2-2 放置审计
+
+        # 逐格顺序放置（颜色切换由 _ensure_item_in_hand 的 hotbar_map 缓存零成本处理）
+        for x in x_span:
             await self._paused.wait()
             if self._stopped:
                 return
 
-            # Switch to correct item
-            await self._ensure_item_in_hand(block_id)
+            block_id = self.block_matrix.get((x, row_z))
+            if not block_id or block_id == "minecraft:air":
+                continue  # 空白格不放置（不消耗站立点）
 
-            for x in x_positions:
-                await self._paused.wait()
-                if self._stopped:
-                    return
+            world_x = self.origin_x + x
+            self._activity("debug", f"建造 ({world_x},{self.origin_y},{world_z}) ← {self._normalize_item_id(block_id)}")
 
-                world_x = self.origin_x + x
-                # 2026-08-15 日志增强：每格建造过程 debug 级记录（详细模式可见）
-                self._activity("debug", f"建造 ({world_x},{self.origin_y},{world_z}) ← {self._normalize_item_id(block_id)}")
-                # 2026-08-14 模块C：真·走一格放一格——每放置一块前精确移动到该方块
-                # 正北站立点（相邻格 = 1 格移动）。原实现 threshold=2 跳格、靠
-                # place_block(face=AUTO) 站桩斜放，触及范围边缘易失败且非「走一格」。
-                # 2026-08-14 修复：站立高度 = origin_y -1（地面层），避免悬空/与方块同层。
-                # ⚠️ 2026-08-15 回退：行内直走（walk_toward）实测导致 bot 掉下平台
-                # （y=58.5 vs 站立层68）→ 后续放置全失败，本轮回退为纯 _move_to。
-                # 2026-08-15「踩地图画建造」：站立高度随行变化（第一行站平台顶，
-                # 后续行站上一行已放方块顶）——bot 脚下始终有方块，不掉海里。
-                stand_z = world_z - 1
-                stand_y = self._stand_y_for_row(row_z)
-                if not await self._move_to(world_x, stand_y, stand_z,
-                                           max_offset=1, label=f"({world_x},{world_z})",
-                                           verify_height=True):
-                    # 2026-08-14：放置点移动失败（可能淹死复活到远处/掉坑）→
-                    # 传送回建造点重试一次，避免直接区域失败
-                    if await self._try_teleport_home("放置点移动失败"):
-                        if not await self._move_to(world_x, stand_y, stand_z,
-                                                   max_offset=1, label=f"({world_x},{world_z})",
-                                                   verify_height=True):
-                            self.progress.state = "offline"
-                            return
-                    else:
+            # ── 1. 确定并移动到位 ──
+            if stand is None:
+                # 行首：北缘（第一行=平台顶；后续行=上一行方块顶，bot 行末转行时已在附近）
+                stand = (world_x, first_stand_y, world_z - 1)
+            # 行内/转行：stand 已 = 上一格方块顶（放置成功后更新）
+            if not await self._move_to_step(stand[0], stand[1], stand[2],
+                                            label=f"stand({world_x},{world_z})"):
+                # 站立点不可达（可能 bot 被传送/卡走）→ 传送兜底一次再试
+                if await self._try_teleport_home("站立点移动失败"):
+                    if not await self._move_to(stand[0], stand[1], stand[2], max_offset=1,
+                                               label=f"stand retry({world_x},{world_z})",
+                                               verify_height=True):
                         self.progress.state = "offline"
                         return
-
-                # 2) Verify: skip if the target is already correct
-                if await self._verify_block(world_x, self.origin_y, world_z, block_id):
-                    self.progress.record_place()
-                    self.progress.last_completed_x = x
-                    self._db_updates.append((world_x, self.origin_y, world_z, block_id))
-                    self._activity("debug", f"({world_x},{world_z}) 已放置，跳过")
-                    continue
-
-                # 3) Place with retry + rate limiting
-                if await self._place_with_retry(world_x, self.origin_y, world_z, block_id):
-                    self.progress.record_place()
-                    self.progress.last_completed_x = x
-                    self._db_updates.append((world_x, self.origin_y, world_z, block_id))
-                    self._activity("debug", f"放置成功 ({world_x},{world_z}) {self._normalize_item_id(block_id)}")
                 else:
-                    # 2026-08-14 放置失败告警：连续放置失败说明材料/位置异常，
-                    # 记录但不中断（由行尾/区域完成判定兜底）；累计告警交由上层处理
-                    logger.warning("[%s] Place FAILED after %d retries at (%d,%d,%d) %s",
-                                   self.bot_id, self._place_retries,
-                                   world_x, self.origin_y, world_z, block_id)
-                    self._activity("warn", f"放置失败 ({world_x},{world_z}) {self._normalize_item_id(block_id)}（重试{self._place_retries}次仍失败）")
+                    self.progress.state = "offline"
+                    return
 
-                # 4) Rate limiting between placements (anti mis-place / anti-cheat)
-                #    RTT 自适应：每 10 次放置采样一次 ping，间隔 = max(base, RTT*1.5)
-                self._place_sample_count += 1
-                if self._place_sample_count % 10 == 0:
-                    await self._update_place_interval()
-                await asyncio.sleep(self._place_interval)
+            # ── 2. 站立格前提校验（脚下实体，防踩空坠落）──
+            if not await self._stand_solid(stand[0], stand[1], stand[2]):
+                self._pending_gaps.append((world_x, self.origin_y, world_z, block_id))
+                self._activity("warn",
+                               f"站立点 ({stand[0]},{stand[1]},{stand[2]}) 脚下非实体——"
+                               f"悬空/上一格未放成功，跳过放置 ({world_x},{world_z})")
+                row_gap += 1
+                row_audit.append({"x": world_x, "z": world_z, "result": "gap"})
+                continue  # stand 不更新（bot 仍在原站立点，避免踩空）
 
-        # 5) 行完成 → 批量持久化进度（断点续建）
+            # ── 3. Verify：目标已正确则跳过（仍踩上本格方块顶）──
+            if await self._verify_block(world_x, self.origin_y, world_z, block_id):
+                self.progress.record_place()
+                self.progress.last_completed_x = x
+                self._db_updates.append((world_x, self.origin_y, world_z, block_id))
+                row_placed += 1
+                stand = (world_x, self.origin_y + 1, world_z)  # 踩上（已放）
+                self._activity("debug", f"({world_x},{world_z}) 已放置，跳过")
+                continue
+
+            # ── 4. 选物品（P0-3：失败显式跳过，杜绝手持错误物品放错）──
+            if not await self._ensure_item_in_hand(block_id):
+                self._pending_gaps.append((world_x, self.origin_y, world_z, block_id))
+                self._activity("warn",
+                               f"无法获取材料 {self._normalize_item_id(block_id)}，跳过放置 ({world_x},{world_z})")
+                row_failed += 1
+                row_audit.append({"x": world_x, "z": world_z, "result": "no_material"})
+                continue
+
+            # ── 5. 放置（含放置后校验分层，P0-5）──
+            if await self._place_with_retry(world_x, self.origin_y, world_z, block_id):
+                self.progress.record_place()
+                self.progress.last_completed_x = x
+                self._db_updates.append((world_x, self.origin_y, world_z, block_id))
+                row_placed += 1
+                row_audit.append({"x": world_x, "z": world_z, "result": "placed"})
+                self._activity("debug", f"放置成功 ({world_x},{world_z}) {self._normalize_item_id(block_id)}")
+                # 踩上：下一格站立点 = 本格方块顶（bot 脚下恒为已放方块）
+                stand = (world_x, self.origin_y + 1, world_z)
+            else:
+                row_failed += 1
+                row_audit.append({"x": world_x, "z": world_z, "result": "fail"})
+                logger.warning("[%s] Place FAILED after %d retries at (%d,%d,%d) %s",
+                               self.bot_id, self._place_retries,
+                               world_x, self.origin_y, world_z, block_id)
+                self._activity("warn",
+                               f"放置失败 ({world_x},{world_z}) {self._normalize_item_id(block_id)}（重试{self._place_retries}次仍失败）")
+                # stand 不更新：bot 仍在上格站立点，下一格继续（AUTO 参考面兜底平台/北面）
+
+            # ── 6. 限速（防放错/防高频）──
+            self._place_sample_count += 1
+            if self._place_sample_count % 10 == 0:
+                await self._update_place_interval()
+            await asyncio.sleep(self._place_interval)
+
+        # ── 行尾：flush 进度 + 行尾复核（P0-5）+ 审计日志（P2-2）──
         await self._flush_db(row_z)
+        await self._reconcile_row(row_z)
+        if row_audit:
+            self._activity("info",
+                           f"第 {row_z} 行放置统计：成功 {row_placed} / 失败 {row_failed} / 悬空跳过 {row_gap}"
+                           f"（放置坐标 {[a['x'] for a in row_audit if a['result']=='placed'][:5]}{'…' if row_placed > 5 else ''}）")
         # 2026-08-14 终端：行完成埋点（低频，每行一条）
         if row_z == self.region.z_start or row_z % 10 == 0 or row_z == self.region.z_end:
             self._activity("info", f"第 {row_z} 行完成")
+
+    async def _stand_solid(self, x: int, y: int, z: int) -> bool:
+        """站立格前提校验（P0-2）：bot 站立点 (x, y, z) 脚下 (x, y-1, z) 必须是实体方块。
+
+        非实体（air/water/lava）→ 返回 False（悬空/掉水），调用方跳过放置并记待补，
+        不触发传送兜底（区别于移动到位后的脚下检查——那是防坠落强条件）。
+        """
+        try:
+            foot = await self.mcp.get_world_block_at(int(x), int(y) - 1, int(z))
+            name = ((foot.get("name") or "air").split("[")[0])
+            return name not in ("air", "water", "lava", "flowing_water", "flowing_lava")
+        except Exception:
+            return False  # 读取失败按不满足处理（安全侧）
+
+    async def _move_to_step(self, x: int, y: int, z: int, label: str = "") -> bool:
+        """轻量行内移动（P0-2/P0-1）：距离 ≤3 用 walk_toward 控制键直走（带护栏，
+        Node 侧校验目标格脚下实体 + 此处校验 y 偏差，非实体/高度不符拒绝直走防踩空）；
+        失败/超距离回退 _move_to。
+        """
+        try:
+            p = await self._get_player_pos_full()
+            if p:
+                d = max(abs(p[0] - x), abs(p[2] - z))
+                if d <= 3.0:
+                    try:
+                        r = await self.mcp.walk_toward(x=x, z=z, timeout_ms=8000)
+                        if r.get("success"):
+                            # walk_toward 只移动 x/z：校验 bot 实际高度与目标站立层
+                            # 一致（防 bot 掉下平台后 x/z 到位但高度错误继续放置）
+                            p2 = await self._get_player_pos_full()
+                            if p2 and abs(float(p2[2]) - y) > 1.5:
+                                self._last_move_fail_reason = "height"
+                                self._activity("debug",
+                                               f"直走到位但高度不符（目标y={y}，实际y={p2[2]:.1f}），回退寻路")
+                                return await self._move_to(x, y, z, max_offset=1,
+                                                           label=label or f"step({x},{z})",
+                                                           verify_height=True)
+                            return True
+                    except Exception:
+                        pass
+            return await self._move_to(x, y, z, max_offset=1,
+                                       label=label or f"step({x},{z})",
+                                       verify_height=True)
+        except Exception:
+            return await self._move_to(x, y, z, max_offset=1,
+                                       label=label or f"step({x},{z})",
+                                       verify_height=True)
 
     def _is_near(self, x: int, y: int, z: int, threshold: float = 2.0) -> bool:
         """Check whether the bot's last known position is within `threshold` blocks."""
@@ -760,7 +891,8 @@ class BotBuildLoop:
         self._db_updates = []
         try:
             from vmtools_next.data.db import get_session_factory
-            from vmtools_next.data.models.build_map_art import MapArtBlockState
+            from vmtools_next.data.models.build_map_art import MapArtBlockState, MapArtTask
+            from sqlalchemy import func
             db = get_session_factory()()
             try:
                 now = datetime.now(timezone.utc)
@@ -773,12 +905,29 @@ class BotBuildLoop:
                     ).first()
                     if row is None:
                         continue
+                    # 2026-08-16 P0-5：placed=True + verified=False（弱确认）。
+                    # verified 由行尾复核（_reconcile_row）/启动对账收敛为 True；
+                    # actual_block 先记录期望值，对账发现放错/缺失时重置。
                     row.placed = True
-                    row.verified = True
+                    row.verified = False
                     row.actual_block = block_id.split("[")[0]
                     row.placed_by_bot = self.bot_id
                     row.placed_at = now
                     row.verified_at = now
+                # 2026-08-16 P0-5（B5）：聚合进度同步（索引 COUNT，量级毫秒）——
+                # 使 GET /tasks/{id} 的 progress.placed_blocks 与实时推送一致。
+                try:
+                    task = db.query(MapArtTask).filter(
+                        MapArtTask.task_id == self.task_id).first()
+                    if task is not None:
+                        task.placed_blocks = db.query(func.count()).select_from(
+                            MapArtBlockState).filter(
+                            MapArtBlockState.task_id == self.task_id,
+                            MapArtBlockState.placed.is_(True),
+                        ).scalar() or 0
+                except Exception as _agg_err:
+                    logger.warning("[%s] Aggregate progress update failed: %s",
+                                   self.bot_id, _agg_err)
                 db.commit()
             finally:
                 db.close()
@@ -790,48 +939,269 @@ class BotBuildLoop:
             logger.warning("[%s] DB flush failed (row %d): %s", self.bot_id, row_z, e)
             # 失败不阻断建造：世界状态仍会被 _verify_block 兜底
 
-    async def _restore_progress(self) -> None:
-        """Restore previously persisted progress from DB (breakpoint resume).
+    async def _reconcile_row(self, row_z: int) -> None:
+        """行尾复核（2026-08-16 P0-5）：对本行弱确认（_pending_confirm）的坐标
+        重读真实 world，收敛 verified 状态，防进度虚高。
 
-        Counts blocks already marked placed in this bot's region so the UI
-        starts with the correct placed_blocks figure; actual skipping is done
-        by _verify_block against world state.
+        - 读到期望方块 → verified=True（强确认）
+        - 读到明确非期望、非 air 方块 → placed=False 重置（放错/被破坏）
+        - 读到 air/读取失败 → 保持 placed=True + verified=False（客户端数据旧，
+          待启动/完成对账收敛——权威对账依赖 bot 重启后 world 真实，见方案限制）
         """
+        if not self._pending_confirm:
+            return
+        row_pending = [pc for pc in self._pending_confirm
+                       if pc[2] == self.origin_z + row_z]
+        if not row_pending:
+            return
+        ok_count = 0
+        reset_count = 0
+        stale_count = 0
         try:
             from vmtools_next.data.db import get_session_factory
             from vmtools_next.data.models.build_map_art import MapArtBlockState
             db = get_session_factory()()
             try:
-                count = db.query(MapArtBlockState).filter(
+                for x, y, z, block_id in row_pending:
+                    try:
+                        v = await self.mcp.get_world_block_at(x, y, z)
+                        actual = ((v.get("name") or "air").split("[")[0])
+                    except Exception:
+                        actual = "air"  # 读取失败按旧数据处理
+                    if actual == block_id.split("[")[0]:
+                        ok_count += 1
+                        row = db.query(MapArtBlockState).filter(
+                            MapArtBlockState.task_id == self.task_id,
+                            MapArtBlockState.x == x, MapArtBlockState.y == y,
+                            MapArtBlockState.z == z,
+                        ).first()
+                        if row:
+                            row.verified = True
+                            row.verified_at = datetime.now(timezone.utc)
+                        self._verified_set.add((x, y, z))
+                    elif actual in ("air", ""):
+                        stale_count += 1  # 客户端旧数据，保持弱确认（不重置）
+                    else:
+                        reset_count += 1
+                        row = db.query(MapArtBlockState).filter(
+                            MapArtBlockState.task_id == self.task_id,
+                            MapArtBlockState.x == x, MapArtBlockState.y == y,
+                            MapArtBlockState.z == z,
+                        ).first()
+                        if row:
+                            row.placed = False
+                            row.verified = False
+                            row.actual_block = ""
+                db.commit()
+            finally:
+                db.close()
+            self._pending_confirm = [pc for pc in self._pending_confirm
+                                     if pc not in row_pending]
+            self._reconcile_stats["row"][row_z] = {
+                "ok": ok_count, "reset": reset_count, "stale": stale_count}
+            if ok_count or reset_count:
+                self._activity(
+                    "debug",
+                    f"行 {row_z} 复核：确认 {ok_count} / 重置 {reset_count} / 待定 {stale_count}")
+        except Exception as e:
+            logger.warning("[%s] Row reconcile failed (row %d): %s", self.bot_id, row_z, e)
+
+    async def _reconcile_start(self) -> None:
+        """启动对账（2026-08-16 P0-5）：任务启动（含重新开始）时对 DB 已 placed
+        坐标分批真实复核（bot 重启后本地 world 从服务器重拉，此时为权威状态）。
+
+        - 一致 → verified=True（保留）
+        - air/读取失败 → 保持 placed（客户端可能旧，运行中 _verify_block 兜底）
+        - 明确其它方块 → placed=False 重置（被破坏/放错）
+        取代「信任 DB 计数直接复用」（原 _restore_progress 的信任逻辑），
+        防止 DB 与世界的进度虚高偏差被静默带入本轮。
+        """
+        try:
+            from vmtools_next.data.db import get_session_factory
+            from vmtools_next.data.models.build_map_art import MapArtBlockState
+            db = get_session_factory()()
+            rows = []
+            try:
+                rows = db.query(
+                    MapArtBlockState.x, MapArtBlockState.y, MapArtBlockState.z,
+                    MapArtBlockState.expected_block,
+                ).filter(
                     MapArtBlockState.task_id == self.task_id,
                     MapArtBlockState.placed.is_(True),
                     MapArtBlockState.x >= self.origin_x + self.region.x_start,
                     MapArtBlockState.x <= self.origin_x + self.region.x_end,
                     MapArtBlockState.z >= self.origin_z + self.region.z_start,
                     MapArtBlockState.z <= self.origin_z + self.region.z_end,
-                ).count()
-                if count:
-                    self.progress.blocks_placed = count
-                    # 2026-08-14 模块补充：断点续建信任 DB——加载已 placed 坐标到
-                    # _verified_set，避免 16384 块全量 WS 往返（仅在「重新开始」时全量核对）
-                    rows = db.query(
-                        MapArtBlockState.x, MapArtBlockState.y, MapArtBlockState.z,
-                    ).filter(
-                        MapArtBlockState.task_id == self.task_id,
-                        MapArtBlockState.placed.is_(True),
-                        MapArtBlockState.x >= self.origin_x + self.region.x_start,
-                        MapArtBlockState.x <= self.origin_x + self.region.x_end,
-                        MapArtBlockState.z >= self.origin_z + self.region.z_start,
-                        MapArtBlockState.z <= self.origin_z + self.region.z_end,
-                    ).all()
-                    for row in rows:
-                        self._verified_set.add((row.x, row.y, row.z))
-                    logger.info("[%s] Resumed with %d blocks already placed (%d verified)",
-                                self.bot_id, count, len(rows))
+                ).all()
             finally:
                 db.close()
+            if not rows:
+                return
+            ok_count = 0
+            reset_count = 0
+            stale_count = 0
+            self._activity("info", f"启动对账：DB 已置位 {len(rows)} 块，逐块核对实际方块状态…")
+            db2 = get_session_factory()()
+            try:
+                # 分批复核（每批 50，间隔 0.1s 防阻塞 WS 轮询）
+                for i in range(0, len(rows), 50):
+                    batch = rows[i:i + 50]
+                    for rx, ry, rz, expected in batch:
+                        try:
+                            v = await self.mcp.get_world_block_at(rx, ry, rz)
+                            actual = ((v.get("name") or "air").split("[")[0])
+                        except Exception:
+                            actual = "air"
+                        if actual == expected.split("[")[0]:
+                            ok_count += 1
+                            row = db2.query(MapArtBlockState).filter(
+                                MapArtBlockState.task_id == self.task_id,
+                                MapArtBlockState.x == rx,
+                                MapArtBlockState.y == ry,
+                                MapArtBlockState.z == rz,
+                            ).first()
+                            if row:
+                                row.verified = True
+                                row.verified_at = datetime.now(timezone.utc)
+                            self._verified_set.add((rx, ry, rz))
+                        elif actual in ("air", ""):
+                            stale_count += 1  # 客户端旧数据，保持弱确认
+                        else:
+                            reset_count += 1
+                            row = db2.query(MapArtBlockState).filter(
+                                MapArtBlockState.task_id == self.task_id,
+                                MapArtBlockState.x == rx,
+                                MapArtBlockState.y == ry,
+                                MapArtBlockState.z == rz,
+                            ).first()
+                            if row:
+                                row.placed = False
+                                row.verified = False
+                                row.actual_block = ""
+                    db2.commit()
+                    if i + 50 < len(rows):
+                        await asyncio.sleep(0.1)
+            finally:
+                db2.close()
+            self.progress.blocks_placed = ok_count  # 以世界复核一致的计数为准
+            self._reconcile_stats["start"] = {
+                "total": len(rows), "ok": ok_count, "reset": reset_count, "stale": stale_count}
+            self._activity(
+                "info",
+                f"启动对账完成：{ok_count} 一致 / {reset_count} 重置 / {stale_count} 待定"
+                f"（共 {len(rows)} 块 DB 已置位）")
         except Exception as e:
-            logger.warning("[%s] Progress restore failed: %s", self.bot_id, e)
+            logger.warning("[%s] Start reconcile failed: %s", self.bot_id, e)
+
+    async def _restore_progress(self) -> None:
+        """Restore previously persisted progress from DB (breakpoint resume).
+
+        2026-08-16 P0-5：改由 _reconcile_start 做真实世界对账（以实际方块状态
+        为唯一权威），此处仅保留进度计数兜底（对账失败时仍以 DB 计数启动，
+        运行中 _verify_block 逐格纠偏）。
+        """
+        await self._reconcile_start()
+
+    async def _reconcile_region_final(self) -> tuple[int, int]:
+        """区域完成前对账（2026-08-16 P0-5）：对 DB 中本区域 placed=True 的行复核。
+
+        返回 (已确认数, 待确认数)：
+          - verified=True / 复核读到期望方块 → 已确认（ok）
+          - 复核读到 air/读取失败 → 待确认（pending，客户端数据旧，不重置、不计入完成）
+          - 复核读到明确的其它方块 → placed=False 重置（放错/被破坏）
+        同时同步 map_art_tasks.placed_blocks 聚合计数（B5）。
+
+        异常时返回 (0, 0)：调用方 placed=0 < total → 判 failed（fail-safe，不误报完成）。
+        """
+        try:
+            from vmtools_next.data.db import get_session_factory
+            from vmtools_next.data.models.build_map_art import (
+                MapArtBlockState, MapArtTask,
+            )
+            from sqlalchemy import func
+            db = get_session_factory()()
+            rows = []
+            try:
+                rows = db.query(
+                    MapArtBlockState.x, MapArtBlockState.y, MapArtBlockState.z,
+                    MapArtBlockState.expected_block, MapArtBlockState.verified,
+                ).filter(
+                    MapArtBlockState.task_id == self.task_id,
+                    MapArtBlockState.placed.is_(True),
+                    MapArtBlockState.x >= self.origin_x + self.region.x_start,
+                    MapArtBlockState.x <= self.origin_x + self.region.x_end,
+                    MapArtBlockState.z >= self.origin_z + self.region.z_start,
+                    MapArtBlockState.z <= self.origin_z + self.region.z_end,
+                ).all()
+            finally:
+                db.close()
+            ok_count = 0
+            pending_count = 0
+            reset_count = 0
+            db2 = get_session_factory()()
+            try:
+                for rx, ry, rz, expected, verified in rows:
+                    if verified:
+                        ok_count += 1
+                        continue
+                    try:
+                        v = await self.mcp.get_world_block_at(rx, ry, rz)
+                        actual = ((v.get("name") or "air").split("[")[0])
+                    except Exception:
+                        actual = "air"
+                    if actual == expected.split("[")[0]:
+                        ok_count += 1
+                        row = db2.query(MapArtBlockState).filter(
+                            MapArtBlockState.task_id == self.task_id,
+                            MapArtBlockState.x == rx,
+                            MapArtBlockState.y == ry,
+                            MapArtBlockState.z == rz,
+                        ).first()
+                        if row:
+                            row.verified = True
+                            row.verified_at = datetime.now(timezone.utc)
+                        self._verified_set.add((rx, ry, rz))
+                    elif actual in ("air", ""):
+                        pending_count += 1  # 客户端数据旧，未确认（不重置）
+                    else:
+                        reset_count += 1
+                        row = db2.query(MapArtBlockState).filter(
+                            MapArtBlockState.task_id == self.task_id,
+                            MapArtBlockState.x == rx,
+                            MapArtBlockState.y == ry,
+                            MapArtBlockState.z == rz,
+                        ).first()
+                        if row:
+                            row.placed = False
+                            row.verified = False
+                            row.actual_block = ""
+                db2.commit()
+                # 聚合进度同步（全任务 placed 计数）
+                try:
+                    task = db2.query(MapArtTask).filter(
+                        MapArtTask.task_id == self.task_id).first()
+                    if task is not None:
+                        task.placed_blocks = db2.query(func.count()).select_from(
+                            MapArtBlockState).filter(
+                            MapArtBlockState.task_id == self.task_id,
+                            MapArtBlockState.placed.is_(True),
+                        ).scalar() or 0
+                    db2.commit()
+                except Exception as _agg_err:
+                    logger.warning("[%s] Final reconcile aggregate failed: %s",
+                                   self.bot_id, _agg_err)
+            finally:
+                db2.close()
+            self._reconcile_stats["done"] = {
+                "ok": ok_count, "pending": pending_count, "reset": reset_count}
+            if reset_count or pending_count:
+                self._activity(
+                    "info",
+                    f"完成前对账：确认 {ok_count} / 待确认 {pending_count} / 重置 {reset_count}")
+            return ok_count, pending_count
+        except Exception as e:
+            logger.warning("[%s] Final reconcile failed: %s", self.bot_id, e)
+            return 0, 0  # fail-safe：按未完成处理
 
     async def _verify_block(self, x: int, y: int, z: int, block_id: str) -> bool:
         """Compare world block at (x,y,z) with the expected block_id (name only).
@@ -858,7 +1228,17 @@ class BotBuildLoop:
             return False
 
     async def _place_with_retry(self, x: int, y: int, z: int, block_id: str) -> bool:
-        """Place a block with retries; returns True if eventually placed."""
+        """Place a block with retries; returns True if eventually placed (弱确认成功).
+
+        2026-08-16 P0-5 放置后校验分层（防进度虚高）：
+          - 强确认：放置后 world 读到期望方块（服务器真实或本地 forceLocalBlock 同步，
+            两者在重启对账时收敛）→ verified；
+          - 放错：world 读到明确的非期望、非 air 方块 → 重试（attempt 内）；
+          - 弱确认：world 读到 air/读取失败（Via 不推送块更新，客户端数据旧）→
+            信任 place_block 发出（服务器已接受），坐标记入 _pending_confirm，
+            由行尾复核（_reconcile_row）/启动对账收敛 verified，防止进度虚高。
+        """
+        expected = block_id.split("[")[0]
         for attempt in range(self._place_retries):
             await self._paused.wait()
             if self._stopped:
@@ -876,22 +1256,31 @@ class BotBuildLoop:
                     # 客户端 blockAt 可能读旧 air → 信任服务器直接以目标下方为参考放置
                 )
                 if result.get("success"):
-                    # 2026-08-15 P3：放置后真实确认——但客户端 blockAt 可能读到旧 air
-                    # （Via 不推送块更新）→ air/读取失败 不算失败（信任 place_block success，
-                    # 服务器已接受放置）；只有"读到明确的其它非预期方块"才重试。
+                    # P0-3 防线：放置返回的手持物品必须与期望一致（防止放错方块）
+                    pw = result.get("placed_with") or ""
+                    if pw and self._normalize_item_id(pw) != self._normalize_item_id(expected):
+                        logger.warning(
+                            "[%s] Place used WRONG item at (%d,%d,%d): held %s want %s — abort",
+                            self.bot_id, x, y, z, pw, expected)
+                        return False  # 已发出错误放置，由上层跳过/待补（对账会修正）
+                    # P0-5 放置后确认（分层）
                     try:
                         v = await self.mcp.get_world_block_at(x, y, z)
                         actual = ((v.get("name") or "air").split("[")[0])
-                        if actual == block_id.split("[")[0]:
+                        if actual == expected:
+                            # 强确认（服务器真实或本地已同步）
+                            self._verified_set.add((x, y, z))
                             return True
                         if actual in ("air", ""):
-                            # 客户端数据旧（服务器已放置但本地未同步）→ 信任成功
+                            # 弱确认：客户端数据旧（服务器已放置但本地未同步）→ 记入待确认
+                            self._pending_confirm.append((x, y, z, block_id))
                             return True
                         logger.warning(
                             "[%s] Place confirmed WRONG at (%d,%d,%d): got %s want %s — retry",
-                            self.bot_id, x, y, z, actual, block_id.split("[")[0])
+                            self.bot_id, x, y, z, actual, expected)
                     except Exception:
-                        # 读取失败（chunk 未加载等）→ 信任 place_block 结果（避免死循环）
+                        # 读取失败（chunk 未加载等）→ 弱确认（避免死循环）
+                        self._pending_confirm.append((x, y, z, block_id))
                         return True
                 logger.warning("[%s] Place failed at (%d,%d,%d) attempt %d/%d: %s",
                                self.bot_id, x, y, z, attempt + 1, self._place_retries, result)
@@ -901,17 +1290,19 @@ class BotBuildLoop:
             await asyncio.sleep(0.5)
         return False
 
-    async def _ensure_item_in_hand(self, block_id: str):
+    async def _ensure_item_in_hand(self, block_id: str) -> bool:
         """Switch hotbar to the required block type, restock if empty.
 
         ⚠️ 必须检查 select_hotbar_item 返回值（success:false 不会抛异常——
         WS handler 返回错误 dict，而非 reject）。原实现用 except 捕获失败
         永远不触发补货（P0 修复）。
+        2026-08-16 P0-3：返回 bool —— True=手持已就绪；False=无法获取该材料
+        （补货也失败/装备失败），调用方跳过放置，杜绝手持错误物品放错方块。
         """
         # 2026-08-14 模块B：快捷栏动态识别 —— 先查 _hotbar_map 缓存，命中则直接切槽（零搜索），
         # 未命中才走 select_hotbar_item 全背包搜索，成功后回填缓存。
         if self._current_item == block_id:
-            return
+            return True
         clean_id = block_id.split("[")[0] if "[" in block_id else block_id
 
         # 1) 查缓存：_hotbar_map 里有 → 直接 set_quick_bar_slot（零成本）
@@ -924,7 +1315,7 @@ class BotBuildLoop:
                     if r.get("success"):
                         self._current_item = block_id
                         self._current_slot = slot
-                        return
+                        return True
                 except Exception:
                     pass
                 # 缓存失效（物品已用完/被移动）→ 从缓存清除，走搜索
@@ -932,9 +1323,8 @@ class BotBuildLoop:
                 break
 
         # 2) 缓存未命中 → 全背包搜索
-        result = await self._try_select_item(clean_id, block_id)
-        if result:
-            return
+        if await self._try_select_item(clean_id, block_id):
+            return True
 
         # select 失败 → 检查背包存量
         count = await self._check_inventory_level(block_id)
@@ -943,10 +1333,10 @@ class BotBuildLoop:
             logger.warning("[%s] Equip %s failed but %d in inventory, retrying...",
                            self.bot_id, clean_id, count)
             if await self._try_select_item(clean_id, block_id):
-                return
+                return True
             logger.warning("[%s] Equip %s retry failed, skipping this color",
                            self.bot_id, clean_id)
-            return
+            return False
 
         # 背包中没有该物品 → 补货（2026-08-14：全量补齐所有缺的材料再返回，
         # 避免"缺A补A、回来又缺B再传送"的反复奔波）
@@ -955,7 +1345,10 @@ class BotBuildLoop:
         if await self._do_full_restock(clean_id):
             # 补货后刷新 hotbar_map 并重试
             await self._refresh_hotbar_map()
-            await self._try_select_item(clean_id, block_id)
+            if await self._try_select_item(clean_id, block_id):
+                return True
+        logger.warning("[%s] 补货后仍无法装备 %s，跳过该材料", self.bot_id, clean_id)
+        return False
 
     async def _try_select_item(self, clean_id: str, block_id: str) -> bool:
         """Select/equip item; returns True only if the hand now holds it."""
@@ -1223,16 +1616,12 @@ class BotBuildLoop:
                     f"——若 bot 能传送回建造点则继续，否则检查领地权限/坐标")
         return env
 
-    async def _verify_at_build_area(self, retries: int = 2) -> bool:
-        """传送后验证 bot 是否真的回到建造区域附近（2026-08-15 增强）。
+    async def _verify_at_build_area(self, retries: int = 2) -> Optional[str]:
+        """传送后验证 bot 是否真的回到建造区域附近（2026-08-16 P0-4 改造）。
 
-        - 位置获取失败时等 1.5s 重试（最多 retries 次），全部失败才视为"未知不拦截"——
-          避免传送失败被静默掩盖（原实现位置 None 直接放行，兜底链失效）。
-        - 2026-08-15 决定性修复（y 严格校验 + 复查）：
-          · 站立层 y = origin_y-1（68）；bot 站平台顶脚部 y≈68.0±0.5。
-          · y 偏差 ≥1.0 判失败（悬空 y=69、掉水里 y=58 都不再"验证通过"——
-            此前 y=69 在 3 格容忍内被放行，bot 下一秒掉进平台下水面）。
-          · 验证通过后再等 1.5s 复查一次位置（确认没掉下去/没漂走）。
+        返回 None = 验证通过；否则返回失败原因标签（供 _try_teleport_home 分流）：
+          - "teleport_no_effect"  ：多次无法获取位置 / 位置不在建造区域（传送未生效或传错位置）
+          - "fall_after_teleport" ：位置对但高度不符 / 未落地 / 复查漂移（传回后再次坠落/悬空）
         """
         for attempt in range(retries + 1):
             if attempt > 0:
@@ -1243,23 +1632,18 @@ class BotBuildLoop:
                     self._activity("debug",
                                    f"传送后位置获取失败，{1.5}s 后重试（{attempt + 1}/{retries}）")
                     continue
-                self._activity("debug", "传送后多次尝试仍无法获取 bot 位置，视为成功（不拦截）")
-                return True
+                self._activity("warn", "传送后多次尝试仍无法获取 bot 位置——判定传送未生效")
+                return "teleport_no_effect"
             x, z, y = p
-            expected_y = self.origin_y + self._stand_y_offset  # 站立层（平台顶 y=68）
-            # 2026-08-15 决定性修复：y 严格校验（<1.0）——bot 站平台顶脚部 y≈68.0±0.5；
-            # 悬空 y=69 / 掉水里 y=58 都判失败（此前 3 格容忍放行 y=69，bot 下一秒掉水里）
+            expected_y = self.origin_y + self._stand_y_offset  # 站立层（平台顶）
             if abs(float(y) - expected_y) >= 1.0:
                 self._activity("warn",
                                f"传送后高度不符（站立层={expected_y}，实际y={y:.1f}）——"
                                f"判定未到位（可能悬空/掉水），走兜底")
-                return False
+                return "fall_after_teleport"
             if self._near_build_area(x, z):  # x/z 判断（y 已单独严格校验）
                 # 复查：等 1.5s 再确认位置没变（防悬空瞬间验证通过后掉下去）
                 await asyncio.sleep(1.5)
-                # 2026-08-15 决定性补充：检查 bot 是否真正落地（on_ground）——
-                # 传送到悬空处 y 值可能正确（如平台边缘外1格）但 bot 下一秒掉水里，
-                # is_on_ground=False 时判定未到位，走第 3 级寻路走回（pathfinder 会走能站的路）
                 try:
                     st = await self.mcp.get_player_state()
                     d2 = st.get("data", st) if isinstance(st, dict) else {}
@@ -1267,57 +1651,123 @@ class BotBuildLoop:
                     if on_ground is False:
                         self._activity("warn",
                                        f"传送后 bot 未落地（on_ground=False，悬空/水中）——判定未到位，走兜底")
-                        return False
+                        return "fall_after_teleport"
                 except Exception:
                     pass
                 p2 = await self._get_player_pos_full()
                 if p2 is None:
                     self._activity("debug",
                                    f"传送后位置验证通过（{x:.0f},{z:.0f},y={y:.0f}），复查位置获取失败视为通过")
-                    return True
+                    return None
                 x2, z2, y2 = p2
                 if (abs(x2 - x) > 3.0 or abs(z2 - z) > 3.0
                         or abs(float(y2) - expected_y) >= 1.0):
                     self._activity("warn",
                                    f"传送后位置复查异常（初始{x:.0f},{z:.0f},y={y:.0f}→复查"
                                    f"{x2:.0f},{z2:.0f},y={y2:.0f}）——bot 未稳定，判定未到位")
-                    return False
+                    return "fall_after_teleport"
                 self._activity("debug",
                                f"传送后位置验证通过（{x:.0f},{z:.0f},y={y:.0f}）在建造区域附近")
-                return True
+                return None
             self._activity("warn",
                            f"传送后位置不在建造区域（{x:.0f},{z:.0f},y={y:.0f}），需固定指令兜底")
+            return "teleport_no_effect"
+        return "teleport_no_effect"
+
+    async def _wait_landed(self, timeout_s: float = 5.0) -> bool:
+        """落地稳定化（P0-4）：等待 bot 真正落地（is_on_ground=true 且位置稳定）。
+
+        用于「传回后再次坠落」场景——bot 传送到悬空处/水中时，先等落地稳定
+        再验证，避免反复「传送→坠落→再传送」的空转。
+        """
+        try:
+            t0 = time.monotonic()
+            last_y = None
+            stable_ticks = 0
+            while time.monotonic() - t0 < timeout_s:
+                st = await self.mcp.get_player_state()
+                d2 = st.get("data", st) if isinstance(st, dict) else {}
+                on_ground = d2.get("is_on_ground")
+                loc = d2.get("location") or {}
+                cy = loc.get("y")
+                if on_ground is True and isinstance(cy, (int, float)):
+                    if last_y is not None and abs(float(cy) - last_y) < 0.05:
+                        stable_ticks += 1
+                        if stable_ticks >= 3:  # 连续 3 次采样位置稳定且落地
+                            return True
+                    else:
+                        stable_ticks = 0
+                    last_y = float(cy)
+                await asyncio.sleep(0.6)
             return False
-        return False
+        except Exception:
+            return False
 
     async def _try_teleport_home(self, reason: str = "") -> bool:
-        """传送回建造点（2026-08-14 兜底链 + 2026-08-15 寻路走回增强）：
+        """传送回建造点（2026-08-16 P0-4 兜底状态机，替换原固定三级链）：
 
-        1) 先用临时点 return（/ehomes dth）传送 → 等 2.5s → 验证位置在建造区域附近；
-        2) 临时点传送失败/位置不对（死亡/意外导致 dth 不在地图画区域）→
-           改用固定指令 return_fixed（/ehomes mapart 或 /tp x y z，可自定义）兜底；
-        3) 2026-08-15 新增：前两级都失败（如 /tp 被服务器忽略、mapart 家未设置）→
-           **pathfinder + 蹲搭走回建造区**（bot 掉到平台下方/远处时自愈），
-           目标 = 区域北缘站立点 (origin_x, origin_y-1, origin_z-1)。
+        分级与失败原因分流：
+          1) 临时点传送（/ehomes dth）——每级内重试 _tp_retry_each 次；
+             · teleport_no_effect（传送未生效/传错位置）→ 换下一级传送；
+             · fall_after_teleport（传回后坠落/未落地）→ 先 _wait_landed 落地稳定化，
+               稳定后再验证，仍失败才换级；
+          2) 固定指令兜底（return_fixed，如 /ehomes mapart）——同策略；
+          3) pathfinder + 蹲搭走回建造区（传送链全失败时的自愈）。
+        总尝试上限 _tp_retry_total（默认 8）——防「传送未生效」死循环空转；
+        每次失败记录原因标签/次数/耗时（P2-1 兜底决策日志）。
         """
-        # 1) 临时点传送
+        t_start = time.monotonic()
+        attempts = 0
+        fail_log: list[str] = []
+
+        async def _try_tp(cmd: str) -> bool:
+            nonlocal attempts
+            for _i in range(self._tp_retry_each):
+                if self._stopped:
+                    return False
+                attempts += 1
+                if attempts > self._tp_retry_total:
+                    self._activity("error",
+                                   f"传送兜底尝试次数超上限（{self._tp_retry_total}），放弃")
+                    return True  # 占位：实际返回 True 会导致误判成功——由调用方校验位置
+                if not await self._send_teleport(cmd):
+                    fail_log.append(f"{cmd}:send_fail")
+                    continue
+                verify = await self._verify_at_build_area()
+                if verify is None:
+                    return True
+                fail_log.append(f"{cmd}:{verify}")
+                if verify == "fall_after_teleport":
+                    # 传回后坠落 → 先落地稳定化再复验（区分于传送未生效）
+                    self._activity("warn", "传送到位但未稳定（坠落/悬空），等待落地稳定后复验…")
+                    if await self._wait_landed():
+                        verify2 = await self._verify_at_build_area()
+                        if verify2 is None:
+                            return True
+                        fail_log.append(f"{cmd}:landed:{verify2}")
+            return False
+
+        # 1) 临时点传送（分级重试）
         cmd = self._supply_cfg.get("return", "/ehomes dth")
         if reason:
             self._activity("warn", f"{reason}，传送回建造点（{cmd}）")
         else:
             self._activity("info", f"传送回建造点（{cmd}）")
-        if await self._send_teleport(cmd) and await self._verify_at_build_area():
+        if await _try_tp(cmd):
+            self._activity("debug", f"传送兜底成功（{cmd}，共尝试 {attempts} 次，耗时 {time.monotonic() - t_start:.1f}s）")
             return True
+
         # 2) 固定指令兜底（2026-08-15：DB 未配置 return_fixed 时回退默认 /ehomes mapart）
         fixed = (self._supply_cfg.get("return_fixed") or "/ehomes mapart").strip()
         if fixed and fixed != cmd:
             self._activity("warn", f"临时传送点不可用，改用固定指令兜底（{fixed}）")
-            if await self._send_teleport(fixed) and await self._verify_at_build_area():
+            if await _try_tp(fixed):
+                self._activity("debug", f"传送兜底成功（{fixed}，共尝试 {attempts} 次，耗时 {time.monotonic() - t_start:.1f}s）")
                 return True
+
         # 3) 2026-08-15 新增：pathfinder + 蹲搭走回建造区（传送链全失败时的自愈）
-        self._activity("warn", "传送回建造点失败（临时点+固定指令均未到建造区域），尝试寻路走回")
+        self._activity("warn", f"传送回建造点失败（{attempts} 次，原因 {';'.join(fail_log) or 'unknown'}），尝试寻路走回")
         try:
-            # 目标 = 区域北缘站立点（bot 站 z=origin_z-1，y=origin_y-1 地面层）
             gx = self.origin_x + self.region.x_start
             gz = self.origin_z + self.region.z_start - 1
             gy = self.origin_y + self._stand_y_offset
@@ -1331,7 +1781,8 @@ class BotBuildLoop:
                 return True
         except Exception as e:
             logger.warning("[%s] Walk-back to build area failed: %s", self.bot_id, e)
-        self._activity("warn", "传送与寻路走回均失败，无法返回建造点")
+        self._activity("warn",
+                       f"传送与寻路走回均失败，无法返回建造点（总尝试 {attempts} 次，耗时 {time.monotonic() - t_start:.1f}s）")
         return False
 
     @staticmethod
@@ -2668,10 +3119,11 @@ class MapArtCoordinator:
                 "health": health,
                 "food": food,
                 "region": {
-                    "x_start": loop.region.x_start,
-                    "x_end": loop.region.x_end,
-                    "z_start": loop.region.z_start,
-                    "z_end": loop.region.z_end,
+                    # 2026-08-16 审查修复：region 为相对坐标，画布按世界坐标渲染 → 转世界
+                    "x_start": loop.region.x_start + self.origin[0],
+                    "x_end": loop.region.x_end + self.origin[0],
+                    "z_start": loop.region.z_start + self.origin[2],
+                    "z_end": loop.region.z_end + self.origin[2],
                 },
                 "blocks_placed": loop.progress.blocks_placed,
                 "blocks_total": loop.progress.blocks_total,
@@ -2695,8 +3147,9 @@ class MapArtCoordinator:
                 # 重启后颜色漂移；crc32 保证同一 bot 永远同色（前端画布标记同算法）
                 "color": f"#{zlib.crc32(bid.encode()) & 0xFFFFFF:06x}",
                 "region": {
-                    "x_start": r.x_start, "x_end": r.x_end,
-                    "z_start": r.z_start, "z_end": r.z_end,
+                    # 2026-08-16 审查修复：region 为相对坐标，画布按世界坐标渲染 → 转世界
+                    "x_start": r.x_start + self.origin[0], "x_end": r.x_end + self.origin[0],
+                    "z_start": r.z_start + self.origin[2], "z_end": r.z_end + self.origin[2],
                 },
                 "state": "idle",
             }

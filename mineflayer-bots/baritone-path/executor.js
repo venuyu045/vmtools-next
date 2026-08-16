@@ -51,6 +51,7 @@ async function executeMovement(bot, mv, opts = {}) {
   let arrived = false;
   let lastPos = botFoot(bot);
   let stillMs = 0;
+  let strafeAttempts = 0; // 2026-08-16 P0-1：卡住时 strafe 侧移尝试次数
   const start = Date.now();
 
   const ctrl = { forward: false, back: false, left: false, right: false, jump: false, sneak: false };
@@ -74,10 +75,12 @@ async function executeMovement(bot, mv, opts = {}) {
       const horizontalOK = f.x === to.x && f.z === to.z;
       const yOK = Math.abs(f.py - to.y) <= ARRIVE_Y;
 
-      // 爬升/跳跃：水平接近目标时持续跳跃直到 y 到位
+      // 爬升/跳跃（2026-08-16 P0-1 增强）：提前量从 1.1 放宽到 2.0——bot 水平接近
+      // 目标时就开始持续跳（原到 1.1 格才跳，平台边缘/低台阶处起跳过晚易撞墙），
+      // 直到 y 到位；y 到位后停止跳跃（防连续跳过头）。
       if (isAscend || isParkour) {
         const hDist = Math.hypot(f.px - to.x, f.pz - to.z);
-        if (hDist < 1.1 && !yOK) {
+        if (hDist < 2.0 && !yOK) {
           setCtrl({ jump: true });
         } else if (yOK) {
           setCtrl({ jump: false });
@@ -86,12 +89,28 @@ async function executeMovement(bot, mv, opts = {}) {
 
       if (horizontalOK && yOK) { arrived = true; break; }
 
-      // 卡住检测：2s 内位置几乎没变
+      // 卡住检测：2s 内位置几乎没变 → 先尝试 strafe 侧移一格（2026-08-16 P0-1：
+      // 原直接判失败；侧移可绕过前方 1 格阻挡/悬崖边缘，避免频繁重规划），
+      // 侧移仍无效（累计 2 次）才判失败。
       if (lastPos) {
         const moved = Math.hypot(f.px - lastPos.px, f.py - lastPos.py, f.pz - lastPos.pz);
         if (moved < 0.05) {
           stillMs += TICK_MS;
-          if (stillMs > 2000) break;
+          if (stillMs > 2000) {
+            if (strafeAttempts < 2) {
+              strafeAttempts++;
+              stillMs = 0;
+              // 朝目标方向的一侧尝试侧移 0.6s（left/right 交替），结束后恢复 forward
+              const side = strafeAttempts % 2 === 1 ? 'left' : 'right';
+              try {
+                setCtrl({ forward: false, [side]: true });
+                await sleep(600);
+                setCtrl({ forward: true, [side]: false });
+              } catch (e) { /* 侧移失败忽略 */ }
+              continue;
+            }
+            break; // 侧移 2 次仍卡住 → 判失败
+          }
         } else {
           stillMs = 0;
         }

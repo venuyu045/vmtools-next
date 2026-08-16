@@ -159,13 +159,23 @@ class MineflayerConfig(BaseModel):
     map_art_restock_stacks: int = 1  # 1-16
     # 单 bot 两次补货最小间隔（秒）——防"取 64 用 165 块又传"的短周期反复（配合组数配置）
     map_art_min_restock_interval_s: int = 90
-    # ⚠️ 2026-08-15 决定性修复（第二次修正）：bot 站立层相对 origin_y 的偏移。
-    #   当前任务实测：5397 处 68 层=white_concrete（平台顶 68.0）、69 层=air——
-    #   bot 必须站 origin_y-1（68）。mapart 家 69 能站只是用户设家的局部高点
-    #   （平台局部凸起），不代表建造区站立层，曾误导我把 offset 改成 0 导致 bot
-    #   站 69 层悬空掉水。默认 -1 = 站立层 origin_y-1（15.2.11 验证结论）。
-    #   若某任务平台顶确实=origin_y（方块放平台顶同层），服务器 config.yaml 设 0。
-    map_art_stand_y_offset: int = 0  # -1 | 0 | 1
+    # ⚠️ 2026-08-16 语义统一（P1-1）：本字段 = bot 脚部 y 相对 origin_y 的偏移
+    #   （即 bot 站立高度），与 map_art_coordinator._stand_y_for_row 的用法一致。
+    #   默认 0 → bot 脚 y = origin_y（第一行站平台顶：平台 68 层顶面 = 脚 69 = origin_y，
+    #   与 2026-08-15 实测「bot 脚 69.0 = 站 68 层顶」一致）；后续行站方块顶 = origin_y+1。
+    #   旧注释（-1 = 站立方块层 origin_y-1）是另一套语义，已废弃，勿再混用。
+    map_art_stand_y_offset: int = 0  # 0 默认 | 旧任务平台结构特殊可 -1/1（谨慎）
+    # ── 2026-08-16 P2：寻路/放置/兜底参数收敛（原散落硬编码）──
+    # 寻路失败重试次数（baritone+旧 pathfinder 各自重试，默认 2）
+    map_art_move_retries: int = 2
+    # 放置失败重试次数（默认 3）
+    map_art_place_retries: int = 3
+    # 移动到位高度校验 y 容差（P1-3 双条件：y 偏差 ≤ 容差 且 脚下实体；默认 1.0 格）
+    map_art_verify_y_tol: float = 1.0
+    # 传送兜底：每级（临时点/固定指令）内重试次数（默认 3）
+    map_art_tp_retry_each: int = 3
+    # 传送兜底：总尝试上限（防「传送未生效」死循环空转，默认 8）
+    map_art_tp_retry_total: int = 8
     # ── 2026-08-15 环境检测整合（用户需求：维度+位置+附近领地结合）──
     # 地图画建造领地（Residence 名，可自定义；空=不校验）。bot 启动建造前检查
     # 当前所在领地是否匹配（用户主领地 venus，可按任务改成自己的领地）。

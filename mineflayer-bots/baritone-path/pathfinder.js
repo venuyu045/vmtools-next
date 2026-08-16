@@ -28,19 +28,36 @@ async function pathTo(bot, goalX, goalY, goalZ, opts = {}) {
   // 2026-08-15 P5：寻路前清空方块缓存——世界会变化（bot 放置/平台实际存在但
   // 缓存可能是旧 air），A* 必须读到最新状态（否则 no_path 误判）
   world.clearCache();
-  // 2026-08-15 P5：等待目标 chunk 加载（baritone A* 需要读目标区域方块，
-  // chunk 未加载时 blockAt 全 null → 误判不可走）
-  try {
-    const cx = Math.floor(goalX / 16), cz = Math.floor(goalZ / 16);
-    if (typeof bot.world.hasChunk === 'function' && !bot.world.hasChunk(cx, cz)) {
-      for (let i = 0; i < 25; i++) {
-        await sleep(200);
-        if (bot.world.hasChunk(cx, cz)) break;
-      }
-    }
-  } catch (e) { /* 无法检查 chunk 则跳过 */ }
   const start = botFoot(bot);
   if (!start) return { success: false, reason: 'no_position' };
+
+  // 2026-08-16 P0-1：chunk 走廊预检——等待起点→目标矩形走廊内【全部】chunk 加载
+  // （原仅检查目标 chunk）。配合 world.js 未加载块保守判定（未加载不可走），
+  // 避免 A* 在空 chunk 上规划踩空路径；路径中途 chunk 未加载 → 直接 no_path
+  // 而非生成不可行路径。
+  try {
+    if (typeof bot.world.hasChunk === 'function') {
+      const cx0 = Math.floor(Math.min(start.x, goalX) / 16);
+      const cx1 = Math.floor(Math.max(start.x, goalX) / 16);
+      const cz0 = Math.floor(Math.min(start.z, goalZ) / 16);
+      const cz1 = Math.floor(Math.max(start.z, goalZ) / 16);
+      const needed = (cx1 - cx0 + 1) * (cz1 - cz0 + 1);
+      let loaded = 0;
+      for (let i = 0; i < 25; i++) { // 最多等 5s（25×200ms）
+        loaded = 0;
+        for (let cx = cx0; cx <= cx1; cx++) {
+          for (let cz = cz0; cz <= cz1; cz++) {
+            if (bot.world.hasChunk(cx, cz)) loaded++;
+          }
+        }
+        if (loaded >= needed) break;
+        await sleep(200);
+      }
+      if (loaded < needed) {
+        log(`[baritone] 走廊 chunk 未全部加载（${loaded}/${needed}），等待后仍缺失`);
+      }
+    }
+  } catch (e) { /* 无法检查 chunk 则跳过（回退旧行为） */ }
 
   log(`[baritone] 寻路 from=(${start.x},${start.y},${start.z}) to=(${goalX},${goalY},${goalZ})`);
 

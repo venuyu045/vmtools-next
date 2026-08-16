@@ -262,6 +262,45 @@ def _run_lightweight_migrations(engine) -> None:
                     conn.execute(text("ALTER TABLE map_art_tasks ADD COLUMN food_config TEXT DEFAULT ''"))
             except Exception as _e:
                 logger.warning("map_art_tasks supply_config migration check: {}", _e)
+            # 地图画方块坐标语义统一（2026-08-16 P0-5/B4）：
+            # map_art_block_states 历史混存两套坐标（create 时投影相对坐标 0..size-1 /
+            # 运行 flush 时世界坐标 origin+相对）。统一为世界坐标。
+            # 幂等保护：用 SQLite PRAGMA user_version（0→1 只执行一次），
+            # 且按「相对坐标特征行」过滤（x/z ∈ [0,size) 且 placed=False，绝大多数
+            # 非零 origin 地图画 origin 远离 0，区间不重叠可安全区分）。
+            try:
+                cur_v = conn.execute(text("PRAGMA user_version")).fetchone()
+                cur_ver = int(cur_v[0]) if cur_v and cur_v[0] is not None else 0
+                if cur_ver < 1:
+                    mt_columns = {row[1] for row in conn.execute(text("PRAGMA table_info(map_art_tasks)")).fetchall()}
+                    bs_columns = {row[1] for row in conn.execute(text("PRAGMA table_info(map_art_block_states)")).fetchall()}
+                    if ("origin_x" in mt_columns and "origin_z" in mt_columns
+                            and "task_id" in bs_columns and "placed" in bs_columns):
+                        rows = conn.execute(text(
+                            "SELECT task_id, origin_x, origin_y, origin_z, "
+                            "projection_size_x, projection_size_z FROM map_art_tasks"
+                        )).fetchall()
+                        migrated = 0
+                        for task_id, ox, oy, oz, sx, sz in rows:
+                            if not ox and not oy and not oz:
+                                continue  # origin 全 0：相对=世界，无需转换
+                            sx = sx or 0
+                            sz = sz or 0
+                            if sx <= 0 or sz <= 0:
+                                continue  # 尺寸未知无法判定相对特征，跳过（对账兜底）
+                            n = conn.execute(text(
+                                "UPDATE map_art_block_states "
+                                "SET x = x + :ox, y = y + :oy, z = z + :oz "
+                                "WHERE task_id = :tid AND placed = 0 "
+                                "AND x >= 0 AND x < :sx AND z >= 0 AND z < :sz"
+                            ), {"ox": ox or 0, "oy": oy or 0, "oz": oz or 0,
+                                "sx": sx, "sz": sz, "tid": task_id}).rowcount
+                            migrated += n
+                        if migrated:
+                            logger.info("MapArt block coords migrated to world coords: {} rows", migrated)
+                    conn.execute(text("PRAGMA user_version = 1"))
+            except Exception as _e:
+                logger.warning("map_art_block_states coord migration check: {}", _e)
             conn.commit()
     except Exception as e:
         logger.warning("Lightweight migration check: {}", e)

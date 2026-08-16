@@ -50,11 +50,15 @@ async def execute_map_art_start(task_id: str, db: Session) -> tuple[bool, str]:
 
     # P2-7：投影解析结果在 create_task 时已写入 MapArtBlockState（DB 即解析缓存），
     # 启动时直接从 DB 重建 layers，避免对大投影重复 parse_file（512×512+ 耗时/IO）。
+    # 2026-08-16 P0-5/B4：DB 统一存【世界坐标】（create 落库已转 origin+相对），
+    # 此处重建回【相对坐标】供 coordinator（build_2d_matrix / _place_row 均用相对）。
     from vmtools_next.data.models.build_map_art import MapArtBlockState as _MABS
     _rows = db.query(_MABS).filter(_MABS.task_id == task_id).all()
     _layers: dict[int, list[tuple[int, int, int, str]]] = {}
+    _ox, _oy, _oz = task.origin_x or 0, task.origin_y or 0, task.origin_z or 0
     for _r in _rows:
-        _layers.setdefault(_r.y, []).append((_r.x, _r.y, _r.z, _r.expected_block))
+        _layers.setdefault(_r.y - _oy, []).append(
+            (_r.x - _ox, _r.y - _oy, _r.z - _oz, _r.expected_block))
     if not _layers:
         return False, "任务无方块数据（投影解析结果缺失），无法启动"
 
@@ -429,9 +433,13 @@ async def create_task(
 
     # Block states（P2-19：bulk insert 分批提交，避免 16384+ 条单 commit 过慢）
     # ⚠️ 2026-08-13 修复：此前误写 `layers`（未定义变量）→ NameError 500；
-    # 方块数据来自 parse_file 返回的 parsed.layers（y_offset → [(x,y,z,block)]）
+    # 方块数据来自 parse_file 返回的 parsed.layers（y_offset → [(x,y,z,block)]，
+    # 投影 Position=(0,0,0) 校验后为相对坐标 0..size-1）。
+    # 2026-08-16 P0-5/B4：落库统一转【世界坐标】（origin + 相对），与运行中
+    # _flush_db / _restore_progress / get_task_blocks 的世界坐标语义一致。
+    _ox, _oy, _oz = data.origin_x or 0, data.origin_y or 0, data.origin_z or 0
     _payload = [
-        {"task_id": task.task_id, "x": wx, "y": wy, "z": wz,
+        {"task_id": task.task_id, "x": wx + _ox, "y": wy + _oy, "z": wz + _oz,
          "expected_block": block_id}
         for y_offset, blocks in parsed.layers.items()
         for wx, wy, wz, block_id in blocks
@@ -500,6 +508,24 @@ def get_task(task_id: str, db: Session = Depends(get_db), user=Depends(require_a
         MapArtBotAssignment.task_id == task_id
     ).all()
 
+    # 2026-08-16 审查修复：MapArtMaterial.placed_count 无更新路径 → 材料面板进度恒 0。
+    # 以实际方块状态为准聚合：按 expected_block 分组统计 placed=True 的行数
+    # （16384 行 × 一次 GROUP BY，索引友好；去 [ 后缀兼容组件数据）。
+    from sqlalchemy import func as _func
+    _placed_by_mat: dict[str, int] = {}
+    try:
+        _agg_rows = db.query(
+            MapArtBlockState.expected_block, _func.count(),
+        ).filter(
+            MapArtBlockState.task_id == task_id,
+            MapArtBlockState.placed.is_(True),
+        ).group_by(MapArtBlockState.expected_block).all()
+        for _eb, _cnt in _agg_rows:
+            _key = str(_eb or "").split("[")[0]
+            _placed_by_mat[_key] = _cnt
+    except Exception:
+        pass  # 聚合失败回退原 placed_count（保持接口可用）
+
     return {
         "task_id": task.task_id,
         "name": task.name,
@@ -529,7 +555,8 @@ def get_task(task_id: str, db: Session = Depends(get_db), user=Depends(require_a
                 "item_id": m.item_id,
                 "display_name": m.display_name,
                 "required": m.required_count,
-                "placed": m.placed_count,
+                # 2026-08-16 审查修复：placed 以 block_states 聚合为准（原 placed_count 恒 0）
+                "placed": _placed_by_mat.get((m.item_id or "").split("[")[0], m.placed_count or 0),
                 "color_hex": m.color_hex,
             }
             for m in materials
@@ -539,9 +566,13 @@ def get_task(task_id: str, db: Session = Depends(get_db), user=Depends(require_a
                 "bot_id": b.bot_id,
                 "bot_name": b.bot_name,
                 "state": b.state,
+                # 2026-08-16 审查修复：region 为投影相对坐标，前端画布按世界坐标渲染
+                # （blocks 已是世界坐标）——统一转世界坐标（origin + 相对），防区域框错位。
                 "region": {
-                    "x_start": b.region_x_start, "x_end": b.region_x_end,
-                    "z_start": b.region_z_start, "z_end": b.region_z_end,
+                    "x_start": (b.region_x_start or 0) + (task.origin_x or 0),
+                    "x_end": (b.region_x_end or 0) + (task.origin_x or 0),
+                    "z_start": (b.region_z_start or 0) + (task.origin_z or 0),
+                    "z_end": (b.region_z_end or 0) + (task.origin_z or 0),
                 },
                 "blocks_placed": b.blocks_placed,
                 "blocks_total": b.blocks_total,

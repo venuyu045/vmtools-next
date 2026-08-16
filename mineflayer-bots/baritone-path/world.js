@@ -117,14 +117,18 @@ class World {
   /** 目标格 (x,y,z) 的方块顶能否站立（站在该方块上） */
   canWalkOn(x, y, z) {
     const b = this.blockAt(x, y, z);
-    if (!b.loaded) return true; // 未加载先假设可行（由执行器落地校验）
+    // 2026-08-16 P0-1：未加载块保守判定——不再乐观放行（原 return true 会让 A*
+    // 在空 chunk 上规划踩空路径）。配合 pathfinder.js 走廊预检（确保路径区域
+    // chunk 已加载），正常路径仍可用；未加载区域强制不可走 → A* 绕开或 no_path
+    // → 由调用方等 chunk 后重试。
+    if (!b.loaded) return false;
     return b.solid;
   }
 
   /** 目标格 (x,y,z) 的方块能否穿过（身体/头空间） */
   canWalkThrough(x, y, z) {
     const b = this.blockAt(x, y, z);
-    if (!b.loaded) return true;
+    if (!b.loaded) return false;
     return b.passable;
   }
 
