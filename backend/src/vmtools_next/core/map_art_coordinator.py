@@ -2850,6 +2850,9 @@ class BotBuildLoop:
         防循环：一晚只睡一次（_slept_this_night）。doDaylightCycle=false 时间锁
         夜晚时，睡一次后跳过直到时间离开夜晚窗口（白天）才重置——避免"睡→醒→
         又检测到夜晚→再睡"死循环。
+        维度检测（2026-08-16 用户反馈）：仅主世界可睡觉——末地/下界无昼夜循环
+        （末地恒为"夜晚"时间），bot 补货时可能在末地仓库，若按 timeOfDay 判断会
+        误触发睡觉且跨维度寻路失败（path_failed）。非主世界一律跳过。
         未配置睡觉点（任务 sleep_x/y/z 为空）→ 空转，不打扰建造。
         """
         if not self._sleep_point:
@@ -2868,6 +2871,11 @@ class BotBuildLoop:
                     continue
                 tod = st.get("time_of_day")
                 if tod is None:
+                    continue
+                # 维度检测：仅主世界可睡觉（末地恒夜晚/下界床会爆炸）
+                dim = st.get("dimension") or "unknown"
+                if dim not in ("overworld", "minecraft:overworld", "minecraft_overworld"):
+                    slept_this_night = True  # 非主世界视为"本晚已处理"，防每次循环误触
                     continue
                 # 已在睡（如服务器自动入睡/外部触发）→ 等醒来流程由 _do_sleep_cycle 处理
                 if st.get("is_sleeping"):
