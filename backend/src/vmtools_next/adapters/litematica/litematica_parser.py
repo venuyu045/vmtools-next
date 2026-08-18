@@ -1772,8 +1772,16 @@ class LitematicaParser:
             block_states_raw = region_data.get("BlockStates", [])
             palette_bits = max(2, math.ceil(math.log2(max(len(palette_names), 1))))
 
+            # ⚠️ 2026-08-18 双保险：先显式转 int 再传解码器——实测 nbtlib LongArray
+            # 在解码函数内部 `[int(x) for x in raw_data]` 转换后结果仍异常（全 0，
+            # 外部先转 int 再传则正常 474538 块）→ 在此处先转 int 列表。
+            try:
+                block_states_int = [int(x) for x in block_states_raw]
+            except Exception:
+                block_states_int = block_states_raw
+
             # Decode block states
-            block_indices = _decode_block_states(block_states_raw, palette_bits, sx * sy * sz)
+            block_indices = _decode_block_states(block_states_int, palette_bits, sx * sy * sz)
             # P2-22：解码长度校验——数据不足时静默截断会导致"解析成功但缺块"
             expected_volume = sx * sy * sz
             if len(block_indices) < expected_volume:
