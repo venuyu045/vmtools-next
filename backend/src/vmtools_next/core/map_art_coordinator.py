@@ -468,15 +468,38 @@ class BotBuildLoop:
                 self._activity("info", "已确认到位，保存 dth")
         except Exception as _e:
             logger.warning("[%s] Initial positioning failed: %s", self.bot_id, _e)
-        try:
-            r = await self.mcp.send_chat(self._supply_cfg.get("save", "/esethomes dth"))
-            if isinstance(r, dict) and r.get("success") is False:
-                logger.warning("[%s] save build home failed: %s", self.bot_id, r.get("error", "?"))
-            else:
-                await asyncio.sleep(1.0)
-                self._activity("info", "已保存建造点位置（dth）")
-        except Exception as e:
-            logger.warning("[%s] save build home error: %s", self.bot_id, e)
+        # ⚠️ 2026-08-18 用户建议（治本）：dth 是临时传送点，新任务启动必须覆盖为
+        # 【本任务】建造点——此前无条件保存：定位失败时 bot 还在旧位置 → dth 被旧
+        # 任务坐标污染 → 之后所有 /ehomes dth 都传回旧区域（"不在建造区域"死循环根因）。
+        # 修复：仅当确认到位（placed0）或 origin /tp 传送到本任务区域成功时才覆盖 dth；
+        # 否则保持 dth 原值不污染（后续 _try_teleport_home 有 origin /tp 级兜底）。
+        async def _save_dth(label: str) -> None:
+            try:
+                r = await self.mcp.send_chat(self._supply_cfg.get("save", "/esethomes dth"))
+                if isinstance(r, dict) and r.get("success") is False:
+                    logger.warning("[%s] save build home failed: %s", self.bot_id, r.get("error", "?"))
+                else:
+                    await asyncio.sleep(1.0)
+                    self._activity("info", f"已保存建造点位置（dth）· {label}")
+            except Exception as e:
+                logger.warning("[%s] save build home error: %s", self.bot_id, e)
+
+        if placed0:
+            await _save_dth("启动定位到位")
+        elif self.origin_x is not None:
+            # 定位失败 → 用本任务 origin /tp 强制传送到建造区，成功则覆盖 dth
+            tp_cmd = f"/tp {self.origin_x} {self.origin_y + self._stand_y_offset} {self.origin_z}"
+            self._activity("warn", f"启动定位失败，改用任务 origin 传送后保存 dth（{tp_cmd}）")
+            try:
+                if await self._send_teleport(tp_cmd) and (await self._verify_at_build_area()) is None:
+                    placed0 = True
+                    await _save_dth("origin /tp 到位")
+                else:
+                    self._activity("warn", "origin 传送未到位，dth 保持原值（后续传回由 origin /tp 兜底）")
+            except Exception as _tp_err:
+                logger.warning("[%s] Startup origin tp failed: %s", self.bot_id, _tp_err)
+        else:
+            self._activity("warn", "任务无 origin 配置，dth 保持原值")
 
         # ── 2026-08-18 用户期望流程：启动后（已在主世界建造点）依次处理 ──
         #   1) 副手猪排检查（_ensure_food_offhand 内部已含装备+补货，缺则自动补）
