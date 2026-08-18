@@ -51,26 +51,10 @@
       </el-button>
     </div>
 
-    <!-- 主体：预览画布 + 侧边面板 -->
+    <!-- 主体：左侧面板（预览已彻底移除 2026-08-18，用户确认不需要）+ 右侧面板 -->
     <div class="main-content">
-      <!-- 2D 俯视预览画布 -->
+      <!-- 左侧：补货仓库配置 + 实时日志 + Bot 背包 -->
       <div class="canvas-area">
-        <div v-if="loadingBlocks" class="loading-canvas">正在加载方块数据…</div>
-        <!-- 2026-08-18 用户需求：过大的地图画预览没用 → 大图（runs 模式或 >8万块）
-             不渲染预览画布，显示占位提示（省带宽+防卡顿）；小图保留预览 -->
-        <div v-else-if="isBigMap" class="loading-canvas">
-          🖼️ 投影过大（{{ bigMapInfo }}），预览已禁用——建造不受影响，可查看材料需求/日志/背包
-        </div>
-        <BuildMapCanvas
-          v-else
-          :task-id="taskId"
-          :materials="materials"
-          :init-data="blockData"
-          :bot-positions="botMarkers"
-          @ready="onCanvasReady"
-        />
-
-        <!-- 预览正下方：补货仓库配置（需求6/7） -->
         <SupplyConfigPanel :task-id="taskId" class="supply-panel" />
 
         <!-- 实时日志终端（2026-08-14：仓库补货列表下面，bot 活动实时反馈） -->
@@ -174,7 +158,6 @@
 import { ref, onMounted, onUnmounted, computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import BuildMapCanvas from '@/components/build/BuildMapCanvas.vue'
 import SupplyConfigPanel from '@/components/build/SupplyConfigPanel.vue'
 import BuildLogPanel from '@/components/build/BuildLogPanel.vue'
 import BotInventoryPanel from '@/components/build/BotInventoryPanel.vue'
@@ -189,50 +172,9 @@ const route = useRoute()
 const taskId = computed(() => route.params.taskId as string)
 const { on: sockOn, off: sockOff, emit: sockEmit } = useSocketIO()
 
-// ── 方块数据缓存（2026-08-14 常态化）：localStorage 持久化，跨刷新/重进秒开 ──
-// 投影解析结果（blocks 结构）在任务创建后固定不变，仅 placed 进度变化（由
-// BuildMapCanvas 5s 增量轮询更新）。缓存 key=taskId，天然按任务隔离；
-// LRU 只保留最近 3 个任务，防 localStorage 溢出（16384 块 ≈ 1.5MB）。
-const BLOCK_CACHE_PREFIX = 'vmtools-mapart-blocks-'
-const BLOCK_CACHE_MAX = 3
-function cacheGetBlocks(taskId: string): any | null {
-  try {
-    const raw = localStorage.getItem(BLOCK_CACHE_PREFIX + taskId)
-    return raw ? JSON.parse(raw) : null
-  } catch { return null }
-}
-function cacheSetBlocks(taskId: string, data: any) {
-  try {
-    localStorage.setItem(BLOCK_CACHE_PREFIX + taskId, JSON.stringify(data))
-    // LRU：保留最近 N 个任务（按 key 字典序近似时间序）
-    const keys: string[] = []
-    for (let i = 0; i < localStorage.length; i++) {
-      const k = localStorage.key(i) || ''
-      if (k.startsWith(BLOCK_CACHE_PREFIX)) keys.push(k)
-    }
-    keys.sort()
-    while (keys.length > BLOCK_CACHE_MAX) {
-      localStorage.removeItem(keys[0])
-      keys.shift()
-    }
-  } catch { /* 容量满/隐私模式：放弃持久化，仅本次会话内存生效 */ }
-}
-
 const task = ref<any>(null)
 const bots = ref<any[]>([])
 const materials = ref<any[]>([])
-const blockData = ref<any>(null)
-const loadingBlocks = ref(true)
-// 2026-08-18：大图判断（runs 模式 = 后端已按行合并，说明 >5 万块；或 blocks >8 万）
-const isBigMap = computed(() =>
-  !!((blockData.value?.runs && blockData.value.runs.length > 0)
-    || (blockData.value?.blocks && blockData.value.blocks.length > 80000)))
-const bigMapInfo = computed(() => {
-  const d = blockData.value
-  if (d?.runs?.length) return `${d.runs.length} 段（约 ${(d.total || d.runs.length * 50).toLocaleString()} 块）`
-  if (d?.blocks) return `${d.blocks.length.toLocaleString()} 块`
-  return ''
-})
 const elapsed = ref(0)
 const eta = ref(0)
 const overallRate = ref('0')
@@ -347,19 +289,6 @@ function stableColor(seed: string): string {
 }
 function botColor(botId: string): string { return stableColor(botId) }
 
-/** 传给画布的 bot 位置标记（含区域框数据 + 真实饱食度/血量） */
-const botMarkers = computed(() =>
-  (bots.value || []).map((b: any) => ({
-    bot_id: b.bot_id,
-    bot_name: b.bot_name || b.bot_id,
-    state: b.state,
-    position: b.position || null,
-    region: b.region || null,
-    health: b.health ?? null,
-    food: b.food ?? null,
-  }))
-)
-
 function formatTime(secs: number): string {
   const m = Math.floor(secs / 60)
   const s = Math.floor(secs % 60)
@@ -371,10 +300,6 @@ function botPct(b: any): number {
   if (!b || !b.total) return 0
   const p = Math.round(((b.placed || 0) / b.total) * 100)
   return Math.min(100, Math.max(0, p))
-}
-
-function onCanvasReady() {
-  // 画布就绪
 }
 
 // ── 数据加载 ──
@@ -397,36 +322,6 @@ async function fetchTask() {
     }))
     bots.value = data.bots || []
     await loadAvailableBots()
-
-    // 方块数据：localStorage 缓存秒开（跨刷新常态保留），后台静默刷新一次
-    // ⚠️ 2026-08-18 大图优化：超过 8 万块（≈6MB JSON）跳过 localStorage 缓存——
-    // localStorage 通常 5MB 上限，47 万块（~25MB）会写入失败且 JSON.parse 卡顿，
-    // 直接内存渲染（RLE 行内合并后绘制极快，无需跨刷新缓存）。
-    const cached = cacheGetBlocks(taskId.value)
-    const useCache = cached && !(cached.blocks && cached.blocks.length > 80000)
-    if (useCache) {
-      blockData.value = cached
-      loadingBlocks.value = false
-    } else {
-      loadingBlocks.value = true
-    }
-    try {
-      const { data: blockResp } = await mapArtApi.getBlocks(taskId.value)
-      const fresh = {
-        task_id: blockResp.task_id,
-        // 2026-08-18 大图返回 runs（后端已行内同色合并），小图仍 blocks
-        blocks: blockResp.blocks || [],
-        runs: blockResp.runs || [],
-        bots: blockResp.bots || [],
-        origin: blockResp.origin || { x: 0, y: 64, z: 0 },
-        size: blockResp.size || { x: 32, z: 32 },
-        placed: blockResp.placed || 0,
-      }
-      const isBig = (fresh.runs && fresh.runs.length > 0) || fresh.blocks.length > 80000
-      if (!isBig) cacheSetBlocks(taskId.value, fresh) // 大图不写缓存
-      blockData.value = fresh // 后台刷新：缓存/首次都更新为最新（含 placed 进度）
-    } catch { /* 方块数据可能尚未生成；有缓存则保留缓存 */ }
-    loadingBlocks.value = false
   } catch (e) {
     ElMessage.error(errMsg(e, '获取任务详情失败'))
   }
@@ -546,15 +441,6 @@ function onBuildBotStatus(data: any) {
 .bot-manage-bar .el-select { flex: 1; min-width: 0; }
 .manage-hint { font-size: 11px; color: var(--text-muted); white-space: nowrap; }
 .bot-remove { margin-left: auto; }
-.loading-canvas {
-  flex: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--text-muted);
-  background: var(--bg-card);
-  border-radius: 8px;
-}
 .control-bar {
   display: flex;
   gap: 8px;
