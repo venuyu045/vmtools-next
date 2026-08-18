@@ -1334,19 +1334,57 @@ def delete_task(task_id: str, db: Session = Depends(get_db), user=Depends(requir
 def get_task_blocks(task_id: str, db: Session = Depends(get_db), user=Depends(require_admin)):
     """Return all block states for a task (for 3D frontend initialization).
 
-    Returns full block list so the Three.js canvas can render immediately.
+    ⚠️ 2026-08-18 大图优化：> 5 万块时返回【行内同色 run-length】（runs）而非逐格
+    blocks——47 万块投影逐格 JSON ≈25MB 下载+解析卡死/占满带宽；runs 按行内
+    连续同色合并（{z, x_start, x_end, block, placed}）数据量降 1~2 个数量级，
+    前端直接按 run 绘制。小图（≤5 万）保持逐格 blocks 兼容旧逻辑。
     """
     task = db.query(MapArtTask).filter(MapArtTask.task_id == task_id).first()
     if not task:
         raise HTTPException(status_code=404, detail="任务不存在")
 
-    blocks = db.query(MapArtBlockState).filter(
-        MapArtBlockState.task_id == task_id
-    ).all()
-
+    total = task.total_blocks or 0
     # Get bot assignments for region outlines
     bots = db.query(MapArtBotAssignment).filter(
         MapArtBotAssignment.task_id == task_id
+    ).all()
+
+    if total > 50000:
+        # ── 大图：原生 SQL 读 (x,z,expected,placed)，内存按行合并 runs ──
+        from sqlalchemy import text as _sql
+        rows = db.execute(_sql(
+            "SELECT x, z, expected_block, placed FROM map_art_block_states "
+            "WHERE task_id = :t ORDER BY z, x"
+        ), {"t": task_id}).fetchall()
+        runs: list[dict] = []
+        cur: Optional[dict] = None
+        for _x, _z, _exp, _placed in rows:
+            _p = bool(_placed)
+            if cur and cur["z"] == _z and cur["block"] == _exp \
+                    and cur["placed"] == _p and _x == cur["x_end"] + 1:
+                cur["x_end"] = _x
+            else:
+                cur = {"z": _z, "x_start": _x, "x_end": _x,
+                       "block": _exp, "placed": _p}
+                runs.append(cur)
+        return {
+            "task_id": task_id,
+            "runs": runs,
+            "is_runs": True,
+            "total": len(rows),
+            "placed": task.placed_blocks or 0,
+            "bots": [
+                {"bot_id": ba.bot_id, "bot_name": ba.bot_name, "state": ba.state,
+                 "region": {"x_start": ba.region_x_start, "x_end": ba.region_x_end,
+                            "z_start": ba.region_z_start, "z_end": ba.region_z_end}}
+                for ba in bots
+            ],
+            "origin": {"x": task.origin_x, "y": task.origin_y, "z": task.origin_z},
+            "size": {"x": task.projection_size_x, "z": task.projection_size_z},
+        }
+
+    blocks = db.query(MapArtBlockState).filter(
+        MapArtBlockState.task_id == task_id
     ).all()
 
     return {

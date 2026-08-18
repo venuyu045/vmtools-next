@@ -47,11 +47,15 @@ export interface BotMarker {
   health?: number | null
   food?: number | null
 }
-
 const props = defineProps<{
   taskId: string
   materials?: { item_id: string; display_name: string; placed: number; required: number }[]
-  initData?: { blocks: { x: number; y: number; z: number; expected: string; placed: boolean }[]; origin: { x: number; y: number; z: number }; size: { x: number; z: number } } | null
+  initData?: {
+    blocks?: { x: number; y: number; z: number; expected: string; placed: boolean }[]
+    runs?: { z: number; x_start: number; x_end: number; block: string; placed: boolean }[]
+    origin: { x: number; y: number; z: number }; size: { x: number; z: number }
+    placed?: number
+  } | null
   botPositions?: BotMarker[]
 }>()
 
@@ -164,6 +168,7 @@ async function preloadTextures() {
   const ids = new Set<string>()
   for (const m of props.materials || []) ids.add(m.item_id)
   for (const b of props.initData?.blocks || []) ids.add(b.expected)
+  for (const r of props.initData?.runs || []) ids.add(r.block)
   await Promise.all([...ids].map(id => loadTexture(id)))
 }
 
@@ -199,11 +204,20 @@ interface Geo {
 }
 function computeGeo(): Geo | null {
   const blocks = props.initData?.blocks
-  if (!blocks?.length || cw.value <= 0) return null
+  const runs = props.initData?.runs
+  const hasRuns = !!(runs && runs.length)
+  if ((!blocks?.length && !hasRuns) || cw.value <= 0) return null
   let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity
-  for (const b of blocks) {
-    minX = Math.min(minX, b.x); maxX = Math.max(maxX, b.x)
-    minZ = Math.min(minZ, b.z); maxZ = Math.max(maxZ, b.z)
+  if (hasRuns) {
+    for (const r of runs!) {
+      minX = Math.min(minX, r.x_start); maxX = Math.max(maxX, r.x_end)
+      minZ = Math.min(minZ, r.z); maxZ = Math.max(maxZ, r.z)
+    }
+  } else {
+    for (const b of blocks!) {
+      minX = Math.min(minX, b.x); maxX = Math.max(maxX, b.x)
+      minZ = Math.min(minZ, b.z); maxZ = Math.max(maxZ, b.z)
+    }
   }
   // 2026-08-14 模块E：四周加 2 格 padding——bot 站在行北边（z-1）与边缘，
   // 此前标记被画布裁掉（用户「看不到 bot 位置」根因之一）
@@ -326,7 +340,8 @@ function drawRun(ctx: CanvasRenderingContext2D, geo: Geo,
 /** 重绘画布内容（canvas 物理尺寸不变，不引起布局跳动） */
 function render() {
   const cvs = canvas.value
-  if (!cvs || !props.initData?.blocks?.length || cw.value <= 0 || ch.value <= 0) return
+  const hasData = !!(props.initData?.blocks?.length || props.initData?.runs?.length)
+  if (!cvs || !hasData || cw.value <= 0 || ch.value <= 0) return
   const geo = computeGeo()
   if (!geo) return
 
@@ -346,31 +361,43 @@ function render() {
   ctx.fillRect(0, 0, cw.value, ch.value)
 
   // ── 2026-08-18 大图优化：行内同色合并（RLE）──
-  // 按 z 分组，行内按 x 升序；连续同色（expected+placed 相同且 x 连续）合并为
-  // 一段 drawRun（一次绘制），绘制次数从 N(47万) → 同色段数（地图画通常几万以内）。
-  const blocks = props.initData.blocks
-  const rowMap = new Map<number, typeof blocks>()
-  for (const b of blocks) {
-    let arr = rowMap.get(b.z)
-    if (!arr) { arr = []; rowMap.set(b.z, arr) }
-    arr.push(b)
-  }
-  let placed = 0
-  for (const [wz, rowBlocks] of rowMap) {
-    rowBlocks.sort((a, b) => a.x - b.x)
-    let rs = 0
-    for (let i = 1; i <= rowBlocks.length; i++) {
-      const same = i < rowBlocks.length
-        && rowBlocks[i].expected === rowBlocks[rs].expected
-        && rowBlocks[i].placed === rowBlocks[rs].placed
-        && rowBlocks[i].x === rowBlocks[i - 1].x + 1
-      if (!same) {
-        drawRun(ctx, geo, rowBlocks[rs].x, rowBlocks[i - 1].x, wz,
-                rowBlocks[rs].expected, rowBlocks[rs].placed)
-        if (rowBlocks[rs].placed) placed += (i - rs)
-        rs = i
+  // 优先使用后端已合并的 runs（大图 >5 万块时 getBlocks 返回 runs，数据量降
+  // 1~2 个数量级，直接按 run 绘制）；否则前端本地合并（小图 blocks）。
+  const blocks = props.initData?.blocks
+  const runs = props.initData?.runs
+  let placed = props.initData?.placed ?? 0
+  let total = 0
+  if (runs && runs.length) {
+    for (const r of runs) {
+      drawRun(ctx, geo, r.x_start, r.x_end, r.z, r.block, !!r.placed)
+      total += (r.x_end - r.x_start + 1)
+    }
+    // runs 模式 placed 用接口统计（大图不逐格刷新，进度数字由任务状态轮询体现）
+  } else if (blocks && blocks.length) {
+    const rowMap = new Map<number, typeof blocks>()
+    for (const b of blocks) {
+      let arr = rowMap.get(b.z)
+      if (!arr) { arr = []; rowMap.set(b.z, arr) }
+      arr.push(b)
+    }
+    placed = 0
+    for (const [wz, rowBlocks] of rowMap) {
+      rowBlocks.sort((a, b) => a.x - b.x)
+      let rs = 0
+      for (let i = 1; i <= rowBlocks.length; i++) {
+        const same = i < rowBlocks.length
+          && rowBlocks[i].expected === rowBlocks[rs].expected
+          && rowBlocks[i].placed === rowBlocks[rs].placed
+          && rowBlocks[i].x === rowBlocks[i - 1].x + 1
+        if (!same) {
+          drawRun(ctx, geo, rowBlocks[rs].x, rowBlocks[i - 1].x, wz,
+                  rowBlocks[rs].expected, rowBlocks[rs].placed)
+          if (rowBlocks[rs].placed) placed += (i - rs)
+          rs = i
+        }
       }
     }
+    total = blocks.length
   }
   drawRegions(ctx, geo)
   drawBotMarkers(ctx, geo)
@@ -378,7 +405,7 @@ function render() {
   ctx.fillStyle = '#888888'
   ctx.font = '11px monospace'
   ctx.fillText(`Z: ${geo.minZ} → ${geo.maxZ}`, 10, 16)
-  ctx.fillText(`X: ${geo.minX} → ${geo.maxX}  已放置: ${placed}/${blocks.length}`, 10, 32)
+  ctx.fillText(`X: ${geo.minX} → ${geo.maxX}  已放置: ${placed}/${total}`, 10, 32)
 
   emit('ready')
 }
@@ -406,6 +433,9 @@ watch(showRegions, () => nextTick(render))
 let pollTimer: number | undefined
 async function pollPlaced() {
   if (!props.taskId) return
+  // 2026-08-18 大图 runs 模式：不逐格刷新（placed 进度数字由任务状态轮询体现，
+  // 大图 placed 坐标集合返回也很大，避免占带宽）
+  if (props.initData?.runs?.length) return
   try {
     const { data } = await mapArtApi.getPlacedBlocks(props.taskId)
     const placedKeys = new Set(data.blocks.map((b: any) => `${b.x},${b.z}`))

@@ -399,12 +399,16 @@ async function fetchTask() {
       const { data: blockResp } = await mapArtApi.getBlocks(taskId.value)
       const fresh = {
         task_id: blockResp.task_id,
+        // 2026-08-18 大图返回 runs（后端已行内同色合并），小图仍 blocks
         blocks: blockResp.blocks || [],
+        runs: blockResp.runs || [],
         bots: blockResp.bots || [],
         origin: blockResp.origin || { x: 0, y: 64, z: 0 },
         size: blockResp.size || { x: 32, z: 32 },
+        placed: blockResp.placed || 0,
       }
-      if (!(fresh.blocks.length > 80000)) cacheSetBlocks(taskId.value, fresh) // 大图不写缓存
+      const isBig = (fresh.runs && fresh.runs.length > 0) || fresh.blocks.length > 80000
+      if (!isBig) cacheSetBlocks(taskId.value, fresh) // 大图不写缓存
       blockData.value = fresh // 后台刷新：缓存/首次都更新为最新（含 placed 进度）
     } catch { /* 方块数据可能尚未生成；有缓存则保留缓存 */ }
     loadingBlocks.value = false
