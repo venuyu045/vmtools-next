@@ -49,12 +49,24 @@ function createSleepHandlers(bot, ctx = {}) {
   bot.on('wake', () => emitSleepState({ event: 'wake' }));
 
   // ── 世界时间/状态 ──
+  // ⚠️ 2026-08-18 根因修复：服务器运行时间长，Time Update 包 timeOfDay(long)
+  // 溢出为负数 → mineflayer `timeOfDay % 24000` 得到负值（实测 -4060）→
+  // 夜晚判断（12542~23458）恒 False → 「晚上不睡觉」根因。归一化：
+  //   tod = tod % 24000; if (tod < 0) tod += 24000
+  // 真实值：-4060 → 19940（夜晚 19:53）。
+  function normalizeTimeOfDay(tod) {
+    if (typeof tod !== 'number' || isNaN(tod)) return null;
+    let v = tod % 24000;
+    if (v < 0) v += 24000;
+    return v;
+  }
   function get_time_status({} = {}) {
     const t = bot.time || {};
+    const tod = normalizeTimeOfDay(t.timeOfDay);
     return {
       success: true,
-      time_of_day: t.timeOfDay ?? null,        // 0~24000（0=6:00 日出）
-      is_day: t.isDay ?? null,                 // <13000
+      time_of_day: tod,                        // 0~24000（0=6:00 日出）
+      is_day: tod !== null ? (tod < 13000) : (t.isDay ?? null), // 修正后重算（原 t.isDay 可能基于负值错误）
       day: t.day ?? null,
       do_daylight_cycle: t.doDaylightCycle ?? null, // false=服务器锁时间，睡觉不会跳
       is_raining: !!bot.isRaining,
@@ -110,8 +122,10 @@ function createSleepHandlers(bot, ctx = {}) {
     if (bot.isSleeping) return { success: false, reason: 'already_sleeping' };
 
     // 1. 可睡条件预检（提前返回友好原因；bot.sleep 内部也会再查一次）
+    // ⚠️ 2026-08-18：tod 用 normalizeTimeOfDay 归一化（服务器 long 溢出为负时
+    // 负值判断恒 not_night → 睡觉永远失败；实测 -4060 → 19940 夜晚）。
     const thunderstorm = bot.isRaining && (bot.thunderState > 0);
-    const tod = bot.time ? bot.time.timeOfDay : null;
+    const tod = normalizeTimeOfDay(bot.time ? bot.time.timeOfDay : null);
     if (!thunderstorm && (tod === null || !(tod >= 12541 && tod <= 23458))) {
       return { success: false, reason: 'not_night', time_of_day: tod };
     }

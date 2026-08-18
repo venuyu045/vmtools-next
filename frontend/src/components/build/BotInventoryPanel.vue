@@ -85,9 +85,17 @@ async function pollSleepStatus(botId: string) {
   }
 }
 
-/** timeOfDay(0~24000，0=06:00) → "HH:MM"（服务器时间，6:00 为日出） */
+/** timeOfDay(0~24000，0=06:00) → "HH:MM"（服务器时间，6:00 为日出）
+ *  ⚠️ 2026-08-18：服务器时间 long 溢出时 timeOfDay 可能为负数（如 -4060），
+ *  先归一化到 0~24000（-4060 → 19940，夜晚 19:53）。 */
+function normTod(tod: number): number {
+  if (!isFinite(tod)) return 0
+  let v = ((tod % 24000) + 24000) % 24000
+  return v
+}
 function fmtTime(tod: number): string {
-  const totalMin = Math.floor((tod / 1000) * 60)
+  const t = normTod(tod)
+  const totalMin = Math.floor((t / 1000) * 60)
   const h = (6 + Math.floor(totalMin / 60)) % 24
   const m = totalMin % 60
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`
@@ -95,8 +103,9 @@ function fmtTime(tod: number): string {
 
 /** 昼夜判断：12542~23458 原版可睡窗口=夜晚；其余=白天 */
 function sleepPhaseLabel(tod: number): string {
-  if (tod >= 12542 && tod <= 23458) return '夜晚'
-  if (tod >= 23459) return '凌晨'
+  const t = normTod(tod)
+  if (t >= 12542 && t <= 23458) return '夜晚'
+  if (t >= 23459) return '凌晨'
   return '白天'
 }
 
@@ -104,7 +113,7 @@ function sleepPhaseClass(st: any): string {
   const tod = st?.time_status?.time_of_day
   if (st?.time_status?.is_sleeping) return 'phase-night'
   if (tod == null) return ''
-  return tod >= 12542 && tod <= 23458 ? 'phase-night' : 'phase-day'
+  return normTod(tod) >= 12542 && normTod(tod) <= 23458 ? 'phase-night' : 'phase-day'
 }
 
 async function handleForceSleep(botId: string) {
