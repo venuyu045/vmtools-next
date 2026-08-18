@@ -2,7 +2,7 @@
   <section id="gallery" ref="rootRef" class="lx-section lx-gallery" :class="{ 'is-revealed': revealed }">
     <div class="lx-section-inner">
       <p class="lx-eyebrow">Gallery · 光影集</p>
-      <h2 ref="titleRef" class="lx-section-title" :class="{ 'lx-title-on': titleOn }">光影集</h2>
+      <h2 class="lx-section-title">光影集</h2>
       <p class="lx-section-desc">帧帧光影，皆为理想乡的日常注脚；点击图片，可放大细览。</p>
 
       <div class="lx-gallery-tabs" role="tablist" aria-label="相册分类">
@@ -75,12 +75,10 @@
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import type { LxCategory, LxImage } from '@/api/lixiangxiang'
 import { useReveal } from '@/composables/useReveal'
-import { useTitleFade } from '@/composables/useTitleFade'
 
 const props = defineProps<{ categories: LxCategory[]; images: LxImage[] }>()
 
 const { rootRef, revealed } = useReveal()
-const { titleRef, titleOn } = useTitleFade()
 
 const activeCat = ref('all')
 const preview = ref<LxImage | null>(null)
@@ -170,15 +168,6 @@ window.addEventListener('keydown', onKeydown)
   margin: 0 0 12px;
   letter-spacing: 2px;
   line-height: 1.25;
-  /* 中心带淡入淡出（useTitleFade）：同屏只显示一个大标题 */
-  opacity: 0;
-  transform: translateY(18px);
-  transition: opacity 0.8s var(--ease-out), transform 0.8s var(--ease-out);
-}
-
-.lx-section-title.lx-title-on {
-  opacity: 1;
-  transform: none;
 }
 
 .lx-section-desc {
