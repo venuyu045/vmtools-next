@@ -465,6 +465,36 @@ class BotBuildLoop:
         except Exception as e:
             logger.warning("[%s] save build home error: %s", self.bot_id, e)
 
+        # ── 2026-08-18 用户期望流程：启动后（已在主世界建造点）依次处理 ──
+        #   1) 副手猪排检查（_ensure_food_offhand 内部已含装备+补货，缺则自动补）
+        #   2) 若为夜晚/雷暴 → 先传送到床边睡觉跳过黑夜，再干活
+        #   3) 再启动对账 → 补洞 → 行循环（见下）
+        try:
+            _food_ok = await self._ensure_food_offhand()
+            if _food_ok:
+                self._activity("debug", "副手已就绪（猪排），跳过启动补食")
+            else:
+                self._activity("warn", "启动时副手未就绪（装备/补货未成功），建造中由食物监控兜底")
+        except Exception as _f0e:
+            logger.warning("[%s] Startup offhand check error: %s", self.bot_id, _f0e)
+        try:
+            _st0 = await self.mcp.get_time_status()
+            if _st0.get("success"):
+                _tod0 = _st0.get("time_of_day")
+                _dim0 = _st0.get("dimension") or "unknown"
+                _in_win = self._sleep_night_start <= _tod0 <= self._sleep_night_end
+                _thunder0 = bool(_st0.get("is_raining")) and int(_st0.get("thunder_state") or 0) > 0
+                if self._sleep_point and _dim0 in ("overworld", "minecraft:overworld", "minecraft_overworld") \
+                        and (_in_win or _thunder0) and not bool(_st0.get("is_sleeping")):
+                    self._activity("info",
+                                   f"启动时检测到夜晚（timeOfDay={_tod0}），先传送睡觉跳过黑夜")
+                    try:
+                        await self._do_sleep_cycle()
+                    except Exception as _se:
+                        logger.warning("[%s] Startup sleep cycle error: %s", self.bot_id, _se)
+        except Exception as _s0e:
+            logger.warning("[%s] Startup night check error: %s", self.bot_id, _s0e)
+
         # ⚠️ 2026-08-16：真实世界对账移到【传送定位后】（bot 到建造区、world 从
         # 服务器重拉、chunk 加载）——大范围扫描才准确（在传送前扫描会因区域 chunk
         # 未加载读到 air 全"待定"）。扫描失败/部分未加载由运行中 _verify_block 兜底。
@@ -961,21 +991,34 @@ class BotBuildLoop:
         if row_z == self.region.z_start or row_z % 10 == 0 or row_z == self.region.z_end:
             self._activity("info", f"第 {row_z} 行完成")
     async def _fill_pending_gaps(self) -> int:
-        """补放破洞（2026-08-16 用户需求）：区域循环跑完后，对 _pending_gaps 逐格补放。
+        """补放破洞（2026-08-16 用户需求，2026-08-18 按用户期望流程重构）：
 
-        站位：优先该格 4 个相邻方向中脚下为实体的格（站在已放方块/平台上，面朝洞放置）；
-        2026-08-18 增强（实测 60 格补放 0 成功根因）：Via 下 get_world_block_at 读
-        平台层可能返回旧 air（客户端数据未同步）→ 找不到站立格全部跳过。现增加
-        【bot 当前真实位置兜底】：bot 已在建造区（on_ground=true 且与缺口同层相邻）
-        时直接使用当前位置站立补放，不再依赖本地方块读取。
-        材料不足/不可达/放置失败 → 保留在清单（下次续建兜底），不阻塞。
+        流程（对齐用户描述）：
+          1) 【最近空洞优先】：按 bot 当前位置距离排序，逐个补齐；
+          2) 【寻路到旁边实体方块】：站立点优先 bot 当前位置（on_ground=true 且同层
+             相邻），否则 4 方向相邻格【直接寻路尝试】——baritone/_move_to_step 成功
+             即视为可达且脚下实体（不再依赖读本地方块判断，Via 数据旧不再误跳过）；
+          3) 补完一个空洞后若还有空洞 → 继续下一格（bot 逐格移动，天然靠近后续空洞）；
+          4) 材料不足/不可达/放置失败 → 保留在清单（下次续建兜底），不阻塞。
         返回成功补放格数。
         """
         if not self._pending_gaps:
             return 0
         filled = 0
         remaining: list[tuple[int, int, int, str]] = []
-        self._activity("info", f"开始补放破洞（共 {len(self._pending_gaps)} 格）")
+        # 1. 最近空洞优先（按 bot 当前位置切比雪夫距离排序）
+        try:
+            _ps0 = await self.mcp.get_player_state()
+            _pd0 = _ps0.get("data", _ps0) if isinstance(_ps0, dict) else {}
+            _loc0 = _pd0.get("location") or {}
+            _bx0, _bz0 = _loc0.get("x"), _loc0.get("z")
+            if _bx0 is not None and _bz0 is not None:
+                self._pending_gaps.sort(
+                    key=lambda g: max(abs(float(_bx0) - g[0]), abs(float(_bz0) - g[2])))
+        except Exception:
+            pass
+        self._activity("info",
+                       f"开始补放破洞（共 {len(self._pending_gaps)} 格，最近优先）")
         for wx, wy, wz, block_id in self._pending_gaps:
             if self._stopped:
                 remaining.append((wx, wy, wz, block_id))
@@ -1013,31 +1056,17 @@ class BotBuildLoop:
                                                f"({_bxi},{int(round(float(_by)))},{_bzi}) 站立（on_ground 兜底）")
                 except Exception:
                     pass
-                # 路径2：4 方向相邻格脚下实体（读本地方块）
+                # 路径2：4 方向相邻格【直接寻路尝试】——不再读本地方块判断脚下实体
+                #（Via 数据旧读到 air 会误跳过），改为：寻路成功 = 站立点可达且脚下
+                # 实体（baritone 不会把 bot 送到悬空格），失败换下一方向。
                 if stand is None:
                     for sx, sz in ((wx, wz - 1), (wx - 1, wz), (wx + 1, wz), (wx, wz + 1)):
-                        try:
-                            foot = await self.mcp.get_world_block_at(sx, wy - 1, sz)
-                            fname = ((foot.get("name") or "air").split("[")[0])
-                            if fname not in ("air", "water", "lava",
-                                             "flowing_water", "flowing_lava"):
-                                stand = (sx, wy, sz)
-                                break
-                        except Exception:
-                            continue
+                        mv = await self._move_to_step(sx, wy, sz,
+                                                      label=f"gap-stand({wx},{wz})")
+                        if mv is True:
+                            stand = (sx, wy, sz)
+                            break
                 if stand is None:
-                    remaining.append((wx, wy, wz, block_id))
-                    continue
-                # 移动到站立格（2026-08-18：改用 _move_to_step——支持 walk_toward
-                # 轻量直走 + gap 跳过，避免每次补放都走完整 baritone 寻路；失败回退
-                # _move_to 语义一致）
-                mv = await self._move_to_step(stand[0], stand[1], stand[2],
-                                              label=f"gap-fill({wx},{wz})")
-                if mv == "gap":
-                    # 目标站立格脚下非实体（本身也是洞）→ 跳过该格，保留待补
-                    remaining.append((wx, wy, wz, block_id))
-                    continue
-                if not mv:
                     remaining.append((wx, wy, wz, block_id))
                     continue
                 if not await self._ensure_item_in_hand(block_id):
