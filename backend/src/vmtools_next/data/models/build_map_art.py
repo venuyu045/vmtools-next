@@ -254,6 +254,24 @@ class MapArtFoodBox(Base):
     )
 
 
+class MapArtGlobalConfig(Base):
+    """地图画全局配置（2026-08-18）：单行 id=1，存全局共享配置。
+
+    当前承载【食物补货配置】（用户需求：一个任务里改了，其他任务同步生效）：
+    config_json = JSON 字符串，如
+    {"item_id":"minecraft:cooked_porkchop","go_command":"/res tp lixiangxiang.qwp",
+     "wait_after_go_ms":5000,"eat_threshold_food":15,"eat_threshold_health":15}
+    未来可扩展其它全局项（key 分区：{"food":{...}, "xxx":{...}}）。
+    """
+
+    __tablename__ = "map_art_global_config"
+
+    id = Column(Integer, primary_key=True, default=1)  # 固定单行 id=1
+    config_json = Column(Text, default="{}")
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc),
+                         onupdate=lambda: datetime.now(timezone.utc))
+
+
 class MapArtBlockState(Base):
     """Per-block state in the map art build area.
 

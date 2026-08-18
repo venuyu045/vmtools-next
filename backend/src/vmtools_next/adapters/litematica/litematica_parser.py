@@ -1830,12 +1830,18 @@ class LitematicaParser:
         max_x = max((r["size"]["x"] for r in parsed.regions.values()), default=0)
         max_y = max((r["size"]["y"] for r in parsed.regions.values()), default=0)
         max_z = max((r["size"]["z"] for r in parsed.regions.values()), default=0)
+        # ⚠️ 2026-08-18：metadata 的 TotalBlocks/TotalVolume 可能为 0（部分导出工具
+        # 不写这两个字段，实测 schematic_part_1_2.litematic TotalBlocks=0 但实际
+        # 474538 块）→ 以解析出的实际方块数/体积为准，避免任务 total_blocks=0。
+        total_blocks = sum(len(blks) for blks in parsed.layers.values())
+        total_volume = sum(r["size"]["x"] * r["size"]["y"] * r["size"]["z"]
+                           for r in parsed.regions.values())
         return ProjectionInfo(
             name=parsed.name,
             author=parsed.author,
             description=parsed.description,
-            total_blocks=parsed.total_blocks,
-            total_volume=parsed.total_volume,
+            total_blocks=total_blocks or parsed.total_blocks,
+            total_volume=total_volume or parsed.total_volume,
             size_x=max_x,
             size_y=max_y,
             size_z=max_z,
@@ -1894,11 +1900,20 @@ def _decode_block_states(raw_data, bits_per_entry: int, expected_count: int) -> 
     offset = bitIndex&63，一个值可能横跨两个相邻 long）。旧实现按 `64//bits` 每 long
     独立解、丢弃每 long 末尾余数位——当 bits 不整除 64 时（如 bits=3），从第
     floor(64/bits)+1 个值起全部错位，导致图案错乱 + 材料统计错误 + 末尾缺块。
+
+    ⚠️ 2026-08-18 修复（实测投影解析空）：nbtlib Long 对象直接做位运算（>>/&/|）
+    结果异常（解码全 0 / 错乱，转 int 后正常：474538 块解出 47 万非 air）——
+    入口统一转成 int 列表，确保位运算在原生 int 上进行。
     """
     if not raw_data:
         return [0] * expected_count
     if bits_per_entry <= 0:
         return [0] * expected_count
+    # 2026-08-18：nbtlib Long → 原生 int（位运算安全）
+    try:
+        raw_data = [int(x) for x in raw_data]
+    except Exception:
+        pass
 
     mask = (1 << bits_per_entry) - 1
     indices: list[int] = []

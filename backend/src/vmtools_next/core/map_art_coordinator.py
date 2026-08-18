@@ -3737,21 +3737,36 @@ class MapArtCoordinator:
 
     def _load_food_data(self) -> None:
         """从 DB 加载食物配置 + 猪排潜影盒坐标（2026-08-14 模块A）。
+
+        2026-08-18：食物配置改为【全局共享】（map_art_global_config 单行 id=1）——
+        一个任务改了所有任务同步（用户需求）；兼容旧任务级 food_config 作为迁移源。
         """
         try:
             from vmtools_next.data.db import get_session_factory
-            from vmtools_next.data.models.build_map_art import MapArtTask, MapArtFoodBox
+            from vmtools_next.data.models.build_map_art import (
+                MapArtTask, MapArtFoodBox, MapArtGlobalConfig,
+            )
             import json as _json
             db = get_session_factory()()
             try:
-                task = db.query(MapArtTask).filter(MapArtTask.task_id == self.task_id).first()
-                if task and task.food_config:
+                # 2026-08-18：全局食物配置优先（一个任务改 → 处处生效）
+                gcfg = db.query(MapArtGlobalConfig).filter(MapArtGlobalConfig.id == 1).first()
+                if gcfg and gcfg.config_json:
                     try:
-                        d = _json.loads(task.food_config)
+                        d = _json.loads(gcfg.config_json)
                         if isinstance(d, dict):
                             self._food_config = d
                     except Exception:
                         pass
+                if not self._food_config:
+                    task = db.query(MapArtTask).filter(MapArtTask.task_id == self.task_id).first()
+                    if task and task.food_config:
+                        try:
+                            d = _json.loads(task.food_config)
+                            if isinstance(d, dict):
+                                self._food_config = d
+                        except Exception:
+                            pass
                 # 食物潜影盒坐标
                 rows = db.query(MapArtFoodBox).filter(
                     MapArtFoodBox.task_id == self.task_id

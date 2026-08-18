@@ -71,8 +71,11 @@
       </template>
     </el-card>
 
-    <!-- 食物补货配置（2026-08-14 模块A：猪排仓库 + 进食阈值） -->
+    <!-- 食物补货配置（2026-08-14 模块A：猪排仓库 + 进食阈值；2026-08-18 全局共享） -->
     <el-card class="panel" header="食物补货配置（副手猪排）">
+      <p class="panel-desc">
+        ⚠️ 2026-08-18：此配置为【全局共享】——在任意一个地图画任务里修改保存，所有任务同步生效。
+      </p>
       <el-form label-width="130px" size="small" class="cfg-form">
         <el-form-item label="食物类型">
           <el-input v-model="foodCfg.item_id" placeholder="minecraft:cooked_porkchop" />

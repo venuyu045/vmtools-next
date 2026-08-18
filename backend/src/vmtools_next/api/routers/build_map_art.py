@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session
 from vmtools_next.api.deps import get_db, get_current_user, require_admin
 from vmtools_next.data.models.build_map_art import (
     MapArtTask, MapArtMaterial, MapArtBotAssignment, MapArtBlockState, MapArtSupplyBox, MapArtSupplyTemplate,
-    MapArtSupplyWarehouse, MapArtFoodBox,
+    MapArtSupplyWarehouse, MapArtFoodBox, MapArtGlobalConfig,
 )
 from vmtools_next.adapters.litematica.litematica_parser import LitematicaParser
 from vmtools_next.core.map_art_coordinator import (
@@ -368,6 +368,14 @@ async def create_task(
         reqs = await LitematicaParser.get_material_requirements(data.projection_file_path)
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"投影解析失败：{e}")
+    # 2026-08-18：解析结果为空（投影无方块数据/解析失败静默返回空）→ 明确报错，
+    # 避免创建 total_blocks=0 的空任务（前端预览/材料需求不显示的根因之一）。
+    if (info.total_blocks or 0) <= 0 or not parsed.layers:
+        raise HTTPException(
+            status_code=400,
+            detail="投影解析结果为空（0 个方块）：请检查投影文件是否包含方块数据，"
+                   "或重新在 Litematica 中导出（确保有实际放置的方块）",
+        )
 
     # P2-12：坐标系一致性校验——map_art 后端用「相对坐标+origin」放置、前端用投影
     # 坐标渲染，均假设投影 Position=(0,0,0)；带偏移投影会"什么都建不出"或坐标错位。
@@ -1066,21 +1074,69 @@ def put_supply_warehouse(data: SupplyBoxesRequest, db: Session = Depends(get_db)
     return {"status": "ok", "materials": len(cleaned)}
 
 
-# ── 食物补货配置（2026-08-14 模块A）─────────────────────────────────────
+# ── 食物补货配置（2026-08-14 模块A；2026-08-18 全局同步）──────────────────
+
+def _load_global_food_config(db: Session) -> dict:
+    """读取【全局】食物配置（map_art_global_config 单行 id=1）。
+
+    2026-08-18 用户需求：一个任务里改了，其他任务同步生效——食物配置
+    改为全局一份（不再存任务级 food_config 字段）。首次无记录 → 默认值；
+    兼容旧任务级 food_config 作为迁移源（任一任务有自定义则先写入全局）。
+    """
+    _default = _default_food_config()
+    row = db.query(MapArtGlobalConfig).filter(MapArtGlobalConfig.id == 1).first()
+    if row and row.config_json:
+        try:
+            data = json.loads(row.config_json)
+            if isinstance(data, dict):
+                return {
+                    "item_id": str(data.get("item_id") or _default["item_id"]),
+                    "go_command": str(data.get("go_command") or _default["go_command"]),
+                    "wait_after_go_ms": int(data.get("wait_after_go_ms") or _default["wait_after_go_ms"]),
+                    "eat_threshold_food": int(data.get("eat_threshold_food") or _default["eat_threshold_food"]),
+                    "eat_threshold_health": int(data.get("eat_threshold_health") or _default["eat_threshold_health"]),
+                }
+        except Exception:
+            pass
+    # 兼容迁移：旧任务级 food_config 有自定义 → 提升为全局（一次性）
+    try:
+        custom = db.query(MapArtTask.food_config).filter(
+            MapArtTask.food_config.isnot(None),
+            MapArtTask.food_config != "",
+        ).first()
+        if custom and custom[0]:
+            cfg = _parse_food_config(custom[0])
+            if cfg != _default:
+                _save_global_food_config(db, cfg)
+                return cfg
+    except Exception:
+        pass
+    return _default
+
+
+def _save_global_food_config(db: Session, cfg: dict) -> None:
+    """写入【全局】食物配置（单行 id=1）。"""
+    row = db.query(MapArtGlobalConfig).filter(MapArtGlobalConfig.id == 1).first()
+    if row is None:
+        row = MapArtGlobalConfig(id=1, config_json="{}")
+        db.add(row)
+    row.config_json = json.dumps(cfg, ensure_ascii=False)
+    db.commit()
+
 
 @router.get("/tasks/{task_id}/food-config")
 def get_food_config(task_id: str, db: Session = Depends(get_db), user=Depends(require_admin)):
-    """读取任务级食物配置（猪排仓库指令 + 进食阈值）。"""
+    """读取食物配置（2026-08-18 起为【全局共享】：所有任务同一份，一个任务改处处生效）。"""
     task = db.query(MapArtTask).filter(MapArtTask.task_id == task_id).first()
     if not task:
         raise HTTPException(status_code=404, detail="任务不存在")
-    return _parse_food_config(task.food_config)
+    return _load_global_food_config(db)
 
 
 @router.put("/tasks/{task_id}/food-config")
 def put_food_config(task_id: str, data: FoodConfigRequest, db: Session = Depends(get_db),
                     user=Depends(require_admin)):
-    """保存任务级食物配置（item_id / go_command / 进食阈值均可自定义）。"""
+    """保存食物配置（2026-08-18 起为【全局共享】：写全局，所有任务同步）。"""
     task = db.query(MapArtTask).filter(MapArtTask.task_id == task_id).first()
     if not task:
         raise HTTPException(status_code=404, detail="任务不存在")
@@ -1092,9 +1148,8 @@ def put_food_config(task_id: str, data: FoodConfigRequest, db: Session = Depends
         "eat_threshold_food": data.eat_threshold_food or _default["eat_threshold_food"],
         "eat_threshold_health": data.eat_threshold_health or _default["eat_threshold_health"],
     }
-    task.food_config = json.dumps(cfg, ensure_ascii=False)
-    db.commit()
-    return {"status": "ok", "food_config": cfg}
+    _save_global_food_config(db, cfg)
+    return {"status": "ok", "food_config": cfg, "global": True}
 
 
 @router.get("/tasks/{task_id}/food-boxes")
