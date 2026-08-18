@@ -44,13 +44,6 @@
         <el-button type="primary" @click="confirmPlayer">添加</el-button>
       </template>
     </el-dialog>
-
-    <div class="help-box">
-      <h4>怎么获取 QQ OpenID？</h4>
-      <p>让那个 QQ 用户在群里 <strong>@机器人 发一条消息</strong>，在服务器运行：</p>
-      <code>/opt/vmtools-next/vmtools-next/backend/.venv/bin/python /opt/vmtools-next/vmtools-next/backend/src/vmtools_next/adapters/qqbot/ws_sniffer.py</code>
-      <p>终端显示 <code>发送者 openid=XXXXXXXX</code>，填入上方对应行即可。</p>
-    </div>
   </div>
 </template>
 
@@ -144,10 +137,6 @@ async function confirmPlayer() {
 .track-list :deep(.el-tag .el-tag__close) { color: var(--success); }
 .track-list :deep(.el-tag .el-tag__close:hover) { background: var(--success-bg); }
 .na { color: var(--text-disabled); font-style: italic; font-size: 13px; }
-
-.help-box { background: var(--bg-card); border: 1px solid var(--border-subtle); border-radius: var(--radius-lg); padding: 16px; margin-top: 24px; }
-.help-box p { margin: 8px 0; }
-.help-box code { background: var(--terminal-bg); color: var(--terminal-text); padding: 2px 6px; border-radius: 4px; font-size: 12px; display: block; margin: 8px 0; overflow-x: auto; }
 
 /* ============ 移动端适配 ============ */
 @media (max-width: 768px) {
