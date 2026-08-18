@@ -70,6 +70,8 @@ class CombatAttackRequest(BaseModel):
     attack_radius: float = Field(default=3.0, ge=0.5, le=8.0)
     # 2026-08-11：手动攻击也遵循模式（false=原地打，true=寻路追击）
     move_to_target: bool = False
+    # 2026-08-18：强制距离（跳过距离判定直接发攻击包）——测试服务端是否校验攻击距离
+    force_distance: bool = False
 
 
 class MccBotCreate(BaseModel):

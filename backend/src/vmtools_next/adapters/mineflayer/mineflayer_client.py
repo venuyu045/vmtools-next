@@ -463,13 +463,15 @@ class MineflayerBridgeClient(AbstractBotAgent):
                      target_type: str | None = None,
                      move_to_target: bool = False,
                      scan_radius: int = 16,
-                     attack_radius: float = 3.0) -> dict:
+                     attack_radius: float = 3.0,
+                     force_distance: bool = False) -> dict:
         return await self._send_request(METHOD_ATTACK, {
             "target_id": target_id,
             "target_type": target_type,
             "move_to_target": move_to_target,
             "scan_radius": scan_radius,
             "attack_radius": attack_radius,
+            "force_distance": force_distance,
         }, timeout=DEFAULT_CMD_TIMEOUT)
 
     async def set_auto_attack(self, enabled: bool = True, radius: int = 8,

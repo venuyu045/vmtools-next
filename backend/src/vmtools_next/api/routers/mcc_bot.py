@@ -1119,7 +1119,8 @@ async def combat_attack(bot_id: str, data: CombatAttackRequest,
         result = await client.attack(target_id=data.target_id, target_type=data.target_type,
                                      move_to_target=data.move_to_target,
                                      scan_radius=data.scan_radius,
-                                     attack_radius=data.attack_radius)
+                                     attack_radius=data.attack_radius,
+                                     force_distance=data.force_distance)
         if isinstance(result, dict) and result.get("success") is False:
             raise HTTPException(400, result.get("error", "攻击失败"))
         return {"success": True, "bot_id": bot_id, "result": result}

@@ -520,7 +520,7 @@ function createCombatHandlers(bot, ctx = {}) {
     return { success: true, entities: getNearbyEntities(radius, target_types, !includesPlayer(target_types)) };
   }
 
-  async function attack({ target_id = null, target_type = null, move_to_target = false, scan_radius = 16, attack_radius = 3 } = {}) {
+  async function attack({ target_id = null, target_type = null, move_to_target = false, scan_radius = 16, attack_radius = 3, force_distance = false } = {}) {
     let entity = null;
     if (target_id != null) entity = bot.entities[target_id];
     if (!entity && target_type) {
@@ -532,6 +532,9 @@ function createCombatHandlers(bot, ctx = {}) {
       if (list.length > 0) entity = bot.entities[list[0].id];
     }
     if (!entity) return { success: false, error: 'no target found' };
+    // 2026-08-18：force_distance=跳过距离判定直接发攻击包（测试服务端是否校验攻击距离，
+    // 也是「远程手长」攻击的基础：若服务端不校验，bot 站多远都能打到）
+    if (force_distance) return attackEntity(entity);
     // 手动攻击也遵循模式：false=原地打（够不到报错），true=寻路追击；均按攻击半径判定
     return attackByMode(entity, Boolean(move_to_target), Number(attack_radius) || 3);
   }
