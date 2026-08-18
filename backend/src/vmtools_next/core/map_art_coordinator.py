@@ -540,6 +540,17 @@ class BotBuildLoop:
                 # placed=True 且 verified=False 的行（读真实 world），未确认块不得
                 # 静默计入 completed（防「0/16384 却 completed」类进度虚高）。
                 ok_count, pending = await self._reconcile_region_final()
+                # 2026-08-18 用户反馈（校验对比之后不填坑）：完成前对账发现的缺块
+                # （air/其它方块）已由 _reconcile_region_final 收集进 _pending_gaps →
+                # 补放后再复对账收敛（此前只复对账不补放，缺块永远留着判 failed）。
+                if pending > 0 and self._pending_gaps and not self._stopped:
+                    self._activity("info",
+                                   f"完成前对账发现 {pending} 块待确认/缺口，先补放再复对账")
+                    filled_gaps = await self._fill_pending_gaps()
+                    if filled_gaps > 0:
+                        self._activity("info", f"对账后补放 {filled_gaps} 格")
+                    await asyncio.sleep(2)
+                    ok_count, pending = await self._reconcile_region_final()
                 if pending > 0:
                     # 给服务器同步/客户端刷新一次机会后复对账
                     await asyncio.sleep(3)
@@ -953,6 +964,10 @@ class BotBuildLoop:
         """补放破洞（2026-08-16 用户需求）：区域循环跑完后，对 _pending_gaps 逐格补放。
 
         站位：优先该格 4 个相邻方向中脚下为实体的格（站在已放方块/平台上，面朝洞放置）；
+        2026-08-18 增强（实测 60 格补放 0 成功根因）：Via 下 get_world_block_at 读
+        平台层可能返回旧 air（客户端数据未同步）→ 找不到站立格全部跳过。现增加
+        【bot 当前真实位置兜底】：bot 已在建造区（on_ground=true 且与缺口同层相邻）
+        时直接使用当前位置站立补放，不再依赖本地方块读取。
         材料不足/不可达/放置失败 → 保留在清单（下次续建兜底），不阻塞。
         返回成功补放格数。
         """
@@ -978,24 +993,50 @@ class BotBuildLoop:
                 if await self._verify_block(wx, wy, wz, block_id):
                     filled += 1
                     continue
-                # 找相邻可站立格（脚下实体），4 方向优先
+                # ── 找可站立格（2026-08-18 双路径）──
                 stand: Optional[tuple[int, int, int]] = None
-                for sx, sz in ((wx, wz - 1), (wx - 1, wz), (wx + 1, wz), (wx, wz + 1)):
-                    try:
-                        foot = await self.mcp.get_world_block_at(sx, wy - 1, sz)
-                        fname = ((foot.get("name") or "air").split("[")[0])
-                        if fname not in ("air", "water", "lava",
-                                         "flowing_water", "flowing_lava"):
-                            stand = (sx, wy, sz)
-                            break
-                    except Exception:
-                        continue
+                # 路径1：bot 当前真实位置兜底（Via 数据旧时本地方块读取不可靠）——
+                # bot 已在建造区且 on_ground=true、与缺口同层相邻 → 直接用当前位置。
+                try:
+                    _ps = await self.mcp.get_player_state()
+                    _pd = _ps.get("data", _ps) if isinstance(_ps, dict) else {}
+                    if _pd.get("is_on_ground") is True:
+                        _loc = _pd.get("location") or {}
+                        _bx, _by, _bz = _loc.get("x"), _loc.get("y"), _loc.get("z")
+                        if _bx is not None and _by is not None and _bz is not None:
+                            _bxi, _bzi = int(round(_bx)), int(round(_bz))
+                            if max(abs(_bxi - wx), abs(_bzi - wz)) <= 2 \
+                                    and abs(float(_by) - wy) <= 1.5:
+                                stand = (_bxi, int(round(float(_by))), _bzi)
+                                self._activity("debug",
+                                               f"补放 {wx},{wz}：用 bot 当前位置 "
+                                               f"({_bxi},{int(round(float(_by)))},{_bzi}) 站立（on_ground 兜底）")
+                except Exception:
+                    pass
+                # 路径2：4 方向相邻格脚下实体（读本地方块）
+                if stand is None:
+                    for sx, sz in ((wx, wz - 1), (wx - 1, wz), (wx + 1, wz), (wx, wz + 1)):
+                        try:
+                            foot = await self.mcp.get_world_block_at(sx, wy - 1, sz)
+                            fname = ((foot.get("name") or "air").split("[")[0])
+                            if fname not in ("air", "water", "lava",
+                                             "flowing_water", "flowing_lava"):
+                                stand = (sx, wy, sz)
+                                break
+                        except Exception:
+                            continue
                 if stand is None:
                     remaining.append((wx, wy, wz, block_id))
                     continue
-                # 移动到站立格
-                mv = await self._move_to(stand[0], stand[1], stand[2], max_offset=1,
-                                         label=f"gap-fill({wx},{wz})", verify_height=True)
+                # 移动到站立格（2026-08-18：改用 _move_to_step——支持 walk_toward
+                # 轻量直走 + gap 跳过，避免每次补放都走完整 baritone 寻路；失败回退
+                # _move_to 语义一致）
+                mv = await self._move_to_step(stand[0], stand[1], stand[2],
+                                              label=f"gap-fill({wx},{wz})")
+                if mv == "gap":
+                    # 目标站立格脚下非实体（本身也是洞）→ 跳过该格，保留待补
+                    remaining.append((wx, wy, wz, block_id))
+                    continue
                 if not mv:
                     remaining.append((wx, wy, wz, block_id))
                     continue
@@ -1286,13 +1327,17 @@ class BotBuildLoop:
             ok_count = 0
             reset_count = 0
             stale_count = 0
+            unloaded_count = 0
             self._activity("info", f"启动对账：DB 已置位 {len(rows)} 块，大范围扫描匹配投影…")
             db2 = get_session_factory()()
             try:
                 # ⚠️ 2026-08-16：优先用【大范围平面扫描】（一次 WS 往返读取区域
                 # 指定层所有方块 {x,z,block}）→ 内存与 DB 批量比对，替代 16384 次
                 # 逐格 get_world_block_at（重启后 bot world 从服务器重拉 = 权威）。
-                actual_map: dict[tuple[int, int], str] = {}
+                # ⚠️ 2026-08-18：未加载 chunk 的坐标 block=null（Node 端已区分）——
+                # 不再误判为「缺口」，避免 chunk 未加载时整片 air 进 _pending_gaps
+                # 导致启动填坑 0 成功（实测 60 格全跳过）。
+                actual_map: dict[tuple[int, int], Optional[str]] = {}
                 try:
                     _snap = await self.mcp.scan_region_blocks(
                         x_start=self.origin_x + self.region.x_start,
@@ -1303,8 +1348,12 @@ class BotBuildLoop:
                     )
                     _blks = (_snap.get("data", _snap)).get("blocks", []) if isinstance(_snap, dict) else []
                     for _b in _blks:
-                        actual_map[(_b.get("x"), _b.get("z"))] = self._normalize_item_id(
-                            (_b.get("block") or "air").split("[")[0])
+                        _bname = _b.get("block")
+                        if _bname is None:
+                            actual_map[(_b.get("x"), _b.get("z"))] = None  # 未加载 chunk 标记
+                        else:
+                            actual_map[(_b.get("x"), _b.get("z"))] = self._normalize_item_id(
+                                str(_bname).split("[")[0])
                     self._activity("debug", f"大范围扫描完成：{len(actual_map)} 格")
                 except Exception as _scan_err:
                     logger.warning("[%s] Region scan failed (%s)，回退逐格对账", self.bot_id, _scan_err)
@@ -1318,6 +1367,11 @@ class BotBuildLoop:
                             actual = self._normalize_item_id((v.get("name") or "air").split("[")[0])
                         except Exception:
                             actual = "air"
+                    if actual is None:
+                        # 2026-08-18：坐标所在 chunk 未加载 → 不判定（既不算缺口也不算
+                        # 一致），由运行中 _verify_block（bot 走近后 chunk 加载）兜底。
+                        unloaded_count += 1
+                        continue
                     if actual == self._normalize_item_id(expected):
                         ok_count += 1
                         row = db2.query(MapArtBlockState).filter(
@@ -1360,7 +1414,8 @@ class BotBuildLoop:
             self._activity(
                 "info",
                 f"启动对账完成：{ok_count} 一致 / {reset_count} 重置 / {stale_count} 待定"
-                f"（共 {len(rows)} 块 DB 已置位）")
+                f"（共 {len(rows)} 块 DB 已置位）" +
+                (f" / {unloaded_count} 未加载" if unloaded_count else ""))
         except Exception as e:
             logger.warning("[%s] Start reconcile failed: %s", self.bot_id, e)
 
@@ -1473,8 +1528,13 @@ class BotBuildLoop:
                         self._verified_set.add((rx, ry, rz))
                     elif actual in ("air", ""):
                         pending_count += 1  # 客户端数据旧，未确认（不重置）
+                        # 2026-08-18 用户反馈（校验对比后不填坑）：完成前对账发现的
+                        # 缺块（读到 air）必须进入待补清单，由 _fill_pending_gaps 补放
+                        # ——此前只复对账不补放，缺块永远留在世界（任务被判 failed）。
+                        self._pending_gaps.append((rx, ry, rz, expected))
                     else:
                         reset_count += 1
+                        self._pending_gaps.append((rx, ry, rz, expected))  # 2026-08-18 同上：放错/被破坏→补放
                         row = db2.query(MapArtBlockState).filter(
                             MapArtBlockState.task_id == self.task_id,
                             MapArtBlockState.x == rx,
@@ -3249,7 +3309,10 @@ class BotBuildLoop:
                 # 排队：通知主循环在下一个安全点暂停，等它确认（_sleep_hold）后再执行
                 self._sleep_req.set()
                 try:
-                    await asyncio.wait_for(self._sleep_hold.wait(), timeout=60)
+                    # 2026-08-18：超时 60→120s——主循环可能在启动填坑/完成前补放/
+                    # 大范围扫描等长操作中（实测补放 59 格耗时 81s），60s 内未到
+                    # 安全点被误判超时 → 整晚不睡。120s 覆盖单次长操作边界。
+                    await asyncio.wait_for(self._sleep_hold.wait(), timeout=120)
                 except asyncio.TimeoutError:
                     # 主循环 60s 内未到达安全点（补货/移动卡住）→ 取消本次请求；
                     # 同时清理 _sleep_hold 残留（防主循环响应晚到后 _sleep_event 无人恢复）

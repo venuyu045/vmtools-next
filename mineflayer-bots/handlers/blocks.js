@@ -354,6 +354,9 @@ function createBlockHandlers(bot) {
   // 供 Python 端与投影 block_matrix 批量匹配（替代 16384 次逐格 get_world_block_at
   // WS 往返 → 大幅缩短启动对账/重启后重走时间）。
   // ⚠️ bot 重启后本地 world 从服务器重拉（权威状态），此扫描此时最准确。
+  // ⚠️ 2026-08-18 修复：未加载 chunk 的坐标 block 返回 null（而非 'air'）——
+  // 此前统一返回 'air' 导致「启动对账 → 补放」在 chunk 未加载时把整片区域误判为
+  // 缺口（实测 60 格全 air→补放 0 成功）。Python 端对 null 跳过（运行中 _verify_block 兜底）。
   function scan_region_blocks({ x_start, x_end, z_start, z_end, y, max_count = 200000 } = {}) {
     try {
       if (x_start == null || x_end == null || z_start == null || z_end == null || y == null) {
@@ -364,6 +367,14 @@ function createBlockHandlers(bot) {
       const z0 = Math.min(z_start, z_end), z1 = Math.max(z_start, z_end);
       for (let x = x0; x <= x1 && blocks.length < max_count; x++) {
         for (let z = z0; z <= z1 && blocks.length < max_count; z++) {
+          // chunk 未加载：blockAt 返回的也是 air（旧数据/占位），无法区分「真空气」与
+          // 「未加载」→ 显式检查 column 是否存在，未加载返回 null 供上层跳过。
+          let col = null;
+          try { col = bot.world.getColumn(Math.floor(x / 16), Math.floor(z / 16)); } catch (e) { col = null; }
+          if (!col) {
+            blocks.push({ x, z, block: null });
+            continue;
+          }
           const b = bot.blockAt(new Vec3(x, y, z));
           blocks.push({ x, z, block: (b && b.name) ? b.name : 'air' });
         }
