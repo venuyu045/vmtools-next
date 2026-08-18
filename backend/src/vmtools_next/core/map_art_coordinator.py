@@ -256,6 +256,10 @@ class BotBuildLoop:
         # 2026-08-14 模块A：食物配置 + 猪排潜影盒坐标
         self._food_cfg: dict = food_config or self._default_food_cfg()
         self._food_boxes: list[tuple[int, int, int]] = food_boxes or []
+        # 2026-08-18 用户需求：猪排仓库坐标加入 y 轴判定白名单——仓库在末地
+        # y=58（与建造层 y=319 差异巨大），_near_build_area/_verify_at_build_area
+        # 的 y 校验会把它误判为"未到位/不在建造区域"。
+        self._y_whitelist: set[tuple[int, int]] = {(b[0], b[2]) for b in self._food_boxes}
         # 2026-08-14 模块B：快捷栏槽位 → 材料映射缓存（避免每次全背包搜索）
         self._hotbar_map: dict[int, str] = {}  # slot(0-8) → clean_item_id
         self._food_task: Optional[asyncio.Task] = None  # 食物监控协程
@@ -2017,6 +2021,22 @@ class BotBuildLoop:
             pass
         return None
 
+    def _near_whitelist(self, x: float, z: float, radius: float = 6.0) -> bool:
+        """是否在 y 轴白名单坐标附近（2026-08-18：猪排仓库 food_boxes）。
+
+        bot 在仓库取猪排时高度与建造层差异巨大，若 y 校验误判会触发兜底传送
+        把 bot 从仓库拉走。白名单内坐标跳过 y 校验（x/z 区域判断照常）。
+        """
+        if not self._y_whitelist:
+            return False
+        try:
+            for wx, wz in self._y_whitelist:
+                if abs(float(x) - wx) <= radius and abs(float(z) - wz) <= radius:
+                    return True
+        except Exception:
+            pass
+        return False
+
     def _near_build_area(self, x: float, z: float, y: Optional[float] = None) -> bool:
         """判断 (x,z)（可选 y）是否在建造区域附近（矩形区域，X/Z 半宽半高各自外扩自适应余量）。
 
@@ -2051,9 +2071,13 @@ class BotBuildLoop:
         if half_w <= 0 or half_h <= 0:
             return True  # 未知区域不拦截（避免误判导致无限兜底）
         if y is not None:
-            expected_y = self.origin_y + self._stand_y_offset  # 站立层（地面）
-            if abs(y - expected_y) > 3.0:
-                return False
+            # ⚠️ 2026-08-18 用户需求：猪排仓库（food_boxes）加入 y 轴白名单——
+            # bot 在仓库取猪排时 y=58（末地）与建造层差异巨大，跳过 y 校验，
+            # 避免误判"不在建造区域/未到位"触发兜底传送把 bot 从仓库拉走。
+            if not self._near_whitelist(x, z):
+                expected_y = self.origin_y + self._stand_y_offset  # 站立层（地面）
+                if abs(y - expected_y) > 3.0:
+                    return False
         return abs(x - cx) <= half_w and abs(z - cz) <= half_h
 
     async def _send_teleport(self, cmd: str) -> bool:
@@ -2205,10 +2229,14 @@ class BotBuildLoop:
             # 原 `>=1.0` 把 1.0 判为不符 → 传送后反复误判"高度不符"兜底循环。
             # 统一用 _verify_y_tol（>容差才失败），与 _move_to verify_height 一致。
             if abs(float(y) - expected_y) > self._verify_y_tol:
-                self._activity("warn",
-                               f"传送后高度不符（站立层={expected_y}，实际y={y:.1f}）——"
-                               f"判定未到位（可能悬空/掉水），走兜底")
-                return "fall_after_teleport"
+                # ⚠️ 2026-08-18 用户需求：猪排仓库（food_boxes）加入 y 轴白名单——
+                # bot 在仓库取猪排时 y=58（末地）与建造层差异巨大，若误判高度不符会
+                # 触发 fall_after_teleport（等待落地→复验→再失败）死循环。
+                if not self._near_whitelist(x, z):
+                    self._activity("warn",
+                                   f"传送后高度不符（站立层={expected_y}，实际y={y:.1f}）——"
+                                   f"判定未到位（可能悬空/掉水），走兜底")
+                    return "fall_after_teleport"
             if self._near_build_area(x, z):  # x/z 判断（y 已单独严格校验）
                 # 复查：等 1.5s 再确认位置没变（防悬空瞬间验证通过后掉下去）
                 await asyncio.sleep(1.5)
@@ -3174,7 +3202,11 @@ class BotBuildLoop:
             return False
 
         try:
-            # 1. 保存当前位置
+            # 1. 保存当前位置（暂存 dth——取猪排后 /ehomes dth 传回建造点）
+            # ⚠️ 2026-08-18 用户反馈"取猪排前为什么不先暂存当前位置"：逻辑已有，
+            # 但缺 activity 日志用户看不到；补日志 + 保存失败直接中断（防返回错位）。
+            self._activity("info",
+                           f"暂存当前位置（{self._supply_cfg.get('save', '/esethomes dth')}）——取完猪排后传回此处")
             r1 = await self.mcp.send_chat(self._supply_cfg.get("save", "/esethomes dth"))
             if isinstance(r1, dict) and r1.get("success") is False:
                 logger.warning("[%s] Food save command failed: %s", self.bot_id, r1.get("error", "?"))
@@ -3365,6 +3397,11 @@ class BotBuildLoop:
         """
         try:
             if event_name == "bot_death":
+                # 2026-08-18 修复：任务已取消/停止后不再触发死亡恢复（此前会继续
+                # 传送/寻路——用户反馈"取消任务后假人还一直动"）。
+                if self._stopped:
+                    self._activity("debug", "任务已停止，忽略 bot 死亡恢复")
+                    return
                 self._activity("warn", "⚠️ bot 死亡（可能被怪物击杀）——等待复活后传送回建造点")
                 logger.warning("[%s] bot_death event received, scheduling recovery", self.bot_id)
                 asyncio.create_task(self._handle_death())
@@ -3379,7 +3416,12 @@ class BotBuildLoop:
         （/ehomes mapart 固定点）恢复位置；主循环状态由上层重新开始/续建处理。
         """
         try:
+            # 2026-08-18 修复：任务取消/停止后立即退出（死亡恢复协程可能已排队/运行中）
+            if self._stopped:
+                return
             await asyncio.sleep(3.0)  # 等复活动画/重生点加载
+            if self._stopped:
+                return
             fixed = (self._supply_cfg.get("return_fixed") or "/ehomes mapart").strip()
             self._activity("info", f"死亡恢复：传送回固定建造点（{fixed}）")
             await self.mcp.send_chat(fixed)
@@ -3828,6 +3870,8 @@ class MapArtCoordinator:
                         MapArtFoodBox.task_id == self.task_id
                     ).order_by(MapArtFoodBox.sort_order).all()
                     self._food_boxes = [(r.x, r.y, r.z) for r in rows]
+                # 2026-08-18：同步更新 y 轴白名单（猪排仓库坐标）
+                self._y_whitelist = {(b[0], b[2]) for b in self._food_boxes}
             finally:
                 db.close()
         except Exception as e:
