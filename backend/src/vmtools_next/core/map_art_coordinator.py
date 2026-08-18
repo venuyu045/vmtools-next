@@ -2580,13 +2580,13 @@ class BotBuildLoop:
         # ⚠️ 2026-08-18 修复（用户反馈：材料不缺仍补货→超64）：原条件 have_trigger<64
         # 会把「背包还有几十个（如 50）」的材料也强制补到 256 → 超量。改为仅当
         # 背包【完全没有】该材料（have_trigger<1）才强制加入补货——已有部分材料时
-        # 靠 _try_select_item 重试即可，不应触发补货。
+        # 靠 _try_select_item 重试即可，不应触发补货。target 固定 64（一组，不再 4 组）。
         if not any(n.item_id == clean_trigger for n in needs):
             have_trigger = await self._check_inventory_level(clean_trigger)
             if have_trigger < 1:  # 2026-08-18：仅完全无货才补
                 needs.append(Need(
                     item_id=clean_trigger,
-                    target=planner.plan_target(64, self._restock_stacks),
+                    target=64,  # 2026-08-18：只补一组（用户：每种只拿一组）
                     have=have_trigger,
                     boxes=self._supply_boxes_for(clean_trigger),
                 ))

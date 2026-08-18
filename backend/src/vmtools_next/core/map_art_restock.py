@@ -103,13 +103,17 @@ class RestockPlanner:
         region_materials: {归一化 item_id: 区域需求块数}（region_material_count 产出）
         have_counts:      {归一化 item_id: 背包散装量}
         supply_boxes:     {item_id(任意格式): [坐标...]}（任务级+全局仓库合并后）
+
+        ⚠️ 2026-08-18 用户要求（每种超64仍补货）：【哪种用完只拿哪种，每种只补一组】——
+        - 背包还有该材料（have > 0）→ 不补（此前 have<target(256) 就补 → 没用完也拿 → 超64）
+        - 完全用完（have == 0）→ 补一组（target = min(64, 区域需求)，不再补 4 组=256）
         """
         needs: list[Need] = []
         for item_id, needed in region_materials.items():
-            target = self.plan_target(needed, self.stacks_per_item)
-            have = have_counts.get(item_id, 0)
-            if have >= target:
-                continue
+            if have_counts.get(item_id, 0) > 0:
+                continue  # 2026-08-18：背包还有 → 不补（用户：没用完的不要拿）
+            target = max(1, min(64, needed))  # 2026-08-18：只补一组（64），区域需求不足 64 则按需求
+            have = 0
             boxes = []
             for key, box_list in supply_boxes.items():
                 if self.normalize(key) == item_id and box_list:

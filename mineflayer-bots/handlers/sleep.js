@@ -30,6 +30,29 @@ const { pathTo } = require('../baritone-path/pathfinder');
 function createSleepHandlers(bot, ctx = {}) {
   const { broadcast = null, createEvent = null } = ctx;
 
+  // ── 2026-08-18 根治：修正 bot.time.timeOfDay 本身 ──
+  // mineflayer time 插件在 'time' 事件里 `timeOfDay % 24000` 不做负数归一化 →
+  // 服务器 timeOfDay(long) 溢出为负时 bot.time.timeOfDay 为负（实测 -4060）→
+  // mineflayer bed.js 的 bot.sleep() 内部检查 `timeOfDay 12541~23458` 恒 False
+  // → 「sleep_error: it's not night and it's not a thunderstorm」睡觉失败。
+  // 这里注册监听覆盖为归一化值（mineflayer 先注册先更新，我们后注册覆盖）。
+  // 修正后所有依赖 bot.time.timeOfDay 的地方（bed.js / get_time_status / 前端）统一正常。
+  try {
+    if (bot._client && typeof bot._client.on === 'function') {
+      bot._client.on('time', (pkt) => {
+        try {
+          if (pkt && typeof pkt.timeOfDay === 'number' && bot.time) {
+            let v = pkt.timeOfDay % 24000;
+            if (v < 0) v += 24000;
+            if (bot.time.timeOfDay !== v) bot.time.timeOfDay = v;
+            const isDay = v < 13000;
+            if (bot.time.isDay !== isDay) bot.time.isDay = isDay;
+          }
+        } catch (e) { /* 忽略单次修正失败 */ }
+      });
+    }
+  } catch (e) { /* time 修正注册失败不影响其余功能 */ }
+
   // ── 入睡/醒来事件 → 广播（Python 插件决策 + 前端实时状态） ──
   function emitSleepState(extra = {}) {
     if (!broadcast || !createEvent) return;
@@ -151,21 +174,24 @@ function createSleepHandlers(bot, ctx = {}) {
     }
 
     // 3. 走到床边（2 格内可点击；bed.js 点击范围 x/z ±2、y ±2）
+    // 2026-08-18：寻路失败【重试一次】（Via 数据旧/首次规划不准，重试常成功）；
+    // 近距离（≤32）优先 pathfinder GoalNear（baritone 在近距离反而易 timeout）。
     const dist = bot.entity.position.distanceTo(bed.position);
     if (dist > 2.5) {
       let moved = false;
       try {
-        if (dist > 32) {
-          // 远距离：baritone 移植寻路（支持爬升/跳跃/下降）
-          const r = await pathTo(bot, bed.position.x, bed.position.y, bed.position.z, {
-            maxOffset: 2,
-            timeoutMs: Math.min(timeout_ms, 45000),
-            onLog: (m) => console.log(`[sleep][baritone] ${m}`),
-          });
-          moved = !!r.success;
-        } else {
+        const tryMove = async () => {
+          if (dist > 32) {
+            // 远距离：baritone 移植寻路（支持爬升/跳跃/下降）
+            const r = await pathTo(bot, bed.position.x, bed.position.y, bed.position.z, {
+              maxOffset: 2,
+              timeoutMs: Math.min(timeout_ms, 30000),
+              onLog: (m) => console.log(`[sleep][baritone] ${m}`),
+            });
+            return !!r.success;
+          }
           // 近距离：pathfinder GoalNear（2 格容差）
-          moved = await new Promise((resolve) => {
+          return await new Promise((resolve) => {
             let done = false;
             let timer = null;
             const cleanup = () => {
@@ -189,13 +215,18 @@ function createSleepHandlers(bot, ctx = {}) {
             timer = setTimeout(() => {
               try { bot.pathfinder.stop(); } catch (e) { /* ignore */ }
               finish(false);
-            }, Math.min(timeout_ms, 20000));
+            }, Math.min(timeout_ms, 15000));
             try {
               bot.pathfinder.setGoal(new GoalNear(bed.position.x, bed.position.y, bed.position.z, 2));
             } catch (e) {
               finish(false);
             }
           });
+        };
+        moved = await tryMove();
+        if (!moved) {
+          // 2026-08-18：首次失败重试一次（Via 数据旧/卡住自愈）
+          moved = await tryMove();
         }
       } catch (err) {
         return { success: false, reason: 'path_error:' + err.message };
@@ -205,14 +236,38 @@ function createSleepHandlers(bot, ctx = {}) {
       }
     }
 
-    // 4. 睡觉（等待 sleep 事件；内部 3s 超时抛「bot is not sleeping」）
-    try {
-      await bot.sleep(bed);
-      return {
-        success: true,
-        reason: 'sleeping',
-        bed: { x: bed.position.x, y: bed.position.y, z: bed.position.z },
+    // 4. 睡觉：优先 activateBlock 右键床（绕过 mineflayer bed.js 的
+    //    「it's not night」时间检查——bed.js 内部用 bot.time.timeOfDay 原始值，
+    //    即使我们预检通过它也可能拒绝），再等 sleep 事件；失败回退 bot.sleep()。
+    //    2026-08-18 修复：实测 19:06 出现 sleep_error: it's not night。
+    const sleepByActivate = () => new Promise((resolve) => {
+      let done = false;
+      const finish = (ok, extra) => {
+        if (done) return;
+        done = true;
+        bot.removeListener('sleep', onSleep);
+        if (timer) clearTimeout(timer);
+        resolve(ok ? { success: true, ...extra } : { success: false, ...extra });
       };
+      const onSleep = () => finish(true, { reason: 'sleeping' });
+      const timer = setTimeout(() => finish(false, { reason: 'sleep_timeout' }), 4000);
+      bot.once('sleep', onSleep);
+      bot.activateBlock(bed).catch(() => finish(false, { reason: 'activate_failed' }));
+    });
+    try {
+      const rAct = await sleepByActivate();
+      if (rAct.success) {
+        return { success: true, reason: 'sleeping', method: 'activate',
+                bed: { x: bed.position.x, y: bed.position.y, z: bed.position.z } };
+      }
+      // activateBlock 未入睡（可能已修正时间）→ 回退 bot.sleep()（含时间/怪物检查）
+      try {
+        await bot.sleep(bed);
+        return { success: true, reason: 'sleeping', method: 'bot.sleep',
+                bed: { x: bed.position.x, y: bed.position.y, z: bed.position.z } };
+      } catch (err2) {
+        return { success: false, reason: 'sleep_error:' + err2.message, method: 'bot.sleep' };
+      }
     } catch (err) {
       // 常见失败：床被占用 / 附近有怪物 / 点击太远 / 点击被拒
       return { success: false, reason: 'sleep_error:' + err.message };
