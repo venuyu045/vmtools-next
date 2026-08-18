@@ -2,7 +2,7 @@
   <section id="members" ref="rootRef" class="lx-section lx-members" :class="{ 'is-revealed': revealed }">
     <div class="lx-section-inner">
       <p class="lx-eyebrow">Members · 同乡</p>
-      <h2 class="lx-section-title">共聚理想乡 · {{ members.length }} 位成员</h2>
+      <h2 ref="titleRef" class="lx-section-title" :class="{ 'lx-title-on': titleOn }">共聚理想乡 · {{ members.length }} 位成员</h2>
 
       <div class="lx-toolbar">
         <div class="lx-filter" role="tablist" aria-label="按职位筛选">
@@ -70,10 +70,12 @@
 import { computed, ref, watch } from 'vue'
 import type { LxMember } from '@/api/lixiangxiang'
 import { useReveal } from '@/composables/useReveal'
+import { useTitleFade } from '@/composables/useTitleFade'
 
 const props = defineProps<{ members: LxMember[] }>()
 
 const { rootRef, revealed } = useReveal()
+const { titleRef, titleOn } = useTitleFade()
 
 const activeFilter = ref('全部')
 const sortMode = ref<'join' | 'rank'>('rank')
@@ -165,6 +167,15 @@ watch(() => props.members.length, () => {
   margin: 0 0 40px;
   letter-spacing: 2px;
   line-height: 1.25;
+  /* 中心带淡入淡出（useTitleFade）：同屏只显示一个大标题 */
+  opacity: 0;
+  transform: translateY(18px);
+  transition: opacity 0.8s var(--ease-out), transform 0.8s var(--ease-out);
+}
+
+.lx-section-title.lx-title-on {
+  opacity: 1;
+  transform: none;
 }
 
 /* ================= Toolbar（去胶囊化） ================= */

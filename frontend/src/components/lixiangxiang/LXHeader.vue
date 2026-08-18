@@ -29,7 +29,7 @@
     <div class="lx-hero-grid">
       <div class="lx-hero-main">
         <p class="lx-hero-eyebrow">Minecraft 玩家组织 · 二〇二四年至今</p>
-        <h1 class="lx-hero-title">理想乡</h1>
+        <h1 ref="titleRef" class="lx-hero-title" :class="{ 'lx-title-on': titleOn }">理想乡</h1>
         <p class="lx-hero-slogan">{{ slogan || '此心安处，便是理想乡' }}</p>
         <p class="lx-hero-sub">
           自 2024 年 12 月肇建，我们筑起完善的基础生产体系，收容四方生灵，
@@ -72,6 +72,7 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 import { lxPublicApi } from '@/api/lixiangxiang'
+import { useTitleFade } from '@/composables/useTitleFade'
 
 const navItems = [
   { href: '#intro', label: '组织介绍' },
@@ -85,6 +86,7 @@ defineProps<{ memberCount?: number }>()
 
 const menuOpen = ref(false)
 const slogan = ref('')
+const { titleRef, titleOn } = useTitleFade()
 
 function closeMenu() {
   menuOpen.value = false
@@ -285,6 +287,15 @@ onMounted(async () => {
   margin: 0 0 14px;
   letter-spacing: 6px;
   text-indent: 6px; /* 视觉居中补偿字距 */
+  /* 中心带淡入淡出（useTitleFade）：滚出首屏中心后淡出，避免与其他大标题同屏 */
+  opacity: 0;
+  transform: translateY(18px);
+  transition: opacity 0.8s var(--ease-out), transform 0.8s var(--ease-out);
+}
+
+.lx-hero-title.lx-title-on {
+  opacity: 1;
+  transform: none;
 }
 
 .lx-hero-slogan {

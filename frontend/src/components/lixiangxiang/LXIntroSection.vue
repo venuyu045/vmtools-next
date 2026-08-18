@@ -2,7 +2,7 @@
   <section id="intro" ref="rootRef" class="lx-section lx-intro" :class="{ 'is-revealed': revealed }">
     <div class="lx-section-inner">
       <p class="lx-eyebrow">About · 组织介绍</p>
-      <h2 class="lx-section-title">筑一方家园，聚四海同好</h2>
+      <h2 ref="titleRef" class="lx-section-title" :class="{ 'lx-title-on': titleOn }">筑一方家园，聚四海同好</h2>
 
       <div class="lx-intro-grid">
         <div class="lx-intro-main">
@@ -41,6 +41,7 @@ import { computed, onMounted, ref } from 'vue'
 import { lxPublicApi } from '@/api/lixiangxiang'
 import type { LxInfo } from '@/api/lixiangxiang'
 import { useReveal } from '@/composables/useReveal'
+import { useTitleFade } from '@/composables/useTitleFade'
 
 const props = defineProps<{
   info: LxInfo | null
@@ -51,6 +52,7 @@ const props = defineProps<{
 }>()
 
 const { rootRef, revealed } = useReveal()
+const { titleRef, titleOn } = useTitleFade()
 
 /** 组件独立使用时（未由 Home 预取传入）自动拉取 */
 const localInfo = ref<LxInfo | null>(null)
@@ -129,6 +131,15 @@ onMounted(async () => {
   margin: 0 0 56px;
   letter-spacing: 2px;
   line-height: 1.25;
+  /* 中心带淡入淡出（useTitleFade）：同屏只显示一个大标题 */
+  opacity: 0;
+  transform: translateY(18px);
+  transition: opacity 0.8s var(--ease-out), transform 0.8s var(--ease-out);
+}
+
+.lx-section-title.lx-title-on {
+  opacity: 1;
+  transform: none;
 }
 
 .lx-intro-grid {

@@ -2,7 +2,7 @@
   <section id="bases" ref="rootRef" class="lx-section lx-bases" :class="{ 'is-revealed': revealed }">
     <div class="lx-section-inner">
       <p class="lx-eyebrow">Bases · 领地</p>
-      <h2 class="lx-section-title">三区并立 · 家园如画</h2>
+      <h2 ref="titleRef" class="lx-section-title" :class="{ 'lx-title-on': titleOn }">三区并立 · 家园如画</h2>
       <p class="lx-section-desc">建筑安家，工业造血，生灵增色——各司其职，共绘家园生机。</p>
 
       <div v-if="bases.length === 0" class="lx-empty">基地资料整理中…</div>
@@ -32,10 +32,12 @@
 <script setup lang="ts">
 import type { LxBase } from '@/api/lixiangxiang'
 import { useReveal } from '@/composables/useReveal'
+import { useTitleFade } from '@/composables/useTitleFade'
 
 defineProps<{ bases: LxBase[] }>()
 
 const { rootRef, revealed } = useReveal()
+const { titleRef, titleOn } = useTitleFade()
 
 /** 坐标解析："-2673, 57, 9627" → "X: -2673 · Z: 9627"（测绘坐标牌） */
 function coordText(raw: string): string {
@@ -83,6 +85,15 @@ function coordText(raw: string): string {
   margin: 0 0 12px;
   letter-spacing: 2px;
   line-height: 1.25;
+  /* 中心带淡入淡出（useTitleFade）：同屏只显示一个大标题 */
+  opacity: 0;
+  transform: translateY(18px);
+  transition: opacity 0.8s var(--ease-out), transform 0.8s var(--ease-out);
+}
+
+.lx-section-title.lx-title-on {
+  opacity: 1;
+  transform: none;
 }
 
 .lx-section-desc {
