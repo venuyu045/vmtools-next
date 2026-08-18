@@ -3756,6 +3756,13 @@ class MapArtCoordinator:
                         d = _json.loads(gcfg.config_json)
                         if isinstance(d, dict):
                             self._food_config = d
+                            # 2026-08-18：食物潜影盒坐标也从全局读（全局同步）
+                            fboxes = d.get("food_boxes") or []
+                            if fboxes:
+                                self._food_boxes = [
+                                    (int(b["x"]), int(b["y"]), int(b["z"]))
+                                    for b in fboxes if isinstance(b, dict) and "x" in b
+                                ]
                     except Exception:
                         pass
                 if not self._food_config:
@@ -3767,11 +3774,12 @@ class MapArtCoordinator:
                                 self._food_config = d
                         except Exception:
                             pass
-                # 食物潜影盒坐标
-                rows = db.query(MapArtFoodBox).filter(
-                    MapArtFoodBox.task_id == self.task_id
-                ).order_by(MapArtFoodBox.sort_order).all()
-                self._food_boxes = [(r.x, r.y, r.z) for r in rows]
+                # 食物潜影盒坐标（全局未配置时回退任务级旧表，兼容迁移）
+                if not self._food_boxes:
+                    rows = db.query(MapArtFoodBox).filter(
+                        MapArtFoodBox.task_id == self.task_id
+                    ).order_by(MapArtFoodBox.sort_order).all()
+                    self._food_boxes = [(r.x, r.y, r.z) for r in rows]
             finally:
                 db.close()
         except Exception as e:

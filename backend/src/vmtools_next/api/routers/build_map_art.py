@@ -1077,25 +1077,34 @@ def put_supply_warehouse(data: SupplyBoxesRequest, db: Session = Depends(get_db)
 # ── 食物补货配置（2026-08-14 模块A；2026-08-18 全局同步）──────────────────
 
 def _load_global_food_config(db: Session) -> dict:
-    """读取【全局】食物配置（map_art_global_config 单行 id=1）。
+    """读取【全局】食物配置（map_art_global_config 单行 id=1，含食物潜影盒坐标）。
 
     2026-08-18 用户需求：一个任务里改了，其他任务同步生效——食物配置
-    改为全局一份（不再存任务级 food_config 字段）。首次无记录 → 默认值；
-    兼容旧任务级 food_config 作为迁移源（任一任务有自定义则先写入全局）。
+    （含食物潜影盒坐标 food_boxes）改为全局一份。首次无记录 → 默认值；
+    兼容旧任务级 food_config / MapArtFoodBox 作为迁移源。
     """
     _default = _default_food_config()
+    result = {
+        **_default,
+        "food_boxes": [],
+    }
     row = db.query(MapArtGlobalConfig).filter(MapArtGlobalConfig.id == 1).first()
     if row and row.config_json:
         try:
             data = json.loads(row.config_json)
             if isinstance(data, dict):
-                return {
+                result = {
                     "item_id": str(data.get("item_id") or _default["item_id"]),
                     "go_command": str(data.get("go_command") or _default["go_command"]),
                     "wait_after_go_ms": int(data.get("wait_after_go_ms") or _default["wait_after_go_ms"]),
                     "eat_threshold_food": int(data.get("eat_threshold_food") or _default["eat_threshold_food"]),
                     "eat_threshold_health": int(data.get("eat_threshold_health") or _default["eat_threshold_health"]),
+                    "food_boxes": [
+                        {"x": int(b["x"]), "y": int(b["y"]), "z": int(b["z"])}
+                        for b in (data.get("food_boxes") or []) if isinstance(b, dict) and "x" in b
+                    ],
                 }
+                return result
         except Exception:
             pass
     # 兼容迁移：旧任务级 food_config 有自定义 → 提升为全局（一次性）
@@ -1107,11 +1116,22 @@ def _load_global_food_config(db: Session) -> dict:
         if custom and custom[0]:
             cfg = _parse_food_config(custom[0])
             if cfg != _default:
-                _save_global_food_config(db, cfg)
-                return cfg
+                result.update(cfg)
     except Exception:
         pass
-    return _default
+    # 兼容迁移：旧任务级 MapArtFoodBox 有坐标 → 提升为全局（一次性）
+    try:
+        legacy_boxes = db.query(MapArtFoodBox).filter(
+            MapArtFoodBox.item_id == "minecraft:cooked_porkchop",
+        ).order_by(MapArtFoodBox.sort_order).first()
+        if legacy_boxes is not None:
+            old_rows = db.query(MapArtFoodBox).order_by(MapArtFoodBox.sort_order).all()
+            if old_rows:
+                result["food_boxes"] = [{"x": r.x, "y": r.y, "z": r.z} for r in old_rows]
+                _save_global_food_config(db, result)
+    except Exception:
+        pass
+    return result
 
 
 def _save_global_food_config(db: Session, cfg: dict) -> None:
@@ -1141,12 +1161,14 @@ def put_food_config(task_id: str, data: FoodConfigRequest, db: Session = Depends
     if not task:
         raise HTTPException(status_code=404, detail="任务不存在")
     _default = _default_food_config()
+    _cur = _load_global_food_config(db)  # 保留现有 food_boxes
     cfg = {
         "item_id": (data.item_id or "").strip() or _default["item_id"],
         "go_command": (data.go_command or "").strip() or _default["go_command"],
         "wait_after_go_ms": data.wait_after_go_ms or _default["wait_after_go_ms"],
         "eat_threshold_food": data.eat_threshold_food or _default["eat_threshold_food"],
         "eat_threshold_health": data.eat_threshold_health or _default["eat_threshold_health"],
+        "food_boxes": _cur.get("food_boxes") or [],
     }
     _save_global_food_config(db, cfg)
     return {"status": "ok", "food_config": cfg, "global": True}
@@ -1170,10 +1192,18 @@ def get_food_boxes(task_id: str, db: Session = Depends(get_db), user=Depends(req
 @router.put("/tasks/{task_id}/food-boxes")
 def put_food_boxes(task_id: str, data: SupplyBoxesRequest, db: Session = Depends(get_db),
                    user=Depends(require_admin)):
-    """批量保存任务食物潜影盒坐标（整体替换：先删旧再插新）。"""
+    """批量保存食物潜影盒坐标（2026-08-18 起为【全局共享】：写全局，所有任务同步）。"""
     task = db.query(MapArtTask).filter(MapArtTask.task_id == task_id).first()
     if not task:
         raise HTTPException(status_code=404, detail="任务不存在")
+    cfg = _load_global_food_config(db)  # 保留现有食物配置
+    boxes: list[dict] = []
+    for item in data.items:
+        for b in item.boxes:
+            boxes.append({"x": int(b.x), "y": int(b.y), "z": int(b.z)})
+    cfg["food_boxes"] = boxes
+    _save_global_food_config(db, cfg)
+    return {"status": "ok", "boxes": boxes, "global": True}
 
 
 @router.get("/tasks/{task_id}/sleep-point")
@@ -1201,19 +1231,6 @@ def put_sleep_point(task_id: str, data: SleepPointRequest, db: Session = Depends
     db.commit()
     return {"status": "ok",
             "sleep_point": {"x": task.sleep_x, "y": task.sleep_y, "z": task.sleep_z}}
-    db.query(MapArtFoodBox).filter(MapArtFoodBox.task_id == task_id).delete()
-    saved = 0
-    for item in data.items:
-        for i, box in enumerate(item.boxes):
-            db.add(MapArtFoodBox(
-                task_id=task_id,
-                item_id=item.item_id.split("[")[0],
-                x=box.x, y=box.y, z=box.z,
-                sort_order=i,
-            ))
-            saved += 1
-    db.commit()
-    return {"status": "ok", "saved": saved}
 
 
 @router.get("/tasks/{task_id}/logs")
