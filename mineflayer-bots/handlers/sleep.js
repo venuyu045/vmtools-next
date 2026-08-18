@@ -36,17 +36,20 @@ function createSleepHandlers(bot, ctx = {}) {
   // mineflayer bed.js 的 bot.sleep() 内部检查 `timeOfDay 12541~23458` 恒 False
   // → 「sleep_error: it's not night and it's not a thunderstorm」睡觉失败。
   // 这里注册监听覆盖为归一化值（mineflayer 先注册先更新，我们后注册覆盖）。
-  // 修正后所有依赖 bot.time.timeOfDay 的地方（bed.js / get_time_status / 前端）统一正常。
+  // ⚠️ 2026-08-18 二次修复：26.1 协议 timeOfDay 是 BigInt（long）——
+  // `typeof pkt.timeOfDay === 'number'` 恒 False → 修正从未生效！
+  // 用 Number() 统一转 number 再归一化。
   try {
     if (bot._client && typeof bot._client.on === 'function') {
       bot._client.on('time', (pkt) => {
         try {
-          if (pkt && typeof pkt.timeOfDay === 'number' && bot.time) {
-            let v = pkt.timeOfDay % 24000;
-            if (v < 0) v += 24000;
-            if (bot.time.timeOfDay !== v) bot.time.timeOfDay = v;
-            const isDay = v < 13000;
-            if (bot.time.isDay !== isDay) bot.time.isDay = isDay;
+          if (pkt && pkt.timeOfDay != null && bot.time) {
+            const raw = typeof pkt.timeOfDay === 'bigint' ? Number(pkt.timeOfDay) : pkt.timeOfDay;
+            if (typeof raw === 'number' && isFinite(raw)) {
+              let v = raw % 24000;
+              if (v < 0) v += 24000;
+              if (bot.time.timeOfDay !== v) bot.time.timeOfDay = v;
+            }
           }
         } catch (e) { /* 忽略单次修正失败 */ }
       });
@@ -78,6 +81,8 @@ function createSleepHandlers(bot, ctx = {}) {
   //   tod = tod % 24000; if (tod < 0) tod += 24000
   // 真实值：-4060 → 19940（夜晚 19:53）。
   function normalizeTimeOfDay(tod) {
+    // ⚠️ 2026-08-18：兼容 BigInt（26.1 协议 timeOfDay 为 long）
+    if (typeof tod === 'bigint') tod = Number(tod);
     if (typeof tod !== 'number' || isNaN(tod)) return null;
     let v = tod % 24000;
     if (v < 0) v += 24000;
@@ -149,6 +154,10 @@ function createSleepHandlers(bot, ctx = {}) {
     // 负值判断恒 not_night → 睡觉永远失败；实测 -4060 → 19940 夜晚）。
     const thunderstorm = bot.isRaining && (bot.thunderState > 0);
     const tod = normalizeTimeOfDay(bot.time ? bot.time.timeOfDay : null);
+    // ⚠️ 2026-08-18 二次修复：强制把 bot.time.timeOfDay 写为归一化正值——
+    // mineflayer bed.js 内部用 bot.time.timeOfDay（可能 BigInt/负值）判断
+    // isDay（<13000=白天）→ 负值/BigInt 会被误判为白天 → 睡觉永远失败。
+    if (tod !== null && bot.time) bot.time.timeOfDay = tod;
     if (!thunderstorm && (tod === null || !(tod >= 12541 && tod <= 23458))) {
       return { success: false, reason: 'not_night', time_of_day: tod };
     }

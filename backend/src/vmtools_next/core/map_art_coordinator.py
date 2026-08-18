@@ -2302,6 +2302,18 @@ class BotBuildLoop:
             self._activity("debug", f"传送兜底成功（{cmd}，共尝试 {attempts} 次，耗时 {time.monotonic() - t_start:.1f}s）")
             return True
 
+        # 1.5) 2026-08-18 用户反馈（新任务"不在建造区域"死循环）：dth 是上次保存的
+        # 临时点——可能是【旧任务】的坐标（睡觉/补货往返保存的 dth 来自旧建造点），
+        # 传过去永远不在新任务区域。直接用本任务 origin /tp 传送到建造区，
+        # 不依赖任何历史临时点/固定点。
+        if self.origin_x is not None:
+            tp_origin = f"/tp {self.origin_x} {self.origin_y + self._stand_y_offset} {self.origin_z}"
+            self._activity("warn", f"临时传送点不在本任务区域，改用任务 origin 传送（{tp_origin}）")
+            if await _try_tp(tp_origin):
+                self._activity("debug",
+                               f"任务 origin 传送成功（{tp_origin}，共尝试 {attempts} 次，耗时 {time.monotonic() - t_start:.1f}s）")
+                return True
+
         # 2) 固定指令兜底（2026-08-15：DB 未配置 return_fixed 时回退默认 /ehomes mapart）
         fixed = (self._supply_cfg.get("return_fixed") or "/ehomes mapart").strip()
         if fixed and fixed != cmd:
