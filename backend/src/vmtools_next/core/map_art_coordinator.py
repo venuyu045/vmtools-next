@@ -1827,6 +1827,22 @@ class BotBuildLoop:
                            self.bot_id, clean_id)
             return False
 
+        # 2026-08-18 用户反馈（材料不缺仍补货→数量超64）：背包检测到 0 时
+        # 【二次确认】——Via 下 get_inventory_snapshot 可能读到旧数据/窗口残留
+        # 返回 0（实际背包有货），单次读取误判"无货"→ 补货 → 原有货 + 新取 64 超量。
+        # 间隔 0.5s 重读一次，仍为 0 才真正补货。
+        try:
+            await asyncio.sleep(0.5)
+            count2 = await self._check_inventory_level(block_id)
+            if count2 > 0:
+                self._activity("debug",
+                               f"背包二次确认 {clean_id} ×{count2}（首次读到 0 为 Via 数据滞后）→ 重试装备")
+                if await self._try_select_item(clean_id, block_id):
+                    return True
+                return False
+        except Exception:
+            pass  # 二次确认失败按"确实无货"处理（继续补货）
+
         # 背包中没有该物品 → 补货（2026-08-14：全量补齐所有缺的材料再返回，
         # 避免"缺A补A、回来又缺B再传送"的反复奔波）
         logger.info("[%s] %s 用完了，开始补货...", self.bot_id, clean_id)
@@ -2561,9 +2577,13 @@ class BotBuildLoop:
         needs = planner.compute_needs(self._region_materials, have_counts, self._supply_boxes)
 
         # 2) 触发材料强制加入（区域统计可能未覆盖/已满足但本次就是要用它）
+        # ⚠️ 2026-08-18 修复（用户反馈：材料不缺仍补货→超64）：原条件 have_trigger<64
+        # 会把「背包还有几十个（如 50）」的材料也强制补到 256 → 超量。改为仅当
+        # 背包【完全没有】该材料（have_trigger<1）才强制加入补货——已有部分材料时
+        # 靠 _try_select_item 重试即可，不应触发补货。
         if not any(n.item_id == clean_trigger for n in needs):
             have_trigger = await self._check_inventory_level(clean_trigger)
-            if have_trigger < 64:  # 触发材料不足一组 → 补
+            if have_trigger < 1:  # 2026-08-18：仅完全无货才补
                 needs.append(Need(
                     item_id=clean_trigger,
                     target=planner.plan_target(64, self._restock_stacks),
@@ -3325,6 +3345,43 @@ class BotBuildLoop:
         except Exception as e:
             logger.warning("[%s] Death recovery error: %s", self.bot_id, e)
 
+    async def force_sleep(self, timeout_s: float = 180.0) -> dict:
+        """手动触发一次睡觉往返（2026-08-18 前端「睡觉按钮」入口）。
+
+        复用夜晚自动睡觉的排队机制：set _sleep_req → 主循环在下一个安全点确认
+        （_sleep_hold）暂停 → 执行 _do_sleep_cycle（保存位置→传床边→睡→天亮→传回）
+        → 恢复建造。与 _sleep_monitor_loop 的请求串行（已有请求则拒绝重复）。
+        返回 {success, reason}。
+        """
+        if not self._sleep_point:
+            return {"success": False, "reason": "未配置睡觉点（任务或 bot 床坐标）"}
+        if self._sleeping:
+            return {"success": False, "reason": "bot 已在睡觉中"}
+        if self._sleep_req.is_set():
+            return {"success": False, "reason": "已有睡觉请求排队（夜晚自动/其他触发）"}
+        self._activity("info", "手动触发睡觉（前端按钮）：请求主循环暂停去睡觉")
+        self._sleep_req.set()
+        try:
+            await asyncio.wait_for(self._sleep_hold.wait(), timeout=timeout_s)
+        except asyncio.TimeoutError:
+            # 与 monitor 同款竞态防护：唤醒可能已阻塞的主循环
+            self._sleep_req.clear()
+            self._sleep_hold.clear()
+            self._sleep_event.set()
+            return {"success": False, "reason": "等待主循环暂停超时，未执行睡觉"}
+        self._sleep_hold.clear()
+        try:
+            await self._do_sleep_cycle()
+            return {"success": True, "reason": "睡觉往返完成"}
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            return {"success": False, "reason": f"睡觉执行异常：{e}"}
+        finally:
+            self._sleep_event.set()
+            self._sleep_req.clear()
+            self._sleep_hold.clear()
+
     async def _sleep_monitor_loop(self) -> None:
         """睡觉监控协程：轮询服务器时间，进入夜晚/雷暴可睡窗口 → 暂停建造去睡觉。
 
@@ -3390,10 +3447,14 @@ class BotBuildLoop:
                     # 安全点被误判超时 → 整晚不睡。120s 覆盖单次长操作边界。
                     await asyncio.wait_for(self._sleep_hold.wait(), timeout=120)
                 except asyncio.TimeoutError:
-                    # 主循环 60s 内未到达安全点（补货/移动卡住）→ 取消本次请求；
-                    # 同时清理 _sleep_hold 残留（防主循环响应晚到后 _sleep_event 无人恢复）
+                    # 主循环 120s 内未到达安全点（补货/移动卡住）→ 取消本次请求；
+                    # ⚠️ 2026-08-18 竞态修复：必须 set _sleep_event——若主循环已在
+                    # 安全点 clear _sleep_req + set _sleep_hold + await _sleep_event.wait()
+                    # 而这里恰好超时放弃，主循环会永远等不到 _sleep_event → 卡死。
+                    # set _sleep_event 让已阻塞的主循环恢复（未阻塞则无害）。
                     self._sleep_req.clear()
                     self._sleep_hold.clear()
+                    self._sleep_event.set()
                     slept_this_night = False  # 允许下轮重试
                     self._activity("warn", "睡觉请求等待主循环暂停超时，本轮跳过")
                     continue
@@ -3578,6 +3639,8 @@ class MapArtCoordinator:
         """从 DB 加载任务睡觉点（map_art_tasks.sleep_x/y/z，2026-08-16）。
 
         床的方块坐标（世界坐标）。未配置（任一为空）→ None（建造循环跳过睡觉）。
+        2026-08-18：per-bot 床覆盖（多 bot 协作）——若该 bot 在 mcc_bots 表配了
+        sleep_x/y/z，则优先用 bot 自己的床（_bot_sleep_point），否则任务级默认。
         """
         try:
             from vmtools_next.data.db import get_session_factory
@@ -3594,6 +3657,36 @@ class MapArtCoordinator:
                 db.close()
         except Exception as e:
             logger.warning("[%s] Load sleep data failed: %s", self.task_id, e)
+
+    def _bot_sleep_point(self, bot_id: str) -> Optional[tuple[int, int, int]]:
+        """per-bot 睡觉点（2026-08-18 多 bot 协作）：mcc_bots.sleep_x/y/z 优先，
+        未配置则回退任务级 _sleep_point。返回 None 表示该 bot 不可睡觉。"""
+        try:
+            from vmtools_next.data.db import get_session_factory
+            from vmtools_next.data.models.logistics import MccBotModel
+            db = get_session_factory()()
+            try:
+                row = db.query(MccBotModel).filter(MccBotModel.bot_id == bot_id).first()
+                if row is not None:
+                    sx, sy, sz = row.sleep_x, row.sleep_y, row.sleep_z
+                    if sx is not None and sy is not None and sz is not None:
+                        return (int(sx), int(sy), int(sz))
+            finally:
+                db.close()
+        except Exception as e:
+            logger.warning("[%s] Load per-bot sleep point failed: %s", self.task_id, e)
+        return self._sleep_point
+
+    async def force_sleep(self, bot_id: str) -> dict:
+        """手动触发该 bot 睡觉（2026-08-18 前端「睡觉按钮」→ 任务内 bot）。
+
+        任务运行中的 bot 走 BotBuildLoop.force_sleep（复用夜晚排队机制）；
+        bot 不在本任务 → 调用 mcc_bots 通用睡觉（auto_sleep 插件直接 sleep_at）。
+        """
+        loop = self._loops.get(bot_id)
+        if loop is not None:
+            return await loop.force_sleep()
+        return {"success": False, "reason": f"bot {bot_id} 不在任务 {self.task_id} 运行中（空闲 bot 请在 bot 管理页触发）"}
 
     def _load_supply_data(self) -> None:
         """从 DB 加载任务的补货配置（任务级潜影盒 + 全局仓库合并 + 三个传送指令）。
@@ -3777,7 +3870,8 @@ class MapArtCoordinator:
                 supply_config=self._supply_config,
                 food_config=self._food_config,
                 food_boxes=self._food_boxes,
-                sleep_point=self._sleep_point,
+                # 2026-08-18：per-bot 床覆盖（mcc_bots.sleep_x/y/z 优先，否则任务级）
+                sleep_point=self._bot_sleep_point(bot_id),
                 on_done=self._on_loop_done,
                 on_activity=self._on_loop_activity,
             )
@@ -3845,7 +3939,8 @@ class MapArtCoordinator:
             supply_config=self._supply_config,
             food_config=self._food_config,
             food_boxes=self._food_boxes,
-            sleep_point=self._sleep_point,
+            # 2026-08-18：per-bot 床覆盖（mcc_bots.sleep_x/y/z 优先，否则任务级）
+            sleep_point=self._bot_sleep_point(bot_id),
             on_done=self._on_loop_done,
             on_activity=self._on_loop_activity,
         )

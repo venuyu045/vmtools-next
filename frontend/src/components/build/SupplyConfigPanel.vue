@@ -116,19 +116,33 @@
       </div>
     </el-card>
 
-    <!-- 睡觉点配置（2026-08-16：夜晚自动睡觉防怪物/幻翼） -->
+    <!-- 睡觉点配置（2026-08-16：夜晚自动睡觉防怪物/幻翼；2026-08-18 per-bot 床绑定） -->
     <el-card class="panel" header="自动睡觉（夜晚防怪物 / 防幻翼）">
       <el-form label-width="130px" size="small" class="cfg-form">
-        <el-form-item label="床的坐标（X Y Z）">
+        <el-form-item label="默认床（任务级）">
           <el-input-number v-model="sleepPoint.x" :controls="false" size="small" class="box-input" placeholder="X" />
           <el-input-number v-model="sleepPoint.y" :controls="false" size="small" class="box-input" placeholder="Y" />
           <el-input-number v-model="sleepPoint.z" :controls="false" size="small" class="box-input" placeholder="Z" />
         </el-form-item>
         <el-form-item>
-          <el-button type="primary" size="small" :loading="savingSleepPoint" @click="saveSleepPointCfg">保存睡觉点</el-button>
-          <span class="cfg-hint">填床的方块坐标（世界坐标）；bot 夜晚暂停建造 → 寻路到床睡觉 → 天亮传回建造点。全 0 保存 = 清空（跳过自动睡觉）</span>
+          <el-button type="primary" size="small" :loading="savingSleepPoint" @click="saveSleepPointCfg">保存默认床</el-button>
+          <span class="cfg-hint">填床的方块坐标（世界坐标）；bot 夜晚暂停建造 → 寻路到床睡觉 → 天亮传回建造点。全 0 = 清空。下方可给每个 bot 绑定独立床（多 bot 协作）</span>
         </el-form-item>
       </el-form>
+
+      <!-- 2026-08-18：per-bot 床绑定（不同 bot → 不同床；不填用默认床） -->
+      <div class="perbot-sleep">
+        <div class="perbot-title">各 Bot 独立床（可选，覆盖默认床）</div>
+        <div v-if="!botSleepList.length" class="box-empty mono">暂无任务 bot（任务启动后显示）</div>
+        <div v-for="bs in botSleepList" :key="bs.bot_id" class="perbot-row">
+          <span class="perbot-name">{{ bs.bot_name || bs.bot_id }}</span>
+          <el-input-number v-model="bs.x" :controls="false" size="small" class="box-input" placeholder="X" />
+          <el-input-number v-model="bs.y" :controls="false" size="small" class="box-input" placeholder="Y" />
+          <el-input-number v-model="bs.z" :controls="false" size="small" class="box-input" placeholder="Z" />
+          <el-button size="small" type="primary" :loading="bs.saving" @click="saveBotSleep(bs)">保存</el-button>
+          <el-button v-if="bs.has_point" size="small" text type="danger" @click="clearBotSleep(bs)">清除</el-button>
+        </div>
+      </div>
     </el-card>
 
     <!-- 保存为模板（2026-08-14 二期） -->
@@ -160,6 +174,7 @@ import { ref, onMounted, reactive } from 'vue'
 import { ElMessage } from 'element-plus'
 import ItemIcon from '@/components/ItemIcon.vue'
 import { mapArtApi } from '@/api/mapArt'
+import { botApi } from '@/api/bot'
 import { errMsg } from '@/utils/error'
 import { zhItemName } from '@/utils/itemZh'
 
@@ -188,9 +203,64 @@ const foodBoxes = ref<Box[]>([])
 const savingFoodCfg = ref(false)
 const savingFoodBoxes = ref(false)
 
-// ── 睡觉点（2026-08-16：夜晚自动睡觉防怪物/幻翼）──
+// ── 睡觉点（2026-08-16：夜晚自动睡觉防怪物/幻翼；2026-08-18 per-bot 床绑定）──
 const sleepPoint = reactive({ x: 0, y: 0, z: 0 })
 const savingSleepPoint = ref(false)
+const botSleepList = ref<{ bot_id: string; bot_name: string; x: number; y: number; z: number; has_point: boolean; saving: boolean }[]>([])
+
+/** 加载任务 bot 列表 + 每个 bot 已绑定的独立床（mcc_bots.sleep_x/y/z） */
+async function loadBotSleepList() {
+  try {
+    const { data } = await mapArtApi.getTask(props.taskId)
+    const bots = (data.bots || []) as any[]
+    const list: typeof botSleepList.value = []
+    for (const b of bots) {
+      const row: typeof botSleepList.value[number] = {
+        bot_id: b.bot_id, bot_name: b.bot_name || b.bot_id,
+        x: 0, y: 0, z: 0, has_point: false, saving: false,
+      }
+      try {
+        const { data: st } = await botApi.sleepStatus(b.bot_id)
+        const sp = st?.sleep_point
+        if (sp?.x != null) {
+          row.x = sp.x; row.y = sp.y; row.z = sp.z; row.has_point = true
+        }
+      } catch { /* bot 离线/未连：保留默认 0 */ }
+      list.push(row)
+    }
+    botSleepList.value = list
+  } catch { /* 任务未运行/无 bots：忽略 */ }
+}
+
+async function saveBotSleep(bs: { bot_id: string; x: number; y: number; z: number; saving: boolean }) {
+  if (bs.x === 0 && bs.y === 0 && bs.z === 0) {
+    ElMessage.warning('请先填写该 bot 的床坐标（全 0 请用「清除」）')
+    return
+  }
+  bs.saving = true
+  try {
+    await botApi.saveSleepPoint(bs.bot_id, { x: bs.x, y: bs.y, z: bs.z })
+    ElMessage.success(`${bs.bot_id} 的独立床已保存（优先于默认床）`)
+    await loadBotSleepList()
+  } catch (e) {
+    ElMessage.error(errMsg(e, '保存失败'))
+  } finally {
+    bs.saving = false
+  }
+}
+
+async function clearBotSleep(bs: { bot_id: string; x: number; y: number; z: number; has_point: boolean; saving: boolean }) {
+  bs.saving = true
+  try {
+    await botApi.clearSleepPoint(bs.bot_id)
+    bs.x = 0; bs.y = 0; bs.z = 0; bs.has_point = false
+    ElMessage.success(`${bs.bot_id} 的独立床已清除（回退默认床）`)
+  } catch (e) {
+    ElMessage.error(errMsg(e, '清除失败'))
+  } finally {
+    bs.saving = false
+  }
+}
 
 // ── 模板保存/导入（2026-08-14 二期） ──
 const saveTplOpen = ref(false)
@@ -302,6 +372,8 @@ async function load() {
     sleepPoint.x = sp.x ?? 0
     sleepPoint.y = sp.y ?? 0
     sleepPoint.z = sp.z ?? 0
+    // 2026-08-18：per-bot 床绑定列表
+    await loadBotSleepList()
   } catch (e) {
     ElMessage.error(errMsg(e, '加载补货配置失败'))
   } finally {
@@ -417,4 +489,9 @@ defineExpose({ reload: load })
 .box-empty { font-size: 11px; color: var(--text-muted); padding: 2px 0 2px 36px; }
 .save-bar { margin-top: 10px; text-align: right; }
 .empty { color: var(--text-muted); padding: 16px 0; text-align: center; font-size: 12px; }
+/* 2026-08-18 per-bot 床绑定 */
+.perbot-sleep { border-top: 1px dashed var(--border-subtle); padding-top: 8px; margin-top: 4px; }
+.perbot-title { font-size: 12px; color: var(--text-muted); margin-bottom: 6px; }
+.perbot-row { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
+.perbot-name { font-size: 12px; font-weight: 600; min-width: 90px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #7cb8ff; }
 </style>

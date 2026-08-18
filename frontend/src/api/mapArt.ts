@@ -81,6 +81,14 @@ export const mapArtApi = {
   saveSleepPoint(taskId: string, sp: { x: number; y: number; z: number }) {
     return client.put(`/build/map-art/tasks/${taskId}/sleep-point`, sp)
   },
+  /** 2026-08-18：手动触发任务内 bot 睡觉（「睡觉按钮」） */
+  forceBotSleep(taskId: string, botId: string) {
+    return client.post(`/build/map-art/tasks/${taskId}/bots/${botId}/sleep`)
+  },
+  /** 2026-08-18：查询 bot 实时世界时间/昼夜/睡觉状态（状态栏数据源） */
+  getBotSleepStatus(botId: string) {
+    return client.get(`/mcc-bots/${botId}/sleep/status`)
+  },
   /** 2026-08-14：补货潜影盒坐标（材料 ↔ 坐标，1 材料可配多坐标） */
   getSupplyBoxes(taskId: string) {
     return client.get(`/build/map-art/tasks/${taskId}/supply-boxes`)

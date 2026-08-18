@@ -697,6 +697,29 @@ async def control_task(
     return {"task_id": task_id, "status": task.status, "message": f"任务已{_ACTION_LABELS.get(data.action, data.action)}"}
 
 
+@router.post("/tasks/{task_id}/bots/{bot_id}/sleep")
+async def force_bot_sleep(task_id: str, bot_id: str,
+                          db: Session = Depends(get_db),
+                          user=Depends(require_admin)):
+    """手动触发任务内指定 bot 睡觉（2026-08-18 前端「睡觉按钮」）。
+
+    bot 在任务运行中 → coordinator.force_sleep（复用夜晚排队机制：暂停建造 →
+    传床边 → 睡 → 天亮 → 传回 → 恢复）；bot 不在任务 → 走 mcc_bots 通用睡觉。
+    """
+    task = db.query(MapArtTask).filter(MapArtTask.task_id == task_id).first()
+    if not task:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    coordinator = get_coordinator(task_id)
+    if coordinator is None:
+        raise HTTPException(status_code=409, detail="任务未在运行中（无 coordinator），请在 bot 管理页触发睡觉")
+    try:
+        result = await coordinator.force_sleep(bot_id)
+        return {"task_id": task_id, "bot_id": bot_id, **result}
+    except Exception as e:
+        logger.warning("[%s] Force sleep %s error: %s", task_id, bot_id, e)
+        raise HTTPException(status_code=500, detail=f"强制睡觉失败：{e}")
+
+
 @router.post("/tasks/{task_id}/bots")
 async def manage_task_bot(
     task_id: str,
