@@ -126,17 +126,7 @@
         <el-table-column label="创建时间" width="140">
           <template #default="{ row }">{{ fmtApiTime(row.created_at, { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) }}</template>
         </el-table-column>
-        <el-table-column label="操作" width="230" fixed="right">
-          <template #default="{ row }">
-            <template v-if="authStore.isAdmin">
-              <el-button v-if="row.type === 'map_art' && ['draft', 'pending'].includes(row.status)" size="small" type="primary" plain @click="controlTask(row, 'start')">启动</el-button>
-              <el-button v-if="row.status === 'running'" size="small" @click="controlTask(row, 'pause')">暂停</el-button>
-              <el-button v-if="row.status === 'paused'" size="small" @click="controlTask(row, 'resume')">恢复</el-button>
-              <el-button v-if="['running', 'paused', 'pending', 'draft'].includes(row.status)" size="small" type="warning" plain @click="controlTask(row, 'stop')">停止</el-button>
-              <el-button v-if="row.type === 'map_art' && ['draft', 'cancelled', 'completed'].includes(row.status)" size="small" type="danger" plain @click="deleteTask(row)">删除</el-button>
-            </template>
-          </template>
-        </el-table-column>
+        <!-- 任务中心为只读视图：无操作列（启动/暂停/恢复/停止/删除请前往对应任务详情页） -->
       </el-table>
       <div class="pager-row">
         <el-pagination
@@ -154,11 +144,7 @@
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
 import { tasksApi } from '@/api/tasks'
-import { mapArtApi } from '@/api/mapArt'
-import { logisticsApi } from '@/api/logistics'
-import { useAuthStore } from '@/stores/auth'
 import { useSocketIO } from '@/composables/useSocketIO'
 import { fmtApiTime } from '@/utils/time'
 
@@ -196,7 +182,6 @@ interface BotInfo {
   manual?: { working: boolean; name: string } | null
 }
 
-const authStore = useAuthStore()
 const { on, off } = useSocketIO()
 
 const loading = ref(false)
@@ -298,37 +283,6 @@ function formatDuration(sec: number | null | undefined, status: string): string 
 
 function botStatusLabel(s: string): string {
   return { online: '在线', offline: '离线', connecting: '连接中', error: '错误', unknown: '未知' }[s] || s
-}
-
-async function controlTask(row: TaskRow, action: string) {
-  try {
-    if (row.type === 'scan') {
-      ElMessage.info('仓库扫描的暂停/恢复/停止请在仓库详情页操作')
-      return
-    }
-    if (row.type === 'map_art') {
-      const { data } = await mapArtApi.controlTask(row.id, action)
-      ElMessage.success(data?.message || `任务已${action}`)
-    } else {
-      if (action === 'stop') await logisticsApi.stopTask(row.id)
-      else if (action === 'pause') await logisticsApi.pauseTask(row.id)
-      else if (action === 'resume') await logisticsApi.resumeTask(row.id)
-      else { ElMessage.info('物流任务由模板页启动'); return }
-      ElMessage.success(`任务已${action}`)
-    }
-    fetchOverview()
-  } catch (e: any) {
-    ElMessage.error(e?.response?.data?.detail || `操作失败: ${action}`)
-  }
-}
-
-async function deleteTask(row: TaskRow) {
-  try {
-    await ElMessageBox.confirm(`确认删除任务「${row.name}」？`, '确认', { type: 'warning' })
-    await mapArtApi.deleteTask(row.id)
-    ElMessage.success('已删除')
-    fetchOverview()
-  } catch { /* 取消 */ }
 }
 
 /** socket：build_progress（地图画进度）与 task_queue_update（队列变化）到达即刷新 */
