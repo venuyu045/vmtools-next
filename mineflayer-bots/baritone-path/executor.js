@@ -71,14 +71,18 @@ async function executeMovement(bot, mv, opts = {}) {
 
   try {
     // 2) 前进（+ 爬升/跳跃由接近度触发；长距离疾跑）
-    setCtrl({ forward: true, sprint: !!sprint });
+    // ⚠️ 2026-08-18：爬升/跳跃段强制关疾跑（疾跑+跳跃易跳过头/撞墙错位）
+    setCtrl({ forward: true, sprint: !!sprint && !isAscend && !isParkour });
 
     while (Date.now() - start < MOVE_TIMEOUT_MS) {
       await sleep(TICK_MS);
       const f = botFoot(bot);
       if (!f) continue;
-      // 到位判定：格坐标一致（水平）+ y 偏差 ≤1
-      const horizontalOK = f.x === to.x && f.z === to.z;
+      // 到位判定（2026-08-18 放宽，吸收疾跑滑行）：格坐标一致 OR 水平浮点距离 ≤1.0
+      // ——疾跑惯性/转向会导致 bot 脚部落在目标格边缘外 0.3~0.8 格（floor 后差 1 格），
+      // 原严格格坐标判定 → 永不命中 → 来回振荡 → 单段 8s 超时（用户反馈 baritone 一直 timeout）。
+      const horizontalOK = (f.x === to.x && f.z === to.z)
+        || Math.hypot(f.px - (to.x + 0.5), f.pz - (to.z + 0.5)) <= 1.0;
       const yOK = Math.abs(f.py - to.y) <= ARRIVE_Y;
 
       // 爬升/跳跃（2026-08-16 P0-1 增强）：提前量从 1.1 放宽到 2.0——bot 水平接近

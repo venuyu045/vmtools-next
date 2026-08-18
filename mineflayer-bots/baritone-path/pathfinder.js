@@ -83,7 +83,8 @@ async function pathTo(bot, goalX, goalY, goalZ, opts = {}) {
   }
   log(`[baritone] 路径 ${path.length} 段: ${path.map(p => p.name).join(' → ')}`);
 
-  // 逐段执行（2026-08-18 疾跑：剩余路径 >5 段疾跑，接近目标（≤5 段）转走路）
+  // 逐段执行（2026-08-18 疾跑：剩余路径 >8 段疾跑，接近目标（≤8 段）转走路——
+    // 阈值从 5 提到 8：短距离寻路（补洞/行间几~十几格）疾跑收益低且放大滑行误差）
   let lastPos = start;
   for (let i = 0; i < path.length; i++) {
     if (Date.now() > deadline) {
@@ -91,7 +92,7 @@ async function pathTo(bot, goalX, goalY, goalZ, opts = {}) {
     }
     const mv = path[i];
     const remaining = path.length - i; // 剩余段数（每段 1 格）
-    const shouldSprint = remaining > 5;
+    const shouldSprint = remaining > 8;
     log(`[baritone] 执行 ${i + 1}/${path.length} ${mv.name} → (${mv.to.x},${mv.to.y},${mv.to.z})${shouldSprint ? ' [sprint]' : ''}`);
     const r = await executeMovement(bot, mv, { onLog, sprint: shouldSprint });
     if (r.success) {
