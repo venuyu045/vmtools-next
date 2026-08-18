@@ -397,9 +397,9 @@ class BotBuildLoop:
         self._activity("info", f"开始建造区域 z[{self.region.z_start}..{self.region.z_end}]")
 
         # 断点续建：恢复 DB 中已放置进度（2026-08-16 用户需求：不重走已建行）——
-# 返回起始行号（region 相对坐标），行循环从该行开始；起始行内已放格由
-# _verify_block 快速跳过（读取确认已放），未放格正常补放。
-        resume_z = await self._restore_progress()
+# 2026-08-18 精确到列：返回 (起始行号, 起始列号)，行循环第一行直接从
+# resume_x 列继续（不从头蛇形走，直接前往上次停建位置）。
+        resume_z, resume_x = await self._restore_progress()
 
         # 2026-08-14 模块A：启动食物监控协程（饱食度/血量低时吃副手猪排）
         self._food_task = asyncio.create_task(self._food_monitor_loop())
@@ -541,8 +541,21 @@ class BotBuildLoop:
                 except Exception:
                     pass
 
-                # Position bot at north edge of current row
-                moved = await self._move_to_row_edge(row_z)
+                # 2026-08-18：断点续建第一行直接前往上次停建位置（resume_x 列方块顶），
+                # 不从头蛇形走行北缘；后续行正常走行北缘。
+                if row_z == resume_z and resume_x is not None:
+                    moved = await self._move_to(
+                        self.origin_x + resume_x, self.origin_y + 1, world_z,
+                        max_offset=1, label=f"resume({self.origin_x + resume_x},{world_z})",
+                        verify_height=True)
+                    if not moved:
+                        self._activity("warn",
+                                       f"断点续建定位到 ({self.origin_x + resume_x},{world_z}) 失败，"
+                                       f"回退行北缘定位")
+                        moved = await self._move_to_row_edge(row_z)
+                else:
+                    # Position bot at north edge of current row
+                    moved = await self._move_to_row_edge(row_z)
                 if not moved and not self._stopped:
                     # 2026-08-14：行边缘寻路失败（bot 淹死复活到远处/掉落/被卡）→
                     # 传送回建造点重试一次，避免任务直接失败
@@ -552,7 +565,11 @@ class BotBuildLoop:
                     break  # 移动失败（bot 离线/不可达）→ 终止本 bot 循环
 
                 # Place blocks in this row, grouped by color
-                await self._place_row(row_z, world_z)
+                # 2026-08-18：断点续建第一行从 resume_x 列继续（直接前往上次停建位置），
+                # 后续行正常从行首蛇形。
+                await self._place_row(
+                    row_z, world_z,
+                    start_x=(resume_x if (row_z == resume_z and resume_x is not None) else None))
                 if self.progress.state == "offline":
                     break  # 行内移动/放置中断 → 终止循环
 
@@ -849,7 +866,7 @@ class BotBuildLoop:
             self._activity("warn", f"蹲搭前往 ({x},{y},{z}) 异常")
         return False
 
-    async def _place_row(self, row_z: int, world_z: int):
+    async def _place_row(self, row_z: int, world_z: int, start_x: Optional[int] = None):
         """Place all blocks in a single row — 「边放边踩」蛇形逐格连续模式（2026-08-16 P0-2）。
 
         用户设计前提：bot 站在已建面上前搭一格、踩上前进，蛇形逐行、行末侧移掉头。
@@ -859,12 +876,23 @@ class BotBuildLoop:
             下一格直接从该顶上放置相邻格（参考面 AUTO 优先 bot 脚下/北面/平台）；
           - 蛇形转行：行末方块顶直接放下一行行首（零额外移动，bot 已在其上）。
         放置失败/材料缺失/站立格悬空 → 跳过该格并记入待补清单（不中断，行尾/区域判定兜底）。
+
+        2026-08-18：start_x 断点续建（用户需求：直接前往上次停建位置）——
+        行内从 start_x 列开始（正向行 x>=start_x；反向行 x<=start_x），不再从行首
+        蛇形重走已建格。start_x 格本身已放，_verify_block 命中后踩上，下一格沿蛇形
+        方向继续（站立逻辑自动衔接，无需额外处理）。
         """
         await self._paused.wait()
         if self._stopped:
             return
 
         x_span = self._row_x_span()
+        # 2026-08-18：断点续建截断行首已建段（正向行从 start_x 起，反向行到 start_x 止）
+        if start_x is not None:
+            if self._row_is_forward(row_z):
+                x_span = [x for x in x_span if x >= start_x]
+            else:
+                x_span = [x for x in x_span if x <= start_x]
         self.progress.state = "placing"
 
         # 行首站立高度（第一行=平台顶；后续行=上一行方块顶）
@@ -896,8 +924,14 @@ class BotBuildLoop:
 
             # ── 1. 确定并移动到位 ──
             if stand is None:
-                # 行首：北缘（第一行=平台顶；后续行=上一行方块顶，bot 行末转行时已在附近）
-                stand = (world_x, first_stand_y, world_z - 1)
+                if start_x is not None and x == start_x:
+                    # 2026-08-18 断点续建首格：bot 已定位到 resume 格方块顶
+                    # (origin_y+1)，直接站在此处（_verify_block 命中已放格后踩上，
+                    # 下一格沿蛇形方向继续）——不从行北缘重新开始。
+                    stand = (world_x, self.origin_y + 1, world_z)
+                else:
+                    # 行首：北缘（第一行=平台顶；后续行=上一行方块顶，bot 行末转行时已在附近）
+                    stand = (world_x, first_stand_y, world_z - 1)
             # 行内/转行：stand 已 = 上一格方块顶（放置成功后更新）
             _mv = await self._move_to_step(stand[0], stand[1], stand[2],
                                            label=f"stand({world_x},{world_z})")
@@ -1448,13 +1482,16 @@ class BotBuildLoop:
         except Exception as e:
             logger.warning("[%s] Start reconcile failed: %s", self.bot_id, e)
 
-    async def _restore_progress(self) -> int:
-        """断点续建（2026-08-16 用户需求）：从 DB 已 placed 的最大行继续，不重走已建行。
+    async def _restore_progress(self) -> tuple[int, Optional[int]]:
+        """断点续建（2026-08-16 用户需求；2026-08-18 精确到列）：
 
-        返回起始行号（region 相对坐标）。重新开始任务时，行循环从该行开始：
+        返回 (起始行号, 起始列号或 None)（region 相对坐标）。重新开始任务时：
         - 之前的行（已建）完全跳过（不再 move_to_row_edge / 逐格走）
-        - 起始行内已放的格由 _verify_block 快速跳过（读取确认已放），未放格正常补放
-        - 若 DB 无 placed 记录 → 从 region.z_start 开始
+        - 【起始行内从「最后放置的格子」继续】——行循环第一行不从头蛇形走，
+          而是直接从 resume_x 列继续（resume_x 格已放，_verify_block 跳过并踩上，
+          下一格沿蛇形方向继续）。补洞阶段（_reconcile_start → _fill_pending_gaps）
+          已把半建行前面的缺口补掉，不会踩空。
+        - 若 DB 无 placed 记录 → 从 (region.z_start, None) 开始（行首）
 
         真实世界对账（_reconcile_start）仍在 run() 传送定位后执行（扫描比对权威状态）。
         """
@@ -1464,6 +1501,7 @@ class BotBuildLoop:
             from sqlalchemy import func
             db = get_session_factory()()
             try:
+                # 1. 最大已放置 z 行（区域范围）
                 max_wz = db.query(func.max(MapArtBlockState.z)).filter(
                     MapArtBlockState.task_id == self.task_id,
                     MapArtBlockState.placed.is_(True),
@@ -1473,28 +1511,37 @@ class BotBuildLoop:
                     MapArtBlockState.z <= self.origin_z + self.region.z_end,
                 ).scalar()
                 if max_wz is not None:
-                    resume = int(max_wz) - self.origin_z
-                    resume = max(self.region.z_start, min(resume, self.region.z_end))
-                    # 2026-08-16 修复（用户实测乱走）：resume 行可能是【半建行】（只放了
-                    # 部分 x 就中断），行内缺口多 → bot 踩空掉水 → 寻路失败 → 低处乱走。
-                    # 从 max_z-1 行开始（完整行，已放格 _verify_block 跳过），走到半建行
-                    # 再补完——多走一行但绝不踩半建行缺口。
-                    if resume > self.region.z_start:
-                        resume -= 1
-                    if resume > self.region.z_start:
-                        self.progress.current_row = resume
-                        self._activity(
-                            "info",
-                            f"断点续建：从第 {resume} 行继续（跳过 {resume - self.region.z_start} 个已建行，"
-                            f"避免半建行缺口踩空）")
-                        logger.info("[%s] Resume from row %d (DB max placed z=%d)",
-                                    self.bot_id, resume, max_wz)
-                        return resume
+                    row_z = int(max_wz) - self.origin_z
+                    row_z = max(self.region.z_start, min(row_z, self.region.z_end))
+                    # 2. 该行内最后放置的 x（按蛇形方向：正向行取最大 x，反向行取最小 x）
+                    rows_x = [r[0] for r in db.query(MapArtBlockState.x).filter(
+                        MapArtBlockState.task_id == self.task_id,
+                        MapArtBlockState.placed.is_(True),
+                        MapArtBlockState.z == int(max_wz),
+                        MapArtBlockState.x >= self.origin_x + self.region.x_start,
+                        MapArtBlockState.x <= self.origin_x + self.region.x_end,
+                    ).all()]
+                    resume_x: Optional[int] = None
+                    if rows_x:
+                        if self._row_is_forward(row_z):
+                            resume_x = max(rows_x) - self.origin_x
+                        else:
+                            resume_x = min(rows_x) - self.origin_x
+                    self.progress.current_row = row_z
+                    self._activity(
+                        "info",
+                        f"断点续建：从第 {row_z} 行"
+                        + (f" 第 {resume_x} 列继续" if resume_x is not None else " 行首继续")
+                        + f"（跳过 {row_z - self.region.z_start} 个已建行，"
+                          f"直接前往上次停建位置）")
+                    logger.info("[%s] Resume from row %d x=%s (DB max placed z=%d)",
+                                self.bot_id, row_z, resume_x, max_wz)
+                    return row_z, resume_x
             finally:
                 db.close()
         except Exception as e:
             logger.warning("[%s] Restore progress failed: %s", self.bot_id, e)
-        return self.region.z_start
+        return self.region.z_start, None
 
     async def _reconcile_region_final(self) -> tuple[int, int]:
         """区域完成前对账（2026-08-16 P0-5）：对 DB 中本区域 placed=True 的行复核。

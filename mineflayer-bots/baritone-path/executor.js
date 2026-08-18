@@ -7,6 +7,11 @@
  *   - DESCEND / DOWNWARD：forward（自然下落/走下）
  *   - PILLAR / BRIDGE → 返回 needPlace 由调用方 scaffold 兜底
  *
+ * 2026-08-18 疾跑（用户需求：>5 格纯移动自动疾跑、接近目标转走路）：
+ *   - executeMovement 接收 opts.sprint（由 pathfinder.js 按剩余路径段数计算）
+ *   - sprint=true 时按住 sprint 键（配合 forward 疾跑）；false 走路
+ *   - 侧移 strafe 时强制关 sprint（侧移不疾跑）
+ *
  * 到位判定（每 50ms）：bot 脚格 = floor(position) 与目标格一致（水平），
  * 且 y 偏差 ≤1 → 下一段。（2026-08-15 P5：用格坐标而非浮点距离，防 0.707>0.6 误判）
  */
@@ -25,10 +30,11 @@ function botFoot(bot) {
 
 /**
  * 执行一个 movement（阻塞直到到位/超时/失败）。
+ * @param {object} opts { onLog?, sprint? } — sprint=true 疾跑（>5 格长距离）
  * @returns {{success:boolean, reason?:string, position?:object}}
  */
 async function executeMovement(bot, mv, opts = {}) {
-  const { onLog } = opts;
+  const { onLog, sprint = false } = opts;
   const log = (msg) => { if (onLog) onLog(msg); };
 
   // 需要搭块的移动 → 交给调用方 scaffold 兜底
@@ -54,7 +60,7 @@ async function executeMovement(bot, mv, opts = {}) {
   let strafeAttempts = 0; // 2026-08-16 P0-1：卡住时 strafe 侧移尝试次数
   const start = Date.now();
 
-  const ctrl = { forward: false, back: false, left: false, right: false, jump: false, sneak: false };
+  const ctrl = { forward: false, back: false, left: false, right: false, jump: false, sneak: false, sprint: false };
   const setCtrl = (patch) => {
     for (const k of Object.keys(ctrl)) {
       const v = patch[k] !== undefined ? patch[k] : false;
@@ -64,8 +70,8 @@ async function executeMovement(bot, mv, opts = {}) {
   };
 
   try {
-    // 2) 前进（+ 爬升/跳跃由接近度触发）
-    setCtrl({ forward: true });
+    // 2) 前进（+ 爬升/跳跃由接近度触发；长距离疾跑）
+    setCtrl({ forward: true, sprint: !!sprint });
 
     while (Date.now() - start < MOVE_TIMEOUT_MS) {
       await sleep(TICK_MS);
@@ -103,9 +109,9 @@ async function executeMovement(bot, mv, opts = {}) {
               // 朝目标方向的一侧尝试侧移 0.6s（left/right 交替），结束后恢复 forward
               const side = strafeAttempts % 2 === 1 ? 'left' : 'right';
               try {
-                setCtrl({ forward: false, [side]: true });
+                setCtrl({ forward: false, [side]: true, sprint: false }); // 侧移不疾跑
                 await sleep(600);
-                setCtrl({ forward: true, [side]: false });
+                setCtrl({ forward: true, [side]: false, sprint: !!sprint });
               } catch (e) { /* 侧移失败忽略 */ }
               continue;
             }
@@ -118,7 +124,7 @@ async function executeMovement(bot, mv, opts = {}) {
       lastPos = f;
     }
   } finally {
-    setCtrl({ forward: false, back: false, left: false, right: false, jump: false, sneak: false });
+    setCtrl({ forward: false, back: false, left: false, right: false, jump: false, sneak: false, sprint: false });
   }
 
   if (arrived) {

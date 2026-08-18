@@ -83,15 +83,17 @@ async function pathTo(bot, goalX, goalY, goalZ, opts = {}) {
   }
   log(`[baritone] 路径 ${path.length} 段: ${path.map(p => p.name).join(' → ')}`);
 
-  // 逐段执行
+  // 逐段执行（2026-08-18 疾跑：剩余路径 >5 段疾跑，接近目标（≤5 段）转走路）
   let lastPos = start;
   for (let i = 0; i < path.length; i++) {
     if (Date.now() > deadline) {
       return { success: false, reason: 'timeout', position: lastPos, path: path.slice(0, i) };
     }
     const mv = path[i];
-    log(`[baritone] 执行 ${i + 1}/${path.length} ${mv.name} → (${mv.to.x},${mv.to.y},${mv.to.z})`);
-    const r = await executeMovement(bot, mv, { onLog });
+    const remaining = path.length - i; // 剩余段数（每段 1 格）
+    const shouldSprint = remaining > 5;
+    log(`[baritone] 执行 ${i + 1}/${path.length} ${mv.name} → (${mv.to.x},${mv.to.y},${mv.to.z})${shouldSprint ? ' [sprint]' : ''}`);
+    const r = await executeMovement(bot, mv, { onLog, sprint: shouldSprint });
     if (r.success) {
       lastPos = r.position;
       world.clearCache(); // 世界变化后清缓存（scaffold 放置了方块）
@@ -114,7 +116,7 @@ async function pathTo(bot, goalX, goalY, goalZ, opts = {}) {
       return { success: false, reason: r.reason, position: lastPos, path: path.slice(0, i) };
     }
     // 普通移动失败：重试一次（world 缓存可能过期）
-    const r2 = await executeMovement(bot, mv, { onLog });
+    const r2 = await executeMovement(bot, mv, { onLog, sprint: shouldSprint });
     if (r2.success) { lastPos = r2.position; world.clearCache(); continue; }
     return { success: false, reason: r.reason || 'move_failed', position: lastPos, path: path.slice(0, i) };
   }
