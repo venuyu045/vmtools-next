@@ -10,7 +10,7 @@ class CombatAutoAttackRequest(BaseModel):
     enabled: bool = True
     radius: int = Field(default=8, ge=1, le=64)   # 兼容旧字段 = 扫描半径
     scan_radius: Optional[int] = Field(default=None, ge=1, le=64)  # 扫描（索敌）半径
-    attack_radius: float = Field(default=3.0, ge=0.5, le=8.0)      # 实际出手距离
+    attack_radius: float = Field(default=3.0, ge=0.5, le=64.0)      # 实际出手距离（2026-08-18 上限拉到 64，远程手长测试）
     target_types: list[str] = Field(default_factory=list)
     interval_ms: int = Field(default=1000, ge=100, le=60000)
     # 2026-08-13：MC 习惯单位 tick（1 秒=20 tick），优先于 interval_ms（ms=tick*50）
@@ -44,7 +44,7 @@ class CombatGuardRequest(BaseModel):
     z: Optional[float] = None
     radius: int = Field(default=8, ge=1, le=64)
     scan_radius: Optional[int] = Field(default=None, ge=1, le=64)
-    attack_radius: float = Field(default=3.0, ge=0.5, le=8.0)
+    attack_radius: float = Field(default=3.0, ge=0.5, le=64.0)
     target_types: list[str] = Field(default_factory=list)
     interval_ms: int = Field(default=1000, ge=100, le=60000)
     # 2026-08-13：MC 习惯单位 tick（1 秒=20 tick），优先于 interval_ms（ms=tick*50）
@@ -67,7 +67,7 @@ class CombatAttackRequest(BaseModel):
     target_id: Optional[int] = None
     target_type: Optional[str] = None
     scan_radius: int = Field(default=16, ge=1, le=64)
-    attack_radius: float = Field(default=3.0, ge=0.5, le=8.0)
+    attack_radius: float = Field(default=3.0, ge=0.5, le=64.0)
     # 2026-08-11：手动攻击也遵循模式（false=原地打，true=寻路追击）
     move_to_target: bool = False
     # 2026-08-18：强制距离（跳过距离判定直接发攻击包）——测试服务端是否校验攻击距离
