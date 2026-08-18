@@ -430,6 +430,19 @@ class BotBuildLoop:
                 if await self._send_teleport(fixed0):
                     # 2026-08-16 P0-4：_verify_at_build_area 返回 Optional[str]（None=通过）
                     placed0 = (await self._verify_at_build_area()) is None
+            # ⚠️ 2026-08-18 用户反馈（新任务执行时"不在任务范围内"，范围绑定旧任务）：
+            # 固定传送点（return_fixed，默认 /ehomes mapart）是【旧任务】的建造点——
+            # 新任务区域不同时，bot 被传到旧区域 → 永远"不在本任务范围"。
+            # 修复：固定点验证失败（不在本任务区域）→ 直接按【本任务 origin】传送
+            # （/tp 任务坐标），确保定位到本任务建造区。
+            if not placed0 and self.origin_x is not None:
+                tp_cmd = f"/tp {self.origin_x} {self.origin_y + self._stand_y_offset} {self.origin_z}"
+                self._activity("info", f"固定点不在本任务区域，改用任务 origin 传送（{tp_cmd}）")
+                try:
+                    if await self._send_teleport(tp_cmd):
+                        placed0 = (await self._verify_at_build_area()) is None
+                except Exception as _tp_err:
+                    logger.warning("[%s] Origin teleport failed: %s", self.bot_id, _tp_err)
             gx0 = self.origin_x + self.region.x_start
             gz0 = self.origin_z + self.region.z_start - 1
             gy0 = self.origin_y + self._stand_y_offset  # 站立层（固定 offset）

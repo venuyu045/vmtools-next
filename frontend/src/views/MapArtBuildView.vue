@@ -56,6 +56,11 @@
       <!-- 2D 俯视预览画布 -->
       <div class="canvas-area">
         <div v-if="loadingBlocks" class="loading-canvas">正在加载方块数据…</div>
+        <!-- 2026-08-18 用户需求：过大的地图画预览没用 → 大图（runs 模式或 >8万块）
+             不渲染预览画布，显示占位提示（省带宽+防卡顿）；小图保留预览 -->
+        <div v-else-if="isBigMap" class="loading-canvas">
+          🖼️ 投影过大（{{ bigMapInfo }}），预览已禁用——建造不受影响，可查看材料需求/日志/背包
+        </div>
         <BuildMapCanvas
           v-else
           :task-id="taskId"
@@ -218,6 +223,16 @@ const bots = ref<any[]>([])
 const materials = ref<any[]>([])
 const blockData = ref<any>(null)
 const loadingBlocks = ref(true)
+// 2026-08-18：大图判断（runs 模式 = 后端已按行合并，说明 >5 万块；或 blocks >8 万）
+const isBigMap = computed(() =>
+  !!((blockData.value?.runs && blockData.value.runs.length > 0)
+    || (blockData.value?.blocks && blockData.value.blocks.length > 80000)))
+const bigMapInfo = computed(() => {
+  const d = blockData.value
+  if (d?.runs?.length) return `${d.runs.length} 段（约 ${(d.total || d.runs.length * 50).toLocaleString()} 块）`
+  if (d?.blocks) return `${d.blocks.length.toLocaleString()} 块`
+  return ''
+})
 const elapsed = ref(0)
 const eta = ref(0)
 const overallRate = ref('0')

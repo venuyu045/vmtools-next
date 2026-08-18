@@ -1107,6 +1107,15 @@ def _load_global_food_config(db: Session) -> dict:
                 return result
         except Exception:
             pass
+    # 2026-08-18：全局有记录但 food_boxes 为空时，从旧任务表 MapArtFoodBox 补齐
+    # （防止旧任务已配坐标、全局因历史写入空列表而丢失）
+    if row and row.config_json and not result.get("food_boxes"):
+        try:
+            legacy = db.query(MapArtFoodBox).order_by(MapArtFoodBox.sort_order).all()
+            if legacy:
+                result["food_boxes"] = [{"x": r.x, "y": r.y, "z": r.z} for r in legacy]
+        except Exception:
+            pass
     # 兼容迁移：旧任务级 food_config 有自定义 → 提升为全局（一次性）
     try:
         custom = db.query(MapArtTask.food_config).filter(
@@ -1176,16 +1185,18 @@ def put_food_config(task_id: str, data: FoodConfigRequest, db: Session = Depends
 
 @router.get("/tasks/{task_id}/food-boxes")
 def get_food_boxes(task_id: str, db: Session = Depends(get_db), user=Depends(require_admin)):
-    """读取任务食物潜影盒坐标（猪排仓库）。"""
+    """读取食物潜影盒坐标（2026-08-18 起为【全局共享】：所有任务同一份）。
+
+    ⚠️ 修复：此前漏改仍读任务表（put 写全局、get 读任务表 → 保存后读不到
+    「无法保存」、A 任务配置 B 任务不显示「没同步」）。
+    """
     task = db.query(MapArtTask).filter(MapArtTask.task_id == task_id).first()
     if not task:
         raise HTTPException(status_code=404, detail="任务不存在")
-    rows = db.query(MapArtFoodBox).filter(
-        MapArtFoodBox.task_id == task_id
-    ).order_by(MapArtFoodBox.sort_order).all()
+    cfg = _load_global_food_config(db)
     return {
-        "item_id": "minecraft:cooked_porkchop",
-        "boxes": [{"x": r.x, "y": r.y, "z": r.z} for r in rows],
+        "item_id": cfg.get("item_id", "minecraft:cooked_porkchop"),
+        "boxes": cfg.get("food_boxes") or [],
     }
 
 
