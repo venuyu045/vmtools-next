@@ -18,7 +18,7 @@
             <el-input-number v-model="idle.scan_radius" :min="1" :max="64" /> 格
           </el-form-item>
           <el-form-item label="攻击半径">
-            <el-input-number v-model="idle.attack_radius" :min="1" :max="8" :step="0.5" /> 格
+            <el-input-number v-model="idle.attack_radius" :min="1" :max="64" :step="0.5" /> 格
           </el-form-item>
           <el-form-item label="目标类型">
             <el-select v-model="idle.target_types" multiple placeholder="空 = 全部实体" style="width: 100%">
@@ -62,7 +62,7 @@
             <el-input-number v-model="pvp.scan_radius" :min="1" :max="64" /> 格
           </el-form-item>
           <el-form-item label="攻击半径">
-            <el-input-number v-model="pvp.attack_radius" :min="1" :max="8" :step="0.5" /> 格
+            <el-input-number v-model="pvp.attack_radius" :min="1" :max="64" :step="0.5" /> 格
           </el-form-item>
           <el-form-item label="目标类型">
             <el-select v-model="pvp.target_types" multiple placeholder="空 = 全部实体" style="width: 100%">
