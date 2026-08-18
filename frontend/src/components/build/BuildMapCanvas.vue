@@ -211,7 +211,10 @@ function computeGeo(): Geo | null {
   minX -= PAD; maxX += PAD; minZ -= PAD; maxZ += PAD
   const cols = maxX - minX + 1
   const rows = maxZ - minZ + 1
-  const cellSize = Math.max(4, Math.min(40, Math.floor(Math.min(cw.value / cols, ch.value / rows))))
+  // 2026-08-18 大图优化：cellSize 下限降到 1px——47 万块投影（578×821）原 min4
+  // 会撑出 2300×3300px 巨大 canvas（数百万像素逐格填充）→ 卡死；
+  // cellSize=1 画布缩小到 ~580×820（绘制量降一个数量级，配合行内同色合并极快）。
+  const cellSize = Math.max(1, Math.min(40, Math.floor(Math.min(cw.value / cols, ch.value / rows))))
   const totalW = cols * cellSize
   const totalH = rows * cellSize
   return {
@@ -299,6 +302,27 @@ function drawRegions(ctx: CanvasRenderingContext2D, geo: Geo) {
   }
 }
 
+/** 绘制一段水平连续同色 run（2026-08-18 大图优化：一次 drawImage/fillRect 画整段，
+ *  替代逐格绘制——47 万块投影同色段合并后绘制次数降 1~2 个数量级）。 */
+function drawRun(ctx: CanvasRenderingContext2D, geo: Geo,
+                 wxStart: number, wxEnd: number, wz: number,
+                 blockId: string, placed: boolean) {
+  const { x: cx, y: cy } = toCanvas(geo, wxStart, wz)
+  const w = (wxEnd - wxStart + 1) * geo.cellSize
+  if (geo.cellSize >= 3) {
+    const clean = blockId.split('[')[0]
+    const img = textureCache.get(clean) ?? textureCache.get(blockId)
+    if (img) {
+      ctx.globalAlpha = placed ? 1 : 0.4
+      ctx.drawImage(img, cx, cy, w, geo.cellSize)
+      ctx.globalAlpha = 1
+      return
+    }
+  }
+  ctx.fillStyle = placed ? blockColor(blockId) : '#444444'
+  ctx.fillRect(cx, cy, w, geo.cellSize)
+}
+
 /** 重绘画布内容（canvas 物理尺寸不变，不引起布局跳动） */
 function render() {
   const cvs = canvas.value
@@ -321,11 +345,32 @@ function render() {
   ctx.fillStyle = '#1a1a2e'
   ctx.fillRect(0, 0, cw.value, ch.value)
 
+  // ── 2026-08-18 大图优化：行内同色合并（RLE）──
+  // 按 z 分组，行内按 x 升序；连续同色（expected+placed 相同且 x 连续）合并为
+  // 一段 drawRun（一次绘制），绘制次数从 N(47万) → 同色段数（地图画通常几万以内）。
+  const blocks = props.initData.blocks
+  const rowMap = new Map<number, typeof blocks>()
+  for (const b of blocks) {
+    let arr = rowMap.get(b.z)
+    if (!arr) { arr = []; rowMap.set(b.z, arr) }
+    arr.push(b)
+  }
   let placed = 0
-  for (const b of props.initData.blocks) {
-    const { x: cx, y: cy } = toCanvas(geo, b.x, b.z)
-    drawBlock(ctx, cx, cy, geo.cellSize, b.expected, b.placed)
-    if (b.placed) placed++
+  for (const [wz, rowBlocks] of rowMap) {
+    rowBlocks.sort((a, b) => a.x - b.x)
+    let rs = 0
+    for (let i = 1; i <= rowBlocks.length; i++) {
+      const same = i < rowBlocks.length
+        && rowBlocks[i].expected === rowBlocks[rs].expected
+        && rowBlocks[i].placed === rowBlocks[rs].placed
+        && rowBlocks[i].x === rowBlocks[i - 1].x + 1
+      if (!same) {
+        drawRun(ctx, geo, rowBlocks[rs].x, rowBlocks[i - 1].x, wz,
+                rowBlocks[rs].expected, rowBlocks[rs].placed)
+        if (rowBlocks[rs].placed) placed += (i - rs)
+        rs = i
+      }
+    }
   }
   drawRegions(ctx, geo)
   drawBotMarkers(ctx, geo)
@@ -333,7 +378,7 @@ function render() {
   ctx.fillStyle = '#888888'
   ctx.font = '11px monospace'
   ctx.fillText(`Z: ${geo.minZ} → ${geo.maxZ}`, 10, 16)
-  ctx.fillText(`X: ${geo.minX} → ${geo.maxX}  已放置: ${placed}/${props.initData.blocks.length}`, 10, 32)
+  ctx.fillText(`X: ${geo.minX} → ${geo.maxX}  已放置: ${placed}/${blocks.length}`, 10, 32)
 
   emit('ready')
 }

@@ -384,8 +384,12 @@ async function fetchTask() {
     await loadAvailableBots()
 
     // 方块数据：localStorage 缓存秒开（跨刷新常态保留），后台静默刷新一次
+    // ⚠️ 2026-08-18 大图优化：超过 8 万块（≈6MB JSON）跳过 localStorage 缓存——
+    // localStorage 通常 5MB 上限，47 万块（~25MB）会写入失败且 JSON.parse 卡顿，
+    // 直接内存渲染（RLE 行内合并后绘制极快，无需跨刷新缓存）。
     const cached = cacheGetBlocks(taskId.value)
-    if (cached) {
+    const useCache = cached && !(cached.blocks && cached.blocks.length > 80000)
+    if (useCache) {
       blockData.value = cached
       loadingBlocks.value = false
     } else {
@@ -400,7 +404,7 @@ async function fetchTask() {
         origin: blockResp.origin || { x: 0, y: 64, z: 0 },
         size: blockResp.size || { x: 32, z: 32 },
       }
-      cacheSetBlocks(taskId.value, fresh)
+      if (!(fresh.blocks.length > 80000)) cacheSetBlocks(taskId.value, fresh) // 大图不写缓存
       blockData.value = fresh // 后台刷新：缓存/首次都更新为最新（含 placed 进度）
     } catch { /* 方块数据可能尚未生成；有缓存则保留缓存 */ }
     loadingBlocks.value = false

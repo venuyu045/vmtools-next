@@ -10,7 +10,8 @@
     <div class="add-row">
       <el-select v-model="addItemId" filterable allow-create default-first-option size="small"
                  placeholder="选择或输入材料 ID（如 white_concrete）" style="width: 300px">
-        <el-option v-for="m in knownMaterials" :key="m" :label="zhItemName(m)" :value="m" />
+        <!-- 2026-08-18：已添加配置的材料从下拉隐藏（防止重复添加） -->
+        <el-option v-for="m in availableMaterials" :key="m" :label="zhItemName(m)" :value="m" />
       </el-select>
       <el-button size="small" type="primary" :disabled="!addItemId" @click="addMaterial">添加材料</el-button>
     </div>
@@ -46,7 +47,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, computed } from 'vue'
 import { ElMessage } from 'element-plus'
 import ItemIcon from '@/components/ItemIcon.vue'
 import { mapArtApi } from '@/api/mapArt'
@@ -62,6 +63,9 @@ const savedAt = ref('')
 const items = ref<WhItem[]>([])
 const addItemId = ref('')
 const knownMaterials = ref<string[]>([])
+/** 2026-08-18：可选材料 = 已知材料 - 已添加配置的材料（下拉不再出现重复项） */
+const availableMaterials = computed(() =>
+  knownMaterials.value.filter(m => !items.value.some(it => it.item_id === m)))
 
 async function load() {
   loading.value = true
