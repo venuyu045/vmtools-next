@@ -826,8 +826,10 @@ async def manage_task_bot(
     task = db.query(MapArtTask).filter(MapArtTask.task_id == task_id).first()
     if not task:
         raise HTTPException(status_code=404, detail="任务不存在")
-    if task.status in ("completed", "cancelled", "failed"):
-        raise HTTPException(status_code=400, detail=f"任务当前状态（{task.status}）不允许操作 Bot")
+    # 2026-08-19：仅 completed 终态禁止操作 bot（failed/cancelled 可重新开始续建，
+    # 用户需能调整 bot 后再重启；未运行任务直接改 assignment，运行中走 coordinator）
+    if task.status == "completed":
+        raise HTTPException(status_code=400, detail="任务已完成，不允许操作 Bot")
 
     coordinator = get_coordinator(task_id)
     from vmtools_next.core.bot_engine import resolve_bot_engine

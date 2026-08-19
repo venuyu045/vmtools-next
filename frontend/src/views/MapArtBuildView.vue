@@ -86,8 +86,8 @@
             <el-button size="small" type="primary" :disabled="!selectedAddBot || !canManageBots" @click="handleAddBot">
               添加
             </el-button>
-            <el-tooltip content="任务未结束时均可添加/移除 Bot" placement="top">
-              <span class="manage-hint" v-if="!canManageBots">终态任务不可管理</span>
+            <el-tooltip content="除已完成外均可添加/移除 Bot（失败/取消可先调整再重新开始）" placement="top">
+              <span class="manage-hint" v-if="!canManageBots">已完成任务不可管理</span>
             </el-tooltip>
           </div>
           <div v-if="!bots.length" class="empty">暂无分配的 Bot</div>
@@ -203,11 +203,12 @@ const squadIndex = ref(0)
 // ── Bot 动态管理（需求4：添加/删除 bot，自动分配区域） ──
 const selectedAddBot = ref('')
 const availableBots = ref<any[]>([])
-/** 2026-08-19：任何非终态（draft/pending/running/paused）均可添加/移除 bot；
- * 仅 completed/cancelled/failed 终态禁止（后端同样校验） */
+/** 2026-08-19：除 completed 外的所有状态均可添加/移除 bot——
+ * draft/pending 未开始、running/paused 运行中、failed/cancelled 可重新开始续建
+ * （调整 bot 后再重启）；仅 completed 终态禁止（后端同样校验） */
 const canManageBots = computed(() => {
   const s = task.value?.status
-  return s === 'running' || s === 'paused' || s === 'draft' || s === 'pending'
+  return s !== 'completed'
 })
 /** 2026-08-14：failed / cancelled / 未完成的 completed 任务可「重新开始」（断点续建，保留已放进度） */
 const canRestart = computed(() => {
