@@ -39,8 +39,48 @@ function createSleepHandlers(bot, ctx = {}) {
   // ⚠️ 2026-08-18 二次修复：26.1 协议 timeOfDay 是 BigInt（long）——
   // `typeof pkt.timeOfDay === 'number'` 恒 False → 修正从未生效！
   // 用 Number() 统一转 number 再归一化。
+  // ⚠️ 2026-08-19 三次修复：26.1 协议 packet_update_time 包已改为
+  // { age:i64, clockUpdates:[{id,totalTicks(varlong),partialTick(f32),rate(f32)}] }
+  // ——**没有 time/tickDayTime 字段**！mineflayer time.js 读 packet.time 为
+  // undefined → 解析崩溃/错误 → bot.time 时间与实际服务器不符（实测 day=-77952）。
+  // 修复：监听 'update_time'（26.1 真实事件名，此前监听 'time' 永不触发），
+  // 从 clockUpdates 提取世界时钟（id=0）的 totalTicks 计算 timeOfDay。
   try {
     if (bot._client && typeof bot._client.on === 'function') {
+      // 26.1：clockUpdates 数组（新格式）
+      bot._client.on('update_time', (pkt) => {
+        try {
+          if (pkt && Array.isArray(pkt.clockUpdates) && bot.time) {
+            // 诊断日志（首次观察真实时钟内容，确认后移除）
+            const clocks = pkt.clockUpdates.map(c => ({
+              id: c.id,
+              tt: typeof c.totalTicks === 'bigint' ? c.totalTicks.toString() : String(c.totalTicks),
+              rate: c.rate,
+            }));
+            console.log(`[update_time] age=${JSON.stringify(pkt.age)} clocks=${JSON.stringify(clocks)}`);
+            // 世界时钟：优先 id=0，否则第一个
+            const clock = pkt.clockUpdates.find(c => c.id === 0) || pkt.clockUpdates[0];
+            if (clock && clock.totalTicks != null) {
+              let tt;
+              try {
+                tt = typeof clock.totalTicks === 'bigint' ? clock.totalTicks : BigInt(clock.totalTicks);
+              } catch (e) { tt = 0n; }
+              let tod = Number(tt % 24000n);
+              if (tod < 0) tod += 24000;
+              if (bot.time.timeOfDay !== tod) {
+                bot.time.timeOfDay = tod;
+                bot.time.bigTime = tt;
+                bot.time.time = Number(tt);
+                bot.time.day = Number(tt / 24000n);
+                bot.time.isDay = tod < 13000;
+                bot.time.moonPhase = Number((tt / 24000n) % 8n);
+                bot.time.doDaylightCycle = true;
+              }
+            }
+          }
+        } catch (e) { console.log(`[update_time] parse err: ${e.message}`); }
+      });
+      // 兼容老协议（1.21.x）：保留 'time' 事件监听（timeOfDay 字段）
       bot._client.on('time', (pkt) => {
         try {
           if (pkt && pkt.timeOfDay != null && bot.time) {

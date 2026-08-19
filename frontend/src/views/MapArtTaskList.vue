@@ -72,6 +72,13 @@
           </el-select>
           <span style="color: var(--text-muted); font-size: 12px;">投影绕 Y 轴旋转后放置在原点</span>
         </el-form-item>
+        <el-form-item label="建造模式">
+          <el-select v-model="form.build_mode" style="width: 100%">
+            <el-option value="column" label="多Bot协作（列式）—— 从角开始排级推进，多 bot 并行" />
+            <el-option value="strip" label="分区独立 —— 每 bot 一块区域独立建造（旧模式）" />
+          </el-select>
+          <span style="color: var(--text-muted); font-size: 12px;">列式：5 bot 从地图画角协作建造；分区：各 bot 负责一条带状区域</span>
+        </el-form-item>
         <el-form-item label="选择 Bot">
           <el-select v-model="form.bot_ids" multiple placeholder="选择参与建造的 Bot">
             <el-option
@@ -113,7 +120,7 @@ const uploadedPath = ref('')
 const allBots = ref<any[]>([])
 const showTemplates = ref(false) // 补货仓库模板弹窗（2026-08-14 二期）
 
-const form = ref({ name: '', origin_x: 0, origin_y: 64, origin_z: 0, bot_ids: [] as string[], rotation: 0 })
+const form = ref({ name: '', origin_x: 0, origin_y: 64, origin_z: 0, bot_ids: [] as string[], rotation: 0, build_mode: 'column' })
 
 async function loadBots() {
   try {
@@ -199,10 +206,11 @@ async function createTask() {
       origin_x: form.value.origin_x, origin_y: form.value.origin_y, origin_z: form.value.origin_z,
       bot_ids: form.value.bot_ids,
       rotation: form.value.rotation,
+      build_mode: form.value.build_mode || 'column',
     })
     ElMessage.success('任务创建成功！')
     showCreate.value = false
-    form.value = { name: '', origin_x: 0, origin_y: 64, origin_z: 0, bot_ids: [], rotation: 0 }
+    form.value = { name: '', origin_x: 0, origin_y: 64, origin_z: 0, bot_ids: [], rotation: 0, build_mode: 'column' }
     uploadedPath.value = ''
     fetchTasks()
   } catch (e: any) {

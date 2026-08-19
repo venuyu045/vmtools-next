@@ -627,13 +627,15 @@ class ColumnBuildLoop(BotBuildLoop):
     async def _guard_monitor_loop(self) -> None:
         """卡滞/坠落监控协程（2026-08-19）。
 
-        卡滞：仅在「执行移动/放置」状态（progress.state in moving/placing）检测，
-        连续 _stuck_timeout_s 无位置或动作进展 → 传送至本列最近完成格续建；
-        连续 3 次卡滞 → 上报离线。
+        卡滞：仅在「执行移动/放置」状态（progress.state in moving/placing）检测。
+        ⚠️ 2026-08-19 修复：不能只看位置不动——bot 放置方块时【本来就站着不动】，
+        位置不变是正常放置；须结合「动作进展」（progress.blocks_placed 增长）——
+        有放置进展则重置卡滞计数。连续 3 次卡滞 → 上报离线。
         坠落：检测到持续下坠且低于建造层 _fall_threshold 格以上 → 记录断点 +
         传送回临时点自救。
         """
         try:
+            last_placed = -1  # 上次观察的已放置数（动作进展判断）
             while not self._stopped and not self._stop_requested.is_set():
                 await asyncio.sleep(2)
                 if self._stopped or self._stop_requested.is_set():
@@ -647,6 +649,10 @@ class ColumnBuildLoop(BotBuildLoop):
                     if not p:
                         continue
                     now = time.monotonic()
+                    # 动作进展：已放置数增长 = 放置正常进行（位置不动≠卡滞）
+                    placed_now = self.progress.blocks_placed
+                    has_progress = (last_placed >= 0 and placed_now > last_placed)
+                    last_placed = placed_now
                     # ── 卡滞检测 ──
                     if self._stuck_last_pos is None:
                         self._stuck_last_pos = p
@@ -654,10 +660,15 @@ class ColumnBuildLoop(BotBuildLoop):
                     else:
                         moved = max(abs(p[0] - self._stuck_last_pos[0]),
                                     abs(p[2] - self._stuck_last_pos[2]))
-                        if moved < 0.2 and (now - self._stuck_check_ts) >= self._stuck_timeout_s:
+                        if has_progress:
+                            # 有放置进展：重置卡滞基准（放置中位置不动正常）
+                            self._stuck_last_pos = p
+                            self._stuck_check_ts = now
+                            self._stuck_count = 0
+                        elif moved < 0.2 and (now - self._stuck_check_ts) >= self._stuck_timeout_s:
                             self._stuck_count += 1
                             self._activity("warn",
-                                           f"卡滞检测：{self._stuck_timeout_s:.0f}s 无进展（第 {self._stuck_count} 次）")
+                                           f"卡滞检测：{self._stuck_timeout_s:.0f}s 无位置/放置进展（第 {self._stuck_count} 次）")
                             if self._stuck_count >= 3:
                                 self._activity("error", "连续 3 次卡滞 → 标记离线")
                                 if self._on_bot_offline:
@@ -1402,14 +1413,26 @@ class MultiBotCoordinator:
                                     start_y if direction == 1 else 1,
                                     self._size_y if direction == 1 else 1,
                                     squad_index)
-            # 移动到起始条方块顶
-            self._activity("info", f"{bid} 就位 → 列 x={col}, y={start_y}")
+            # 移动到起始条方块顶（世界坐标；就位失败重试一次，仍失败标记离线——
+            # 2026-08-19 修复：此前失败仅打日志仍广播开工 → bot 未到位却"就位"）
+            self._activity("info",
+                           f"{bid} 就位 → 列 x={col}（世界 {world_x},{world_z}），y={start_y}")
             try:
                 ok = await loop._move_to(world_x, self.origin[1] + 1, world_z,
                                          max_offset=1, label=f"pos({bid},{col},{start_y})",
                                          timeout_ms=30000, verify_height=True)
                 if not ok:
-                    logger.warning("[%s] %s 就位失败（列x=%d y=%d）", self.task_id, bid, col, start_y)
+                    # 重试一次（传送兜底后再寻路）
+                    await loop._try_teleport_home(f"就位失败重试({bid})")
+                    ok = await loop._move_to(world_x, self.origin[1] + 1, world_z,
+                                             max_offset=1, label=f"pos retry({bid},{col},{start_y})",
+                                             timeout_ms=30000, verify_height=True)
+                if not ok:
+                    self._activity("warn",
+                                   f"{bid} 就位失败（列x={col} 世界{world_x},{world_z}），标记离线")
+                    if bid not in self._squad.offline_bots:
+                        self._squad.offline_bots.append(bid)
+                    loop.progress.state = "offline"
             except Exception as e:
                 logger.warning("[%s] %s 就位异常: %s", self.task_id, bid, e)
             await asyncio.sleep(0.8)  # 分批间隔（防推挤）

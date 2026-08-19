@@ -116,7 +116,10 @@
             <div class="bot-meta">
               <span v-if="task?.build_mode === 'column'">列 {{ bot.column ?? '-' }} · 排 {{ bot.squad_index ?? 1 }}</span>
               <span v-else>行 {{ bot.current_row >= 0 ? bot.current_row : '-' }}</span>
-              <span>{{ (bot.rate ?? 0).toFixed(1) }} 块/分钟</span>
+              <span class="bot-pos" :title="bot.position ? `世界坐标 (${fmtPos(bot.position)})` : '位置未知'">
+                {{ bot.position ? fmtPos(bot.position) : '位置?' }}
+              </span>
+              <span>{{ (bot.rate ?? 0).toFixed(1) }} 块/分</span>
             </div>
           </div>
         </el-card>
@@ -331,6 +334,15 @@ function botPct(b: any): number {
   if (!b || !b.total) return 0
   const p = Math.round(((b.placed || 0) / b.total) * 100)
   return Math.min(100, Math.max(0, p))
+}
+
+/** 2026-08-19：bot 世界坐标位置显示（build_bot_status 实时推送） */
+function fmtPos(pos: any): string {
+  if (!pos) return '-'
+  const x = typeof pos.x === 'number' ? Math.round(pos.x) : pos.x
+  const y = typeof pos.y === 'number' ? Math.round(pos.y) : pos.y
+  const z = typeof pos.z === 'number' ? Math.round(pos.z) : pos.z
+  return `${x},${y},${z}`
 }
 
 // ── 数据加载 ──
