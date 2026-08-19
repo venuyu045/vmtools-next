@@ -81,8 +81,10 @@ async function executeMovement(bot, mv, opts = {}) {
       // 到位判定（2026-08-18 放宽，吸收疾跑滑行）：格坐标一致 OR 水平浮点距离 ≤1.0
       // ——疾跑惯性/转向会导致 bot 脚部落在目标格边缘外 0.3~0.8 格（floor 后差 1 格），
       // 原严格格坐标判定 → 永不命中 → 来回振荡 → 单段 8s 超时（用户反馈 baritone 一直 timeout）。
+      // ⚠️ 2026-08-19 边界修复：浮点回退用 <1.0（排除相邻格中心恰好 1.0 的提前到位——
+      // 原 <=1.0 在 bot 已到相邻格中心时也成立，导致每段提前 1 格）。
       const horizontalOK = (f.x === to.x && f.z === to.z)
-        || Math.hypot(f.px - (to.x + 0.5), f.pz - (to.z + 0.5)) <= 1.0;
+        || Math.hypot(f.px - (to.x + 0.5), f.pz - (to.z + 0.5)) < 1.0;
       const yOK = Math.abs(f.py - to.y) <= ARRIVE_Y;
 
       // 爬升/跳跃（2026-08-16 P0-1 增强）：提前量从 1.1 放宽到 2.0——bot 水平接近

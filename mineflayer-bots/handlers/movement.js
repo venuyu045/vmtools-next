@@ -319,7 +319,11 @@ async function walk_toward({ x, z, timeout_ms = 8000 } = {}) {
       const p = bot.entity ? bot.entity.position : null;
       if (!p) return finish({ success: false, reason: 'no_entity' });
       const d = Math.hypot(p.x - x, p.z - z);
-      if (d <= 0.5) return finish({ success: true, position: { x: p.x, y: p.y, z: p.z } });
+      // ⚠️ 2026-08-19 修复：目标 (x,z) 是方块整数坐标，bot 站在目标方块中心时
+      // 距离 = √(0.5²+0.5²) ≈ 0.707 > 0.5——原 `d <= 0.5` 永不命中 → 行内直走
+      // 总是走到 8s 超时才失败 → 每格回退全量寻路（大图性能灾难）。
+      // 放宽到 ≤1.0（方块中心距 0.707 + 容差，覆盖到位）。
+      if (d <= 1.0) return finish({ success: true, position: { x: p.x, y: p.y, z: p.z } });
       const moved = Math.hypot(p.x - lastPos.x, p.z - lastPos.z);
       if (moved < 0.15) {
         stillTicks++;
