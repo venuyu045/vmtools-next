@@ -1007,6 +1007,28 @@ class MultiBotCoordinator:
 
     # ── 活动日志（复用旧协调器）────────────────
 
+    def _activity(self, level: str, message: str) -> None:
+        """协调器级活动日志（2026-08-19）：无特定 bot，bot_id 记 coordinator。
+
+        修复：此前 _squad_loop/_map_self_check 等调用 self._activity 但协调器
+        未定义该方法 → AttributeError → Squad loop 崩溃 → bot 永远卡在
+        "等待协调器编队"（无人广播开工）。
+        """
+        entry = {
+            "task_id": self.task_id,
+            "bot_id": "coordinator",
+            "bot_name": "协调器",
+            "level": level,
+            "message": message,
+            "ts": datetime.now(timezone.utc).isoformat(),
+        }
+        self._activity_log.append(entry)
+        try:
+            asyncio.create_task(sio.emit("build_log", entry, room=f"build_{self.task_id}"))
+            logger.info("[%s] build_log (coordinator, %s): %s", self.task_id, level, message)
+        except Exception:
+            pass
+
     def _on_loop_activity(self, bot_id: str, bot_name: str, level: str, message: str) -> None:
         entry = {
             "task_id": self.task_id, "bot_id": bot_id, "bot_name": bot_name,
