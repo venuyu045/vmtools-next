@@ -88,6 +88,13 @@ async function createBotProcess(options) {
     hideErrors: false,
     logErrors: true,
     respawn: true,
+    // ⚠️ 2026-08-19：禁用客户端 keepalive 超时踢出（默认 30s）。
+    // 根因：地图画长寻路（330 格）高速移动触发服务器大量区块加载/实体同步 →
+    // 服务器 TPS 骤降 → 30s 内未发 keepalive → 客户端被判超时踢出（实测
+    // "client timed out after 30000 milliseconds" + disconnect.timeout）。
+    // keepAlive=false 后：TCP 断开/被踢仍即时触发 end（进程管理器自动重启），
+    // 仅不再因服务器瞬卡而误踢——对 bot 更稳。
+    keepAlive: false,
   };
 
   // ── 认证方式处理 ──

@@ -85,14 +85,23 @@ async function pathTo(bot, goalX, goalY, goalZ, opts = {}) {
 
   // 逐段执行（2026-08-18 疾跑：剩余路径 >8 段疾跑，接近目标（≤8 段）转走路——
     // 阈值从 5 提到 8：短距离寻路（补洞/行间几~十几格）疾跑收益低且放大滑行误差）
+    // ⚠️ 2026-08-19：超长寻路（>100 段）不疾跑——高速移动触发服务器大量区块加载/
+    // 实体同步 → TPS 骤降 → keepalive 超时踢出（实测 330 格寻路掉线 disconnect.timeout）。
+    // 另：每 50 段暂停 300ms 让服务器/事件循环喘息，降低瞬时负载。
   let lastPos = start;
+  const longPath = path.length > 100;
   for (let i = 0; i < path.length; i++) {
     if (Date.now() > deadline) {
       return { success: false, reason: 'timeout', position: lastPos, path: path.slice(0, i) };
     }
     const mv = path[i];
     const remaining = path.length - i; // 剩余段数（每段 1 格）
-    const shouldSprint = remaining > 8;
+    // 长路径走中速（不疾跑）；短/中路径按剩余段数疾跑
+    const shouldSprint = !longPath && remaining > 8;
+    if (i > 0 && i % 50 === 0) {
+      await sleep(300); // 2026-08-19：长寻路定期喘息，防服务器 TPS 骤降
+      log(`[baritone] 长寻路喘息 @${i}/${path.length}`);
+    }
     log(`[baritone] 执行 ${i + 1}/${path.length} ${mv.name} → (${mv.to.x},${mv.to.y},${mv.to.z})${shouldSprint ? ' [sprint]' : ''}`);
     const r = await executeMovement(bot, mv, { onLog, sprint: shouldSprint });
     if (r.success) {
