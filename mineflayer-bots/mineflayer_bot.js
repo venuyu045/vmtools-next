@@ -88,13 +88,11 @@ async function createBotProcess(options) {
     hideErrors: false,
     logErrors: true,
     respawn: true,
-    // ⚠️ 2026-08-19：禁用客户端 keepalive 超时踢出（默认 30s）。
-    // 根因：地图画长寻路（330 格）高速移动触发服务器大量区块加载/实体同步 →
-    // 服务器 TPS 骤降 → 30s 内未发 keepalive → 客户端被判超时踢出（实测
-    // "client timed out after 30000 milliseconds" + disconnect.timeout）。
-    // keepAlive=false 后：TCP 断开/被踢仍即时触发 end（进程管理器自动重启），
-    // 仅不再因服务器瞬卡而误踢——对 bot 更稳。
-    keepAlive: false,
+    // ⚠️ 2026-08-19 撤销 keepAlive:false（此前误加）：minecraft-protocol 的
+    // keepalive.js 在 keepAlive=false 时【不注册 onKeepAlive 监听 → 客户端收到
+    // 服务器 keep_alive 包后不回包】→ 服务器 30s 收不到回包 → disconnect.timeout
+    // 踢出（实测所有 bot 登录 1 秒内全被踢）。恢复默认 keepalive（正常回包）。
+    // 粒子包 PartialReadError 破坏流的问题由 bot.on('error') 主动重连兜底。
   };
 
   // ── 认证方式处理 ──
