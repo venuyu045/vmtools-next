@@ -86,8 +86,8 @@
             <el-button size="small" type="primary" :disabled="!selectedAddBot || !canManageBots" @click="handleAddBot">
               添加
             </el-button>
-            <el-tooltip content="仅运行中的任务可动态添加/移除 Bot" placement="top">
-              <span class="manage-hint" v-if="!canManageBots">运行中才可管理</span>
+            <el-tooltip content="任务未结束时均可添加/移除 Bot" placement="top">
+              <span class="manage-hint" v-if="!canManageBots">终态任务不可管理</span>
             </el-tooltip>
           </div>
           <div v-if="!bots.length" class="empty">暂无分配的 Bot</div>
@@ -97,13 +97,13 @@
               <strong>{{ bot.bot_name || bot.bot_id }}</strong>
               <el-tag size="small" :type="botStateType(bot.state)">{{ botStateLabel(bot.state) }}</el-tag>
               <el-button
-                v-if="task?.status === 'draft' || task?.status === 'pending' || canManageBots"
+                v-if="canManageBots"
                 size="small"
                 text
                 type="danger"
                 class="bot-remove"
                 @click="handleRemoveBot(bot.bot_id)"
-              >{{ canManageBots ? '移除' : '删除' }}</el-button>
+              >移除</el-button>
             </div>
             <div class="bot-progress">
               <el-progress
@@ -203,8 +203,12 @@ const squadIndex = ref(0)
 // ── Bot 动态管理（需求4：添加/删除 bot，自动分配区域） ──
 const selectedAddBot = ref('')
 const availableBots = ref<any[]>([])
-/** 仅运行中的任务可动态添加/移除 bot（后端校验，前端同步禁用） */
-const canManageBots = computed(() => task.value?.status === 'running')
+/** 2026-08-19：任何非终态（draft/pending/running/paused）均可添加/移除 bot；
+ * 仅 completed/cancelled/failed 终态禁止（后端同样校验） */
+const canManageBots = computed(() => {
+  const s = task.value?.status
+  return s === 'running' || s === 'paused' || s === 'draft' || s === 'pending'
+})
 /** 2026-08-14：failed / cancelled / 未完成的 completed 任务可「重新开始」（断点续建，保留已放进度） */
 const canRestart = computed(() => {
   const s = task.value?.status
@@ -227,8 +231,13 @@ async function loadAvailableBots() {
 async function handleAddBot() {
   if (!selectedAddBot.value || !canManageBots.value) return
   try {
-    await mapArtApi.manageBot(taskId.value, 'add', selectedAddBot.value)
-    ElMessage.success('Bot 已添加，自动分配待接管区域')
+    const { data } = await mapArtApi.manageBot(taskId.value, 'add', selectedAddBot.value)
+    const running = task.value?.status === 'running' || task.value?.status === 'paused'
+    ElMessage.success(
+      running
+        ? 'Bot 已添加，自动分配待接管区域'
+        : (data?.message || 'Bot 已加入任务，启动时统一分配列/区域'),
+    )
     selectedAddBot.value = ''
     fetchTask()
   } catch (e) {
@@ -246,15 +255,15 @@ async function handleRemoveBot(botId: string) {
   try {
     await ElMessageBox.confirm(
       running
-        ? `确认移除 Bot「${botId}」？未完成区域将释放给后续添加的 Bot 接管`
-        : `确认从任务中删除 Bot「${botId}」？剩余 Bot 的区域将自动重新划分`,
+        ? `确认移除 Bot「${botId}」？运行中未完成区域将释放给后续添加的 Bot 接管`
+        : `确认从任务中移除 Bot「${botId}」？剩余 Bot 的区域/列将自动重新划分`,
       '确认操作',
       { type: 'warning' },
     )
   } catch { return }
   try {
     await mapArtApi.manageBot(taskId.value, 'remove', botId)
-    ElMessage.success(running ? 'Bot 已移除，未完成区域已释放' : 'Bot 已删除，剩余区域已重新划分')
+    ElMessage.success(running ? 'Bot 已移除，未完成区域已释放' : 'Bot 已移除，剩余区域已重新划分')
     fetchTask()
   } catch (e) {
     ElMessage.error(errMsg(e, '操作失败'))

@@ -763,6 +763,50 @@ async def force_bot_sleep(task_id: str, bot_id: str,
         raise HTTPException(status_code=500, detail=f"强制睡觉失败：{e}")
 
 
+def _rebuild_assignments(task, db: Session) -> None:
+    """未运行任务重新分配 bot 区域（2026-08-19 统一 add/remove 的 draft 分支）。
+
+    - strip 模式：按 Z 轴重新分区（全 X 条带，region 字段更新）
+    - column 模式：按顺序分配 column_index（1..n，启动时协调器统一用）
+    仅更新非 released 的 assignment 记录。
+    """
+    try:
+        survivors = db.query(MapArtBotAssignment).filter(
+            MapArtBotAssignment.task_id == task.task_id,
+            MapArtBotAssignment.state != "released",
+        ).order_by(MapArtBotAssignment.id).all()
+        if not survivors:
+            return
+        build_mode = getattr(task, "build_mode", "strip") or "strip"
+        size_x = task.projection_size_x or 128
+        size_z = task.projection_size_z or 128
+        if build_mode == "column":
+            # 列式：按顺序分配列号（列 x=1..n 为第1排），region 字段置整列虚拟范围
+            for i, s in enumerate(survivors):
+                col = i + 1
+                s.column_index = col
+                s.region_x_start = col
+                s.region_x_end = col
+                s.region_z_start = 1
+                s.region_z_end = size_z
+                s.blocks_total = size_z
+                s.blocks_placed = 0
+                s.current_row = -1
+        else:
+            regions = partition_rectangular(size_x, size_z, len(survivors))
+            for i, s in enumerate(survivors):
+                r = regions[i]
+                s.region_x_start = r.x_start
+                s.region_x_end = r.x_end
+                s.region_z_start = r.z_start
+                s.region_z_end = r.z_end
+                s.blocks_total = r.block_count
+                s.blocks_placed = 0
+                s.current_row = -1
+    except Exception as _e:
+        logger.warning("[%s] Rebuild assignments failed: %s", task.task_id, _e)
+
+
 @router.post("/tasks/{task_id}/bots")
 async def manage_task_bot(
     task_id: str,
@@ -790,8 +834,6 @@ async def manage_task_bot(
     from vmtools_next.main import get_pool_for_engine
 
     if data.action == "add":
-        if not coordinator:
-            raise HTTPException(status_code=400, detail="任务未在运行，仅运行中的任务可添加 Bot")
         engine = resolve_bot_engine(data.bot_id, db)
         if engine != "mineflayer":
             raise HTTPException(status_code=400,
@@ -801,34 +843,62 @@ async def manage_task_bot(
         err = ensure_available_for_work(db, data.bot_id, "地图画")
         if err:
             raise HTTPException(status_code=400, detail=err)
-        pool = get_pool_for_engine("mineflayer")
-        client = pool.get_client(data.bot_id) if pool else None
-        if not client:
-            raise HTTPException(status_code=400, detail=f"Bot {data.bot_id} 未连接")
 
-        region = await coordinator.add_bot(data.bot_id, data.bot_id, client)
-        if region is None:
-            raise HTTPException(status_code=400,
-                                detail="无待接管区域（所有区域均已分配或完成）")
-        # DB：新增 assignment 记录
+        if coordinator:
+            # ── 运行中：把 remove_bot 释放的未完成区域分配给新 bot（原逻辑）──
+            pool = get_pool_for_engine("mineflayer")
+            client = pool.get_client(data.bot_id) if pool else None
+            if not client:
+                raise HTTPException(status_code=400, detail=f"Bot {data.bot_id} 未连接")
+
+            region = await coordinator.add_bot(data.bot_id, data.bot_id, client)
+            if region is None:
+                raise HTTPException(status_code=400,
+                                    detail="无待接管区域（所有区域均已分配或完成）")
+            # DB：新增 assignment 记录
+            ba = MapArtBotAssignment(
+                task_id=task_id,
+                bot_id=data.bot_id,
+                bot_name=data.bot_id,
+                region_x_start=region.x_start,
+                region_x_end=region.x_end,
+                region_z_start=region.z_start,
+                region_z_end=region.z_end,
+                blocks_total=region.block_count,
+                state="running",
+            )
+            db.add(ba)
+            db.commit()
+            return {"task_id": task_id, "bot_id": data.bot_id,
+                    "action": "add", "region": {
+                        "x_start": region.x_start, "x_end": region.x_end,
+                        "z_start": region.z_start, "z_end": region.z_end,
+                    }}
+
+        # ── 未运行（draft/pending）：直接写入 assignment（2026-08-19 放开限制）──
+        # 任务未启动时随时可添加 bot；启动时协调器统一分配列/区域。
+        existing = db.query(MapArtBotAssignment).filter(
+            MapArtBotAssignment.task_id == task_id,
+            MapArtBotAssignment.bot_id == data.bot_id,
+            MapArtBotAssignment.state != "released",
+        ).first()
+        if existing:
+            raise HTTPException(status_code=400, detail=f"Bot {data.bot_id} 已在此任务中")
         ba = MapArtBotAssignment(
             task_id=task_id,
             bot_id=data.bot_id,
             bot_name=data.bot_id,
-            region_x_start=region.x_start,
-            region_x_end=region.x_end,
-            region_z_start=region.z_start,
-            region_z_end=region.z_end,
-            blocks_total=region.block_count,
-            state="running",
+            state="idle",
+            blocks_total=0,
         )
         db.add(ba)
+        db.flush()
+        # 重新分配（strip=分区 / column=列号），保持分配连续不产生空洞
+        _rebuild_assignments(task, db)
         db.commit()
         return {"task_id": task_id, "bot_id": data.bot_id,
-                "action": "add", "region": {
-                    "x_start": region.x_start, "x_end": region.x_end,
-                    "z_start": region.z_start, "z_end": region.z_end,
-                }}
+                "action": "add", "region": None,
+                "message": "Bot 已加入任务（启动时统一分配列/区域）"}
 
     if data.action == "remove":
         # 至少保留 1 个 bot
@@ -854,7 +924,8 @@ async def manage_task_bot(
             db.commit()
             return {"task_id": task_id, "bot_id": data.bot_id, "action": "remove"}
 
-        # draft/pending：直接删除 assignment + 按剩余 bot 重新分区（2026-08-14 二期）
+        # draft/pending：直接删除 assignment + 按剩余 bot 重新分配（2026-08-14 二期；
+        # 2026-08-19 统一走 _rebuild_assignments 支持 column 列号重排）
         ba = db.query(MapArtBotAssignment).filter(
             MapArtBotAssignment.task_id == task_id,
             MapArtBotAssignment.bot_id == data.bot_id,
@@ -862,28 +933,15 @@ async def manage_task_bot(
         if not ba:
             raise HTTPException(status_code=404, detail=f"Bot {data.bot_id} 不在任务中")
         db.delete(ba)
-
-        # 按剩余 bot 重新划分区域（全 X 条带，按 Z 切分）
+        db.flush()
+        _rebuild_assignments(task, db)
         survivors = db.query(MapArtBotAssignment).filter(
             MapArtBotAssignment.task_id == task_id,
-            MapArtBotAssignment.bot_id != data.bot_id,
-        ).order_by(MapArtBotAssignment.id).all()
-        if survivors:
-            size_x = task.projection_size_x or 128
-            size_z = task.projection_size_z or 128
-            regions = partition_rectangular(size_x, size_z, len(survivors))
-            for i, s in enumerate(survivors):
-                r = regions[i]
-                s.region_x_start = r.x_start
-                s.region_x_end = r.x_end
-                s.region_z_start = r.z_start
-                s.region_z_end = r.z_end
-                s.blocks_total = r.block_count
-                s.blocks_placed = 0
-                s.current_row = -1
+            MapArtBotAssignment.state != "released",
+        ).count()
         db.commit()
         return {"task_id": task_id, "bot_id": data.bot_id, "action": "remove",
-                "repartitioned": len(survivors)}
+                "repartitioned": survivors}
 
     raise HTTPException(status_code=400, detail=f"未知操作：{data.action}")
 
