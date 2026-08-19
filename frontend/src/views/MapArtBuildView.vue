@@ -114,7 +114,8 @@
               <span class="bot-stats">{{ bot.placed }} / {{ bot.total }}</span>
             </div>
             <div class="bot-meta">
-              <span>行 {{ bot.current_row >= 0 ? bot.current_row : '-' }}</span>
+              <span v-if="task?.build_mode === 'column'">列 {{ bot.column ?? '-' }} · 排 {{ bot.squad_index ?? 1 }}</span>
+              <span v-else>行 {{ bot.current_row >= 0 ? bot.current_row : '-' }}</span>
               <span>{{ (bot.rate ?? 0).toFixed(1) }} 块/分钟</span>
             </div>
           </div>
@@ -137,12 +138,28 @@
             <span>{{ rotationLabel(task?.rotation) }}</span>
           </div>
           <div class="stat-row">
+            <span>建造模式</span>
+            <span>{{ task?.build_mode === 'column' ? '多Bot协作（列式）' : '分区独立' }}</span>
+          </div>
+          <div class="stat-row" v-if="task?.build_mode === 'column'">
+            <span>当前排号</span>
+            <span>第 {{ squadIndex || task?.squad_index || 1 }} 排</span>
+          </div>
+          <div class="stat-row">
             <span>已耗时</span>
             <span>{{ formatTime(elapsed) }}</span>
           </div>
           <div class="stat-row">
-            <span>预计剩余</span>
+            <span>预计剩余（整体）</span>
             <span>{{ formatTime(eta) }}</span>
+          </div>
+          <div class="stat-row">
+            <span>净建造速率</span>
+            <span>{{ netRate }} 块/分钟</span>
+          </div>
+          <div class="stat-row">
+            <span>预计剩余（净速率）</span>
+            <span>{{ formatTime(netEta) }}</span>
           </div>
           <div class="stat-row">
             <span>平均速率</span>
@@ -178,6 +195,10 @@ const materials = ref<any[]>([])
 const elapsed = ref(0)
 const eta = ref(0)
 const overallRate = ref('0')
+// 2026-08-19：净速率统计（多Bot列式模式）
+const netRate = ref('0')
+const netEta = ref(0)
+const squadIndex = ref(0)
 
 // ── Bot 动态管理（需求4：添加/删除 bot，自动分配区域） ──
 const selectedAddBot = ref('')
@@ -364,6 +385,10 @@ function onBuildProgress(data: any) {
   overallRate.value = data.placed_blocks > 0 && data.elapsed_sec > 0
     ? (data.placed_blocks / (data.elapsed_sec / 60)).toFixed(1)
     : '0'
+  // 2026-08-19：净速率 / 排号（多Bot列式模式）
+  netRate.value = data.net_rate > 0 ? String(data.net_rate) : '0'
+  netEta.value = data.net_eta || 0
+  squadIndex.value = data.squad_index || 0
   // 注意：后端 _aggregate 的 materials 当前为 {}（未填充），空对象是 truthy——
   // 不加 length 检查会每 2s 把材料面板清空
   if (data.materials && Object.keys(data.materials).length > 0) {

@@ -91,6 +91,10 @@ class MapArtTask(Base):
     sleep_y = Column(Integer, nullable=True)
     sleep_z = Column(Integer, nullable=True)
 
+    # 建造模式（2026-08-19）：strip=旧分区独立模式（Z轴分区），column=新列式协作模式
+    # 新任务默认 column；旧任务兼容 strip
+    build_mode = Column(String(16), default="strip")
+
 
     # Relationships
     materials = relationship(
@@ -155,6 +159,10 @@ class MapArtBotAssignment(Base):
     blocks_total = Column(Integer, default=0)
     current_row = Column(Integer, default=-1)            # current Z-row being built
     last_completed_x = Column(Integer, default=-1)       # checkpoint for resume
+
+    # 2026-08-19 列式协作模式：单列分配
+    column_index = Column(Integer, nullable=True)         # 分配的列号（自定义x坐标）
+    row_direction = Column(Integer, default=1)            # 当前排方向：1=y+ | -1=y-
 
     # Supply box location
     supply_box_x = Column(Integer, nullable=True)
@@ -304,5 +312,39 @@ class MapArtBlockState(Base):
 
     __table_args__ = (
         Index("idx_mapart_bs_task_coord", "task_id", "x", "z"),
+        {"sqlite_autoincrement": True},
+    )
+
+
+class MapArtTaskProgress(Base):
+    """任务进度持久化表（2026-08-19 列式协作模式）。
+
+    定期落盘（每30s），崩溃/重启后加载断点续建。
+    progress_json 结构：
+    {
+      "squad_index": 1,           // 当前排号
+      "direction": 1,             // 当前排方向（1=y+, -1=y-）
+      "active_bots": ["mf-001","mf-002","mf-003","mf-006","mf-007"],
+      "offline_bots": [],
+      "columns": {                // 各Bot进度
+        "mf-001": {"column": 1, "completed_y": 50, "placed": 500},
+        "mf-002": {"column": 2, "completed_y": 50, "placed": 500},
+        ...
+      },
+      "total_placed": 2500,
+      "total_blocks": 470000
+    }
+    """
+
+    __tablename__ = "map_art_task_progress"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    task_id = Column(String(12), ForeignKey("map_art_tasks.task_id", ondelete="CASCADE"),
+                     nullable=False, unique=True, index=True)
+    progress_json = Column(Text, default="{}")
+    checkpoint_at = Column(DateTime, default=lambda: datetime.now(timezone.utc),
+                           onupdate=lambda: datetime.now(timezone.utc))
+
+    __table_args__ = (
         {"sqlite_autoincrement": True},
     )

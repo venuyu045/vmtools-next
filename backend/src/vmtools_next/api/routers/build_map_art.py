@@ -62,18 +62,41 @@ async def execute_map_art_start(task_id: str, db: Session) -> tuple[bool, str]:
     if not _layers:
         return False, "任务无方块数据（投影解析结果缺失），无法启动"
 
-    coord = MapArtCoordinator(
-        task_id=task_id,
-        projection_data={
-            "layers": _layers,
-            "regions": {"Main": {
-                "size": {"x": task.projection_size_x, "z": task.projection_size_z},
-            }},
-        },
-        origin_x=task.origin_x,
-        origin_y=task.origin_y,
-        origin_z=task.origin_z,
-    )
+    # 2026-08-19：按 build_mode 选择协调器（column=新列式协作 / strip=旧分区独立）
+    # 新任务默认 column（create 落库时若未显式指定则置 column）；旧任务兼容 strip。
+    build_mode = getattr(task, "build_mode", "strip") or "strip"
+    if build_mode == "column":
+        from vmtools_next.core.multi_bot_coordinator import (
+            MultiBotCoordinator as MultiCoord,
+            register_multi_coordinator,
+        )
+        coord = MultiCoord(
+            task_id=task_id,
+            projection_data={
+                "layers": _layers,
+                "regions": {"Main": {
+                    "size": {"x": task.projection_size_x, "z": task.projection_size_z},
+                }},
+            },
+            origin_x=task.origin_x,
+            origin_y=task.origin_y,
+            origin_z=task.origin_z,
+        )
+        _use_multi = True
+    else:
+        coord = MapArtCoordinator(
+            task_id=task_id,
+            projection_data={
+                "layers": _layers,
+                "regions": {"Main": {
+                    "size": {"x": task.projection_size_x, "z": task.projection_size_z},
+                }},
+            },
+            origin_x=task.origin_x,
+            origin_y=task.origin_y,
+            origin_z=task.origin_z,
+        )
+        _use_multi = False
     # 地图画建造仅支持 mineflayer 引擎：所有 bot 必须为 MF，且只从 mineflayer pool 取 client
     from vmtools_next.main import get_pool_for_engine
     from vmtools_next.core.bot_engine import resolve_bot_engine
@@ -100,7 +123,10 @@ async def execute_map_art_start(task_id: str, db: Session) -> tuple[bool, str]:
 
     try:
         await coord.start(bot_mcps)
-        register_coordinator(task_id, coord)
+        if _use_multi:
+            register_multi_coordinator(task_id, coord)
+        else:
+            register_coordinator(task_id, coord)
     except Exception as e:
         # 2026-08-14 审查修复：coord.start（连接 bot/初始化 loop）抛异常时
         # 会直接 500 且任务停留在 running（调用方已先置 running 落库）→
@@ -133,6 +159,8 @@ class MapArtTaskCreate(BaseModel):
     organization_id: Optional[str] = None
     # 投影朝向（2026-08-14）：绕 Y 轴顺时针旋转次数 0/1/2/3 = 0°/90°/180°/270°
     rotation: int = 0
+    # 建造模式（2026-08-19）：column=新列式协作（默认）/ strip=旧分区独立
+    build_mode: str = "column"
 
 
 class MapArtTaskResponse(BaseModel):
@@ -418,6 +446,8 @@ async def create_task(
         supply_config=json.dumps(_default_supply_config(), ensure_ascii=False),
         food_config=json.dumps(_default_food_config(), ensure_ascii=False),
         rotation=rotation,
+        # 2026-08-19：新任务默认列式协作模式（多Bot排级蛇形）
+        build_mode=getattr(data, "build_mode", None) or "column",
     )
     db.add(task)
     db.flush()
@@ -556,6 +586,8 @@ def get_task(task_id: str, db: Session = Depends(get_db), user=Depends(require_a
             "x": task.sleep_x, "y": task.sleep_y, "z": task.sleep_z,
         } if (task.sleep_x is not None and task.sleep_y is not None and task.sleep_z is not None) else None,
         "rotation": task.rotation or 0,
+        # 2026-08-19：建造模式（column=多Bot列式协作 / strip=旧分区独立）
+        "build_mode": getattr(task, "build_mode", "strip") or "strip",
         "projection": {
             "file_path": task.projection_file_path,
             "name": task.projection_name,
@@ -587,6 +619,9 @@ def get_task(task_id: str, db: Session = Depends(get_db), user=Depends(require_a
                 "bot_id": b.bot_id,
                 "bot_name": b.bot_name,
                 "state": b.state,
+                # 2026-08-19：列式协作模式扩展（旧任务无该字段，前端回退 0/1）
+                "column": b.column_index or 0,
+                "squad_index": 1,
                 # 2026-08-16 审查修复：region 为投影相对坐标，前端画布按世界坐标渲染
                 # （blocks 已是世界坐标）——统一转世界坐标（origin + 相对），防区域框错位。
                 "region": {

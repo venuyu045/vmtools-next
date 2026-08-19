@@ -206,6 +206,19 @@ class MineflayerConfig(BaseModel):
     task_max_concurrent_build: int = 1
     # 调度器轮询间隔（秒）
     task_poll_interval: float = 2.0
+    # ── 多Bot列式协作建造（2026-08-19）──
+    # 列式建造放置间隔（秒）：多Bot同时放置时服务端节流，默认 0.3s
+    map_art_column_place_interval_s: float = 0.3
+    # 卡滞判定超时（秒）：连续无位置/动作进展判定卡滞，默认 10
+    map_art_stuck_timeout_s: int = 10
+    # 死亡 /back 移动锁定超时（秒）：等待回到死亡点，默认 10
+    map_art_death_back_timeout_s: int = 10
+    # 减员容错离线超时（秒）：Bot离线超过此时间触发编队重组，默认 120
+    map_art_bot_offline_timeout_s: int = 120
+    # 坠落判定高度差（格）：低于建造层此格数判定坠落，默认 3
+    map_art_fall_threshold: int = 3
+    # 进度持久化间隔（秒），默认 30
+    map_art_checkpoint_interval_s: int = 30
 
 
 class MonitorConfig(BaseModel):

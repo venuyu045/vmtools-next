@@ -104,6 +104,11 @@ class MapArtBuildState:
     materials: dict[str, dict]    # item_id → {required, placed}
     elapsed_sec: float
     eta_sec: float = 0.0
+    # 2026-08-19：多Bot列式模式扩展（旧协调器不填，前端默认 0/''）
+    net_rate: float = 0.0          # 净建造速率（格/分钟，剔除补货/复位/同步等待）
+    net_eta: float = 0.0           # 预计剩余（基于净速率）
+    squad_index: int = 0           # 当前排号（列式模式）
+    build_mode: str = "strip"      # strip=旧分区 | column=新列式
 
 
 # ──────────────────────────────────────────────
@@ -259,7 +264,18 @@ class BotBuildLoop:
         # 2026-08-18 用户需求：猪排仓库坐标加入 y 轴判定白名单——仓库在末地
         # y=58（与建造层 y=319 差异巨大），_near_build_area/_verify_at_build_area
         # 的 y 校验会把它误判为"未到位/不在建造区域"。
+        # ⚠️ 2026-08-19 语义强化（任务文档要求）：此白名单是「坐标+半径+维度」区域
+        # 判定（非纯高度白名单）——必须同时满足「bot 在补货点维度」才放行 y 校验，
+        # 防止 bot 意外坠落主世界地表（x/z 碰巧接近仓库坐标）时被误放行。
         self._y_whitelist: set[tuple[int, int]] = {(b[0], b[2]) for b in self._food_boxes}
+        # 补货点维度白名单（默认末地——猪排仓库在末地 y=58；config 可覆盖）
+        try:
+            _wld = str(getattr(get_config().mineflayer,
+                               "map_art_whitelist_dimensions",
+                               "world_the_end") or "world_the_end").split(",")
+            self._whitelist_dims: set[str] = {s.strip() for s in _wld if s.strip()}
+        except Exception:
+            self._whitelist_dims = {"world_the_end"}
         # 2026-08-14 模块B：快捷栏槽位 → 材料映射缓存（避免每次全背包搜索）
         self._hotbar_map: dict[int, str] = {}  # slot(0-8) → clean_item_id
         self._food_task: Optional[asyncio.Task] = None  # 食物监控协程
@@ -2022,14 +2038,23 @@ class BotBuildLoop:
         return None
 
     def _near_whitelist(self, x: float, z: float, radius: float = 6.0) -> bool:
-        """是否在 y 轴白名单坐标附近（2026-08-18：猪排仓库 food_boxes）。
+        """是否在补货点白名单区域（2026-08-18 猪排仓库 food_boxes；2026-08-19 强化）。
 
+        区域判定 = 「维度 + 坐标 + 半径」：
+          · 坐标：与白名单坐标（x,z）曼哈顿距离 ≤ radius
+          · 维度：bot 当前维度必须在补货点维度白名单内（默认末地）
         bot 在仓库取猪排时高度与建造层差异巨大，若 y 校验误判会触发兜底传送
-        把 bot 从仓库拉走。白名单内坐标跳过 y 校验（x/z 区域判断照常）。
+        把 bot 从仓库拉走。白名单内坐标【且同维度】跳过 y 校验。
         """
         if not self._y_whitelist:
             return False
         try:
+            # 维度检查：bot 必须在补货点维度（防坠落主世界地表被误放行）
+            st = getattr(self.mcp, "last_status", None) or {}
+            if isinstance(st, dict) and st.get("dimension") and self._whitelist_dims:
+                cur_dim = str(st.get("dimension"))
+                if cur_dim not in self._whitelist_dims:
+                    return False
             for wx, wz in self._y_whitelist:
                 if abs(float(x) - wx) <= radius and abs(float(z) - wz) <= radius:
                     return True
@@ -4371,6 +4396,15 @@ _active_coordinators: dict[str, MapArtCoordinator] = {}
 
 
 def get_coordinator(task_id: str) -> Optional[MapArtCoordinator]:
+    """获取活跃协调器（2026-08-19：先查多Bot列式协调器，再查旧分区协调器）。"""
+    # 多Bot列式协调器优先（build_mode=column 的新任务）
+    try:
+        from vmtools_next.core.multi_bot_coordinator import get_multi_coordinator
+        mc = get_multi_coordinator(task_id)
+        if mc is not None:
+            return mc  # type: ignore[return-value]
+    except Exception:
+        pass
     return _active_coordinators.get(task_id)
 
 
@@ -4380,3 +4414,9 @@ def register_coordinator(task_id: str, coordinator: MapArtCoordinator):
 
 def unregister_coordinator(task_id: str):
     _active_coordinators.pop(task_id, None)
+    # 同步清理多Bot协调器注册（2026-08-19）
+    try:
+        from vmtools_next.core.multi_bot_coordinator import unregister_multi_coordinator
+        unregister_multi_coordinator(task_id)
+    except Exception:
+        pass

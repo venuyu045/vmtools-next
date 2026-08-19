@@ -10,6 +10,17 @@
       <span class="log-toolbar-label">详细模式显示所有操作（含 debug）</span>
       <el-button size="small" text type="danger" class="log-clear" @click="clearLog">清空</el-button>
     </div>
+    <!-- 2026-08-19：per-bot 独立日志窗口 —— 全部（全局事件流）/ 各Bot 独立终端 -->
+    <div class="log-bot-filter">
+      <el-radio-group v-model="selectedBot" size="small" @change="scrollToBottom">
+        <el-radio-button value="">全部</el-radio-button>
+        <el-radio-button
+          v-for="bid in botIds"
+          :key="bid"
+          :value="bid"
+        >{{ botName(bid) }}</el-radio-button>
+      </el-radio-group>
+    </div>
     <div ref="logBody" class="log-body">
       <div v-for="(entry, i) in filteredLogs" :key="i" class="log-line" :class="`log-${entry.level || 'info'}`">
         <span class="log-time mono">{{ formatTime(entry.ts) }}</span>
@@ -41,12 +52,33 @@ const logs = ref<any[]>([])
 const autoScroll = ref(true)
 const detailMode = ref(false)
 const logBody = ref<HTMLElement>()
+// 2026-08-19：per-bot 日志筛选（'' = 全部/全局事件流）
+const selectedBot = ref('')
 let pollTimer: number | undefined
 
-/** 简略模式过滤掉 debug（详细模式显示全部） */
+/** 日志中出现过的 bot 列表（按首次出现顺序去重） */
+const botIds = computed(() => {
+  const seen: string[] = []
+  for (const l of logs.value) {
+    const id = l.bot_id || l.bot_name || ''
+    if (id && !seen.includes(id)) seen.push(id)
+  }
+  return seen
+})
+
+function botName(bid: string): string {
+  const hit = logs.value.find((l: any) => (l.bot_id || l.bot_name) === bid)
+  return hit?.bot_name || hit?.bot_id || bid
+}
+
+/** 简略模式过滤掉 debug（详细模式显示全部） + bot 筛选（per-bot 独立终端） */
 const filteredLogs = computed(() => {
-  if (detailMode.value) return logs.value
-  return logs.value.filter((l: any) => l.level !== 'debug')
+  let list = logs.value
+  if (selectedBot.value) {
+    list = list.filter((l: any) => (l.bot_id || l.bot_name) === selectedBot.value)
+  }
+  if (detailMode.value) return list
+  return list.filter((l: any) => l.level !== 'debug')
 })
 
 function formatTime(ts: string): string {
@@ -136,6 +168,16 @@ onUnmounted(() => {
   align-items: center;
   gap: 8px;
   margin-bottom: 8px;
+}
+.log-bot-filter {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+.log-bot-filter .el-radio-group {
+  display: flex;
+  flex-wrap: wrap;
 }
 .log-toolbar-label { font-size: 12px; color: var(--text-muted); }
 .log-clear { margin-left: auto; }

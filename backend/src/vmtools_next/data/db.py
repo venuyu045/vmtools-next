@@ -289,8 +289,20 @@ def _run_lightweight_migrations(engine) -> None:
                 # 地图画任务：食物配置（food_config JSON，2026-08-14 模块A）
                 if "food_config" not in mt_columns:
                     conn.execute(text("ALTER TABLE map_art_tasks ADD COLUMN food_config TEXT DEFAULT ''"))
+                # 2026-08-19 列式协作模式：建造模式
+                if "build_mode" not in mt_columns:
+                    conn.execute(text("ALTER TABLE map_art_tasks ADD COLUMN build_mode VARCHAR DEFAULT 'strip'"))
             except Exception as _e:
                 logger.warning("map_art_tasks supply_config migration check: {}", _e)
+            # 2026-08-19 列式协作模式：bot分配扩展
+            try:
+                ba_columns = {row[1] for row in conn.execute(text("PRAGMA table_info(map_art_bot_assignments)")).fetchall()}
+                if "column_index" not in ba_columns:
+                    conn.execute(text("ALTER TABLE map_art_bot_assignments ADD COLUMN column_index INTEGER"))
+                if "row_direction" not in ba_columns:
+                    conn.execute(text("ALTER TABLE map_art_bot_assignments ADD COLUMN row_direction INTEGER DEFAULT 1"))
+            except Exception as _e:
+                logger.warning("map_art_bot_assignments column migration check: {}", _e)
             # 地图画方块坐标语义统一（2026-08-16 P0-5/B4）：
             # map_art_block_states 历史混存两套坐标（create 时投影相对坐标 0..size-1 /
             # 运行 flush 时世界坐标 origin+相对）。统一为世界坐标。
