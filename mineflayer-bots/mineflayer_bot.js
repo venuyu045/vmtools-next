@@ -269,6 +269,21 @@ async function createBotProcess(options) {
     bot.on('error', (err) => {
       console.error(`${ANSI.red}[bot] error:${ANSI.reset}`, err.message);
       broadcast(createEvent('bot_error', { error: err.message }));
+      // ⚠️ 2026-08-19：PartialReadError（如 world_particles 粒子包解析失败）= TCP 包流
+      // 已损坏（客户端无法再正确解析 keepalive → 30s 后被服务器踢 disconnect.timeout）。
+      // 等被踢不如主动重连：立即 quit → 进程退出（end 后 1.5s）→ 进程管理器按
+      // desired_state 自动拉起。粒子包错误偶发（Via 与 26.1 定义不匹配），重连后正常
+      // 工作直到再次触发——把掉线窗口从 30s+ 缩短到秒级。
+      if (err && (
+        err.message.includes('PartialReadError')
+        || err.name === 'PartialReadError'
+        || err.message.includes('Parse error')
+      )) {
+        console.log(`${ANSI.yellow}[bot] 协议解析错误（PartialReadError），主动重连…${ANSI.reset}`);
+        if (!isStopping) {
+          try { bot.quit('packet_parse_error'); } catch (e) { /* 忽略 */ }
+        }
+      }
     });
 
     bot.on('end', (reason) => {
