@@ -1194,7 +1194,6 @@ class MultiBotCoordinator:
                 col_start = (squad_index - 1) * n + 1
                 col_end = col_start + n - 1
                 # 2026-08-19 余列处理：剩余列数 < n 时仅启用前 n' 台 bot（编号靠前）
-                remaining_after = self._size_x - (col_end)
                 if col_end > self._size_x:
                     col_end = self._size_x
                     n = col_end - col_start + 1
