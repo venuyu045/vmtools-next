@@ -12,6 +12,11 @@
 
 // 液体方块名（含后缀 _water/_lava 或纯水）
 const LIQUID_RE = /(water|flowing_water|lava|flowing_lava|bubble_column)/;
+// ⚠️ 2026-08-19：半格高方块（台阶 slab / 楼梯 stairs）——bot 可【走上】（0.5 格高）
+// 也可【穿过】（身体空间不阻挡）。此前被 classify 兜底归为 passable（可穿过）但
+// 不可站立 → canWalkOn(slab)=false → A* 无法在台阶/楼梯上行走 → 路径被台阶挡住
+// → no_path → bot 卡住（用户反馈"不会上半格高的楼梯被卡住"）。
+const HALF_HEIGHT_RE = /(slab|stair|stairs)$|^(slab|stairs)/;
 // 明确可站立的方块（有完整碰撞箱的实体方块）；未命中时按 boundingBox 判断
 const SOLID_HINTS = new Set([
   'grass_block', 'dirt', 'stone', 'cobblestone', 'andesite', 'granite', 'diorite',
@@ -75,6 +80,13 @@ function classify(block) {
     } else {
       passable = true; // 未知类型默认可穿过（避免误判为墙）
     }
+  }
+  // ⚠️ 2026-08-19：半格高方块（slab/stair）可站（canWalkOn）+可穿（canWalkThrough）——
+  // 覆盖上面的分类（slab/stair 的 boundingBox 是 non-full → 被归为 passable 不可站）。
+  // bot 走上 0.5 格台阶无需跳跃（TRAVERSE 直走自动迈上），身体空间在台阶上方可穿过。
+  if (HALF_HEIGHT_RE.test(name)) {
+    solid = true;
+    passable = true;
   }
   return {
     name,
