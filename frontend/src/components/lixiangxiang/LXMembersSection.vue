@@ -45,7 +45,13 @@
           :class="{ 'is-wide': (i % 6) === 0 }"
         >
           <div class="lx-avatar">
-            <img v-if="m.avatar_path" :src="m.avatar_path" :alt="m.nickname || m.game_id" loading="lazy" />
+            <img
+              v-if="defaultAvatarSrc(m)"
+              :src="defaultAvatarSrc(m)"
+              :alt="m.nickname || m.game_id"
+              loading="lazy"
+              @error="onDefaultAvatarError(m)"
+            />
             <span v-else class="lx-avatar-fallback">{{ (m.nickname || m.game_id).slice(0, 1) }}</span>
           </div>
           <div class="lx-member-info">
@@ -74,6 +80,28 @@ import { useReveal } from '@/composables/useReveal'
 const props = defineProps<{ members: LxMember[] }>()
 
 const { rootRef, revealed } = useReveal()
+
+// 未上传自定义头像的成员：默认按 game_id 取 MC 正版皮肤脸部头像（128px 供高分屏），
+// 双服务依次回退，全部失败才落到昵称首字占位符
+const MC_AVATAR_SOURCES = [
+  (name: string) => `https://mc-heads.net/avatar/${encodeURIComponent(name)}/128`,
+  (name: string) => `https://minotar.net/avatar/${encodeURIComponent(name)}/128`,
+]
+
+/** 每个成员的默认头像回退阶段：未记录=0(mc-heads)，1=minotar，≥2=首字占位 */
+const avatarStage = ref(new Map<string, number>())
+
+function defaultAvatarSrc(m: LxMember): string | undefined {
+  if (m.avatar_path) return m.avatar_path
+  const stage = avatarStage.value.get(m.id) ?? 0
+  return MC_AVATAR_SOURCES[stage]?.(m.game_id)
+}
+
+function onDefaultAvatarError(m: LxMember) {
+  if (m.avatar_path) return
+  // Vue 3 对 Map.set 有响应式追踪，src 换新地址后 <img> 会自动重试加载
+  avatarStage.value.set(m.id, (avatarStage.value.get(m.id) ?? 0) + 1)
+}
 
 const activeFilter = ref('全部')
 const sortMode = ref<'join' | 'rank'>('rank')

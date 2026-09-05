@@ -51,7 +51,7 @@
               <el-table :data="members" size="small" class="lx-table" :header-cell-style="headerCellStyle" :cell-style="cellStyle">
                 <el-table-column label="头像" width="70">
                   <template #default="{ row }">
-                    <el-avatar :size="34" :src="row.avatar_path || undefined" shape="square" :style="{ borderRadius: '8px' }">
+                    <el-avatar :size="34" :src="row.avatar_path || mcAvatarSrc(row.game_id)" shape="square" :style="{ borderRadius: '8px' }">
                       {{ (row.nickname || row.game_id).slice(0, 1) }}
                     </el-avatar>
                   </template>
@@ -149,7 +149,7 @@
       <el-form :model="memberDialog.form" label-width="88px" class="lx-dialog-form">
         <el-form-item label="头像">
           <div class="lx-upload-row">
-            <el-avatar :size="52" :src="memberDialog.form.avatar_path || undefined" shape="square" :style="{ borderRadius: '10px' }">
+            <el-avatar :size="52" :src="memberDialog.form.avatar_path || mcAvatarSrc(memberDialog.form.game_id)" shape="square" :style="{ borderRadius: '10px' }">
               {{ (memberDialog.form.nickname || memberDialog.form.game_id || '?').slice(0, 1) }}
             </el-avatar>
             <el-upload
@@ -449,6 +449,11 @@ async function uploadAndSet(key: string, file: File, setUrl: (url: string) => vo
       || (e?.code === 'ECONNABORTED' ? '上传超时，请检查网络后重试' : (e?.message || '上传失败'))
     ElMessage.error(st.error)
   }
+}
+
+/** 未设置自定义头像的成员：默认按 game_id 取 MC 正版皮肤脸部头像（第三方不可达时 el-avatar 自动回退首字） */
+function mcAvatarSrc(gameId: string): string | undefined {
+  return gameId ? `https://mc-heads.net/avatar/${encodeURIComponent(gameId)}/128` : undefined
 }
 
 /** 成员头像上传 */
