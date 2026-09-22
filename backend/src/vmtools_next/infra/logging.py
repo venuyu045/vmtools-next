@@ -45,6 +45,13 @@ def setup_logging(log_dir: str = "logs", debug: bool = False) -> None:
     # Bridge stdlib logging → loguru so INFO from remaining stdlib loggers is visible.
     logging.basicConfig(handlers=[InterceptHandler()], level=0, force=True)
 
+    # Silence noisy third-party loggers.
+    # httpx/httpcore log EVERY outbound HTTP request at INFO; the BlueMap monitor
+    # polls players.json/markers.json for 3 worlds every few seconds, which flooded
+    # /tmp/vmtools.log to 3.3GB / 19M lines. Keep only WARNING+ from these.
+    for _noisy in ("httpx", "httpcore", "urllib3", "hpack", "h2"):
+        logging.getLogger(_noisy).setLevel(logging.WARNING)
+
     # Remove default handler
     logger.remove()
 
