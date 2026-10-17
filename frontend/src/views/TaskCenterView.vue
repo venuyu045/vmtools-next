@@ -373,8 +373,10 @@ onBeforeUnmount(() => {
 .section-title { font-family: var(--font-display); font-size: 20px; font-weight: 400; letter-spacing: -0.5px; color: var(--text-primary); margin: 0; }
 .section-sub { font-size: 12px; color: var(--text-muted); }
 .task-tabs { margin: 0; }
-/* 对齐修复：el-tabs 默认 15px 下边距会让标签条与左侧标题错位（section-header 为 center 对齐） */
-.task-tabs :deep(.el-tabs__header) { margin-bottom: 0; }
+/* 对齐修复：el-tabs 默认 15px 下边距会让标签条与左侧标题错位（section-header 为 center 对齐）。
+   注意：global.css 的 @media(max-width:768px) 给 .el-tabs__header 设了 margin-bottom:12px !important，
+   移动端必须同样带 !important 才能覆盖 */
+.task-tabs :deep(.el-tabs__header) { margin-bottom: 0 !important; }
 /* 分割线改用暖色 Token（EP 默认冷灰 #414243 在暖墨底上偏脏） */
 .task-tabs :deep(.el-tabs__nav-wrap::after) { background-color: var(--border-subtle); }
 .task-tabs :deep(.el-tabs__item) { font-size: 13px; color: var(--text-muted); transition: color var(--dur-fast) var(--ease-out); }
