@@ -90,9 +90,22 @@ class TaskScheduler:
             await self._start_map_art(task_id)
 
         # ── 物流调度 ──
+        # 2026-10-15 审查修复：物流为长任务（可达数十分钟），且 _start_logistics 内部
+        # 会 `await runner._task` 直到整条物流链结束。若在此处 await，schedule_once 会
+        # 被阻塞整个物流时长 → 排队中的地图画任务（max_concurrent_build）无法被调度。
+        # 改为后台任务执行；并发上限由 DB status=running 计数保证（见 _pick_logistics_candidates）。
         logistics_candidates = await self._pick_logistics_candidates()
         for run_id in logistics_candidates:
+            # 后台执行 + 异常兜底（原为 await，异常会被 _scheduler_loop 捕获记录；
+            # 改为后台任务后需自行兜底，避免 "Task exception was never retrieved"）
+            asyncio.create_task(self._spawn_logistics(run_id))
+
+    async def _spawn_logistics(self, run_id: str) -> None:
+        """物流执行包装：后台任务内吞掉异常并记录（保持原有日志行为）。"""
+        try:
             await self._start_logistics(run_id)
+        except Exception as e:  # noqa: BLE001 — 与 _scheduler_loop 的兜底口径一致
+            logger.warning("Logistics runner error {}: {}", run_id[:8], e)
 
     # ── 地图画 ──
 
@@ -158,7 +171,14 @@ class TaskScheduler:
         db = Session()
         candidates: list[str] = []
         try:
-            running = len(self._logistics_runners)
+            # 2026-10-15 审查修复：并发数改按 DB 中 status=running 的物流 run 计数。
+            # 原用 len(self._logistics_runners)（内存字典）计数，而 runner 是在
+            # _start_logistics（await 执行整条物流链）内部才登记的 → schedule_once
+            # 一旦 await，整个调度循环被物流任务阻塞（数以分钟计），期间排队中的
+            # 地图画/其它物流都无法被调度。改为 DB 计数后，schedule_once 可把
+            # 物流执行放到后台任务，不再阻塞调度循环。
+            running = db.query(LogisticsTaskRunModel).filter(
+                LogisticsTaskRunModel.status == "running").count()
             if running >= self._max_concurrent_logistics:
                 return candidates
             slot = self._max_concurrent_logistics - running
@@ -277,30 +297,6 @@ class TaskScheduler:
             self._logistics_runners.pop(run_id, None)
             await self.broadcast_queue()
             await self.schedule_once()
-
-    async def _start_map_art(self, task_id: str) -> None:
-        """启动单个地图画任务；失败置 failed 并继续调度下一个。"""
-        from vmtools_next.data.models.build_map_art import MapArtTask
-        from vmtools_next.api.routers.build_map_art import execute_map_art_start
-
-        Session = get_session_factory()
-        db = Session()
-        try:
-            ok, msg = await execute_map_art_start(task_id, db)
-            if not ok:
-                t = db.query(MapArtTask).filter(MapArtTask.task_id == task_id).first()
-                if t:
-                    t.status = "failed"
-                    t.error_message = msg
-                    t.completed_at = datetime.now(timezone.utc)
-                    db.commit()
-                    logger.warning("Task {} auto-start failed: {}", task_id, msg)
-        finally:
-            db.close()
-
-        await self.broadcast_queue()
-        # 失败后立即尝试启动下一个排队任务（若本任务成功，running 已占满无需再取）
-        await self.schedule_once()
 
     # ── 广播 ──
 

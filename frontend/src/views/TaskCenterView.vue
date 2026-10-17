@@ -55,11 +55,12 @@
               <span class="task-status" :class="bot.currentTask.status">{{ bot.currentTask.status_label }}</span>
             </div>
             <el-progress
+              v-if="bot.currentTask.type !== 'manual'"
               :percentage="taskPct(bot.currentTask)"
               :stroke-width="6"
               :status="bot.currentTask.status === 'completed' ? 'success' : undefined"
             />
-            <div class="task-meta mono">{{ taskProgressText(bot.currentTask) }}</div>
+            <div v-if="bot.currentTask.type !== 'manual'" class="task-meta mono">{{ taskProgressText(bot.currentTask) }}</div>
           </div>
           <div v-else class="task-box idle">
             <span class="idle-text">空闲 · 无执行任务</span>
@@ -69,7 +70,10 @@
           <div v-if="bot.queuedTasks.length" class="queued-list">
             <div class="queued-title">排队中</div>
             <div v-for="q in bot.queuedTasks" :key="q.id" class="queued-item">
-              <span class="task-type" :class="q.type">{{ q.type === 'map_art' ? '地图画' : '物流' }}</span>
+              <!-- 2026-10-15 审查修复：原三元表达式只区分「地图画/物流」，
+                   仓库扫描（scan）排队任务被错误显示为「物流」。改用统一的
+                   taskTypeLabel()，与上方当前任务卡片 / 任务列表口径一致。 -->
+              <span class="task-type" :class="q.type">{{ taskTypeLabel(q.type) }}</span>
               <span class="queued-name" :title="q.name">{{ q.name }}</span>
             </div>
           </div>
@@ -190,10 +194,24 @@ const bots = ref<BotInfo[]>([])
 const stats = ref({ running: 0, queued: 0, completed: 0, failed: 0, bot_total: 0, bot_online: 0, bot_idle: 0 })
 const activeTab = ref('all')
 
-async function fetchOverview() {
-  loading.value = true
+/**
+ * 拉取任务总览。
+ *
+ * 2026-10-15 审查修复：
+ * 1) `silent`：socket 事件触发的刷新不再切换全屏 loading——原实现每次
+ *    build_progress（地图画运行中约 2s 一次）都置 loading=true，导致表格
+ *    反复闪烁「加载中」遮罩；仅首次加载与 30s 轮询显示 loading。
+ * 2) 请求竞态保护（loadSeq）：socket 高频刷新与轮询可能并发，仅采纳最后
+ *    一次发出的请求，避免旧响应覆盖新数据。
+ */
+let loadSeq = 0
+
+async function fetchOverview(silent = false) {
+  const seq = ++loadSeq
+  if (!silent) loading.value = true
   try {
     const { data } = await tasksApi.getOverview()
+    if (seq !== loadSeq) return // 已被更新的请求取代，丢弃本次响应
     tasks.value = data.tasks || []
     bots.value = data.bots || []
     stats.value = data.stats || stats.value
@@ -201,7 +219,7 @@ async function fetchOverview() {
     // 访客未登录时接口 401，静默（页面本身对访客只读，由 AppLayout 拦截交互）
     console.error('[TaskCenter] 加载任务数据失败:', e)
   } finally {
-    loading.value = false
+    if (!silent && seq === loadSeq) loading.value = false
   }
 }
 
@@ -219,6 +237,14 @@ const pagedTasks = computed(() => {
   return list.slice(start, start + pageSize)
 })
 watch(activeTab, () => { page.value = 1 })
+
+// 2026-10-15 审查修复：分页越界钳制。数据刷新（socket/轮询）后任务总数可能减少，
+// 而 page 未重置 → 当前页落空（表格显示「暂无任务」但实际仍有数据）。
+// 用 watch 监听过滤后列表长度，页码超出最大页时回退到最后一页。
+watch(filteredTasks, () => {
+  const maxPage = Math.max(1, Math.ceil(filteredTasks.value.length / pageSize))
+  if (page.value > maxPage) page.value = maxPage
+})
 
 /** Bot → 当前任务 + 排队任务映射（手动标记「工作中」优先展示，2026-08-13） */
 const botCards = computed(() => {
@@ -285,18 +311,23 @@ function botStatusLabel(s: string): string {
   return { online: '在线', offline: '离线', connecting: '连接中', error: '错误', unknown: '未知' }[s] || s
 }
 
-/** socket：build_progress（地图画进度）与 task_queue_update（队列变化）到达即刷新 */
+/**
+ * socket：build_progress（地图画进度）与 task_queue_update（队列变化）到达即刷新。
+ * 2026-10-15：走 silent 模式——build_progress 在运行中约 2s 一次，若切 loading
+ * 会让整个表格遮罩闪烁。守旧逻辑见 fetchOverview 注释。
+ */
 function onTaskEvent() {
-  fetchOverview()
+  fetchOverview(true)
 }
 
 let pollTimer: ReturnType<typeof setInterval> | undefined
 
 onMounted(() => {
-  fetchOverview()
+  fetchOverview() // 首次加载：显示 loading
   on('build_progress', onTaskEvent)
   on('task_queue_update', onTaskEvent)
-  pollTimer = setInterval(fetchOverview, 30000)
+  // 轮询兜底同样 silent（避免每 30s 全表遮罩闪一下）
+  pollTimer = setInterval(() => fetchOverview(true), 30000)
 })
 
 onBeforeUnmount(() => {
@@ -322,6 +353,8 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 14px;
 }
+/* 悬停：全局 .stat-item:hover 已给橙色描边，这里只补一层柔和上浮阴影（transition 复用全局定义） */
+.stat-item:hover { box-shadow: var(--shadow-md); }
 .stat-value {
   font-size: 28px;
   font-family: var(--font-display);
@@ -340,9 +373,18 @@ onBeforeUnmount(() => {
 .section-title { font-family: var(--font-display); font-size: 20px; font-weight: 400; letter-spacing: -0.5px; color: var(--text-primary); margin: 0; }
 .section-sub { font-size: 12px; color: var(--text-muted); }
 .task-tabs { margin: 0; }
+/* 对齐修复：el-tabs 默认 15px 下边距会让标签条与左侧标题错位（section-header 为 center 对齐） */
+.task-tabs :deep(.el-tabs__header) { margin-bottom: 0; }
+/* 分割线改用暖色 Token（EP 默认冷灰 #414243 在暖墨底上偏脏） */
+.task-tabs :deep(.el-tabs__nav-wrap::after) { background-color: var(--border-subtle); }
+.task-tabs :deep(.el-tabs__item) { font-size: 13px; color: var(--text-muted); transition: color var(--dur-fast) var(--ease-out); }
+.task-tabs :deep(.el-tabs__item:hover) { color: var(--text-secondary); }
+.task-tabs :deep(.el-tabs__item.is-active) { color: var(--accent); font-weight: 600; }
+.task-tabs :deep(.el-tabs__active-bar) { background-color: var(--accent); height: 2px; }
 
 .empty-text { color: var(--text-muted); text-align: center; padding: 24px; font-size: 14px; }
-.muted-text { color: var(--text-disabled); font-size: 12px; }
+/* 深色下 --text-disabled(#6A675F) 在 #222119 上仅 2.9:1，提一级到 --text-muted */
+.muted-text { color: var(--text-muted); font-size: 12px; }
 
 /* ---- Bot 卡片 ---- */
 .bot-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px; }
@@ -365,20 +407,21 @@ onBeforeUnmount(() => {
   border-radius: 999px;
   flex-shrink: 0;
 }
-.engine-badge.mineflayer { background: rgba(217, 119, 87, 0.15); color: var(--accent); }
-.engine-badge.mcc { background: rgba(108, 122, 140, 0.15); color: #6c7a8c; }
-.engine-badge.unknown { background: rgba(144, 147, 153, 0.15); color: #909399; }
+.engine-badge.mineflayer { background: var(--accent-soft); color: var(--accent); }
+.engine-badge.mcc { background: var(--info-bg); color: var(--info); }
+.engine-badge.unknown { background: var(--bg-hover); color: var(--text-muted); }
 .bot-name { font-size: 14px; font-weight: 600; color: var(--text-primary); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .bot-status { font-size: 11px; padding: 1px 8px; border-radius: 999px; flex-shrink: 0; }
-.bot-status.online { background: rgba(103, 194, 58, 0.15); color: #67c23a; }
-.bot-status.offline, .bot-status.unknown { background: rgba(144, 147, 153, 0.15); color: #909399; }
-.bot-status.connecting { background: rgba(230, 162, 60, 0.15); color: #e6a23c; }
-.bot-status.error { background: rgba(245, 108, 108, 0.15); color: #f56c6c; }
+.bot-status.online { background: var(--success-bg); color: var(--success); }
+.bot-status.offline, .bot-status.unknown { background: var(--bg-hover); color: var(--text-muted); }
+.bot-status.connecting { background: var(--warning-bg); color: var(--warning); }
+.bot-status.error { background: var(--danger-bg); color: var(--danger); }
 
 .task-box { border-radius: var(--radius-md); padding: 10px 12px; }
 .task-box.current { background: var(--bg-hover); border: 1px solid var(--border-subtle); }
 .task-box.idle { background: transparent; border: 1px dashed var(--border-default); }
-.idle-text { font-size: 12px; color: var(--text-disabled); }
+/* 空态文字原为 --text-disabled（深色下 2.9:1），提升到 --text-muted 保证可读 */
+.idle-text { font-size: 12px; color: var(--text-muted); }
 .task-box-head { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
 .task-name { font-size: 13px; font-weight: 600; color: var(--text-primary); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .task-meta { font-size: 11px; color: var(--text-muted); margin-top: 4px; }
@@ -388,22 +431,32 @@ onBeforeUnmount(() => {
 .queued-item { display: flex; align-items: center; gap: 6px; font-size: 12px; }
 .queued-name { color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-/* 类型/状态徽标 */
-.task-type { font-size: 10px; font-weight: 700; padding: 1px 8px; border-radius: 999px; flex-shrink: 0; }
-.task-type.map_art { background: rgba(217, 119, 87, 0.15); color: var(--accent); }
-.task-type.logistics { background: rgba(108, 122, 140, 0.15); color: #6c7a8c; }
-.task-type.scan { background: rgba(64, 158, 255, 0.15); color: #409eff; }
-.task-type.manual { background: rgba(217, 119, 87, 0.2); color: var(--accent); }
+/* 类型/状态徽标（10px 中文在深色下易糊，提到 11px） */
+.task-type { font-size: 11px; font-weight: 700; padding: 1px 8px; border-radius: 999px; flex-shrink: 0; }
+/* 亮色默认压深一档（--accent 落在 accent-soft 上仅 2.56:1），深色用主题属性选择器覆盖回来。
+   注：scoped 编译会把以 html 开头的选择器额外产出一条「去前缀」规则，导致覆盖失效，故用 [data-theme="dark"] */
+.task-type.map_art { background: var(--accent-soft); color: #A94E2C; }
+[data-theme="dark"] .task-type.map_art { color: var(--accent); }
+.task-type.logistics { background: var(--info-bg); color: var(--info); }
+/* 仓库扫描：橄榄绿（chart-3 系），亮色下压深一档保证 11px 文字可读 */
+.task-type.scan { background: rgba(138, 154, 91, 0.18); color: #55622F; }
+[data-theme="dark"] .task-type.scan { color: #9CAB6B; }
+.task-type.manual { background: var(--bg-active); color: var(--text-secondary); }
 .task-box.current.manual { border-color: var(--accent); }
 .task-status { font-size: 11px; padding: 1px 8px; border-radius: 999px; flex-shrink: 0; }
-.task-status.running { background: rgba(64, 158, 255, 0.15); color: #409eff; }
-.task-status.pending, .task-status.draft { background: rgba(230, 162, 60, 0.15); color: #e6a23c; }
-.task-status.paused { background: rgba(144, 147, 153, 0.2); color: #909399; }
-.task-status.completed { background: rgba(103, 194, 58, 0.15); color: #67c23a; }
-.task-status.failed, .task-status.cancelled { background: rgba(245, 108, 108, 0.15); color: #f56c6c; }
+.task-status.running { background: var(--accent-soft); color: var(--accent-hover); }
+.task-status.pending, .task-status.draft { background: var(--warning-bg); color: var(--warning); }
+.task-status.paused { background: var(--bg-active); color: var(--text-secondary); }
+.task-status.completed { background: var(--success-bg); color: var(--success); }
+.task-status.failed, .task-status.cancelled { background: var(--danger-bg); color: var(--danger); }
 
 .bot-tags { display: flex; gap: 4px; flex-wrap: wrap; }
-.bot-tags :deep(.el-tag) { border-color: var(--border-default); color: var(--text-secondary); }
+/* EP 暗色把 plain tag 的底色取成冷黑 #141414，落在暖墨卡片(#222119)上像“挖了个洞”，改用暖色 hover 底 */
+.bot-tags :deep(.el-tag) {
+  background: var(--bg-hover);
+  border-color: var(--border-default);
+  color: var(--text-secondary);
+}
 
 /* ============ RESPONSIVE ============ */
 @media (max-width: 768px) {
@@ -418,5 +471,7 @@ onBeforeUnmount(() => {
 
 /* 分页（2026-08-13） */
 .pager-row { display: flex; justify-content: flex-end; padding-top: 6px; }
+/* 分页器未渲染（≤1 页）时不要留 6px 空白尾巴 */
+.pager-row:empty { display: none; }
 .mono { font-variant-numeric: tabular-nums; }
 </style>

@@ -96,20 +96,45 @@ class ScheduledTaskScheduler:
         await self._maybe_shutdown_idle()
 
     @staticmethod
+    def _to_local_naive(dt: datetime) -> datetime:
+        """naive UTC（DB 存法）→ 本地 naive 时间。"""
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone().replace(tzinfo=None)
+
+    @staticmethod
     def _is_due(task, now: datetime) -> bool:
+        """判断定时任务是否到期。
+
+        2026-10-15 审查修复：daily/weekly 原先按 UTC 时间匹配 `schedule_time`，
+        而服务器时区为 Asia/Chongqing（+0800）→ 用户选「每天 14:30」实际
+        22:30(北京) 才触发；once 的 run_at 也由前端以本地时间提交却被按
+        UTC 比较，同样偏移 8 小时。三者统一改为【本地时间】语义。
+        """
         kind = task.schedule_kind
+        # now 为 aware UTC → 转成本地 naive 时间（与前端提交的 schedule_time /
+        # run_at 的本地时间语义一致）
+        now_local = now.astimezone().replace(tzinfo=None)
+        # 2026-10-15 审查修复：同一分钟去重。tick 间隔 60s 且 `_is_due` 按 HH:MM
+        # 匹配，若两次 tick 落在同一分钟内（间隔抖动/执行耗时短于 1s）→ 同一
+        # daily/weekly 任务会被触发两次（重复派活、重复自动上下线）。以
+        # last_run_at 落在同一本地分钟则跳过。
+        if kind in ("daily", "weekly") and task.last_run_at is not None:
+            if (ScheduledTaskScheduler._to_local_naive(task.last_run_at).strftime("%Y-%m-%d %H:%M")
+                    == now_local.strftime("%Y-%m-%d %H:%M")):
+                return False
         if kind == "once":
             if not task.run_at:
                 return False
-            # SQLite 存储为 naive datetime；now 为 aware → 统一转 naive UTC 比较
-            now_naive = now.replace(tzinfo=None) if now.tzinfo is not None else now
-            run_at_naive = task.run_at.replace(tzinfo=None) if task.run_at.tzinfo is not None else task.run_at
-            return now_naive >= run_at_naive
+            # run_at 由前端 el-date-picker 以本地时间提交（无时区后缀）
+            run_at_local = (task.run_at.replace(tzinfo=None)
+                            if task.run_at.tzinfo is not None else task.run_at)
+            return now_local >= run_at_local
         if kind == "daily":
-            return now.strftime("%H:%M") == (task.schedule_time or "")
+            return now_local.strftime("%H:%M") == (task.schedule_time or "")
         if kind == "weekly":
-            return (now.weekday() == (task.schedule_weekday or 0)
-                    and now.strftime("%H:%M") == (task.schedule_time or ""))
+            return (now_local.weekday() == (task.schedule_weekday or 0)
+                    and now_local.strftime("%H:%M") == (task.schedule_time or ""))
         return False
 
     # ── 执行 ──

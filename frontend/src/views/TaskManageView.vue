@@ -195,6 +195,9 @@ import { tasksApi } from '@/api/tasks'
 import { warehouseApi } from '@/api/warehouse'
 import { logisticsApi } from '@/api/logistics'
 import { mapArtApi } from '@/api/mapArt'
+// 2026-10-15 审查修复：时区铁律——后端返回 naive UTC 时间串，
+// 必须经 parseApiDate 解析（补 'Z' 按 UTC），禁用 new Date(后端时间串)。
+import { parseApiDate } from '@/utils/time'
 
 interface ManualWorkRow {
   bot_id: string
@@ -318,8 +321,10 @@ function schedTypeLabel(t: string): string {
 }
 
 function fmtShort(iso: string): string {
-  const d = new Date(iso)
-  if (isNaN(d.getTime())) return iso
+  // 2026-10-15 审查修复：改用 parseApiDate（补 'Z' 按 UTC 解析后转本地显示），
+  // 原 new Date(naive) 会按浏览器本地时区解析 → 比真实时间早 8 小时。
+  const d = parseApiDate(iso)
+  if (!d) return iso
   const p = (n: number) => String(n).padStart(2, '0')
   return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
 }

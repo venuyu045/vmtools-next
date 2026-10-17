@@ -63,7 +63,9 @@ def _duration_seconds(started_at, finished_at) -> Optional[int]:
     s = _as_utc_naive(started_at)
     if s is None:
         return None
-    e = _as_utc_naive(finished_at) or datetime.utcnow()
+    # 2026-10-15 审查修复：datetime.utcnow() 在 Python 3.12 已标记弃用，
+    # 且语义不如显式 aware→naive 转换清晰，统一改为 now(timezone.utc) 归一化。
+    e = _as_utc_naive(finished_at) or datetime.now(timezone.utc).replace(tzinfo=None)
     return max(0, int((e - s).total_seconds()))
 
 # ── 状态文案 ──────────────────────────────────────────────
