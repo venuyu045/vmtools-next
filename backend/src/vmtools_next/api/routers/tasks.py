@@ -15,7 +15,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from vmtools_next.api.deps import get_db, get_current_user, require_admin
+from vmtools_next.api.deps import get_db, get_current_user, get_optional_user, require_admin
 from vmtools_next.data.models.build_map_art import MapArtTask, MapArtBotAssignment
 from vmtools_next.data.models.logistics import (
     LogisticsTaskRunModel, LogisticsTaskTemplateModel, MccBotModel,
@@ -175,7 +175,7 @@ def _logistics_to_task(r: LogisticsTaskRunModel, template_name: str, engine: str
 @router.get("/overview")
 def tasks_overview(
     db: Session = Depends(get_db),
-    user=Depends(get_current_user),
+    user=Depends(get_optional_user),
 ):
     """任务中心聚合：地图画 + 物流 + 仓库扫描统一列表、统计、Bot 执行视角。"""
     # 地图画任务（含 bot 分配，取最近 100 条）

@@ -15,7 +15,7 @@ from vmtools_next.config import get_config, reload_config
 from vmtools_next.data.db import get_db, get_session_factory
 from vmtools_next.data.models.player_tracking import PlayerTrackingOwnerModel
 from vmtools_next.data.models.auth import UserModel
-from vmtools_next.api.deps import get_current_user, require_admin
+from vmtools_next.api.deps import get_current_user, get_optional_user, require_admin
 from vmtools_next.infra.logging import get_logger
 
 logger = get_logger("player_tracking")
@@ -99,7 +99,7 @@ def _migrate_from_config(db: Session) -> int:
 
 @router.get("", response_model=PlayerTrackingOut)
 def get_player_tracking(
-    user: UserModel = Depends(get_current_user),
+    user: UserModel | None = Depends(get_optional_user),
     db: Session = Depends(get_db),
 ):
     cfg = get_config().player_tracking
@@ -108,10 +108,12 @@ def get_player_tracking(
     _migrate_from_config(db)
 
     owners_db = db.query(PlayerTrackingOwnerModel).all()
+    # 访客（未登录）不返回 QQ openid，避免泄露绑定标识
+    _logged_in = user is not None
     owners_out = [
         TrackOwnerOut(
             name=o.name,
-            qq_openid=o.qq_openid,
+            qq_openid=(o.qq_openid if _logged_in else ""),
             track_players=json.loads(o.track_players_json),
         )
         for o in owners_db
