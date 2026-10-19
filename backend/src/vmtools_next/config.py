@@ -300,6 +300,18 @@ class BlueMapConfig(BaseModel):
     worlds: list[str] = Field(default_factory=lambda: ["world", "world_nether", "world_the_end"])
 
 
+class AccessControlConfig(BaseModel):
+    """子路径应用的访问白名单（nginx auth_request 用）。
+
+    背景：magpie / dsh 挂在平台子路径下，nginx 通过 auth_request 调后端校验身份。
+    默认只有 site_admin 能过；这里可以额外放行指定的 game_id。
+
+    ⚠️ 白名单只影响「能否进入该子路径应用」，不改变用户在平台内的角色权限。
+    """
+    # magpie Web UI 白名单（除 site_admin 外额外放行的 game_id）
+    magpie_whitelist: list[str] = Field(default_factory=list)
+
+
 class AppConfig(BaseSettings):
     """Top-level application configuration."""
 
@@ -323,6 +335,7 @@ class AppConfig(BaseSettings):
     qq_connect: QqConnectConfig = Field(default_factory=QqConnectConfig)
     player_tracking: PlayerTrackingConfig = Field(default_factory=PlayerTrackingConfig)
     bluemap: BlueMapConfig = Field(default_factory=BlueMapConfig)
+    access_control: AccessControlConfig = Field(default_factory=AccessControlConfig)
 
 
 # ── Loader ──────────────────────────────────────────────────────────────
