@@ -783,7 +783,7 @@ class MccProcessManager:
                                text, flags=_re.M)
                 settings.write_text(text, encoding="utf-8")
             except OSError as exc:
-                logger.warning("MCC2 写插件配置失败 %s: %s", settings, exc)
+                logger.warning("MCC2 写插件配置失败 {}: {}", settings, exc)
 
         # 2) configurations/.env（token 明文只在本地文件，权限 600）
         if token:
@@ -803,7 +803,7 @@ class MccProcessManager:
                 except OSError:
                     pass
             except OSError as exc:
-                logger.warning("MCC2 写 .env 失败 %s: %s", env_file, exc)
+                logger.warning("MCC2 写 .env 失败 {}: {}", env_file, exc)
 
     async def _feed_mcc2_credentials(self, instance_id: str, process, line: str) -> None:
         """按 MCC 2.0 的认证提示喂账号/密码（只在提示出现时写，避免被当聊天发出去）。
@@ -827,7 +827,7 @@ class MccProcessManager:
             self._mcc2_creds[instance_id] = creds
         login, password = creds
         if not login:
-            logger.warning("MCC2 %s: 认证提示出现，但读不到账号密码", instance_id[:8])
+            logger.warning("MCC2 {}: 认证提示出现，但读不到账号密码", instance_id[:8])
             return
 
         try:
@@ -835,9 +835,9 @@ class MccProcessManager:
             stdin.write((login + "\n").encode())
             stdin.write((password + "\n").encode())
             await stdin.drain()
-            logger.info("MCC2 %s: 已向认证提示写入账号凭据", instance_id[:8])
+            logger.info("MCC2 {}: 已向认证提示写入账号凭据", instance_id[:8])
         except Exception as exc:
-            logger.warning("MCC2 %s: 写凭据失败: %s", instance_id[:8], exc)
+            logger.warning("MCC2 {}: 写凭据失败: {}", instance_id[:8], exc)
 
     async def _read_output_loop(self, instance_id: str, process: "asyncio.subprocess.Process | subprocess.Popen") -> None:
         """Read process stdout line by line."""
