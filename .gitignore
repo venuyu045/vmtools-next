@@ -49,3 +49,6 @@ backend/logs/
 # Built frontend (committed to git for easy deploy without Node.js on server)
 # backend/static/assets/
 
+
+# mineflayer 运行时生成的账号缓存（空壳，但可能被写入令牌）
+mineflayer-bots/launcher_accounts.json

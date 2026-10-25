@@ -1,5 +1,31 @@
+diff --git a/node_modules/mineflayer/lib/plugins/physics.js b/node_modules/mineflayer/lib/plugins/physics.js
+index cecae69..b8d6016 100644
+--- a/node_modules/mineflayer/lib/plugins/physics.js
++++ b/node_modules/mineflayer/lib/plugins/physics.js
+@@ -75,7 +75,13 @@ function inject (bot, { physicsEnabled, maxCatchupTicks }) {
+     }
+   }
+ 
++  // 1.21.2+ clients end every tick with a client_tick_end packet, sent after that tick's movement packet.
++  // MC 26.3 servers kick clients that send two position packets without an intervening tick_end
++  // (multiplayer.disconnect.invalid_player_movement). Upstream fix: mineflayer#4137.
++  const sendsTickEnd = bot.supportFeature('sendsClientTickEndPacket')
++
+   function tickPhysics (now) {
++    if (bot._client.state !== 'play') return // nothing to do outside the play state
+     if (!bot.entity?.position || !Number.isFinite(bot.entity.position.x)) return // entity not ready
+     if (bot.blockAt(bot.entity.position) == null) return // check if chunk is unloaded
+     if (bot.physicsEnabled && shouldUsePhysics) {
+@@ -86,6 +92,7 @@ function inject (bot, { physicsEnabled, maxCatchupTicks }) {
+     if (shouldUsePhysics) {
+       updatePosition(now)
+     }
++    if (sendsTickEnd) bot._client.write('tick_end', {})
+   }
+ 
+   // remove this when 'physicTick' is removed
 diff --git a/node_modules/mineflayer/lib/plugins/time.js b/node_modules/mineflayer/lib/plugins/time.js
-index 0b9411d..b6c13af 100644
+index 0b9411d..66d13ba 100644
 --- a/node_modules/mineflayer/lib/plugins/time.js
 +++ b/node_modules/mineflayer/lib/plugins/time.js
 @@ -13,11 +13,28 @@ function inject (bot) {
@@ -10,7 +36,7 @@ index 0b9411d..b6c13af 100644
 -    const age = longToBigInt(packet.age)
 -    const doDaylightCycle = packet.tickDayTime !== undefined ? !!packet.tickDayTime : time >= 0n
 +    // 26.x 新协议：packet = { age: i64, clockUpdates: [{id, totalTicks, partialTick, rate}] }
-+    // 旧协议(≤1.21.11)：packet = { age: i64, time: i64, tickDayTime: bool }
++    // 旧协议(<=1.21.11)：packet = { age: i64, time: i64, tickDayTime: bool }
 +    const hasClockUpdates = Array.isArray(packet.clockUpdates)
 +
 +    let timeBI
@@ -19,10 +45,10 @@ index 0b9411d..b6c13af 100644
 +
 +    if (hasClockUpdates) {
 +      ageBI = longToBigInt(packet.age)
-+      // 26.x 无 time 字段：取 id=0 的主时钟 totalTicks 作为世界时间，否则用 age 兜底
++      // 26.x 无 time 字段：优先取主世界时钟（id=0），否则退化为第一个时钟
 +      const mainClock = packet.clockUpdates.find(c => c && c.id === 0) || packet.clockUpdates[0]
 +      timeBI = mainClock ? bigIntVal(mainClock.totalTicks) : ageBI
-+      doDaylightCycle = true
++      doDaylightCycle = mainClock ? bigIntVal(mainClock.rate) > 0n : true
 +    } else {
 +      timeBI = longToBigInt(packet.time)
 +      ageBI = longToBigInt(packet.age)

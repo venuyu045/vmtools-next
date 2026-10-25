@@ -1,0 +1,49 @@
+--- mcc_orig/Minecraft-Console-Client-20260929-519/MinecraftClient/Protocol/Handlers/Protocol18.cs	2026-09-29 21:56:04.000000000 +0000
++++ /tmp/mcc519/Minecraft-Console-Client-20260929-519/MinecraftClient/Protocol/Handlers/Protocol18.cs	2026-10-25 03:49:24.730026555 +0000
+@@ -316,6 +316,9 @@
+                     while (elapsedMilliseconds >= nextUpdateDue)
+                     {
+                         handler.OnUpdate();
++                        // 1.21.2+ clients terminate each tick with client_tick_end; MC 26.3 kicks
++                        // clients that send two movement packets without it in between.
++                        SendClientTickEnd();
+                         nextUpdateDue += ClientTickIntervalMilliseconds;
+                         elapsedMilliseconds = stopWatch.ElapsedMilliseconds;
+                     }
+@@ -4135,6 +4138,36 @@
+             SendPacket(packetPalette.GetOutgoingIdByType(packet), packetData, packet.ToString());
+         }
+ 
++        /// <summary>
++        /// Whether this protocol version expects a serverbound client_tick_end packet at the end
++        /// of every client tick (vanilla behaviour since 1.21.2).
++        /// </summary>
++        private bool SendsClientTickEnd => protocolVersion >= MC_1_21_2_Version && protocolVersion <= MC_26_2_Version;
++
++        /// <summary>
++        /// Send the serverbound client_tick_end packet that terminates the current client tick.
++        /// MC 26.3 servers enforce "one movement packet per client tick" and reset that counter
++        /// only when client_tick_end arrives; without it every bot is kicked ~1-2s after joining
++        /// with "Invalid move player packet received" (multiplayer.disconnect.invalid_player_movement).
++        /// </summary>
++        private void SendClientTickEnd()
++        {
++            if (!SendsClientTickEnd || currentState != CurrentState.Play)
++                return;
++
++            try
++            {
++                SendPacket(PacketTypesOut.ClientTickEnd, []);
++            }
++            catch (SocketException)
++            {
++                // connection already gone; the reader thread will report the disconnect
++            }
++            catch (System.IO.IOException)
++            {
++            }
++        }
++
+         private void ProcessChunkBlockEntityData(int chunkX, int chunkZ, Queue<byte> packetData)
+         {
+             if (protocolVersion < MC_1_17_Version || packetData.Count == 0)
