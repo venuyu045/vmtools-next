@@ -71,3 +71,29 @@ ssh root@106.12.180.13 'chmod +x /opt/vmtools-next/mcc-runtime/MinecraftClient-2
 
 把实例的 `mcc_binary_path` 与 `launch_command_json` 指回
 `/opt/vmtools-next/mcc-runtime/MinecraftClient-20260523-445-linux-x64`，重启实例即可。
+
+---
+
+## 附：MCC 2.0（feat/mcc-2.0 分支）调研结论 —— 为什么不迁移
+
+**已实测**（2026-10-25）：从 `feat/mcc-2.0` 分支源码自建（.NET 10，单文件 66 MB），
+MCC 2.0 使用的 **UMPK 协议库原生支持协议 777（26.3）**，连 `sy.server.mangocraft.cn:35553`
+输出 `Connecting as: 26.3 (Protocol: 777)`，**无需 Via 翻译**，实测连续在线 5 分钟 0 被踢。
+
+**结论：能力上确实更优，但当前不能迁移。** 原因是**平台依赖的 MCP 工具面**：
+
+| | MCC 1.x（519，内置 MCP） | MCC 2.0（官方 `mcp-server` 插件 v2.0.2） |
+|---|---|---|
+| MCP 形态 | `McpServer.cs` 内置，随进程起 | 独立插件，需 `plugins enable mcp-server` |
+| 工具数量 | 平台映射 **61 个**（`adapters/mcc/mcc_mcp_client.py` 的 `_TOOL_NAME_MAP`） | 仅 **14 个** |
+| 缺什么 | — | `mcc_dig_block` / `mcc_block_scan` / `mcc_container_open_at` / `mcc_inventory_*` / `mcc_entities_*` / `mcc_blocks_find` / `mcc_raycast_block` / `mcc_player_locate` 等 |
+
+平台的地图画、物流、仓库扫描、容器存取、实体交互**全部**建立在缺失的这批工具上，
+迁到 2.0 会让这些功能整体失效。且 2.0 仍是 early access（官方警告「unfinished，features may change」），
+配置格式（TOML）与 1.x（INI）不兼容，需重写 `mcc_file_service.py` 等。
+
+**当前方案**：MCC 1.x（519）+ 本文档的 `client_tick_end` 补丁，稳定可用（实测 26.1/26.2 各 5~6.5 分钟 0 被踢）。
+
+**何时可以迁移**：官方 `mcp-server` 插件补齐库存/容器/方块扫描/实体这几类工具，且 2.0 出正式版时。
+届时优先迁 MCC 2.0（原生 777，不依赖 Via），平台侧需要改的入口集中在
+`adapters/mcc/mcc_mcp_client.py`（工具映射）与 `core/mcc_file_service.py`（INI→TOML）。
