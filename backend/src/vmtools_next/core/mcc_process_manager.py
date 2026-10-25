@@ -24,6 +24,59 @@ from vmtools_next.infra.logging import get_logger
 
 logger = get_logger("mcc.process")
 
+# 允许通过 start_instance(extra_env=...) 注入到 MCC 子进程的环境变量白名单。
+# ⚠️ 2026-10-20 审查修复（中等·环境变量可覆盖密钥/预加载）：
+#   空集 = 当前不允许任何外部注入（无业务需要）。若将来确需注入，只在此处追加
+#   明确的、非敏感的键名；**绝不**允许 MC_PASSWORD / VMT_VIEWER_SECRET /
+#   PATH / LD_PRELOAD / NODE_OPTIONS 这类可改变凭据或加载行为的变量。
+_EXTRA_ENV_ALLOWLIST: frozenset[str] = frozenset()
+
+
+# ── MCC 2.0 支持（2026-10-25） ───────────────────────────────────────────────
+# MCC 2.0（`Mcc.Cli`，UMPK 协议库）原生支持 MC 26.3 / 协议 777，不需要 Velocity 的 Via
+# 翻译。但它与 1.x（`MinecraftClient`）的启动约定完全不同，平台必须区别对待：
+#
+# 1) **配置在 `configurations/*.toml`**，不再读 `MinecraftClient.ini`（ini 只用来取账号密码）
+# 2) **MCP 是插件**（`plugins/`，官方 `mcp-server`），端口读
+#    `plugins/userdata/mcp-server/settings.toml` 的 `Port`，**不读 `MCC_MCP_PORT` 环境变量**
+# 3) **必须给 stdin 持续喂输入**：控制台读到 EOF 就退出；断线自动重连会**重新提示**
+#    Yggdrasil 账号密码，只喂一次会卡死在提示符
+# 4) **绝不能无脑先写账号密码**：配置未就绪或已连上时，那些行会被 REPL 当成聊天内容
+#    发到服务器公屏（2026-10-25 就因此泄露过账号密码）→ 必须**只在看到认证提示后**才写
+_MCC2_BINARY_MARKERS = ("Mcc.Cli", "Mcc-2.", "mcc2")
+
+
+def _is_mcc2_binary(binary: str) -> bool:
+    """判断启动命令是不是 MCC 2.0（按二进制文件名识别）。"""
+    name = os.path.basename(str(binary or ""))
+    return any(marker in name for marker in _MCC2_BINARY_MARKERS)
+
+
+def _read_mcc2_credentials(instance_dir: str) -> tuple[str, str]:
+    """从 1.x 的 MinecraftClient.ini 里读账号密码，供 MCC 2.0 首次/重连认证使用。
+
+    MCC 2.0 不把密码写进 TOML（它走交互式认证），但实例目录里通常还留着 1.x 的 ini。
+    兼容两种格式：新版 `Account = { Login = "...", Password = "..." }` 与老式平铺 `login=`。
+    """
+    import re as _re
+    from pathlib import Path as _Path
+
+    ini = _Path(instance_dir or "") / "MinecraftClient.ini"
+    try:
+        text = ini.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return "", ""
+
+    def _grab(pattern: str) -> str:
+        m = _re.search(pattern, text, _re.MULTILINE)
+        return (m.group(1) or "").strip() if m else ""
+
+    login = _grab(r'Account\s*=\s*\{[^}]*Login\s*=\s*"([^"]*)"') or _grab(r"^login=(.*)$")
+    password = _grab(r'Account\s*=\s*\{[^}]*Password\s*=\s*"([^"]*)"') or _grab(r"^password=(.*)$")
+    if password == "-":
+        password = ""
+    return login, password
+
 
 @dataclass
 class ProcessHandle:
@@ -50,6 +103,9 @@ class MccProcessManager:
         self._pending_disconnect: dict[str, str] = {}  # instance_id → disconnect line
         self._pending_reconnect: dict[str, str] = {}   # instance_id → mc_username (auto-reconnect in progress)
         self._locks: dict[str, asyncio.Lock] = {}
+        # MCC 2.0：每个实例的认证凭据缓存与实例目录（供 _feed_mcc2_credentials 用）
+        self._mcc2_creds: dict[str, tuple[str, str]] = {}
+        self._mcc2_instance_dirs: dict[str, str] = {}
         self._started = False
         self._sentinel_id: str | None = None  # cached sentinel instance UUID
 
@@ -218,8 +274,38 @@ class MccProcessManager:
                 env["MCC_MCP_HOST"] = instance.mcp_host
                 env["VMT_INSTANCE_ID"] = instance.instance_id
                 if extra_env:
-                    env.update({str(k): str(v) for k, v in extra_env.items()})
+                    # ⚠️ 2026-10-20 审查修复（中等·环境变量可覆盖密钥/预加载）：
+                    #   原实现无条件 `env.update(extra_env)`，且发生在上面
+                    #   mcp_auth_token / MC_PASSWORD / VMT_VIEWER_SECRET 注入**之后**
+                    #   → 调用方可覆盖这些密钥；更危险的是可注入 PATH / LD_PRELOAD
+                    #   （MCC 是 mono/.NET 子进程）实现进程内代码执行。
+                    #   修复：只允许白名单键通过（目前无业务需要，故为空集），
+                    #   其余一律丢弃并记警告。保留参数以兼容既有调用方。
+                    _allowed = _EXTRA_ENV_ALLOWLIST
+                    _rejected = [k for k in extra_env if str(k) not in _allowed]
+                    if _rejected:
+                        logger.warning(
+                            "Ignored non-allowlisted extra_env keys for %s: %s",
+                            instance_id[:8], ", ".join(map(str, _rejected)),
+                        )
+                    env.update({
+                        str(k): str(v) for k, v in extra_env.items()
+                        if str(k) in _allowed
+                    })
 
+                # MCC 2.0 需要实例目录（读 1.x ini 取账号密码）与二进制名（判断版本）
+                self._mcc2_instance_dirs[instance_id] = str(instance.instance_dir or "")
+                self._mcc2_creds.pop(instance_id, None)
+
+                # MCC 2.0 的 MCP 端口/密钥写在**插件配置**里（1.x 是读 MCC_MCP_PORT 环境变量），
+                # 每次启动前按平台记录重写，保证端口与 token 与实例记录一致。
+                if _is_mcc2_binary(command[0] if command else ""):
+                    self._prepare_mcc2_mcp_config(
+                        instance_dir=str(instance.instance_dir or ""),
+                        mcp_port=instance.mcp_port,
+                        token_env=instance.mcp_auth_token_env,
+                        token=reveal_secret(instance.mcp_auth_token_secret) or "",
+                    )
                 await self._append_system_line(instance_id, "Starting MCC process: " + " ".join(command))
 
                 # Windows: use subprocess.Popen with CREATE_NEW_CONSOLE
@@ -254,6 +340,11 @@ class MccProcessManager:
                         stdout=asyncio.subprocess.PIPE,
                         stderr=asyncio.subprocess.STDOUT,
                     )
+                    # 标记二进制路径，供 _read_output_loop 判断是否 MCC 2.0（要喂认证凭据）
+                    try:
+                        process._vmt_binary = command[0] if command else ""
+                    except Exception:
+                        pass
                     logger.info("MCC started on Linux with PIPE stdin (pid={})", process.pid)
 
                 instance.status = "running"
@@ -665,6 +756,89 @@ class MccProcessManager:
 
         return re.sub(r"\x1b\[[0-9;?]*[A-Za-z]", _repl, line)
 
+    @staticmethod
+    def _prepare_mcc2_mcp_config(instance_dir: str, mcp_port: int,
+                                 token_env: str, token: str) -> None:
+        """把平台记录的 MCP 端口/token 写进 MCC 2.0 的插件配置。
+
+        1.x 内置 MCP 从环境变量 `MCC_MCP_PORT` 读端口；2.0 改成官方 `mcp-server` 插件后，
+        端口读 `plugins/userdata/mcp-server/settings.toml` 的 `Port`，token 读 `configurations/.env`
+        里 `AuthTokenEnvVar` 指定的变量。不写这里，插件的端口就会停在默认 33333，
+        与平台实例记录（33333-33352 分配）不一致 → 平台连不上 MCP。
+        """
+        from pathlib import Path as _Path
+
+        if not instance_dir:
+            return
+        inst = _Path(instance_dir)
+
+        # 1) 插件 settings.toml
+        settings = inst / "plugins" / "userdata" / "mcp-server" / "settings.toml"
+        if settings.exists():
+            try:
+                text = settings.read_text(encoding="utf-8")
+                import re as _re
+                text = _re.sub(r"^Port = \d+", f"Port = {int(mcp_port)}", text, flags=_re.M)
+                text = _re.sub(r'^AuthTokenEnvVar = ".*"', f'AuthTokenEnvVar = "{token_env}"',
+                               text, flags=_re.M)
+                settings.write_text(text, encoding="utf-8")
+            except OSError as exc:
+                logger.warning("MCC2 写插件配置失败 %s: %s", settings, exc)
+
+        # 2) configurations/.env（token 明文只在本地文件，权限 600）
+        if token:
+            env_file = inst / "configurations" / ".env"
+            try:
+                env_file.parent.mkdir(parents=True, exist_ok=True)
+                lines = []
+                if env_file.exists():
+                    lines = [
+                        ln for ln in env_file.read_text(encoding="utf-8").splitlines()
+                        if not ln.startswith(f"{token_env}=")
+                    ]
+                lines.append(f"{token_env}={token}")
+                env_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
+                try:
+                    os.chmod(env_file, 0o600)
+                except OSError:
+                    pass
+            except OSError as exc:
+                logger.warning("MCC2 写 .env 失败 %s: %s", env_file, exc)
+
+    async def _feed_mcc2_credentials(self, instance_id: str, process, line: str) -> None:
+        """按 MCC 2.0 的认证提示喂账号/密码（只在提示出现时写，避免被当聊天发出去）。
+
+        MCC 2.0 的经典控制台依次打印：
+            [MCC] Yggdrasil username:
+            [MCC] Yggdrasil password:
+        每次断线重连都会**重新打印**这两行，所以要能反复喂（不能只喂一次）。
+        """
+        import asyncio as _asyncio
+
+        if "Yggdrasil username" not in line:
+            return
+        stdin = getattr(process, "stdin", None)
+        if stdin is None:
+            return
+
+        creds = self._mcc2_creds.get(instance_id)
+        if creds is None:
+            creds = _read_mcc2_credentials(self._mcc2_instance_dirs.get(instance_id, ""))
+            self._mcc2_creds[instance_id] = creds
+        login, password = creds
+        if not login:
+            logger.warning("MCC2 %s: 认证提示出现，但读不到账号密码", instance_id[:8])
+            return
+
+        try:
+            # 密码走 stdin（不写 argv、不进日志）
+            stdin.write((login + "\n").encode())
+            stdin.write((password + "\n").encode())
+            await stdin.drain()
+            logger.info("MCC2 %s: 已向认证提示写入账号凭据", instance_id[:8])
+        except Exception as exc:
+            logger.warning("MCC2 %s: 写凭据失败: %s", instance_id[:8], exc)
+
     async def _read_output_loop(self, instance_id: str, process: "asyncio.subprocess.Process | subprocess.Popen") -> None:
         """Read process stdout line by line."""
         if process.stdout is None:
@@ -681,6 +855,11 @@ class MccProcessManager:
             content = raw.decode("utf-8", errors="replace").rstrip("\r\n")
             content = self._sanitize_ansi(content)
             if content:
+                # MCC 2.0：看到 Yggdrasil 认证提示才喂账号密码。
+                # ⚠️ 绝不能预先写：配置未就绪或已连上时，stdin 的行会被 REPL 当成
+                #    聊天内容发到服务器公屏（2026-10-25 泄露事故）。
+                if _is_mcc2_binary(getattr(process, "_vmt_binary", "")):
+                    await self._feed_mcc2_credentials(instance_id, process, content)
                 try:
                     await self._append_line(instance_id, "stdout", content)
                 except Exception:
@@ -831,13 +1010,23 @@ class MccProcessManager:
             pass
 
     def _queue_db_write(self, instance_id: str, stream: str, raw_content: str, line: TerminalLine) -> None:
-        """Queue a terminal line for batched DB persistence."""
+        """Queue a terminal line for batched DB persistence.
+
+        ⚠️ 2026-10-20 审查修复（中等·终端日志明文落库）：
+          原实现 `content=raw_content`（**未脱敏原文**）+ `content_masked=line.content`。
+          读接口虽优先用 content_masked，但 `content` 列**永久保留明文** ——
+          任何 DB 文件泄露、备份外流、sqlite3 直读都能拿到完整原文（含用户手动
+          输入的口令、MCP token 等）。而 mask_text 只匹配行首 `key: value`，
+          `> say login MyPass123` 这类终端回显本来就没被脱敏。
+          修复：两列都写脱敏后的内容（不再保留明文），彻底消除该泄露面。
+          历史数据中的明文列需运维手工清理（见报告 §6.2）。
+        """
         self._pending_db.setdefault(instance_id, []).append(
             MccTerminalLogModel(
                 instance_id=instance_id,
                 stream=stream,
                 seq=line.seq,
-                content=raw_content,
+                content=line.content,           # 已脱敏（line.content 即 masked 版本）
                 content_masked=line.content,
                 created_at=line.created_at,
             )
