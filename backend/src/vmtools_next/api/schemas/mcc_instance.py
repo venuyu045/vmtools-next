@@ -16,7 +16,7 @@ class MccInstanceCreate(BaseModel):
     mc_username: str = ""
     mc_server_host: str = ""
     mc_server_port: int = 25565
-    mc_version: str = "1.21.1"
+    mc_version: str = "26.2"
     bot_engine: str = "mcc"  # "mcc" | "mineflayer"
 
     @field_validator("slug")
@@ -156,7 +156,7 @@ class MccAccountConfigUpdate(BaseModel):
     authlib_injector_path: str = ""
     mc_server_host: str = ""
     mc_server_port: int = Field(default=25565, ge=1, le=65535)
-    mc_version: str = "1.21.1"
+    mc_version: str = "26.2"
 
     @field_validator("auth_type")
     @classmethod
@@ -183,7 +183,7 @@ class MccAccountProfileCreate(BaseModel):
     authlib_injector_path: str = ""
     mc_server_host: str = ""
     mc_server_port: int = Field(default=25565, ge=1, le=65535)
-    mc_version: str = "1.21.1"
+    mc_version: str = "26.2"
 
     @field_validator("auth_type")
     @classmethod

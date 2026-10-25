@@ -31,6 +31,12 @@ from vmtools_next.data.models.mcc_remote import MccAccountProfileModel, MccInsta
 
 logger = logging.getLogger("vmtools.mineflayer_pm")
 
+# 允许通过 start_instance(extra_env=...) 注入到 mineflayer 子进程的环境变量白名单。
+# ⚠️ 2026-10-20 审查修复（中等·环境变量可覆盖密钥/Node 预加载）：
+#   空集 = 当前不允许任何外部注入。绝不加入 MC_PASSWORD / VMT_VIEWER_SECRET /
+#   NODE_OPTIONS / PATH / LD_PRELOAD 这类可改变凭据或加载行为的变量。
+_EXTRA_ENV_ALLOWLIST: frozenset[str] = frozenset()
+
 # 登录成功标志：bot_main.js 在 mineflayer login 事件里打印（作为 bot 真正进入服务器的确定性信号）
 LOGIN_OK_MARKER = "LOGIN_OK"
 
@@ -248,7 +254,7 @@ class MineflayerProcessManager:
                 "--mc-host", self._get_mc_host(instance),
                 "--mc-port", str(self._get_mc_port(instance)),
                 "--username", instance.mc_username or instance.instance_id,
-                "--version", instance.mc_version or "1.21.11",
+                "--version", instance.mc_version or "26.1",
             ]
 
             # 3D 查看器参数（viewer_port>0 才启用）
@@ -307,7 +313,23 @@ class MineflayerProcessManager:
             if viewer_port > 0:
                 env["VMT_VIEWER_SECRET"] = get_config().server.secret_key
             if extra_env:
-                env.update({str(k): str(v) for k, v in extra_env.items()})
+                # ⚠️ 2026-10-20 审查修复（中等·环境变量可覆盖密钥/Node 预加载）：
+                #   原实现无条件 env.update(extra_env)，发生在 MC_PASSWORD /
+                #   VMT_VIEWER_SECRET 注入**之后** → 可覆盖这些密钥；
+                #   更危险：mineflayer 是 `node` 子进程，注入 NODE_OPTIONS=--require
+                #   即可加载攻击者脚本，实现进程内代码执行。
+                #   修复：只允许白名单键（当前为空集），其余丢弃并记警告。
+                _allowed = _EXTRA_ENV_ALLOWLIST
+                _rejected = [k for k in extra_env if str(k) not in _allowed]
+                if _rejected:
+                    logger.warning(
+                        "Ignored non-allowlisted extra_env keys for %s: %s",
+                        instance_id[:8], ", ".join(map(str, _rejected)),
+                    )
+                env.update({
+                    str(k): str(v) for k, v in extra_env.items()
+                    if str(k) in _allowed
+                })
 
             logger.info("Starting mineflayer bot: %s", " ".join(cmd[:6]) + " ...")
 

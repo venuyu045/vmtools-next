@@ -52,7 +52,7 @@ class MccInstanceModel(Base):
     mc_username = Column(String, default="", nullable=False)
     mc_server_host = Column(String, default="", nullable=False)
     mc_server_port = Column(Integer, default=25565, nullable=False)
-    mc_version = Column(String, default="1.21.1", nullable=False)
+    mc_version = Column(String, default="26.2", nullable=False)
 
     organization_id = Column(String, nullable=True, index=True)
     created_by = Column(String, nullable=True, index=True)
@@ -89,7 +89,7 @@ class MccAccountProfileModel(Base):
     authlib_injector_path = Column(String, nullable=True)
     mc_server_host = Column(String, default="", nullable=False)
     mc_server_port = Column(Integer, default=25565, nullable=False)
-    mc_version = Column(String, default="1.21.1", nullable=False)
+    mc_version = Column(String, default="26.2", nullable=False)
     last_login_name = Column(String, nullable=True)
     organization_id = Column(String, nullable=True, index=True)
     created_at = Column(DateTime, default=utc_now, nullable=False)
