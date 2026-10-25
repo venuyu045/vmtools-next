@@ -4,6 +4,27 @@
 
 MCC（Minecraft Console Client）远程管理是 vmtools-next 的一站式 Web 管理平台。用户无需 SSH 登录服务器，即可在浏览器中完成 MCC 多实例创建、账号配置、启动/停止、实时终端、文件编辑等全部操作。
 
+## ⚠️ Minecraft 26.3 必读（2026-10-25）
+
+粉丝服已升级 **MC 26.3（协议 777）**。MCC 445/519 默认**进服 1~2 秒被踢**：
+
+```
+You were kicked from main: 收到了包含非法玩家移动的数据包
+（multiplayer.disconnect.invalid_player_movement）
+```
+
+**根因**：26.3 服务端强制「每个客户端 tick 只能发一个位移包」，且计数器**只在收到 serverbound
+`client_tick_end` 时重置**。原版客户端自 **1.21.2** 起每 tick 结束都发这个空包；
+MCC 的 `PacketPalette261` 里虽然登记了 `ClientTickEnd` 的 ID，但**代码里从来没有发送调用**。
+
+**修复**：给 `Protocol18.cs` 的 `Updater()` 主循环补发（见仓库 `mcc-runtime-patch/`，
+含完整构建脚本、部署与回滚步骤）。打好补丁的单文件二进制约 86 MB，
+`mcc_version` 建议填 **26.2**（MCC 最高支持 776，26.3 由 Velocity 的 Via 向下翻译）。
+
+**构建环境两个坑**：容器 1.8G 内存必须 `-m:1 -p:RunAnalyzers=false -p:EnableNETAnalyzers=false -p:UseSharedCompilation=false`（否则 Roslyn OOM）；无 libicu 必须 `DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1`。
+
+**⚠️ 账号冲突**：同一 MC 账号不能被两个实例同时登录（`duplicate_login` 顶号）。
+
 ## 系统要求
 
 | 组件 | 最低要求 |
