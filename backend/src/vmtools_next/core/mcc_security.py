@@ -18,6 +18,20 @@ SECRET_VALUE_RE = re.compile(
     r"(?im)^([\w.\-]*(?:password|passwd|pwd|token|secret|access_token|refresh_token|client_secret)[\w.\-]*\s*[:=]\s*)(.*)$"
 )
 
+# ⚠️ 2026-10-20 审查修复（中等·脱敏覆盖不全）：
+#   SECRET_VALUE_RE 只匹配「行首 key: value / key=value」，以下真实场景全部漏网：
+#     · `Password: xxx`（空格分隔，非冒号等号）—— MCC/服务端常见输出
+#     · `> say login MyPass123`（终端回显，口令在命令参数里）
+#     · `https://host/api?token=abc&x=1`（URL 内嵌 token）
+#   新增两条正则，与 SECRET_VALUE_RE 一起在 mask_text 里依次应用。
+SECRET_SPACE_RE = re.compile(
+    r"(?i)\b(password|passwd|pwd|token|secret|api[_-]?key|access[_-]?token)\b"
+    r"(\s*[:=]?\s+)(\S{3,})"
+)
+SECRET_URL_PARAM_RE = re.compile(
+    r"(?i)([?&](?:token|access_token|refresh_token|key|secret|api[_-]?key|password)=)([^&\s#]+)"
+)
+
 
 def hash_secret(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
@@ -63,14 +77,23 @@ def reveal_secret(value: str | None) -> str | None:
 
 
 def mask_text(text: str) -> str:
-    """Mask common key=value or key: value secrets in text logs/configs."""
+    """Mask common key=value / key: value / URL-param secrets in text logs/configs.
+
+    ⚠️ 2026-10-20 审查修复（中等·脱敏覆盖不全）：除原有的行首 `key: value`，
+    额外覆盖「空格分隔」与「URL 查询参数」两种真实形态（见上方正则注释）。
+    """
     if not text:
         return text
 
     def repl(match: re.Match[str]) -> str:
         return f"{match.group(1)}******"
 
-    return SECRET_VALUE_RE.sub(repl, text)
+    text = SECRET_VALUE_RE.sub(repl, text)
+    # URL 查询参数（?token=xxx / &key=xxx）
+    text = SECRET_URL_PARAM_RE.sub(lambda m: f"{m.group(1)}******", text)
+    # 空格分隔（Password: xxx / password xxx）
+    text = SECRET_SPACE_RE.sub(lambda m: f"{m.group(1)}{m.group(2)}******", text)
+    return text
 
 
 def mask_mapping(value: Any) -> Any:

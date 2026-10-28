@@ -113,7 +113,14 @@ class MfLogisticsRunner:
                 if r:
                     r.current_state = state
                     r.progress = round(progress, 4)
-                    r.status = "running"
+                    # ⚠️ 2026-10-20 审查修复（严重·暂停/停止被覆写）：
+                    #   原实现每次状态推进都无条件 `r.status = "running"`。
+                    #   于是用户在页面上点「暂停」（DB 写 paused）后，runner 几秒内
+                    #   就把 status 改回 running → 暂停形同虚设、按钮状态来回闪；
+                    #   点「停止」（DB 写 cancelled）后跑完本趟又被 _complete 覆盖。
+                    #   修复：只在当前状态**不是**终态/暂停态时才提升为 running。
+                    if r.status not in ("paused", "cancelled", "failed", "completed"):
+                        r.status = "running"
                     r.error_message = self._error_message or None
                     db.commit()
             finally:

@@ -1056,9 +1056,10 @@ watch(
   white-space: nowrap;
   user-select: none;
 }
-.latency-good { color: var(--green-primary, #67c23a); }
-.latency-mid { color: #e6a23c; }
-.latency-bad { color: #e34d59; }
+/* 延迟指示：改用主题语义 Token（原 #e6a23c/#e34d59 为冷硬 EP 色，深色下过艳） */
+.latency-good { color: var(--success); }
+.latency-mid { color: var(--warning); }
+.latency-bad { color: var(--danger); }
 .latency-off { color: var(--text-muted); }
 .preview-head {
   display: flex;

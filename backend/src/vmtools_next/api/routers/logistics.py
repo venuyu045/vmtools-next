@@ -320,11 +320,41 @@ async def start_task(data: TaskStartRequest, db: Session = Depends(get_db), user
     return _run_to_response(run)
 
 
+def _get_runner(run_id: str):
+    """取正在执行的物流 runner（无则 None）。
+
+    ⚠️ 2026-10-20 审查修复（严重·控制接口不作用于执行器）：见下方三个接口的注释。
+    """
+    try:
+        from vmtools_next.core.task_scheduler import get_task_scheduler
+        sched = get_task_scheduler()
+        if sched is not None:
+            return sched.get_logistics_runner(run_id)
+    except Exception:
+        pass
+    return None
+
+
 @router.post("/tasks/{run_id}/stop")
-def stop_task(run_id: str, db: Session = Depends(get_db), user=Depends(require_admin)):
+async def stop_task(run_id: str, db: Session = Depends(get_db), user=Depends(require_admin)):
+    """停止物流任务：**先**停执行器，再落库终态。
+
+    ⚠️ 2026-10-20 审查修复（严重）：
+      原实现只 `r.status = "cancelled"` + commit，**从不触达执行器**。runner 仍在
+      后台跑，跑完本趟后 `_complete("completed")` 会把终态覆盖成 completed ——
+      「停止」实际无效，且产生错误的完成记录。
+      修复：先 `await runner.stop()`（取消执行协程、置 _stopped），再写 DB；
+      无 runner（任务已不在内存）时保持原有 DB 写法。
+    """
     r = db.query(LogisticsTaskRunModel).filter(LogisticsTaskRunModel.run_id == run_id).first()
     if not r:
         raise HTTPException(404, "Task run not found")
+    runner = _get_runner(run_id)
+    if runner is not None:
+        try:
+            await runner.stop()
+        except Exception as exc:
+            logger.warning("Stop logistics runner {} failed: {}", run_id[:8], exc)
     r.status = "cancelled"
     r.finished_at = datetime.now(timezone.utc)
     db.commit()
@@ -332,20 +362,41 @@ def stop_task(run_id: str, db: Session = Depends(get_db), user=Depends(require_a
 
 
 @router.post("/tasks/{run_id}/pause")
-def pause_task(run_id: str, db: Session = Depends(get_db), user=Depends(require_admin)):
+async def pause_task(run_id: str, db: Session = Depends(get_db), user=Depends(require_admin)):
+    """暂停物流任务：**必须**同时暂停执行器，否则 runner 会覆写回 running。
+
+    ⚠️ 2026-10-20 审查修复（严重）：
+      原实现只改 DB。而 `MfLogisticsRunner._set_state` 每次状态推进都无条件写
+      `r.status = "running"` → 几秒内就把 paused 覆盖回去，前端按钮「恢复」闪回
+      「暂停」。修复：先调 runner.pause()（置 _paused，执行循环在检查点 sleep），
+      再落库；runner 无对应 run 时保持原写法。
+    """
     r = db.query(LogisticsTaskRunModel).filter(LogisticsTaskRunModel.run_id == run_id).first()
     if not r:
         raise HTTPException(404, "Task run not found")
+    runner = _get_runner(run_id)
+    if runner is not None:
+        try:
+            await runner.pause()
+        except Exception as exc:
+            logger.warning("Pause logistics runner {} failed: {}", run_id[:8], exc)
     r.status = "paused"
     db.commit()
     return {"run_id": run_id, "status": "paused"}
 
 
 @router.post("/tasks/{run_id}/resume")
-def resume_task(run_id: str, db: Session = Depends(get_db), user=Depends(require_admin)):
+async def resume_task(run_id: str, db: Session = Depends(get_db), user=Depends(require_admin)):
+    """恢复物流任务：同时解除执行器暂停（见 pause_task 注释）。"""
     r = db.query(LogisticsTaskRunModel).filter(LogisticsTaskRunModel.run_id == run_id).first()
     if not r:
         raise HTTPException(404, "Task run not found")
+    runner = _get_runner(run_id)
+    if runner is not None:
+        try:
+            await runner.resume()
+        except Exception as exc:
+            logger.warning("Resume logistics runner {} failed: {}", run_id[:8], exc)
     r.status = "running"
     db.commit()
     return {"run_id": run_id, "status": "running"}

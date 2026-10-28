@@ -1,0 +1,74 @@
+# ============================================================
+#  .dockerignore — 控制 Docker 构建上下文
+#
+# ⚠️ 2026-10-20 审查修复（严重·真实密钥被打进镜像层）：
+#   本文件原先**不存在**。而 Dockerfile 第 27 行是
+#       COPY backend/config/ config/
+#   → 会把 `backend/config/config.yaml`（含**真实 QQ app_id / app_key /
+#   redirect_uri**，虽被 .gitignore 忽略但存在于构建上下文）一起写进镜像层。
+#   镜像一旦推送 registry / docker save 外发，`docker history` 或层解包即可
+#   直接读出密钥；即使后续 docker rmi 也不影响已分发的副本。
+#   同时缺失本文件还会把 node_modules / __pycache__ / *.db / .env 等一并塞进
+#   构建上下文，既拖慢构建又扩大泄露面。
+# ============================================================
+
+# —— 密钥与本地配置（最关键：绝不能进镜像）——
+.env
+.env.*
+!.env.example
+backend/config/config.yaml
+backend/config/config.dev.yaml
+backend/config/config.prod.yaml
+*.pem
+*.key
+*.p12
+
+# —— 数据库与运行期数据 ——
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+backend/data/
+data/
+logs/
+backend/logs/
+*.log
+
+# —— Python ——
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.venv-*/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# —— Node ——
+node_modules/
+**/node_modules/
+frontend/dist/
+mineflayer-bots/patches/
+
+# —— 前端构建产物（镜像内由 Stage 0 重新构建）——
+backend/static/assets/
+backend/static/index.html
+
+# —— 版本控制与 IDE ——
+.git/
+.gitignore
+.idea/
+.vscode/
+*.swp
+
+# —— 文档与归档（不影响运行，减小上下文）——
+_archive/
+*.md
+!README.md
+审查报告.md
+
+# —— 系统垃圾 ——
+.DS_Store
+Thumbs.db

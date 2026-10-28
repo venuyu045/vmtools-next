@@ -220,6 +220,10 @@ html {
   --el-button-hover-bg-color: var(--bg-hover) !important;
   --el-button-hover-border-color: var(--border-strong) !important;
 }
+/* 语义按钮文字色按主题分别取，保证两种主题都达 WCAG AA 4.5:1：
+   - 亮色：--danger #C0453A / --warning #9A6B1F 是深色底 → 白字（5.06:1 / 4.67:1）
+   - 深色：--danger #E0665A / --warning #C9A05C 是亮色底 → 深字 #141413（5.46:1 / 7.61:1）
+   与主按钮（橙底 + #141413）保持同一「深色文字压亮色底」的约定。 */
 .el-button--danger {
   --el-button-bg-color: var(--danger) !important;
   --el-button-border-color: var(--danger) !important;
@@ -235,6 +239,14 @@ html {
   --el-button-text-color: #FFFFFF !important;
   --el-button-hover-bg-color: var(--warning) !important;
   --el-button-hover-border-color: var(--warning) !important;
+  --el-button-hover-text-color: #FFFFFF !important;
+}
+[data-theme="dark"] .el-button--danger,
+html.dark .el-button--danger,
+[data-theme="dark"] .el-button--warning,
+html.dark .el-button--warning {
+  --el-button-text-color: #141413 !important;
+  --el-button-hover-text-color: #141413 !important;
 }
 
 /* ===== ELEMENT PLUS RADIO BUTTON OVERRIDES ===== */
@@ -512,6 +524,8 @@ html {
   background: var(--bg-hover);
   color: var(--text-primary);
 }
+/* 与 .el-button--danger/--warning 同步：亮色底深、深色底亮，文字色按主题分别取，
+   两种主题都达 WCAG AA 4.5:1（亮：白字 5.06/4.67；深：#141413 5.46/7.61）。 */
 .pixel-btn.danger {
   background: var(--danger);
   color: #FFFFFF;
@@ -527,6 +541,12 @@ html {
   color: #FFFFFF;
   border: none;
   box-shadow: none;
+}
+[data-theme="dark"] .pixel-btn.danger,
+html.dark .pixel-btn.danger,
+[data-theme="dark"] .pixel-btn.warning,
+html.dark .pixel-btn.warning {
+  color: #141413;
 }
 .pixel-btn.warning:hover {
   background: var(--warning);
@@ -749,6 +769,19 @@ html {
     padding: 8px 14px !important;
   }
 
+  /* 表格内的按钮恢复紧凑尺寸：表格行高受按钮撑高影响极大，
+     44px 按钮会把每行撑到 60px+，一屏只看到 4–5 行；表格内仍保留 36px 可点区域。 */
+  .el-table .el-button,
+  .el-table .el-button--small {
+    min-height: 36px !important;
+    padding: 6px 12px !important;
+    font-size: 12px !important;
+  }
+  /* 表格内按钮横排时收窄间距，避免操作列内换行错位 */
+  .el-table .el-button + .el-button {
+    margin-left: 6px !important;
+  }
+
   .el-input__inner {
     min-height: 44px !important;
   }
@@ -771,8 +804,12 @@ html {
 }
 
 /* ===== RESPONSIVE UTILITY CLASSES ===== */
+/* 注意：display 用 revert 而不是 initial。
+   initial 会把 display 重置为规范初始值 inline，导致原本 display:flex 的按钮
+   （如顶栏汉堡按钮 .mobile-menu-btn）在移动端失去居中能力、内边距失效；
+   revert 则回落到元素自身/组件样式定义的 display，语义正确且不破坏布局。 */
 .hide-on-mobile {
-  display: initial;
+  display: revert;
 }
 .show-on-mobile {
   display: none;
@@ -780,7 +817,7 @@ html {
 
 @media (max-width: 768px) {
   .hide-on-mobile { display: none !important; }
-  .show-on-mobile { display: initial !important; }
+  .show-on-mobile { display: revert !important; }
 }
 
 /* ===== RESPONSIVE TABLE SCROLL WRAPPER ===== */
@@ -810,6 +847,32 @@ html {
     margin-top: 4vh !important;
   }
 
+  /* 窄屏：弹窗限高 + 内部滚动，保证底部操作按钮始终可达。
+     原状态：长表单弹窗（如「新建定时任务」747px 高）在 667px 视口下溢出 106px，
+     footer 的「确定/取消」被挤出屏幕且页面无法滚动 → 弹窗无法完成提交。
+     改为 dialog 限高 92dvh、body 内部滚动、footer 常驻可见。 */
+  .el-dialog {
+    max-height: 92dvh !important;
+    display: flex !important;
+    flex-direction: column !important;
+    margin-bottom: 4vh !important;
+  }
+  .el-dialog__header {
+    flex-shrink: 0;
+  }
+  .el-dialog__body {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
+  }
+  .el-dialog__footer {
+    flex-shrink: 0;
+    padding-top: 12px;
+    border-top: 1px solid var(--border-subtle);
+  }
+
   .el-message-box {
     width: 90% !important;
     max-width: 340px !important;
@@ -835,6 +898,50 @@ html {
   }
   .el-table td.el-table__cell {
     padding: 8px 6px !important;
+  }
+
+  /* 窄屏：取消 fixed 列的 sticky 悬浮，改为随表横向滚动。
+     原状态：fixed="right" 操作列（200–300px）position:sticky 钉在可视区右侧，
+     390px 屏上表格可视宽 330px、固定列就占 300px → 主体内容只剩 30px，
+     成员管理/任务运行/路径点/插件管理等页面首屏几乎全被操作列盖住。
+     取消 sticky 后所有列在同一横向滚动流内，靠右滑查看操作列，信息不再被遮挡。
+     注：EP 用 `.el-table__body-wrapper tr td.el-table-fixed-column--right{position:sticky!important}`
+     编译输出，故此处必须用同等或更高特异度的选择器 + !important 才能覆盖。 */
+  .el-table__body-wrapper tr td.el-table-fixed-column--left,
+  .el-table__body-wrapper tr td.el-table-fixed-column--right,
+  .el-table__body-wrapper tr th.el-table-fixed-column--left,
+  .el-table__body-wrapper tr th.el-table-fixed-column--right,
+  .el-table__header-wrapper tr td.el-table-fixed-column--left,
+  .el-table__header-wrapper tr td.el-table-fixed-column--right,
+  .el-table__header-wrapper tr th.el-table-fixed-column--left,
+  .el-table__header-wrapper tr th.el-table-fixed-column--right {
+    position: static !important;
+    z-index: auto !important;
+    box-shadow: none !important;
+  }
+  .el-table .el-table-fixed-column--right.is-first-column::before {
+    display: none !important;
+  }
+  /* 横向滚动容器：触摸惯性 + 右侧渐隐提示「还有内容」 */
+  .el-table__body-wrapper,
+  .el-table__header-wrapper {
+    -webkit-overflow-scrolling: touch;
+  }
+  /* 右侧渐隐：提示表格可横向滑动（否则用户只看到被切一半的列，不知道能滑）。
+     挂在 .el-table 外层（position:relative），不拦截触摸事件。 */
+  .el-table {
+    position: relative;
+  }
+  .el-table::after {
+    content: '';
+    position: absolute;
+    top: 1px;
+    right: 1px;
+    bottom: 1px;
+    width: 20px;
+    pointer-events: none;
+    border-radius: 0 var(--radius-lg) var(--radius-lg) 0;
+    background: linear-gradient(to right, transparent, var(--bg-card) 85%);
   }
 }
 

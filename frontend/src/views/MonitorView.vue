@@ -235,7 +235,10 @@ onBeforeUnmount(() => {
   .stat-row { grid-template-columns: 1fr 1fr; gap: 8px; }
   .stat-val { font-size: 16px; }
 }
-@media (max-width: 400px) {
+/* 仅在真正超窄屏（≤360px，如 iPhone SE 一代）才降为单列：
+   原阈值 400px 会把主流 390px 机型也变成单列，4 张统计卡纵向铺满一屏，
+   首屏完全看不到下方的趋势图表。 */
+@media (max-width: 360px) {
   .stat-row { grid-template-columns: 1fr; }
 }
 </style>

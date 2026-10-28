@@ -450,34 +450,49 @@ async function close() {
 .chest-rows { font-size: 12px; color: var(--text-muted); }
 .chest-grid {
   display: grid;
-  grid-template-columns: repeat(9, 42px);
+  grid-template-columns: repeat(9, var(--slot, 42px));
   gap: 3px;
   justify-content: flex-start;
 }
-.chest-grid.half { grid-template-rows: repeat(3, 42px); overflow: hidden; }
+.chest-grid.half { grid-template-rows: repeat(3, var(--slot, 42px)); overflow: hidden; }
+/* 槽位走 CSS 变量 + 主题 Token：原 #141414 纯黑/冷灰在暖墨主题下发冷发脏 */
 .slot {
-  width: 42px; height: 42px; border: 2px solid #3a3a3a; border-radius: 3px;
-  background: #141414; cursor: pointer; position: relative;
+  width: var(--slot, 42px); height: var(--slot, 42px);
+  border: 2px solid var(--border-strong); border-radius: 3px;
+  background: var(--bg-elevated); cursor: pointer; position: relative;
 }
-.slot:hover { border-color: #aaa; }
-.slot.filled { background: #1a1a1a; }
+.slot:hover { border-color: var(--text-muted); }
+.slot.filled { background: var(--bg-active); }
 .slot .count {
-  position: absolute; right: 2px; bottom: 1px; font-size: 10px; color: #fff;
-  text-shadow: 1px 1px 0 #000; font-family: var(--font-mono);
+  position: absolute; right: 2px; bottom: 1px; font-size: 10px; color: var(--text-primary);
+  text-shadow: 1px 1px 0 rgba(0,0,0,0.6); font-family: var(--font-mono);
 }
 .chest-empty { color: var(--text-muted); font-size: 12px; padding: 12px 0; text-align: center; border: 1px dashed var(--border-default); border-radius: var(--radius-md); }
 .detail-row { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px dashed var(--border-default); }
 .detail-row:last-child { border-bottom: none; }
-.custom-name { color: #e6a23c; font-weight: 600; }
+.custom-name { color: var(--warning); font-weight: 600; }
 .lore-row { align-items: flex-start; }
 .lore-list { display: flex; flex-direction: column; gap: 2px; text-align: right; }
-.lore-line { color: #b48cff; font-size: 12px; font-style: italic; }
+.lore-line { color: var(--text-secondary); font-size: 12px; font-style: italic; }
 .detail-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
 
 /* 窗口点击提示 + 手持高亮（2026-08-12） */
 .click-hint { display: flex; align-items: center; gap: 10px; font-size: 11px; color: var(--text-muted); margin-bottom: 6px; flex-wrap: wrap; }
 .click-hint span.holding { color: var(--accent); font-weight: 600; }
-.click-hint .holding-text { color: #e6a23c; font-weight: 600; }
-.slot.holding { border-color: #e6a23c; box-shadow: 0 0 4px rgba(230, 162, 60, 0.5); }
+.click-hint .holding-text { color: var(--warning); font-weight: 600; }
+.slot.holding { border-color: var(--warning); box-shadow: 0 0 4px var(--warning-bg); }
 .window-chain { font-size: 11px; color: var(--text-muted); margin-bottom: 6px; }
+
+/* ============ 窄屏适配 ============
+   9 列固定 42px + 8×3px 间距 = 402px，在 360–390px 手机抽屉内（可用约 295px）
+   会横向溢出被裁切。改用 CSS 变量按视口收缩，保证 9 列完整可见。 */
+@media (max-width: 768px) {
+  .container-panel { --slot: clamp(26px, calc((100vw - 150px) / 9), 42px); }
+  .chest-grid { gap: 2px; }
+  .slot .count { font-size: 9px; right: 1px; bottom: 0; }
+  .chest-head { gap: 8px; }
+  .container-row { gap: 6px; padding: 5px 6px; }
+  .cname { min-width: 56px; font-size: 12px; }
+  .cdist { min-width: 40px; }
+}
 </style>

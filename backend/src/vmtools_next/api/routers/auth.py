@@ -27,9 +27,21 @@ _LOGIN_WINDOW = 60.0      # 窗口秒数
 def _check_login_rate_limit(key: str) -> None:
     import time as _time
     now = _time.monotonic()
-    # 防内存膨胀（审查 L2）：字典超过上限时整体重置（限流状态短暂归零可接受）
+    # 防内存膨胀：字典超过上限时清理**已过期**的条目，而不是整体清空。
+    #
+    # ⚠️ 2026-10-20 审查修复（中等·限流可被一次性清零）：
+    #   原实现 `_LOGIN_ATTEMPTS.clear()` 会把**全站所有账号**的失败计数一次归零。
+    #   而 key 是 f"{game_id}|{ip}"，**每个新 key 都会插入一条记录**（无论成败），
+    #   攻击者只要用 10001 个随机 game_id 各发 1 次请求，就能触发 clear() →
+    #   目标账号的计数归零 → 继续爆破，且可无限重复（每轮仅 1 万次廉价请求）。
+    #   修复：按时间窗口逐条淘汰过期项；若清理后仍超限（攻击者持续灌入新 key），
+    #   则拒绝**新 key**（fail-closed），不再牺牲已有计数。
     if len(_LOGIN_ATTEMPTS) > 10000:
-        _LOGIN_ATTEMPTS.clear()
+        for k, (ts, _cnt) in list(_LOGIN_ATTEMPTS.items()):
+            if now - ts > _LOGIN_WINDOW:
+                _LOGIN_ATTEMPTS.pop(k, None)
+        if len(_LOGIN_ATTEMPTS) > 10000 and key not in _LOGIN_ATTEMPTS:
+            raise HTTPException(429, "尝试过于频繁，请稍后再试")
     ts, cnt = _LOGIN_ATTEMPTS.get(key, (0.0, 0))
     if now - ts > _LOGIN_WINDOW:
         ts, cnt = now, 0
@@ -251,12 +263,25 @@ def qq_ticket_login(data: QqTicketLoginRequest, db: Session = Depends(get_db)):
 
 
 @router.post("/qq/bind")
-def qq_bind(data: QqBindRequest, db: Session = Depends(get_db)):
+def qq_bind(data: QqBindRequest, request: Request, db: Session = Depends(get_db)):
     """把已认证的 QQ（openid）绑定到已有账号。
 
     校验已有账号的 game_id/password 后写入 qq_openid（一 QQ 一账号，QQ 已绑定其他
     账号或该账号已绑定其他 QQ 均拒绝），绑定成功即返回登录 token。
+
+    ⚠️ 2026-10-20 审查修复（中等·口令爆破 → 直接接管账号）：
+      本接口用「game_id + password」校验并**成功即返回 7 天 JWT**，本质是第二个
+      登录入口，但原先**完全没有限流**（/login 有 5 次/60 秒）。而 qq ticket 在
+      600 秒 TTL 内可重复消费（qq_oauth.consume_ticket 不做 pop，为多步流程设计）。
+      攻击链：攻击者用自己的 QQ 走一次 OAuth 拿 ticket → 在 TTL 内对任意已知
+      game_id（登录页/成员列表可见）无限次尝试本接口 → 命中即拿到该账号 token，
+      并把攻击者 QQ 绑定上去（持久化接管）；目标可以是 site_admin。
+      修复：与 /login 共用同一套限流计数（同一 key 口径），失败不重置计数。
     """
+    client_ip = request.client.host if request.client else "unknown"
+    rate_key = f"{data.game_id.lower()}|{client_ip}"
+    _check_login_rate_limit(rate_key)
+
     from vmtools_next.core.qq_oauth import consume_ticket
     qq_info = consume_ticket(data.qq_ticket)
     if not qq_info:
@@ -280,6 +305,8 @@ def qq_bind(data: QqBindRequest, db: Session = Depends(get_db)):
     user.qq_nickname = qq_info.get("nickname") or user.qq_nickname or ""
     user.last_seen_at = datetime.now(timezone.utc)
     db.commit()
+    # 成功后才清零失败计数（与 /login 口径一致）
+    _reset_login_rate_limit(rate_key)
     return LoginResponse(token=_make_token(user), user_id=user.id, game_id=user.game_id, role=user.role)
 
 

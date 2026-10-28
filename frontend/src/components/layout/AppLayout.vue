@@ -62,16 +62,59 @@ const isGuestMode = computed(() => !authStore.isLoggedIn && route.path !== '/log
 /** 内容区容器（用于访客交互拦截；侧边栏/头部不在此容器内，导航与登录不受影响） */
 const mainRef = ref<HTMLElement | null>(null)
 
+/**
+ * 该路由是否允许访客**自由交互**（不受只读拦截）。
+ *
+ * ⚠️ 2026-10-20 审查修复（中等·交互缺陷）：
+ *   路由表里 `/miaomiao`（妙妙工具）标注 `meta.public = true`，注释明确写着
+ *   「访客无需登录即可访问」，侧边栏也把它列在访客可展开的「工具」组里。
+ *   但本组件的访客拦截器此前只排除 /login、/register 两条路径，
+ *   于是**所有** click/change/input/keydown 都被 preventDefault 并跳登录页 →
+ *   访客在妙妙工具页无法切标签、无法搜索、无法排序、无法翻页，
+ *   页面实际上完全不可用（只剩静态首屏）。
+ *   修复：`meta.public === true` 的路由放行交互；其余只读页（guestReadable）
+ *   保持原有「交互即跳登录」的行为不变。
+ */
+function guestInteractionAllowed(): boolean {
+  return route.meta.public === true
+}
+
 /** 访客模式拦截：内容区任何交互（点击/输入/回车/提交）→ 跳登录页并提示「前面的区域以后再来探索吧」 */
 function onGuestInteract(e: Event) {
   if (authStore.isLoggedIn) return
   if (route.path === '/login' || route.path === '/register') return
+  if (guestInteractionAllowed()) return
   e.preventDefault()
   e.stopPropagation()
   router.push({ path: '/login', query: { reason: 'locked' } })
 }
 
-const GUEST_INTERACT_EVENTS = ['click', 'change', 'input', 'keydown', 'submit'] as const
+/** ⚠️ 2026-10-19 审查修复（中等·可访问性）：
+ *  原实现把 'keydown' 一并纳入拦截，导致访客在内容区按【任意键】——
+ *  包括方向键、PageUp/PageDown、Home/End、空格（滚动）、Tab（焦点切换）、
+ *  Esc —— 都会被 preventDefault 并跳登录页。结果是访客**完全无法用键盘滚动
+ *  或浏览**，对键盘/读屏用户等同页面不可用（WCAG 2.1.1 键盘可达性失败）。
+ *  改为：仅当按键发生在可编辑控件内，或按下 Enter/空格 这类「提交语义」键时才拦截。
+ */
+function onGuestKeydown(e: Event) {
+  if (authStore.isLoggedIn) return
+  if (route.path === '/login' || route.path === '/register') return
+  if (guestInteractionAllowed()) return
+  const ke = e as KeyboardEvent
+  const target = ke.target as HTMLElement | null
+  // 可编辑控件内的输入：视为交互意图，拦截
+  const tag = (target?.tagName || '').toLowerCase()
+  const editable = tag === 'input' || tag === 'textarea' || tag === 'select'
+    || (target?.isContentEditable ?? false)
+  // Enter / 空格：提交语义
+  const submitKey = ke.key === 'Enter' || ke.key === ' '
+  if (!editable && !submitKey) return   // 方向键/翻页/Tab/Esc 等一律放行
+  ke.preventDefault()
+  ke.stopPropagation()
+  router.push({ path: '/login', query: { reason: 'locked' } })
+}
+
+const GUEST_INTERACT_EVENTS = ['click', 'change', 'input', 'submit'] as const
 
 onMounted(() => {
   const el = mainRef.value
@@ -79,6 +122,7 @@ onMounted(() => {
     for (const evt of GUEST_INTERACT_EVENTS) {
       el.addEventListener(evt, onGuestInteract, true)
     }
+    el.addEventListener('keydown', onGuestKeydown, true)
   }
 })
 
@@ -88,6 +132,7 @@ onBeforeUnmount(() => {
     for (const evt of GUEST_INTERACT_EVENTS) {
       el.removeEventListener(evt, onGuestInteract, true)
     }
+    el.removeEventListener('keydown', onGuestKeydown, true)
   }
 })
 
@@ -103,9 +148,16 @@ function toggleSidebar() {
   } catch { /* 忽略（隐私模式等） */ }
 }
 
-/** 打开移动抽屉：仅 ≤768px 响应（桌面端抽屉 display:none，若误触发只剩灰遮罩） */
+/** 抽屉可用区间：≤768px（手机竖屏）或 高度≤480px 的横屏手机（与 CSS 断点保持一致）。
+ *  桌面端抽屉 display:none，若误触发只剩灰遮罩，故必须前置判定。 */
+function isDrawerLayout() {
+  return window.matchMedia('(max-width: 768px)').matches
+    || (window.matchMedia('(max-height: 480px)').matches && window.matchMedia('(max-width: 1024px)').matches)
+}
+
+/** 打开移动抽屉 */
 function openMobileMenu() {
-  if (window.matchMedia('(max-width: 768px)').matches) {
+  if (isDrawerLayout()) {
     mobileDrawerOpen.value = true
   }
 }
@@ -219,6 +271,9 @@ onBeforeUnmount(() => {
   max-width: 80vw;
   z-index: 200;
   box-shadow: var(--shadow-lg);
+  /* 刘海屏/手势条：抽屉内容避让左右与底部安全区 */
+  padding-left: var(--safe-area-left);
+  padding-bottom: var(--safe-area-bottom);
 }
 
 /* 抽屉容器聚焦由内部元素承担，容器本身不显示焦点环 */
@@ -304,6 +359,31 @@ onBeforeUnmount(() => {
   }
 }
 
+/* ============ 手机横屏（高度极窄）：改用抽屉侧边栏 ============
+   横屏手机宽度常为 780–930px，会命中上面的「平板自动折叠」规则，
+   侧边栏被压成 60px 宽、只剩一排无文字的圆点，导航完全不可辨识；
+   而横屏可用高度只有 360–430px，纵向空间本就紧张。
+   此时与竖屏一致改用汉堡菜单 + 抽屉，把横向空间全部让给内容。 */
+@media (max-height: 480px) and (max-width: 1024px) and (min-width: 769px) {
+  .desktop-only {
+    display: none !important;
+  }
+  .mobile-drawer {
+    display: block;
+  }
+  /* 横屏顶栏压缩，给内容留高度 */
+  .app-header {
+    height: 44px;
+  }
+  .app-main {
+    padding: 12px 14px;
+    padding-bottom: calc(12px + var(--safe-area-bottom));
+  }
+  .app-footer {
+    padding: 6px 16px;
+  }
+}
+
 /* ============ MOBILE: hide sidebar, enable drawer ============ */
 @media (max-width: 768px) {
   .desktop-only {
@@ -316,11 +396,23 @@ onBeforeUnmount(() => {
 
   .app-header {
     height: 52px;
+    /* 刘海屏：顶栏内容下移，避免状态栏压住汉堡菜单/用户名 */
+    padding-top: var(--safe-area-top);
+    height: calc(52px + var(--safe-area-top));
   }
 
   .app-main {
     padding: 16px 12px;
     padding-bottom: calc(16px + var(--safe-area-bottom));
+    /* 窄屏取消横向裁剪：内容超宽时允许滚动，而不是静默裁掉右侧内容
+       （此前 overflow-x:hidden 会让宽表格/宽卡片右侧部分直接消失且无法触达） */
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+  }
+
+  /* 页脚备案号：贴底时避让手势条 */
+  .app-footer {
+    padding-bottom: calc(10px + var(--safe-area-bottom));
   }
 }
 

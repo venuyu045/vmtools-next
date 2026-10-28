@@ -92,8 +92,13 @@ class MapArtTask(Base):
     sleep_z = Column(Integer, nullable=True)
 
     # 建造模式（2026-08-19）：strip=旧分区独立模式（Z轴分区），column=新列式协作模式
-    # 新任务默认 column；旧任务兼容 strip
-    build_mode = Column(String(16), default="strip")
+    # ⚠️ 2026-10-28 B12 修复：全链路默认值统一为 column（此前模型默认 strip、
+    #   API 创建强制 column、getattr 兜底 strip → 三处不一致，旧任务/异常行按 strip 跑）。
+    #   唯一默认值来源：本列默认 + api/routers/build_map_art.py 的 DEFAULT_BUILD_MODE
+    #   （resolve_build_mode()）；调度器（task_scheduler / scheduled_task_scheduler）
+    #   不自行判定，一律经 execute_map_art_start 走同一函数。
+    #   显式写入 "strip" 的旧任务仍按 strip 跑（兼容，不回改历史数据）。
+    build_mode = Column(String(16), default="column")
 
 
     # Relationships
@@ -319,21 +324,24 @@ class MapArtBlockState(Base):
 class MapArtTaskProgress(Base):
     """任务进度持久化表（2026-08-19 列式协作模式）。
 
-    定期落盘（每30s），崩溃/重启后加载断点续建。
-    progress_json 结构：
-    {
-      "squad_index": 1,           // 当前排号
-      "direction": 1,             // 当前排方向（1=y+, -1=y-）
-      "active_bots": ["mf-001","mf-002","mf-003","mf-006","mf-007"],
-      "offline_bots": [],
-      "columns": {                // 各Bot进度
-        "mf-001": {"column": 1, "completed_y": 50, "placed": 500},
-        "mf-002": {"column": 2, "completed_y": 50, "placed": 500},
-        ...
-      },
-      "total_placed": 2500,
-      "total_blocks": 470000
-    }
+    定期落盘（每 30s，见 `map_art_checkpoint_interval_s`），崩溃/重启后加载断点续建。
+
+    progress_json 结构（2026-10-28 B8 修复：与 `MultiBotCoordinator._persist_progress`
+    实际写入 / `load_progress` 实际读取的 key 完全对齐）::
+
+        {
+          "squad_index": 1,                     # 当前排号（1-based，仅展示用）
+          "direction": 1,                       # 当前排蛇形方向：1=z+ / -1=z-
+          "active_bots": ["mf-001", "mf-002"],  # 本排参战 bot
+          "offline_bots": [],                   # 减员/离线 bot
+          "bot_columns": {"mf-001": 0, ...},    # bot_id → 列号（0-based；世界 X = origin_x + 列号）
+          "total_columns": 128,                 # 地图画总列数（size_x）
+          "total_rows": 128,                    # 地图画总行数（size_z）
+          "placed_total": 2500                  # 全局已放置数（放置成功计数）
+        }
+
+    ⚠️ 旧 docstring 写的 `columns` / `total_placed` 是笔误：实际 payload 没有这两个
+    key，只有 `bot_columns` / `placed_total` / `total_columns` / `total_rows`。
     """
 
     __tablename__ = "map_art_task_progress"

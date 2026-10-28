@@ -473,13 +473,22 @@ async def upload_image(file: UploadFile = File(...), user=Depends(require_admin)
         raise HTTPException(status_code=400, detail="图片过大（上限 20MB）")
     if len(content) == 0:
         raise HTTPException(status_code=400, detail="空文件")
-    # 校验 PNG/JPEG magic（防伪装文件）
+    # 校验图片 magic（防伪装文件）
+    # ⚠️ 2026-10-20 审查修复（中等·上传校验缺口）：
+    #   _ALLOWED_EXT 含 .webp，但下方只校验了 PNG/JPEG/GIF 的 magic，
+    #   **webp 完全没校验** → 可把任意字节（如带 <script> 的 HTML）存成
+    #   /static/lixiangxiang/uploads/<uuid>.webp 并经公网直链访问。
+    #   虽然该静态目录不是 text/html 的默认渲染路径，但一旦被当作图片之外的
+    #   资源引用（或 MIME 嗅探被绕过）即成存储型 XSS 载体，且可作任意文件托管。
+    #   补齐 webp 的 RIFF....WEBP 容器头校验，与其它格式口径一致。
     if ext in (".png",) and not content.startswith(b"\x89PNG"):
         raise HTTPException(status_code=400, detail="不是有效的 PNG 文件")
     if ext in (".jpg", ".jpeg") and not content.startswith(b"\xff\xd8"):
         raise HTTPException(status_code=400, detail="不是有效的 JPEG 文件")
     if ext in (".gif",) and not content.startswith(b"GIF8"):
         raise HTTPException(status_code=400, detail="不是有效的 GIF 文件")
+    if ext == ".webp" and not (content[:4] == b"RIFF" and content[8:12] == b"WEBP"):
+        raise HTTPException(status_code=400, detail="不是有效的 WEBP 文件")
 
     filename = f"{uuid.uuid4().hex}{ext}"
     dest = _UPLOAD_DIR / filename

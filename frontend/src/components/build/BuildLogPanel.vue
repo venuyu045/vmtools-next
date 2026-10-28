@@ -110,6 +110,23 @@ function onLog(data: any) {
   appendLog(data)
 }
 
+/**
+ * A3/A4：订阅（build_map_join）或控制被后端拒绝时回 build_alert——
+ * 原先前端无任何订阅方，用户只看到「页面正常但永远不刷新」。
+ * 这里落到终端里（错误红字），与页面层的 ElMessage 形成双通道可见反馈。
+ */
+function onBuildAlert(data: any) {
+  const level = data?.type === 'error' ? 'error' : 'warn'
+  appendLog({
+    ts: new Date().toISOString(),
+    level,
+    bot_id: '',
+    bot_name: '',
+    // bot_name 留空：避免「系统」被当成一个 bot 出现在上面的 per-bot 筛选按钮里
+    message: `[系统] ${data?.message || '建造实时通道异常'}`,
+  })
+}
+
 function onLogHistory(data: any) {
   if (data.task_id !== props.taskId) return
   logs.value = [...(data.logs || [])]
@@ -145,10 +162,12 @@ async function pollLogs() {
 }
 
 onMounted(() => {
-  // 确保 socket 已连接再注册（useSocketIO 单例：重复 connect 幂等）
+  // 确保 socket 已连接再注册（useSocketIO 单例：重复 connect 幂等；
+  // on() 本身也已支持「未建连先登记、建连时补挂」，这里保持先连后挂的显式顺序）
   sockConnect()
   sockOn('build_log', onLog)
   sockOn('build_log_history', onLogHistory)
+  sockOn('build_alert', onBuildAlert)
   // REST 轮询兜底（3s）
   pollTimer = window.setInterval(pollLogs, 3000)
   pollLogs()
@@ -157,6 +176,7 @@ onMounted(() => {
 onUnmounted(() => {
   sockOff('build_log', onLog)
   sockOff('build_log_history', onLogHistory)
+  sockOff('build_alert', onBuildAlert)
   if (pollTimer) window.clearInterval(pollTimer)
 })
 </script>

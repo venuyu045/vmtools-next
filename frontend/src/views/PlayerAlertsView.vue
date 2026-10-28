@@ -127,7 +127,9 @@ async function confirmPlayer() {
 .owner-card { background: var(--bg-card); border: 1px solid var(--border-subtle); border-radius: var(--radius-lg); padding: 16px; margin-bottom: 12px; }
 .owner-header { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
 .owner-name { font-size: 16px; font-weight: 600; }
-.owner-id { font-size: 11px; color: var(--text-disabled); background: var(--bg-hover); padding: 2px 6px; border-radius: 4px; }
+/* 深色下 --text-disabled(#6A675F) 落在 --bg-hover 上仅约 2.6:1，
+   11px 小字几乎不可读；辅助信息提到 --text-muted（深色下约 4.5:1）。 */
+.owner-id { font-size: 11px; color: var(--text-muted); background: var(--bg-hover); padding: 2px 6px; border-radius: 4px; }
 .track-list { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .track-list :deep(.el-tag) {
   background: var(--success-bg);
@@ -136,7 +138,7 @@ async function confirmPlayer() {
 }
 .track-list :deep(.el-tag .el-tag__close) { color: var(--success); }
 .track-list :deep(.el-tag .el-tag__close:hover) { background: var(--success-bg); }
-.na { color: var(--text-disabled); font-style: italic; font-size: 13px; }
+.na { color: var(--text-muted); font-style: italic; font-size: 13px; }
 
 /* ============ 移动端适配 ============ */
 @media (max-width: 768px) {

@@ -43,6 +43,24 @@ if [ "${VMT_SECRET_KEY:-change-me}" = "change-me-to-a-random-string-at-least-32-
     sed -i "s/^VMT_SECRET_KEY=.*/VMT_SECRET_KEY=$VMT_SECRET_KEY/" .env
 fi
 
+# ⚠️ 2026-10-20 审查修复（严重·默认口令）：
+#   原脚本只兜底 VMT_SECRET_KEY，**不检查 SITE_ADMIN_PASSWORD**。
+#   而 .env.example 曾提供占位值 change-me → 用户按 Enter 直接继续时，
+#   生产会以「admin / change-me」（仓库里公开的默认口令）创建 site_admin，
+#   等于把最高权限账号的公开口令留在公网。这里补上同样的自动生成 + 回写。
+if [ -z "${SITE_ADMIN_PASSWORD:-}" ] || [ "${SITE_ADMIN_PASSWORD}" = "change-me" ]; then
+    echo "[警告] SITE_ADMIN_PASSWORD 未设置或仍为占位值，将自动生成随机口令"
+    SITE_ADMIN_PASSWORD=$(openssl rand -base64 18 2>/dev/null || python3 -c "import secrets; print(secrets.token_urlsafe(18))")
+    export SITE_ADMIN_PASSWORD
+    if grep -q '^SITE_ADMIN_PASSWORD=' .env; then
+        sed -i "s|^SITE_ADMIN_PASSWORD=.*|SITE_ADMIN_PASSWORD=$SITE_ADMIN_PASSWORD|" .env
+    else
+        printf '\nSITE_ADMIN_PASSWORD=%s\n' "$SITE_ADMIN_PASSWORD" >> .env
+    fi
+    echo "[重要] 初始管理员口令（请立即登录后修改，并妥善保存）："
+    echo "        ${SITE_ADMIN_GAME_ID:-admin} / $SITE_ADMIN_PASSWORD"
+fi
+
 # ── 2. 构建并启动 ──
 echo ""
 echo "[1/2] 构建 Docker 镜像（首次较慢）..."

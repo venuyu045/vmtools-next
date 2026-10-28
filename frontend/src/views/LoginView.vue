@@ -276,6 +276,25 @@ onMounted(() => {
   border-color: #0aa3dc;
   color: #fff;
 }
+/* 深色下 #12b7f5 满色块面积大且亮度高（L≈62%），在暖墨底上过于刺眼；
+   改为低饱和半透明底 + 品牌色描边与文字，既保留 QQ 品牌识别又不扎眼。 */
+[data-theme="dark"] .qq-btn,
+html.dark .qq-btn {
+  background: rgba(18, 183, 245, 0.14) !important;
+  border-color: rgba(18, 183, 245, 0.45) !important;
+  color: #6fd3fa !important;
+}
+[data-theme="dark"] .qq-btn:hover,
+html.dark .qq-btn:hover {
+  background: rgba(18, 183, 245, 0.22) !important;
+  border-color: rgba(18, 183, 245, 0.65) !important;
+  color: #9ce2ff !important;
+}
+[data-theme="dark"] .qq-icon,
+html.dark .qq-icon {
+  background: rgba(18, 183, 245, 0.9);
+  color: #0d1b22;
+}
 .qq-icon {
   display: inline-flex;
   align-items: center;
@@ -321,11 +340,19 @@ onMounted(() => {
 /* ============ RESPONSIVE ============ */
 @media (max-width: 900px) {
   .login-hero { display: none; }
-  .login-form-area { flex: 1 1 100%; }
+  /* 单列时 flex-basis 必须归零：保留 45% 基准会让「基准宽度 + 左右 padding」
+     超出视口（360px 屏实测表单区被撑到 400px，整页横向溢出、右侧内容被裁）。 */
+  .login-form-area {
+    flex: 1 1 auto;
+    width: 100%;
+    min-width: 0;
+    box-sizing: border-box;
+  }
 }
 
 @media (max-width: 480px) {
   .login-form-area { padding: 40px 20px; }
   .form-title { font-size: 26px; }
+  .form-sub { margin-bottom: 24px; }
 }
 </style>

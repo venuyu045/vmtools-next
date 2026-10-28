@@ -9,10 +9,13 @@
       <button class="sidebar-toggle hide-on-mobile" @click="emit('toggleSidebar')" title="切换侧边栏" aria-label="切换侧边栏">
         ☰
       </button>
-      <div class="page-title" v-if="route.meta.title">
+      <!-- 窄屏：页面自身已有大标题（如「成员管理」「系统监控」），此处重复渲染
+           只会白白吃掉 52px 首屏高度并造成「> 标题」双层标题的视觉噪音，
+           故移动端隐藏，桌面端保留面包屑式定位。 -->
+      <div class="page-title hide-on-mobile" v-if="route.meta.title">
         > {{ route.meta.title }}
       </div>
-      <div class="page-title" v-else>
+      <div class="page-title hide-on-mobile" v-else>
         > VMTools
       </div>
     </div>
@@ -251,9 +254,10 @@ async function submitChangePwd() {
   user-select: none;
   flex-shrink: 0;
 }
-.latency-good { color: var(--green-primary, #67c23a); }
-.latency-mid { color: #e6a23c; }
-.latency-bad { color: #e34d59; }
+/* 延迟指示：改用主题语义 Token（原 #e6a23c/#e34d59 为冷硬 EP 色，深色下过艳） */
+.latency-good { color: var(--success); }
+.latency-mid { color: var(--warning); }
+.latency-bad { color: var(--danger); }
 .latency-off { color: var(--text-muted); }
 
 .user-dot {
@@ -398,6 +402,28 @@ async function submitChangePwd() {
 /* 桌面：仅显示 sidebar-toggle（折叠按钮），隐藏移动汉堡（防 global utility 被 scoped display:flex 覆盖） */
 @media (min-width: 769px) {
   .mobile-menu-btn { display: none; }
+}
+
+/* 手机横屏（高度≤480px 且宽≤1024px）：AppLayout 已隐藏桌面侧边栏、改用抽屉，
+   此时必须把汉堡按钮显示出来，否则横屏下没有任何导航入口。
+   同时隐藏失效的折叠按钮（它折叠的是已被隐藏的桌面侧边栏）。 */
+@media (max-height: 480px) and (max-width: 1024px) and (min-width: 769px) {
+  .mobile-menu-btn {
+    display: flex !important;
+    width: 32px;
+    height: 32px;
+    font-size: 16px;
+  }
+  .sidebar-toggle { display: none !important; }
+  /* 横屏空间宝贵：顶栏收紧，用户名改用短名 */
+  .header { padding: 0 14px; }
+  .header-left { gap: 10px; }
+  .page-title { font-size: 14px; max-width: 40vw; }
+  .username { display: none; }
+  .username-mobile { display: inline !important; }
+  .latency { font-size: 10px; padding: 2px 6px; }
+  .theme-btn,
+  .profile-btn { min-height: 30px; padding: 3px 10px; }
 }
 
 @media (max-width: 768px) {

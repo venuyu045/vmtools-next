@@ -17,6 +17,10 @@ from vmtools_next.data.models.build import (  # noqa: F401
 from vmtools_next.data.models.build_map_art import (  # noqa: F401
     MapArtTask, MapArtMaterial, MapArtBotAssignment, MapArtBlockState,
     MapArtTaskProgress,
+    # 2026-10-28 B10 修复：补齐其余 5 个表类的 re-export——此前只导出 5 个，
+    # `from vmtools_next.data.models import MapArtSupplyBox` 会 ImportError。
+    MapArtSupplyBox, MapArtSupplyTemplate, MapArtSupplyWarehouse,
+    MapArtFoodBox, MapArtGlobalConfig,
 )
 from vmtools_next.data.models.mcc_session import MccMcpSessionModel  # noqa: F401
 from vmtools_next.data.models.plugin import (  # noqa: F401
@@ -43,6 +47,10 @@ __all__ = [
     "OperationLogModel",
     # build
     "BuildTaskModel", "BuildLayerModel",
+    # build_map_art（9 张地图画表，B10 补齐）
+    "MapArtTask", "MapArtMaterial", "MapArtBotAssignment", "MapArtBlockState",
+    "MapArtTaskProgress", "MapArtSupplyBox", "MapArtSupplyTemplate",
+    "MapArtSupplyWarehouse", "MapArtFoodBox", "MapArtGlobalConfig",
     # mcc session
     "MccMcpSessionModel",
     # plugin

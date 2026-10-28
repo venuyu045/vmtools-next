@@ -65,6 +65,7 @@ import { useMccInstanceStore, TERMINAL_MAX_LINES } from '@/stores/mccInstance'
 import { useSocketIO } from '@/composables/useSocketIO'
 import { mccInstanceApi, type MccTerminalLine } from '@/api/mccInstance'
 import { errMsg } from '@/utils/error'
+import { parseApiDate } from '@/utils/time'
 
 const props = withDefaults(defineProps<{
   instanceId: string
@@ -276,7 +277,14 @@ function formatLine(line: MccTerminalLine): string {
     // 输入行（仅其他观察者可见，本机已本地回显）：弱化前缀与时间戳
     return `\x1b[36m> ${content.replace(/^>\s*/, '')}\x1b[0m`
   }
-  const time = line.created_at ? new Date(line.created_at).toLocaleTimeString() : '--:--:--'
+  // ⚠️ 2026-10-20 审查修复（中等·时区）：
+  //   created_at 有两个来源：① Socket.IO 实时推送（aware UTC，带 +00:00 后缀）；
+  //   ② REST /terminal/history 回放（DB 读回 naive UTC，**无时区后缀**）。
+  //   原实现直接 new Date(line.created_at)：来源②会被浏览器按本地时区（UTC+8）
+  //   解释 → 终端里历史行的时间戳比真实时间**早 8 小时**（刷新后时间跳变）。
+  //   统一走 parseApiDate（naive 补 'Z' 按 UTC 解析），两种来源都对。
+  const d = parseApiDate(line.created_at)
+  const time = d ? d.toLocaleTimeString() : '--:--:--'
   const streamColor = line.stream === 'stderr' ? '\x1b[31m' : '\x1b[90m'
   return `\x1b[90m[${time}]\x1b[0m ${streamColor}[${line.stream}]\x1b[0m ${content}`
 }

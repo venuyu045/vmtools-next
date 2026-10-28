@@ -30,7 +30,14 @@
       </el-table-column>
       <el-table-column label="进度" width="180">
         <template #default="{ row }">
-          <span>{{ row.placed_blocks }} / {{ row.total_blocks }}</span>
+          <span>{{ row.placed_blocks ?? 0 }} / {{ row.total_blocks ?? 0 }}</span>
+        </template>
+      </el-table-column>
+      <el-table-column label="建造模式" width="150">
+        <template #default="{ row }">
+          <!-- 列表接口老版本不带 build_mode → 显示 '-' 而不是猜成「分区独立」 -->
+          <span v-if="row.build_mode">{{ buildModeLabel(row.build_mode) }}</span>
+          <span v-else style="color: var(--text-muted)">-</span>
         </template>
       </el-table-column>
       <el-table-column prop="projection_name" label="投影" />
@@ -101,7 +108,7 @@
 
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
-import { mapArtApi } from '@/api/mapArt'
+import { mapArtApi, buildModeLabel, type MapArtBuildMode, type MapArtTaskSummary } from '@/api/mapArt'
 import { botApi } from '@/api/bot'
 import { useBotStore } from '@/stores/bot'
 import { useMccInstanceStore } from '@/stores/mccInstance'
@@ -112,7 +119,7 @@ import SupplyWarehouseEditor from '@/components/build/SupplyWarehouseEditor.vue'
 
 const botStore = useBotStore()
 const mccStore = useMccInstanceStore()
-const tasks = ref<any[]>([])
+const tasks = ref<MapArtTaskSummary[]>([])
 const loading = ref(false)
 const showCreate = ref(false)
 const creating = ref(false)
@@ -120,7 +127,22 @@ const uploadedPath = ref('')
 const allBots = ref<any[]>([])
 const showTemplates = ref(false) // 补货仓库模板弹窗（2026-08-14 二期）
 
-const form = ref({ name: '', origin_x: 0, origin_y: 64, origin_z: 0, bot_ids: [] as string[], rotation: 0, build_mode: 'column' })
+/** 契约 §四：build_mode 全链路默认 column（列式协作），创建表单也以 column 为默认 */
+const DEFAULT_BUILD_MODE: MapArtBuildMode = 'column'
+
+function emptyForm() {
+  return {
+    name: '',
+    origin_x: 0,
+    origin_y: 64,
+    origin_z: 0,
+    bot_ids: [] as string[],
+    rotation: 0,
+    build_mode: DEFAULT_BUILD_MODE as MapArtBuildMode,
+  }
+}
+
+const form = ref(emptyForm())
 
 async function loadBots() {
   try {
@@ -197,20 +219,23 @@ async function onFileChange(uploadFile: any) {
 
 async function createTask() {
   if (!uploadedPath.value) { ElMessage.warning('请先上传 .litematic 投影文件'); return }
-  if (!form.value.bot_ids?.length) { ElMessage.warning('请至少选择 1 个 Mineflayer Bot'); return }
+  // 契约要求：bot_ids 非空（列式协作至少 1 个 bot 才可能推进）
+  const botIds = (form.value.bot_ids || []).filter((id): id is string => !!id)
+  if (!botIds.length) { ElMessage.warning('请至少选择 1 个 Mineflayer Bot'); return }
   creating.value = true
   try {
     await mapArtApi.createTask({
       name: form.value.name || '未命名',
       projection_file_path: uploadedPath.value,
       origin_x: form.value.origin_x, origin_y: form.value.origin_y, origin_z: form.value.origin_z,
-      bot_ids: form.value.bot_ids,
+      bot_ids: botIds,
       rotation: form.value.rotation,
-      build_mode: form.value.build_mode || 'column',
+      // 默认列式（DEFAULT_BUILD_MODE），表单被清空时也不落回旧的 strip
+      build_mode: form.value.build_mode || DEFAULT_BUILD_MODE,
     })
     ElMessage.success('任务创建成功！')
     showCreate.value = false
-    form.value = { name: '', origin_x: 0, origin_y: 64, origin_z: 0, bot_ids: [], rotation: 0, build_mode: 'column' }
+    form.value = emptyForm()
     uploadedPath.value = ''
     fetchTasks()
   } catch (e: any) {

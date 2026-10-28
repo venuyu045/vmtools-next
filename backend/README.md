@@ -38,7 +38,16 @@ docker-compose up -d
 ## 配置
 
 主配置文件: `config/config.yaml`
-环境变量覆盖: `VMT_*` 前缀 (如 `VMT_SERVER_PORT=9090`)
+
+环境变量覆盖: `VMT_*` 前缀，**嵌套层级必须用双下划线 `__` 分隔**（`_apply_env_overrides` 按 `split("__")` 解析且要求层级 ≥2）：
+
+```bash
+VMT_SERVER__PORT=9090            # ✅ 生效
+VMT_SERVER_PORT=9090             # ❌ 单下划线：不报错、也不生效（静默失效）
+VMT_SERVER__SECRET_KEY=<32+位>   # 必填，缺失/占位值会 RuntimeError 拒绝启动
+```
+
+> ⚠️ 例外：`VMT_ENV`、`VMT_CONFIG_PATH`、`VMT_PORT`、`MCC_*`、`SITE_ADMIN_*` 是保留的单下划线变量（给 shell / compose / start.sh 插值用），**不要**改成双下划线。详见根 `README.md` 与 `DEPLOY-部署流程.md` §10。
 
 ## 文档
 

@@ -96,11 +96,32 @@ class ScheduledTaskScheduler:
         await self._maybe_shutdown_idle()
 
     @staticmethod
+    def _tz():
+        """业务时区（来自 config.server.timezone，缺省 Asia/Shanghai）。
+
+        ⚠️ 2026-10-20 审查修复（中等·容器部署下定时任务整体偏移 8 小时）：
+          原先用 `datetime.astimezone()`（无参）= **进程本地时区**。Dockerfile 基于
+          python:3.12-slim（UTC）且 compose 未设 TZ → 容器里"本地时间"就是 UTC，
+          用户选「每天 14:30」实际 22:30（北京）才触发；一次性任务同样偏移。
+          改为显式时区后，裸机与容器行为一致，不受部署环境影响。
+          取不到时区（tzdata 缺失/配置非法）时回退系统本地时区，保持向后兼容。
+        """
+        try:
+            from zoneinfo import ZoneInfo
+            from vmtools_next.config import get_config
+            name = getattr(get_config().server, "timezone", "") or ""
+            if name:
+                return ZoneInfo(name)
+        except Exception:
+            pass
+        return datetime.now().astimezone().tzinfo
+
+    @staticmethod
     def _to_local_naive(dt: datetime) -> datetime:
-        """naive UTC（DB 存法）→ 本地 naive 时间。"""
+        """naive UTC（DB 存法）→ 业务时区的 naive 时间。"""
         if dt.tzinfo is None:
             dt = dt.replace(tzinfo=timezone.utc)
-        return dt.astimezone().replace(tzinfo=None)
+        return dt.astimezone(ScheduledTaskScheduler._tz()).replace(tzinfo=None)
 
     @staticmethod
     def _is_due(task, now: datetime) -> bool:
@@ -227,6 +248,9 @@ class ScheduledTaskScheduler:
                         logger.warning("Scheduled logistics trigger failed: {}", e)
 
             elif task.task_type == "map_art":
+                # 2026-10-28 B12：定时触发同样不判定 build_mode，统一交给
+                # execute_map_art_start() → resolve_build_mode()（默认 column），
+                # 与 API 手动启动 / TaskScheduler 队列调度三路同源。
                 from vmtools_next.data.models.build_map_art import MapArtTask
                 from vmtools_next.api.routers.build_map_art import execute_map_art_start
 

@@ -58,6 +58,36 @@ class TaskScheduler:
         except Exception as e:
             logger.warning("Orphan task cleanup failed: {}", e)
 
+        # ⚠️ 2026-10-20 审查修复（严重·物流 run 永久 running）：
+        #   上面的孤儿清理只覆盖 MapArtTask；ScanQueueManager.start() 另清 scan_queue。
+        #   但 `logistics_task_runs` **没有任何清理** → 物流 run 运行中重启后端（或容器
+        #   OOM 重启）后，该行永远停在 running：
+        #     ① `_pick_logistics_candidates` 用 `status=="running"` 计数并发，
+        #        默认 max_concurrent=1 → **之后所有物流任务永不启动**；
+        #     ② `_bot_busy` 见该 bot 有 running run → **该 Bot 永不派物流**；
+        #     ③ main._periodic_broadcast 每 5s 把这条幽灵任务推给前端，显示永远不动。
+        #   修复：与地图画同样口径，重启时把 running/paused 的 run 标记为 failed。
+        try:
+            from vmtools_next.data.models.logistics import LogisticsTaskRunModel
+            Session = get_session_factory()
+            db = Session()
+            try:
+                orphan_runs = db.query(LogisticsTaskRunModel).filter(
+                    LogisticsTaskRunModel.status.in_(["running", "paused"]),
+                ).all()
+                if orphan_runs:
+                    now = datetime.now(timezone.utc)
+                    for run in orphan_runs:
+                        run.status = "failed"
+                        run.error_message = "后端重启，物流任务中断（调度器孤儿清理）"
+                        run.finished_at = now
+                    db.commit()
+                    logger.info("TaskScheduler cleaned {} orphan logistics runs", len(orphan_runs))
+            finally:
+                db.close()
+        except Exception as e:
+            logger.warning("Orphan logistics run cleanup failed: {}", e)
+
         self._scheduler_task = asyncio.create_task(self._scheduler_loop())
         logger.info("TaskScheduler started (max_concurrent_build={})", self._max_concurrent_build)
 
@@ -138,7 +168,13 @@ class TaskScheduler:
         return candidates
 
     async def _start_map_art(self, task_id: str) -> None:
-        """启动单个地图画任务；失败置 failed 并继续调度下一个。"""
+        """启动单个地图画任务；失败置 failed 并继续调度下一个。
+
+        2026-10-28 B12（build_mode 三处默认值统一）：本调度器**不读 build_mode**，
+        也不自行选择协调器——column/strip 的判定与默认值统一在
+        ``execute_map_art_start()`` → ``resolve_build_mode()`` 里（默认 column）。
+        调度路径与 API 手动启动因此天然同源，不要在调度器里再写默认值。
+        """
         from vmtools_next.data.models.build_map_art import MapArtTask
         from vmtools_next.api.routers.build_map_art import execute_map_art_start
 
@@ -213,9 +249,17 @@ class TaskScheduler:
             if running_tasks:
                 tids = [t[0] for t in running_tasks]
                 if tids:
+                    # ⚠️ 2026-10-20 审查修复（中等·移除的 Bot 永不派物流）：
+                    #   原查询未过滤 state。而 manage_task_bot 移除 Bot 时只把
+                    #   assignment 置 state="released"（不删行）→ 被移除的 Bot 仍被
+                    #   判为"被任务占用"，只要该任务还在 running，这个 Bot 的物流 run
+                    #   就一直留在 pending（不失败、不派活、无提示），重新加入也无济于事。
+                    #   修复：与 manage_task_bot / _rebuild_assignments 口径一致，
+                    #   排除已 released 的分配。
                     hit = db.query(MapArtBotAssignment).filter(
                         MapArtBotAssignment.task_id.in_(tids),
                         MapArtBotAssignment.bot_id == bot_id,
+                        MapArtBotAssignment.state != "released",
                     ).first()
                     if hit:
                         return True
@@ -297,6 +341,21 @@ class TaskScheduler:
             self._logistics_runners.pop(run_id, None)
             await self.broadcast_queue()
             await self.schedule_once()
+
+    # ── 运行中 runner 访问器（供 API 层暂停/恢复/停止） ──
+
+    def get_logistics_runner(self, run_id: str):
+        """返回正在执行的物流 runner（不存在时 None）。
+
+        ⚠️ 2026-10-20 审查修复（严重·暂停/停止接口不作用于执行器）：
+          `_logistics_runners` 是 runner 的唯一持有者，但此前**没有任何对外访问器**
+          （api/ 下全仓无 runner 引用）。于是 POST /api/logistics/tasks/{id}/pause
+          和 /stop 只改 DB 一行，runner 仍在全速跑：
+            · pause → runner 下一次 _set_state 把 status 覆写回 "running"，暂停失效；
+            · stop  → runner 跑完本趟后 _complete("completed") 覆盖掉 "cancelled"。
+          本方法把 runner 暴露给 API 层，让控制指令真正下达到执行器。
+        """
+        return self._logistics_runners.get(run_id)
 
     # ── 广播 ──
 

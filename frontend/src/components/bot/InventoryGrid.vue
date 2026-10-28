@@ -455,9 +455,10 @@ onMounted(() => {
 
 <style scoped>
 .inv-container { padding: 8px; user-select: none; }
-.cursor-bar { text-align: center; padding: 5px 8px; margin-bottom: 6px; background: rgba(255,165,0,0.12); color: #ffa500; font-size: 12px; border-radius: 4px; }
-.cursor-bar.move { background: rgba(64,158,255,0.12); color: #409eff; }
-.help { text-align: center; font-size: 11px; color: #777; padding: 4px 0 8px; }
+.cursor-bar { text-align: center; padding: 5px 8px; margin-bottom: 6px; background: var(--warning-bg); color: var(--warning); font-size: 12px; border-radius: 4px; }
+.cursor-bar.move { background: var(--accent-soft); color: var(--accent); }
+/* 原 #777/#666 固定灰在亮色下偏浅、深色下发脏，统一到主题辅助文字色 */
+.help { text-align: center; font-size: 11px; color: var(--text-muted); padding: 4px 0 8px; }
 
 .layout { display: flex; gap: 8px; justify-content: center; align-items: flex-start; }
 
@@ -467,43 +468,63 @@ onMounted(() => {
 .hotbar-row { display: flex; gap: 2px; margin-top: 6px; }
 
 .side-area { display: flex; flex-direction: column; gap: 2px; }
-.side-label { font-size: 10px; color: #666; text-align: center; padding: 2px; }
+.side-label { font-size: 10px; color: var(--text-muted); text-align: center; padding: 2px; }
 .craft-grid {
-  display: grid; grid-template-columns: repeat(2, 42px); gap: 2px; justify-content: center;
+  display: grid; grid-template-columns: repeat(2, var(--slot, 42px)); gap: 2px; justify-content: center;
 }
-.slot.out { border-color: #666; }
+.slot.out { border-color: var(--border-strong); }
 
+/* 槽位尺寸走 CSS 变量：窄屏可整体缩放，避免 9 列固定 42px（394px）在 360px 屏溢出 */
 .slot {
-  width: 42px; height: 42px; border: 2px solid #3a3a3a; border-radius: 3px;
-  background: #141414; cursor: pointer; position: relative; transition: border-color 0.1s;
+  width: var(--slot, 42px); height: var(--slot, 42px);
+  border: 2px solid var(--border-strong); border-radius: 3px;
+  background: var(--bg-elevated); cursor: pointer; position: relative; transition: border-color 0.1s;
 }
-.slot:hover { border-color: #aaa; }
-.slot.filled { background: #1a1a1a; }
-.slot.sel { border-color: #ffe082; box-shadow: 0 0 4px rgba(255,224,130,0.4); }
-.slot.cursor { border-color: #ff8c00; border-style: dashed; background: rgba(255,140,0,0.08); }
-.slot.moveFrom { border-color: #409eff; border-style: dashed; background: rgba(64,158,255,0.15); }
-.slot .icon { position: absolute; width: 32px; height: 32px; top: 4px; left: 4px; image-rendering: pixelated; }
-.slot .count { position: absolute; bottom: 1px; right: 3px; font-size: 11px; color: #fff; font-weight: bold; text-shadow: 0 0 3px #000; }
-.slot .num { position: absolute; top: 0; left: 2px; font-size: 9px; color: #888; }
+.slot:hover { border-color: var(--text-muted); }
+.slot.filled { background: var(--bg-active); }
+.slot.sel { border-color: var(--accent); box-shadow: 0 0 4px var(--accent-ring); }
+.slot.cursor { border-color: var(--warning); border-style: dashed; background: var(--warning-bg); }
+.slot.moveFrom { border-color: var(--accent); border-style: dashed; background: var(--accent-soft); }
+.slot .icon { position: absolute; width: calc(var(--slot, 42px) - 10px); height: calc(var(--slot, 42px) - 10px); top: 4px; left: 4px; image-rendering: pixelated; }
+.slot .count { position: absolute; bottom: 1px; right: 3px; font-size: 11px; color: var(--text-primary); font-weight: bold; text-shadow: 0 0 3px rgba(0,0,0,0.6); }
+.slot .num { position: absolute; top: 0; left: 2px; font-size: 9px; color: var(--text-muted); }
 
-.bar { display: flex; align-items: center; gap: 12px; margin-top: 12px; justify-content: center; font-size: 12px; color: #aaa; flex-wrap: wrap; }
+.bar { display: flex; align-items: center; gap: 12px; margin-top: 12px; justify-content: center; font-size: 12px; color: var(--text-secondary); flex-wrap: wrap; }
 .held-info { color: var(--text-secondary, #bbb); font-size: 12px; }
 
-.ctx { position: fixed; z-index: 9999; background: #2a2a2a; border: 1px solid #555; border-radius: 5px; padding: 4px 0; min-width: 140px; box-shadow: 0 4px 12px rgba(0,0,0,0.5); }
-.ctxh { padding: 6px 12px; font-size: 12px; color: #aaa; border-bottom: 1px solid #444; }
-.ctxi { padding: 7px 14px; font-size: 13px; cursor: pointer; color: #ddd; }
-.ctxi:hover { background: #444; }
-.ctxi.cancel { color: #999; border-top: 1px solid #444; margin-top: 2px; }
+/* 右键菜单 / 上下文菜单：跟随主题浮层色（原 #2a2a2a 冷灰黑在暖墨主题下突兀） */
+.ctx { position: fixed; z-index: 9999; background: var(--bg-elevated); border: 1px solid var(--border-default); border-radius: var(--radius-md); padding: 4px 0; min-width: 140px; box-shadow: var(--shadow-lg); }
+.ctxh { padding: 6px 12px; font-size: 12px; color: var(--text-muted); border-bottom: 1px solid var(--border-subtle); }
+.ctxi { padding: 7px 14px; font-size: 13px; cursor: pointer; color: var(--text-primary); }
+.ctxi:hover { background: var(--bg-hover); }
+.ctxi.cancel { color: var(--text-muted); border-top: 1px solid var(--border-subtle); margin-top: 2px; }
 
 /* 详情弹窗 */
 .detail-body { display: flex; flex-direction: column; gap: 14px; }
 .detail-head { display: flex; align-items: center; gap: 14px; }
 .detail-icon { image-rendering: pixelated; }
 .detail-name { font-size: 17px; font-weight: 600; color: var(--text-primary, #fff); }
-.detail-custom { font-size: 14px; color: #e6a23c; font-weight: 600; margin-top: 2px; }
+/* 命名/附魔/描述：改用主题语义色（原 #e6a23c / #b48cff 为冷硬 EP 紫，深色下发荧光） */
+.detail-custom { font-size: 14px; color: var(--warning); font-weight: 600; margin-top: 2px; }
 .detail-id { font-size: 12px; color: var(--text-muted, #888); margin-top: 2px; }
-.ench-name { color: #e6a23c; font-weight: 600; }
-.lore-line { color: #b48cff; font-size: 12px; font-style: italic; line-height: 1.5; }
+.ench-name { color: var(--warning); font-weight: 600; }
+.lore-line { color: var(--text-secondary); font-size: 12px; font-style: italic; line-height: 1.5; }
 .detail-actions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; }
-.ench { font-size: 13px; color: #b48cff; }
+.ench { font-size: 13px; color: var(--warning); }
+
+/* ============ 窄屏适配 ============
+   9 列固定 42px 槽位 = 394px，加护甲侧栏与内边距共约 460px；
+   360–390px 手机（抽屉内可用宽度仅 ~295px）会整块横向溢出被裁掉。
+   改用 CSS 变量按视口收缩槽位，保证 9 列完整可见、点击目标仍 ≥ 30px。 */
+@media (max-width: 768px) {
+  .inv-container { --slot: clamp(28px, calc((100vw - 120px) / 9), 42px); padding: 4px; }
+  .layout { gap: 4px; }
+  .inv-rows, .inv-row, .hotbar-row, .side-area, .craft-grid { gap: 1px; }
+  .slot .count { font-size: 9px; right: 1px; bottom: 0; }
+  .slot .num { font-size: 8px; }
+  .slot .icon { top: 3px; left: 3px; width: calc(var(--slot, 42px) - 8px); height: calc(var(--slot, 42px) - 8px); }
+  /* 侧栏「护甲/合成」标题：窄屏下槽位变窄会把「护甲」挤成竖排单字，禁止换行 */
+  .side-label { white-space: nowrap; letter-spacing: 0; }
+  .side-area { flex-shrink: 0; }
+}
 </style>

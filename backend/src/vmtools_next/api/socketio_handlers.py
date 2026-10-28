@@ -485,7 +485,15 @@ async def logistics_control(sid, data):
 
 @sio.on("build_control")
 async def build_control(sid, data):
-    """Handle build task control commands."""
+    """Handle build task control commands.
+
+    ⚠️ DEPRECATED（2026-10-28，索引 §8.2 B11 死协议）：建造功能已统一迁移到地图画
+    REST（`POST /api/build/map-art/tasks/{id}/control`），本事件**前端无调用方**。
+    仅为兼容旧客户端保留：
+      · ``action="start"`` 一律回 ``build_alert`` 引导改用地图画 API（不再启动任何引擎）；
+      · ``stop`` / ``pause`` / ``resume`` 仅转发给通用 task engine（物流等），
+        地图画任务请走 REST。
+    """
     if not isinstance(data, dict):
         await sio.emit("build_alert", {"type": "error", "message": "Invalid data format"}, to=sid)
         return
@@ -589,15 +597,24 @@ def _build_initial_payload(user_info: dict | None = None) -> dict:
 # Map Art Build — Socket.IO room management
 # ──────────────────────────────────────────────
 
+# 鉴权拒绝的统一文案（join / leave / request_blocks 同一口径，A3）
+_BUILD_NO_PERM_MSG = "无权限订阅地图画建造进度（需管理员 admin / site_admin）"
+
+
 @sio.event
 async def build_map_join(sid, data: dict):
     """Client joins a map art build task's real-time room.
 
     Frontend emits: { task_id: "xxx" }
-    Backend: joins room "build_{task_id}", pushes build_map_init
+    Backend: joins room "build_{task_id}", 回放历史活动日志
     """
-    # 建造进度属管理数据：仅 admin / site_admin 可订阅（防任务进度泄露）
+    data = data or {}
+    # 建造进度属管理数据：仅 admin / site_admin 可订阅（防任务进度泄露）。
+    # 2026-10-28 A3 修复：非 admin 此前是**静默 return** —— 前端页面看着完全正常，
+    # 但 socket 永不更新、历史日志回放缺失、也没有任何提示（排障时完全看不出原因）。
+    # 现改为回 `build_alert` 让前端能明确提示「无权限」。
     if not await _require_admin_socket(sid):
+        await sio.emit("build_alert", {"type": "error", "message": _BUILD_NO_PERM_MSG}, to=sid)
         return
     task_id = data.get("task_id", "")
     if not task_id:
@@ -607,9 +624,12 @@ async def build_map_join(sid, data: dict):
     logger.info("Socket.IO build_map_join: {} joined room {}", sid, room)
 
     # 2026-08-14 终端：join 时回放历史活动日志（前端实时日志终端初始化）
+    # 2026-10-28：改用 core.map_art 单注册表 `resolve_coordinator()`——旧版要
+    #   `get_coordinator or get_multi_coordinator` 查两张表，而本处只查了 strip 表，
+    #   列式任务（默认模式）join 后历史日志恒为空。
     try:
-        from vmtools_next.core.map_art_coordinator import get_coordinator
-        coord = get_coordinator(task_id)
+        from vmtools_next.core.map_art import resolve_coordinator
+        coord = resolve_coordinator(task_id)
         if coord:
             coord.emit_log_history()
     except Exception as e:
@@ -618,7 +638,15 @@ async def build_map_join(sid, data: dict):
 
 @sio.event
 async def build_map_leave(sid, data: dict):
-    """Client leaves a map art build task room."""
+    """Client leaves a map art build task room.
+
+    2026-10-28 A3 修复：此前**完全没有鉴权**（与 join 的 admin 口径不一致，
+    索引 §4.1 已标出）→ 现与 join 同一口径：非 admin 回 build_alert 后 return。
+    """
+    data = data or {}
+    if not await _require_admin_socket(sid):
+        await sio.emit("build_alert", {"type": "error", "message": _BUILD_NO_PERM_MSG}, to=sid)
+        return
     task_id = data.get("task_id", "")
     if not task_id:
         return
@@ -632,8 +660,12 @@ async def build_map_request_blocks(sid, data: dict):
 
     Frontend emits: { task_id, chunk: { x_start, x_end, z_start, z_end } }
     Backend responds with build_map_chunk event.
+
+    ⚠️ 2026-10-28：前端已无订阅方（B11 死协议），保留仅为兼容旧客户端；
+    非 admin 由静默 return 改为回 build_alert（与 join/leave 同一口径）。
     """
     if not await _require_admin_socket(sid):
+        await sio.emit("build_alert", {"type": "error", "message": _BUILD_NO_PERM_MSG}, to=sid)
         return
     from sqlalchemy.orm import Session
     task_id = data.get("task_id", "")

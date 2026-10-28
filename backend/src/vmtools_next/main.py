@@ -35,6 +35,7 @@ from vmtools_next.api.routers.bluemap_api import router as bluemap_router
 from vmtools_next.api.routers.build_map_art import router as map_art_router
 from vmtools_next.api.routers.lixiangxiang import router as lixiangxiang_router
 from vmtools_next.api.routers.tasks import router as tasks_router
+from vmtools_next.api.routers.access import router as access_router
 from vmtools_next.adapters.mcc.mcc_session_pool import MccSessionPool
 from vmtools_next.adapters.mineflayer.mineflayer_session_pool import MineflayerSessionPool
 from vmtools_next.core.task_engine import TaskEngine
@@ -458,11 +459,19 @@ def create_app() -> FastAPI:
     """Create and configure the FastAPI application."""
     config = get_config()
 
+    # ⚠️ 2026-10-20 审查修复（轻微·接口 schema 未认证泄露）：
+    #   FastAPI 默认开放 /docs、/redoc、/openapi.json，且**无需认证**。
+    #   这三者会完整列出全部接口路径、参数与响应 schema（含管理类接口），
+    #   等于给攻击者一份现成的攻击面地图。生产环境关闭，仅 debug 时开启。
+    _docs_enabled = bool(config.server.debug)
     app = FastAPI(
         title="VMTools Next",
         description="MCC-based server-side automation for Minecraft building & logistics",
         version="0.1.0",
         lifespan=lifespan,
+        docs_url="/docs" if _docs_enabled else None,
+        redoc_url="/redoc" if _docs_enabled else None,
+        openapi_url="/openapi.json" if _docs_enabled else None,
     )
 
     # CORS
@@ -493,6 +502,7 @@ def create_app() -> FastAPI:
     app.include_router(map_art_router)
     app.include_router(lixiangxiang_router)
     app.include_router(tasks_router)
+    app.include_router(access_router)
 
     # Static files (Web UI — will be populated in phase 6)
     static_dir = BASE_DIR.parent.parent / "static"

@@ -53,16 +53,33 @@ def get_engine():
     config = get_config()
     _DATABASE_URL = config.server.database_url
 
-    # Resolve relative SQLite paths to absolute based on this module's location,
-    # so the database is always found regardless of cwd.
+    # Resolve relative SQLite paths to absolute so the DB is found regardless of cwd.
     # Module: backend/src/vmtools_next/data/db.py → 5 levels up → project root.
+    #
+    # ⚠️ 2026-10-20 审查修复（严重·数据丢失）：
+    #   原实现把解析出的 db_rel **丢弃**，无条件改写为
+    #   `<project_root>/vmtools-next/vmtools-next.db`。后果：
+    #     · Docker 部署（compose 设 VMT_SERVER__DATABASE_URL=sqlite:///data/vmtools-next.db，
+    #       卷挂载在 /app/data）→ project_root 解析成 "/" → 实际落点
+    #       /vmtools-next/vmtools-next.db，**不在挂载卷内**：容器重建即丢库；
+    #     · 任何在 config.yaml 里显式配置的相对路径都被静默忽略。
+    #   修复（保持向后兼容）：
+    #     · 绝对路径：原样使用；
+    #     · 相对路径且**含目录部分**（如 data/vmtools-next.db）：按 cwd 解析
+    #       （与 config.yaml.example 注释「相对 cwd」及 Docker WORKDIR=/app 语义一致）；
+    #     · 仅裸文件名（默认 sqlite:///vmtools-next.db）：沿用历史落点
+    #       `<project_root>/vmtools-next/vmtools-next.db`，保证现网裸机部署不受影响。
     if _DATABASE_URL.startswith("sqlite:///"):
         db_rel = _DATABASE_URL.removeprefix("sqlite:///")
         db_path = pathlib.Path(db_rel)
         if not db_path.is_absolute():
-            # Derive project root from this file's location
-            project_root = pathlib.Path(__file__).resolve().parent.parent.parent.parent.parent
-            db_path = (project_root / "vmtools-next" / "vmtools-next.db").resolve()
+            if db_path.parent != pathlib.Path("."):
+                # 显式配置了目录（Docker: data/vmtools-next.db）→ 尊重配置，按 cwd 解析
+                db_path = db_path.resolve()
+            else:
+                # 仅裸文件名 → 历史落点（裸机部署的既有数据库位置）
+                project_root = pathlib.Path(__file__).resolve().parent.parent.parent.parent.parent
+                db_path = (project_root / "vmtools-next" / "vmtools-next.db").resolve()
             _DATABASE_URL = f"sqlite:///{db_path}"
 
     connect_args = {}
@@ -399,7 +416,41 @@ def _ensure_site_admin(Session) -> None:
 
         if not admin_password:
             admin_password = uuid.uuid4().hex[:12]
-            logger.info("Generated site admin password for '{}': {}", admin_game_id, admin_password)
+            # ⚠️ 2026-10-20 审查修复（中等·初始管理员口令写入日志）：
+            #   原实现把口令明文打进日志。日志会流向 journalctl（systemd）、
+            #   docker logs、logs/*.log 落盘，通常比 .env 权限更宽（运维/监控/
+            #   日志采集系统都能读）且长期留存 —— 等于把「首次口令」的暴露面
+            #   从受保护文件挪到了日志。
+            #   修复：写入 0600 文件，日志只提示路径；debug 模式才打印明文。
+            _pw_file = None
+            try:
+                import pathlib as _pathlib
+                from vmtools_next.config import get_config_dir
+                _cfg_dir = _pathlib.Path(get_config_dir())
+                _pw_file = _cfg_dir / ".site_admin_password"
+                _pw_file.write_text(
+                    f"{admin_game_id}\n{admin_password}\n", encoding="utf-8"
+                )
+                try:
+                    _pw_file.chmod(0o600)
+                except OSError:
+                    pass
+            except Exception as _e:  # 写文件失败不应阻断启动
+                logger.warning("Failed to persist initial admin password file: {}", _e)
+                _pw_file = None
+
+            if _pw_file is not None:
+                logger.warning(
+                    "Generated site admin password for '{}' — see {} (chmod 600)",
+                    admin_game_id, _pw_file,
+                )
+                from vmtools_next.config import get_config as _gc
+                if getattr(_gc().server, "debug", False):
+                    logger.warning("DEBUG: site admin password = {}", admin_password)
+            else:
+                # 兜底：无文件可写时只能打印（比丢密码导致无法登录更可接受）
+                logger.warning("Generated site admin password for '{}': {}",
+                               admin_game_id, admin_password)
 
         password_hash = bcrypt.hashpw(
             admin_password.encode("utf-8"), bcrypt.gensalt()

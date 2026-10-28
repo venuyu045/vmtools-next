@@ -162,3 +162,15 @@ bluemap:
     - "world"
     - "world_nether"
     - "world_the_end"
+
+# ── 子路径应用访问控制（magpie / dsh 等 nginx auth_request 用）────
+# 说明：这些子路径应用挂在平台域名下，nginx 通过 auth_request 调后端接口
+#       /api/access/{magpie,dsh}-check 判断放行。site_admin 永远放行；
+#       这里可额外放行指定 game_id（精确匹配，区分大小写）。
+# ⚠️ 白名单只影响「能否进入该子路径应用」，不改变用户在平台内的角色权限。
+access_control:
+  # magpie Web UI 白名单（除 site_admin 外额外放行的 game_id）
+  # 例：
+  #   magpie_whitelist:
+  #     - some_player
+  magpie_whitelist: []

@@ -21,16 +21,110 @@ from vmtools_next.data.models.build_map_art import (
     MapArtSupplyWarehouse, MapArtFoodBox, MapArtGlobalConfig,
 )
 from vmtools_next.adapters.litematica.litematica_parser import LitematicaParser
-from vmtools_next.core.map_art_coordinator import (
-    MapArtCoordinator,
+# 2026-10-28 架构重构：引擎唯一实现在 core.map_art（旧 map_art_coordinator /
+# multi_bot_coordinator 已退化为 re-export shim）。API 只依赖这几个公共入口：
+#   create_coordinator / register_coordinator / unregister_coordinator
+#   resolve_coordinator（不分模式取活跃协调器）/ resolve_build_mode（build_mode 唯一默认值）
+from vmtools_next.core.map_art import (
+    create_coordinator,
     partition_rectangular,
-    get_coordinator,
     register_coordinator,
+    resolve_build_mode,
+    resolve_coordinator,
     unregister_coordinator,
 )
 
 logger = logging.getLogger("vmtools.map_art_api")
 router = APIRouter(prefix="/api/build/map-art", tags=["map-art"])
+
+
+# ──────────────────────────────────────────────
+# build_mode 默认值 / 协调器定位（2026-10-28 重构后为单一来源）
+# ──────────────────────────────────────────────
+#
+# B12（三处默认值不一致）与 P4（列式任务取不到协调器）在本文件的修法：
+#
+#   · build_mode 默认值 **不再在本文件定义** —— 唯一来源是
+#     `core/map_art/registry.py: resolve_build_mode()`（默认 ``column``，
+#     非法值/空值/NULL 一律回退 column）。模型列默认（data/models/build_map_art.py）、
+#     API 创建、``execute_map_art_start`` 兜底、两个调度器全部走它；
+#     历史显式存 ``strip`` 的任务仍按 strip 跑（兼容，不回改历史数据）。
+#
+#   · 协调器注册表也 **只剩一张**（`core/map_art/registry.py`）——旧版 strip 与
+#     column 各一张表，本文件只查 strip 表 → 列式任务（默认模式）的
+#     pause/resume/stop、bot 背包、日志、运行中增删 Bot 全部拿不到协调器。
+#     现在统一 `resolve_coordinator(task_id)` / `unregister_coordinator(task_id)`。
+#
+# 本文件只保留两个「读协调器内存」的兼容小工具（新旧引擎字段名不同）。
+
+
+def _coord_logs(coord, limit: int = 300) -> list[dict]:
+    """读协调器内存活动日志（新旧引擎双兼容）。
+
+    - 新引擎：``coord.activity`` 是 ``ActivityLog``（环形缓冲，``recent(limit)``）
+    - 旧协调器（shim 前）：``coord._activity_log`` 是 deque
+    """
+    act = getattr(coord, "activity", None)
+    if act is not None and hasattr(act, "recent"):
+        try:
+            return list(act.recent(limit))
+        except Exception:
+            pass
+    legacy = getattr(coord, "_activity_log", None)
+    if legacy is not None:
+        try:
+            return list(legacy)[-limit:]
+        except Exception:
+            pass
+    return []
+
+
+def _coord_placed_coords(coord) -> Optional[set]:
+    """运行中已放置坐标集合（协调器级优先，其次聚合各 bot loop）。
+
+    ``_placed_coords`` 在新引擎里挂在每个 ``BotRuntime``（``coord.loops[*]``）上，
+    协调器本身没有 → 聚合后返回；全部为空则返回 None，让调用方回退读 DB
+    （空集合 ≠ 没有放置，不能拿空集合短路 DB 查询）。
+    """
+    direct = getattr(coord, "_placed_coords", None)
+    if direct is not None:
+        return set(direct)
+    loops = getattr(coord, "loops", None) or getattr(coord, "_loops", None)
+    if not isinstance(loops, dict):
+        return None
+    merged: set = set()
+    for loop in loops.values():
+        coords = getattr(loop, "_placed_coords", None)
+        if coords:
+            merged |= set(coords)
+    return merged or None
+
+
+def _coord_total_blocks(coord) -> int:
+    """协调器视角的任务总块数（新引擎 ``_total_blocks`` / 旧 ``total_blocks``）。"""
+    for attr in ("total_blocks", "_total_blocks"):
+        val = getattr(coord, attr, None)
+        if isinstance(val, int) and val > 0:
+            return val
+    return 0
+
+
+def _region_world(ba, task) -> dict:
+    """bot 分配区域（DB 存投影相对坐标）→ 世界坐标。
+
+    2026-10-28 B7 修复：``get_task`` 早已把 region 转世界坐标，但
+    ``/tasks/{id}/blocks`` 两个分支仍原样返回相对坐标 → 同一份数据两套语义
+    （前端按世界坐标渲染 blocks，区域框却按相对坐标画 → 整框偏移 origin）。
+    全 API 统一：region 一律世界坐标。
+    """
+    ox = task.origin_x or 0
+    oz = task.origin_z or 0
+    return {
+        "x_start": (ba.region_x_start or 0) + ox,
+        "x_end": (ba.region_x_end or 0) + ox,
+        "z_start": (ba.region_z_start or 0) + oz,
+        "z_end": (ba.region_z_end or 0) + oz,
+    }
 
 
 # ──────────────────────────────────────────────
@@ -62,41 +156,25 @@ async def execute_map_art_start(task_id: str, db: Session) -> tuple[bool, str]:
     if not _layers:
         return False, "任务无方块数据（投影解析结果缺失），无法启动"
 
-    # 2026-08-19：按 build_mode 选择协调器（column=新列式协作 / strip=旧分区独立）
-    # 新任务默认 column（create 落库时若未显式指定则置 column）；旧任务兼容 strip。
-    build_mode = getattr(task, "build_mode", "strip") or "strip"
-    if build_mode == "column":
-        from vmtools_next.core.multi_bot_coordinator import (
-            MultiBotCoordinator as MultiCoord,
-            register_multi_coordinator,
-        )
-        coord = MultiCoord(
-            task_id=task_id,
-            projection_data={
-                "layers": _layers,
-                "regions": {"Main": {
-                    "size": {"x": task.projection_size_x, "z": task.projection_size_z},
-                }},
-            },
-            origin_x=task.origin_x,
-            origin_y=task.origin_y,
-            origin_z=task.origin_z,
-        )
-        _use_multi = True
-    else:
-        coord = MapArtCoordinator(
-            task_id=task_id,
-            projection_data={
-                "layers": _layers,
-                "regions": {"Main": {
-                    "size": {"x": task.projection_size_x, "z": task.projection_size_z},
-                }},
-            },
-            origin_x=task.origin_x,
-            origin_y=task.origin_y,
-            origin_z=task.origin_z,
-        )
-        _use_multi = False
+    # 2026-08-19：按 build_mode 选择协调器（column=列式协作 / strip=旧分区独立）
+    # 2026-10-28 B12 + 架构重构：build_mode 由 resolve_build_mode() 归一（唯一默认
+    #   column），协调器由 `create_coordinator()` 统一工厂按模式创建——
+    #   API 手动启动 / TaskScheduler 队列 / 定时任务三路共用本函数 → 完全同源。
+    #   注册表也只剩一张（register_coordinator），不再区分 multi/strip。
+    build_mode = resolve_build_mode(task)
+    coord = create_coordinator(
+        task_id=task_id,
+        projection_data={
+            "layers": _layers,
+            "regions": {"Main": {
+                "size": {"x": task.projection_size_x, "z": task.projection_size_z},
+            }},
+        },
+        origin_x=task.origin_x,
+        origin_y=task.origin_y,
+        origin_z=task.origin_z,
+        build_mode=build_mode,
+    )
     # 地图画建造仅支持 mineflayer 引擎：所有 bot 必须为 MF，且只从 mineflayer pool 取 client
     from vmtools_next.main import get_pool_for_engine
     from vmtools_next.core.bot_engine import resolve_bot_engine
@@ -123,10 +201,8 @@ async def execute_map_art_start(task_id: str, db: Session) -> tuple[bool, str]:
 
     try:
         await coord.start(bot_mcps)
-        if _use_multi:
-            register_multi_coordinator(task_id, coord)
-        else:
-            register_coordinator(task_id, coord)
+        # 单注册表（column/strip 同一张，resolve_coordinator 不再需要 or 两次）
+        register_coordinator(task_id, coord)
     except Exception as e:
         # 2026-08-14 审查修复：coord.start（连接 bot/初始化 loop）抛异常时
         # 会直接 500 且任务停留在 running（调用方已先置 running 落库）→
@@ -251,17 +327,13 @@ class SleepPointRequest(BaseModel):
     z: int = 0
 
 
-def _load_global_warehouse(db: Session) -> dict[str, list[tuple[int, int, int]]]:
-    """读取全局补货仓库（材料 → 潜影盒坐标列表）。"""
-    result: dict[str, list[tuple[int, int, int]]] = {}
-    rows = db.query(MapArtSupplyWarehouse).all()
-    for r in rows:
-        try:
-            boxes = json.loads(r.boxes_json or "[]")
-            result[r.item_id] = [(int(b["x"]), int(b["y"]), int(b["z"])) for b in boxes if "x" in b]
-        except Exception:
-            continue
-    return result
+# 2026-10-28 B5：此处原有 `_load_global_warehouse(db)`（读 map_art_supply_warehouse
+# 拼 {item_id: [(x,y,z)]}），全仓无任何调用点 —— 属死代码，已删除。
+# 「全局仓库合并进任务补货配置」这件事在协调器内实现：
+#   `MapArtCoordinator._load_supply_data()`（core/map_art_coordinator.py）自己查
+#   `MapArtSupplyBox`（任务级）+ `MapArtSupplyWarehouse`（全局），任务级优先合并后
+#   传给每个 BotBuildLoop；API 层不需要也不应该再算一遍。
+# 全局仓库的读/写仍由本文件的 GET/PUT `/supply-warehouse` 两个端点负责。
 
 
 def _default_supply_config() -> dict:
@@ -447,7 +519,9 @@ async def create_task(
         food_config=json.dumps(_default_food_config(), ensure_ascii=False),
         rotation=rotation,
         # 2026-08-19：新任务默认列式协作模式（多Bot排级蛇形）
-        build_mode=getattr(data, "build_mode", None) or "column",
+        # 2026-10-28 B12：默认值与模型列默认 / getattr 兜底统一走 resolve_build_mode()
+        # （= "column"）；传了非法值也回退 column，不再把脏值写进库。
+        build_mode=resolve_build_mode(data.build_mode),
     )
     db.add(task)
     db.flush()
@@ -587,7 +661,8 @@ def get_task(task_id: str, db: Session = Depends(get_db), user=Depends(require_a
         } if (task.sleep_x is not None and task.sleep_y is not None and task.sleep_z is not None) else None,
         "rotation": task.rotation or 0,
         # 2026-08-19：建造模式（column=多Bot列式协作 / strip=旧分区独立）
-        "build_mode": getattr(task, "build_mode", "strip") or "strip",
+        # 2026-10-28 B12：统一走 resolve_build_mode()（默认 column，不再 `or "strip"`）
+        "build_mode": resolve_build_mode(task),
         "projection": {
             "file_path": task.projection_file_path,
             "name": task.projection_name,
@@ -624,16 +699,20 @@ def get_task(task_id: str, db: Session = Depends(get_db), user=Depends(require_a
                 "squad_index": 1,
                 # 2026-08-16 审查修复：region 为投影相对坐标，前端画布按世界坐标渲染
                 # （blocks 已是世界坐标）——统一转世界坐标（origin + 相对），防区域框错位。
-                "region": {
-                    "x_start": (b.region_x_start or 0) + (task.origin_x or 0),
-                    "x_end": (b.region_x_end or 0) + (task.origin_x or 0),
-                    "z_start": (b.region_z_start or 0) + (task.origin_z or 0),
-                    "z_end": (b.region_z_end or 0) + (task.origin_z or 0),
-                },
+                "region": _region_world(b, task),
+                # 权威字段（与 WS `build_bot_status` 一致）
                 "blocks_placed": b.blocks_placed,
                 "blocks_total": b.blocks_total,
                 "current_row": b.current_row,
                 "place_rate": b.place_rate,
+                # ── 2026-10-28 A1 修复：后端补 `placed/total/rate` 别名 ──
+                # 前端模板（MapArtBuildView.vue）读的是 bot.placed / bot.total / bot.rate，
+                # 而本接口与 `build_bot_status` 给的是 blocks_placed/blocks_total/place_rate
+                # → 每 bot 进度恒 0%、文本 `undefined / undefined`、速率恒 0.0。
+                # 契约（重构方案 §四）：两组字段同时给，前端改不改都能显示。
+                "placed": b.blocks_placed or 0,
+                "total": b.blocks_total or 0,
+                "rate": b.place_rate or 0.0,
             }
             for b in bots
         ],
@@ -655,7 +734,8 @@ async def control_task(
     if not task:
         raise HTTPException(status_code=404, detail="任务不存在")
 
-    coordinator = get_coordinator(task_id)
+    # 2026-10-28 P4/A3：column/strip 双模式统一取协调器（列式任务此前取不到 → 暂停/停止静默失效）
+    coordinator = resolve_coordinator(task_id)
 
     if data.action == "start":
         # 2026-08-14：支持从 failed /「未完成的 completed」/ cancelled 回退重启（断点续建）。
@@ -752,7 +832,8 @@ async def force_bot_sleep(task_id: str, bot_id: str,
     task = db.query(MapArtTask).filter(MapArtTask.task_id == task_id).first()
     if not task:
         raise HTTPException(status_code=404, detail="任务不存在")
-    coordinator = get_coordinator(task_id)
+    # 2026-10-28：双模式统一取协调器（列式任务此前取不到 → 睡觉按钮 409）
+    coordinator = resolve_coordinator(task_id)
     if coordinator is None:
         raise HTTPException(status_code=409, detail="任务未在运行中（无 coordinator），请在 bot 管理页触发睡觉")
     try:
@@ -777,7 +858,8 @@ def _rebuild_assignments(task, db: Session) -> None:
         ).order_by(MapArtBotAssignment.id).all()
         if not survivors:
             return
-        build_mode = getattr(task, "build_mode", "strip") or "strip"
+        # 2026-10-28 B12：统一走 resolve_build_mode()（默认 column，不再 `or "strip"`）
+        build_mode = resolve_build_mode(task)
         size_x = task.projection_size_x or 128
         size_z = task.projection_size_z or 128
         if build_mode == "column":
@@ -831,7 +913,9 @@ async def manage_task_bot(
     if task.status == "completed":
         raise HTTPException(status_code=400, detail="任务已完成，不允许操作 Bot")
 
-    coordinator = get_coordinator(task_id)
+    # 2026-10-28 P4：column/strip 双模式统一取协调器（列式任务此前恒为 None →
+    # 运行中增删 Bot 一律走「未运行」分支，改了 assignment 却没通知引擎）
+    coordinator = resolve_coordinator(task_id)
     from vmtools_next.core.bot_engine import resolve_bot_engine
     from vmtools_next.main import get_pool_for_engine
 
@@ -847,35 +931,66 @@ async def manage_task_bot(
             raise HTTPException(status_code=400, detail=err)
 
         if coordinator:
-            # ── 运行中：把 remove_bot 释放的未完成区域分配给新 bot（原逻辑）──
+            # ── 运行中增 Bot（2026-10-28 P4 修复：移除 400 拦截，直接调协调器）──
+            # 历史：2026-10-20 曾用 `hasattr(coordinator, "add_bot")` 探测 + 400 拒绝，
+            #   因为列式协调器（MultiBotCoordinator，新任务默认 build_mode="column"）
+            #   当时确实没有 add_bot/remove_bot → 运行中增删 Bot 必然 500，只能硬拦。
+            # 现在：引擎侧（重构方案 §四）为列式协调器实现同名方法，语义为
+            #   「未建的列重新编排、已建的列不动」，签名与旧 strip 协调器一致：
+            #     add_bot(bot_id, bot_name, agent) -> bool
+            #     remove_bot(bot_id) -> bool
+            #   因此 API 不再做模式判断（那是引擎的职责），直接调用即可。
             pool = get_pool_for_engine("mineflayer")
             client = pool.get_client(data.bot_id) if pool else None
             if not client:
                 raise HTTPException(status_code=400, detail=f"Bot {data.bot_id} 未连接")
 
-            region = await coordinator.add_bot(data.bot_id, data.bot_id, client)
-            if region is None:
-                raise HTTPException(status_code=400,
-                                    detail="无待接管区域（所有区域均已分配或完成）")
-            # DB：新增 assignment 记录
-            ba = MapArtBotAssignment(
-                task_id=task_id,
-                bot_id=data.bot_id,
-                bot_name=data.bot_id,
-                region_x_start=region.x_start,
-                region_x_end=region.x_end,
-                region_z_start=region.z_start,
-                region_z_end=region.z_end,
-                blocks_total=region.block_count,
-                state="running",
-            )
-            db.add(ba)
+            result = await coordinator.add_bot(data.bot_id, data.bot_id, client)
+            # 兼容两种返回契约（防引擎重构期/旧协调器混跑）：
+            #   新契约 bool（True=已接管）/ 旧 strip 契约 Region|None（None=无待接管区域）
+            if isinstance(result, bool):
+                ok, region = result, None
+            else:
+                ok, region = result is not None, result
+            if not ok:
+                raise HTTPException(
+                    status_code=400,
+                    detail="无法加入该运行任务：无待接管区域（均已分配/完成），"
+                           "或该 Bot 已在任务中",
+                )
+
+            # DB：新增/复用 assignment 记录（同 bot 可能有 released 历史行 → 复用，防重复行）
+            ba = db.query(MapArtBotAssignment).filter(
+                MapArtBotAssignment.task_id == task_id,
+                MapArtBotAssignment.bot_id == data.bot_id,
+            ).order_by(MapArtBotAssignment.id.desc()).first()
+            if ba is None:
+                ba = MapArtBotAssignment(
+                    task_id=task_id,
+                    bot_id=data.bot_id,
+                    bot_name=data.bot_id,
+                )
+                db.add(ba)
+            ba.state = "running"
+            region_payload = None
+            if region is not None:
+                ba.region_x_start = getattr(region, "x_start", 0)
+                ba.region_x_end = getattr(region, "x_end", 0)
+                ba.region_z_start = getattr(region, "z_start", 0)
+                ba.region_z_end = getattr(region, "z_end", 0)
+                ba.blocks_total = getattr(region, "block_count", 0)
+                ba.blocks_placed = 0
+                ba.current_row = -1
+                region_payload = {
+                    "x_start": ba.region_x_start, "x_end": ba.region_x_end,
+                    "z_start": ba.region_z_start, "z_end": ba.region_z_end,
+                }
             db.commit()
-            return {"task_id": task_id, "bot_id": data.bot_id,
-                    "action": "add", "region": {
-                        "x_start": region.x_start, "x_end": region.x_end,
-                        "z_start": region.z_start, "z_end": region.z_end,
-                    }}
+            return {
+                "task_id": task_id, "bot_id": data.bot_id, "action": "add",
+                "region": region_payload,
+                "message": "Bot 已加入运行中任务（列式模式：未建列重新编排，已建列不动）",
+            }
 
         # ── 未运行（draft/pending）：直接写入 assignment（2026-08-19 放开限制）──
         # 任务未启动时随时可添加 bot；启动时协调器统一分配列/区域。
@@ -912,7 +1027,9 @@ async def manage_task_bot(
             raise HTTPException(status_code=400, detail="至少保留 1 个 Bot")
 
         if coordinator:
-            # 运行中：停止 bot 并释放区域
+            # ── 运行中减 Bot（2026-10-28 P4 修复：移除 400 拦截，直接调协调器）──
+            # 与上面 add 分支同因：列式协调器已由引擎侧实现同名 remove_bot，
+            # 语义为「停该 bot + 其未建列交回编队（已建列不动）」，返回 bool。
             ok = await coordinator.remove_bot(data.bot_id)
             if not ok:
                 raise HTTPException(status_code=400,
@@ -920,11 +1037,12 @@ async def manage_task_bot(
             ba = db.query(MapArtBotAssignment).filter(
                 MapArtBotAssignment.task_id == task_id,
                 MapArtBotAssignment.bot_id == data.bot_id,
-            ).first()
+            ).order_by(MapArtBotAssignment.id.desc()).first()
             if ba:
                 ba.state = "released"
             db.commit()
-            return {"task_id": task_id, "bot_id": data.bot_id, "action": "remove"}
+            return {"task_id": task_id, "bot_id": data.bot_id, "action": "remove",
+                    "message": "Bot 已移出运行中任务（未建列交回编队，已建列保留）"}
 
         # draft/pending：直接删除 assignment + 按剩余 bot 重新分配（2026-08-14 二期；
         # 2026-08-19 统一走 _rebuild_assignments 支持 column 列号重排）
@@ -1346,19 +1464,19 @@ def get_task_logs(task_id: str, db: Session = Depends(get_db), user=Depends(requ
     前端 BuildLogPanel 除 socket 实时推送外，每 3s 轮询此接口增量拉取，
     避免 socket 事件丢失/缓存导致终端空白。
     """
-    from vmtools_next.core.map_art_coordinator import get_coordinator
-    coord = get_coordinator(task_id)
+    # 2026-10-28：单注册表取协调器（列式任务此前恒返回空日志）
+    coord = resolve_coordinator(task_id)
     if not coord:
         return {"logs": []}
-    return {"logs": list(coord._activity_log)}
+    return {"logs": _coord_logs(coord)}
 
 
 @router.get("/tasks/{task_id}/bots/inventory")
 async def get_task_bots_inventory(task_id: str, db: Session = Depends(get_db),
                                   user=Depends(require_admin)):
     """正在工作的 bot 的背包快照（2026-08-14：实时终端下方 bot 背包面板轮询）。"""
-    from vmtools_next.core.map_art_coordinator import get_coordinator
-    coord = get_coordinator(task_id)
+    # 2026-10-28：双模式统一取协调器（列式任务此前恒返回空背包）
+    coord = resolve_coordinator(task_id)
     if not coord:
         return {"bots": []}
     return {"bots": await coord.get_bot_inventory()}
@@ -1376,10 +1494,11 @@ def get_task_placed_blocks(task_id: str, db: Session = Depends(get_db),
     记录，不依赖 DB 行尾 flush）→ 前端预览像素实时变深；任务结束（无 coordinator）
     回退读 DB。
     """
-    from vmtools_next.core.map_art_coordinator import get_coordinator
-    coord = get_coordinator(task_id)
+    # 2026-10-28：单注册表取协调器；新引擎把 _placed_coords 挂在各 bot loop 上，
+    # 由 _coord_placed_coords() 聚合（拿不到则回退 DB，绝不返回空集合短路）。
+    coord = resolve_coordinator(task_id)
     if coord is not None:
-        coords = getattr(coord, "_placed_coords", None)
+        coords = _coord_placed_coords(coord)
         if coords is not None:
             blocks = [
                 {"x": c[0], "y": c[1], "z": c[2],
@@ -1390,7 +1509,7 @@ def get_task_placed_blocks(task_id: str, db: Session = Depends(get_db),
                 "task_id": task_id,
                 "blocks": blocks,
                 "placed": len(blocks),
-                "total": coord.total_blocks if hasattr(coord, "total_blocks") else 0,
+                "total": _coord_total_blocks(coord),
             }
 
     task = db.query(MapArtTask).filter(MapArtTask.task_id == task_id).first()
@@ -1422,6 +1541,7 @@ def delete_task(task_id: str, db: Session = Depends(get_db), user=Depends(requir
         raise HTTPException(status_code=404, detail="任务不存在")
     if task.status not in ("draft", "cancelled", "completed"):
         raise HTTPException(status_code=400, detail=f"任务当前状态（{task.status}）不允许删除")
+    # 2026-10-28：双注册表都摘（列式任务此前删完仍留幽灵协调器）
     unregister_coordinator(task_id)
     # 2026-08-14 审查修复：MapArtSupplyBox 未挂在 MapArtTask 的 relationship 上
     # （无级联），且 SQLite 默认未启用 foreign_keys（ondelete=CASCADE 不生效）→
@@ -1444,6 +1564,15 @@ def get_task_blocks(task_id: str, db: Session = Depends(get_db), user=Depends(re
     blocks——47 万块投影逐格 JSON ≈25MB 下载+解析卡死/占满带宽；runs 按行内
     连续同色合并（{z, x_start, x_end, block, placed}）数据量降 1~2 个数量级，
     前端直接按 run 绘制。小图（≤5 万）保持逐格 blocks 兼容旧逻辑。
+
+    ── 坐标口径（2026-10-28 B7 修复）──
+    本接口**一律返回世界坐标**，与 `GET /tasks/{id}` 声明一致：
+      · `blocks[].x/y/z` / `runs[].z,x_start,x_end`：DB 自 2026-08-16 起统一存世界
+        坐标（`data/db.py` PRAGMA user_version=1 迁移过历史相对坐标行）；
+      · `bots[].region`：DB 存的是**投影相对坐标** → 此处 + origin 转世界坐标
+        （此前两个分支原样返回相对坐标，与 get_task 的世界坐标区域框语义冲突）；
+      · `origin` / `size` 仍照旧返回，供前端自行换算（相对 = 世界 - origin）。
+    新增 `"coords": "world"` 显式标记，防调用方再猜。
     """
     task = db.query(MapArtTask).filter(MapArtTask.task_id == task_id).first()
     if not task:
@@ -1477,12 +1606,13 @@ def get_task_blocks(task_id: str, db: Session = Depends(get_db), user=Depends(re
             "task_id": task_id,
             "runs": runs,
             "is_runs": True,
+            "coords": "world",
             "total": len(rows),
             "placed": task.placed_blocks or 0,
+            # 2026-10-28 B7：region 转世界坐标（与 get_task 一致）
             "bots": [
                 {"bot_id": ba.bot_id, "bot_name": ba.bot_name, "state": ba.state,
-                 "region": {"x_start": ba.region_x_start, "x_end": ba.region_x_end,
-                            "z_start": ba.region_z_start, "z_end": ba.region_z_end}}
+                 "region": _region_world(ba, task)}
                 for ba in bots
             ],
             "origin": {"x": task.origin_x, "y": task.origin_y, "z": task.origin_z},
@@ -1501,10 +1631,11 @@ def get_task_blocks(task_id: str, db: Session = Depends(get_db), user=Depends(re
              "placed": b.placed, "verified": b.verified}
             for b in blocks
         ],
+        "coords": "world",
+        # 2026-10-28 B7：region 转世界坐标（与 get_task 一致）
         "bots": [
             {"bot_id": ba.bot_id, "bot_name": ba.bot_name, "state": ba.state,
-             "region": {"x_start": ba.region_x_start, "x_end": ba.region_x_end,
-                        "z_start": ba.region_z_start, "z_end": ba.region_z_end}}
+             "region": _region_world(ba, task)}
             for ba in bots
         ],
         "origin": {"x": task.origin_x, "y": task.origin_y, "z": task.origin_z},

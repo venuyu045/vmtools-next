@@ -163,13 +163,28 @@ def _get_bot_current_task(db: Session, bot_id: str):
 
     # 2) 地图画（map_art_bot_assignments + map_art_tasks）
     from vmtools_next.data.models.build_map_art import MapArtBotAssignment, MapArtTask
-    assign = db.query(MapArtBotAssignment).filter(
-        MapArtBotAssignment.bot_id == bot_id,
-    ).first()
+    # ⚠️ 2026-10-20 审查修复（中等·当前工作误判为空闲）：
+    #   原实现先 `filter(bot_id=...).first()` 取**最早插入**的一条 assignment
+    #   （可能是几个月前已完成任务的记录），再判断其 task 是否 running。
+    #   若那条旧记录对应任务已结束 → 直接返回 None，**不会再看后续 assignment**
+    #   → 正在跑新任务的 Bot 在状态页显示"空闲"，busy 判断同样失真。
+    #   修复：join 任务表，在 SQL 层就限定「该 bot + 任务正在运行 + 未释放」，
+    #   并按 id 倒序取最新一条。state != "released" 同时对齐
+    #   manage_task_bot / _rebuild_assignments 的口径。
+    assign = (
+        db.query(MapArtBotAssignment)
+        .join(MapArtTask, MapArtTask.task_id == MapArtBotAssignment.task_id)
+        .filter(
+            MapArtBotAssignment.bot_id == bot_id,
+            MapArtBotAssignment.state != "released",
+            MapArtTask.status == "running",
+        )
+        .order_by(MapArtBotAssignment.id.desc())
+        .first()
+    )
     if assign:
         task = db.query(MapArtTask).filter(
             MapArtTask.task_id == assign.task_id,
-            MapArtTask.status == "running",
         ).first()
         if task:
             progress = None
@@ -350,6 +365,14 @@ def bot_status_overview(engine: str = "mcc",
             except Exception:
                 viewer_port = None
 
+        # ⚠️ 2026-10-20 审查修复（中等·访客可读内部端口与实时坐标）：
+        #   本接口用 get_optional_user（未登录可访问，供「访客只读」状态页使用），
+        #   但原实现把 mcp_port / viewer_port 一并返回。这两个端口是**服务器内部**
+        #   监听端口，与访客浏览需求无关，泄露后可用于端口探测/直连尝试
+        #   （配合 connect 接口的 host/port 可控问题形成攻击面）。
+        #   修复：访客（user is None）不返回端口，仅登录用户可见；坐标/血量等
+        #   展示字段保持公开，不影响访客只读页功能。
+        is_guest = user is None
         items.append(MccBotStatusItem(
             bot_id=b.bot_id,
             name=b.name or b.bot_id,
@@ -358,8 +381,8 @@ def bot_status_overview(engine: str = "mcc",
             current_health=b.current_health,
             current_food=b.current_food,
             current_location=loc,
-            mcp_port=mcp_port,
-            viewer_port=viewer_port,
+            mcp_port=None if is_guest else mcp_port,
+            viewer_port=None if is_guest else viewer_port,
             last_heartbeat=last_hb,
             nearest_residence=nearest,
             current_task=task_by_bot.get(b.bot_id),
@@ -417,7 +440,21 @@ def delete_bot(bot_id: str, db: Session = Depends(get_db), user=Depends(require_
 @router.post("/{bot_id}/connect")
 async def connect_bot(bot_id: str, data: MccBotConnectRequest,
                       db: Session = Depends(get_db), user=Depends(require_admin)):
-    """Connect a bot to MCC MCP server (scoped by organization)."""
+    """Connect a bot to MCC MCP server.
+
+    ⚠️ 2026-10-20 审查修复（中等·SSRF + 凭据外发）：
+      原实现把请求体里的 `host` / `port` / `auth_token` **原样**交给
+      `pool.connect_bot(...)`，服务端不做任何校验：
+        · host/port 可控 → 后端可被指使连接任意内网地址（云元数据 169.254.169.254、
+          内网管理口、其他实例的 MCP 端口），并用响应码/超时差异做端口探测；
+        · auth_token 可控 → 可把任意令牌发往任意主机（凭据外发/钓鱼跳板）。
+      与已修的 inventory `mcp_port` 越权同源。
+      修复（最小改动、保持兼容）：
+        · 优先使用数据库中该 bot 绑定实例的 mcp_host/mcp_port 与解密后的
+          mcp_auth_token（服务端权威来源）；
+        · 仅当 bot 无绑定实例时，才允许调用方指定 host，且必须是回环/私有地址
+          （禁止公网地址，防把后端当跳板）。
+    """
     bot = _get_scoped_bot(db, user, bot_id)
 
     # Get pool from app state (injected by lifespan)
@@ -429,7 +466,36 @@ async def connect_bot(bot_id: str, data: MccBotConnectRequest,
     if not pool:
         raise HTTPException(500, "Pool not initialized")
 
-    success = await pool.connect_bot(bot_id, data.host, data.port, data.auth_token)
+    # ── 解析服务端权威连接参数（DB 实例优先）──
+    from vmtools_next.data.models.mcc_remote import MccInstanceModel
+    from vmtools_next.core.mcc_security import reveal_secret
+    inst = db.query(MccInstanceModel).filter(
+        MccInstanceModel.bot_id == bot_id,
+        MccInstanceModel.deleted_at.is_(None),
+    ).first()
+
+    if inst is not None:
+        host = inst.mcp_host or "127.0.0.1"
+        port = inst.mcp_port or data.port
+        token = reveal_secret(inst.mcp_auth_token_secret) or None
+    else:
+        # 无绑定实例：仅允许回环/私有地址，避免把后端当公网跳板
+        import ipaddress
+        host = (data.host or "127.0.0.1").strip()
+        try:
+            ip = ipaddress.ip_address(host)
+            allowed = ip.is_loopback or ip.is_private
+        except ValueError:
+            allowed = host in ("localhost",)
+        if not allowed:
+            raise HTTPException(
+                status_code=400,
+                detail="该 Bot 未绑定 MCC 实例，host 仅允许回环或内网地址",
+            )
+        port = data.port
+        token = data.auth_token
+
+    success = await pool.connect_bot(bot_id, host, port, token)
     bot.status = "online" if success else "error"
     db.commit()
 
@@ -509,16 +575,34 @@ async def _get_mcp_client(bot_id: str, mcp_port: int = 0):
             "（MF bot 由进程管理器管理，不支持临时新建连接）",
         )
     port = mcp_port
-    if not port:
-        from vmtools_next.data.models.mcc_remote import MccInstanceModel
-        with get_session_factory()() as db:
-            inst = db.query(MccInstanceModel).filter(
-                MccInstanceModel.bot_id == bot_id
-            ).first()
-            if inst:
-                port = inst.mcp_port
-    if not port:
-        port = 33333
+
+    # ⚠️ 2026-10-20 审查修复（中等·SSRF / 越权探测）：
+    #   `mcp_port` 来自调用方 query 参数（GET /api/mcc-bots/{id}/inventory?mcp_port=N），
+    #   原实现**无条件优先采用调用方给的值**，然后让后端去连 `127.0.0.1:<N>`。
+    #   任何已登录用户（get_current_user，无需 admin）即可借此：
+    #     ① 探测服务器回环端口存活（SSRF，仅限 127.0.0.1，但足以枚举本机服务）；
+    #     ② 连接**其它实例**的 MCP 端口，绕过「按 bot 取实例」的绑定关系。
+    #   修复：以数据库里该 bot 绑定的实例端口为唯一可信来源；只有当 bot 没有
+    #   关联实例（历史遗留）时，才接受调用方端口，且必须落在配置的 MCC 端口段内。
+    from vmtools_next.data.models.mcc_remote import MccInstanceModel as _Inst
+    from vmtools_next.config import get_config as _get_cfg
+    with get_session_factory()() as db:
+        inst = db.query(_Inst).filter(
+            _Inst.bot_id == bot_id,
+            _Inst.deleted_at.is_(None),
+        ).first()
+    if inst is not None and inst.mcp_port:
+        port = inst.mcp_port
+    else:
+        cfg = _get_cfg().mcc
+        lo, hi = int(cfg.instance_start_port), int(cfg.instance_end_port)
+        if not port:
+            port = lo
+        elif not (lo <= int(port) <= hi):
+            raise HTTPException(
+                400,
+                f"bot {bot_id} 未绑定实例，mcp_port 必须落在配置端口段 {lo}-{hi} 内",
+            )
 
     from vmtools_next.adapters.mcc.mcc_mcp_client import MccMcpClient
     client = MccMcpClient(host="127.0.0.1", port=port, timeout_read=10)

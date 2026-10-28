@@ -225,7 +225,8 @@ const dur = ref<{ hasDurability: boolean; ratio: number; name: string | null; di
 const entities = ref<EntityInfo[]>([])
 
 const durPct = computed(() => Math.round((dur.value?.ratio ?? 1) * 100))
-const durColor = computed(() => (durPct.value < 10 ? '#e34d59' : durPct.value < 30 ? '#e6a23c' : '#67c23a'))
+// 耐久条配色：与主题语义色 Token 对齐（原 EP 冷色 #e34d59/#e6a23c/#67c23a 深色下过艳）
+const durColor = computed(() => (durPct.value < 10 ? 'var(--danger, #e0665a)' : durPct.value < 30 ? 'var(--warning, #c9a05c)' : 'var(--success, #7fb08a)'))
 
 const badgeText = computed(() => {
   if (idle.enabled) return '● 挂机中'
@@ -508,7 +509,7 @@ onMounted(() => {
   font-weight: 600;
 }
 .combat-badge.on {
-  color: #67c23a;
+  color: var(--success, #67c23a);
 }
 /* ── 左右分栏（2026-08-11 重构） ── */
 .combat-cols {
@@ -524,8 +525,8 @@ onMounted(() => {
   background: var(--bg-card, #f5f3ec);
 }
 .combat-col.active {
-  border-color: #67c23a;
-  box-shadow: 0 0 0 1px rgba(103, 194, 58, 0.35);
+  border-color: var(--success, #67c23a);
+  box-shadow: 0 0 0 1px var(--success-bg, rgba(103, 194, 58, 0.35));
 }
 .col-head {
   display: flex;

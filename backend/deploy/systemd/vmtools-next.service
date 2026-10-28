@@ -16,10 +16,26 @@ StandardError=journal
 SyslogIdentifier=vmtools-next
 
 # Environment
+# ⚠️ 2026-10-20 审查修复（严重·部署失败 + 配置失效）：
+#   ① 原文件用 VMT_SERVER_HOST / VMT_SERVER_PORT / VMT_SERVER_DATABASE_URL
+#      （单下划线）。而 config.py 的 _apply_env_overrides 只认
+#      `VMT_<SECTION>__<KEY>`（**双下划线**分隔嵌套层级），且要求 len(path)>=2。
+#      实测这三个变量全部被**静默忽略**（不报错、不生效），服务仍按 config.yaml
+#      默认值（0.0.0.0:8080 / 默认库路径）启动 —— 与运维预期不符。
+#   ② 原文件**未设置 VMT_SERVER__SECRET_KEY**，而 config.load_config() 在
+#      secret_key 为默认值 "change-in-production" 时直接 raise RuntimeError
+#      拒绝启动（安全设计）。因此该 unit 在本机无 config.yaml 时**根本起不来**。
+#   修复：改为双下划线命名；secret_key 用 EnvironmentFile 从受保护文件读取
+#   （不要把密钥硬编码进 unit，unit 通常 644 权限）。
 Environment=VMT_ENV=prod
-Environment=VMT_SERVER_HOST=0.0.0.0
-Environment=VMT_SERVER_PORT=8080
-Environment=VMT_SERVER_DATABASE_URL=sqlite:///data/vmtools-next.db
+Environment=VMT_SERVER__HOST=0.0.0.0
+Environment=VMT_SERVER__PORT=8080
+Environment=VMT_SERVER__DATABASE_URL=sqlite:///data/vmtools-next.db
+# 密钥：/etc/vmtools-next/env 内写 `VMT_SERVER__SECRET_KEY=<openssl rand -hex 32>`
+# 并 `chmod 600`。前缀 `-` 表示文件可选：文件缺失时 systemd 不会因此报错，
+# 但应用启动时 config.load_config() 会因 secret_key 仍为默认值而拒绝启动
+# （安全优先，好过用默认密钥裸奔）—— 见 journalctl -u vmtools-next。
+EnvironmentFile=-/etc/vmtools-next/env
 
 # Security
 NoNewPrivileges=true

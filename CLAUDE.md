@@ -22,7 +22,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | 后端 | Python 3.11+ · FastAPI · SQLAlchemy · SQLite (生产中可用 PostgreSQL) |
 | 实时通信 | python-socketio (WebSocket) |
 | 前端 | Vue 3 · TypeScript · Vite · Element Plus |
-| 终端 | @xterm/xterm（前端）+ ConPTY/PTY（后端） |
+| 终端 | @xterm/xterm（前端）+ PTY/stdout PIPE（后端，见 `core/mcc_process_manager.py`、`core/terminal_log_buffer.py`） |
 | 图表/3D | ECharts · Three.js |
 | 部署 | Docker · Docker Compose · Systemd · Nginx |
 
@@ -66,12 +66,14 @@ npm run build        # 生产构建 → 输出到 backend/static/
 # Docker Compose
 docker compose up -d --build
 
-# 或 Systemd（见 deploy/systemd/）
-# sudo cp deploy/systemd/vmtools-next.service /etc/systemd/system/
+# 或 Systemd（见 backend/deploy/systemd/，注意不是仓库根的 deploy/——该目录不存在）
+# sudo cp backend/deploy/systemd/vmtools-next.service /etc/systemd/system/
 # sudo systemctl enable vmtools-next && systemctl start vmtools-next
 ```
 
 **注意：** 前端构建产物输出到 `backend/static/`，由后端服务。改完前端需重新 `npm run build` 才生效。
+
+> ⚠️ **`backend/static/` 含非构建产物**：`item-icons/`（1231 张图标）与 `lixiangxiang/`（seed 占位资源 + `uploads/` 用户上传数据，运行时生成、不在 `npm run build` 产物里）。**部署禁 `rm -rf static/`** —— 会连用户数据一起删；只替换 `assets/` + `index.html`，替换后校验 `item-icons=1231`、`fonts=404`。
 
 ---
 
@@ -118,25 +120,29 @@ vmtools-next/
 ├── backend/                        # Python FastAPI 后端
 │   ├── src/vmtools_next/           # 核心源码
 │   │   ├── api/
-│   │   │   ├── routers/            # REST API 路由
+│   │   │   ├── routers/            # REST API 路由（19 个模块，含 access.py 子路径鉴权，2026-10-19）
 │   │   │   ├── schemas/            # Pydantic 请求/响应模型
 │   │   │   ├── deps.py             # 依赖注入
 │   │   │   └── socketio_handlers.py# Socket.IO 事件处理
-│   │   ├── core/                   # 核心业务逻辑
+│   │   ├── core/                   # 核心业务逻辑（39 个 .py 模块，此处列关键项）
 │   │   │   ├── mcc_process_manager.py    # MCC 进程守护+终端管理 (55KB，最复杂)
 │   │   │   ├── mineflayer_process_manager.py
 │   │   │   ├── mcc_instance_service.py
 │   │   │   ├── logistics_runner.py       # 物流自动化引擎
+│   │   │   ├── mf_logistics_runner.py    # 物流执行器（Mineflayer 侧）
 │   │   │   ├── task_engine.py            # 通用任务引擎
+│   │   │   ├── task_scheduler.py         # 任务调度
+│   │   │   ├── scheduled_task_scheduler.py # 定时任务调度
 │   │   │   ├── build_engine.py           # 建造引擎
 │   │   │   ├── build_state_machine.py    # 建造状态机 (18 状态)
+│   │   │   ├── multi_bot_coordinator.py  # 多 Bot 列式协作引擎（2026-08-19）
 │   │   │   ├── map_art_coordinator.py    # 像素画/地图画多 bot 协调器
 │   │   │   ├── warehouse_scanner.py      # 仓储扫描器
 │   │   │   ├── inventory_scanner.py      # 背包扫描器
 │   │   │   ├── material_calculator.py    # 材料计算
 │   │   │   ├── bluemap_monitor.py        # BlueMap 上下线监控
 │   │   │   ├── mcc_file_service.py       # 实例文件管理
-│   │   │   ├── conpty.py                 # PTY 终端实现
+│   │   │   ├── terminal_log_buffer.py    # 终端日志环形缓冲
 │   │   │   ├── qqbot_notify.py           # QQ 通知
 │   │   │   ├── safety_manager.py         # 安全防护
 │   │   │   └── dataclasses.py            # 数据类定义
@@ -164,9 +170,12 @@ vmtools-next/
 │   │   ├── main.py                 # FastAPI 应用入口
 │   │   └── __init__.py
 │   ├── config/                     # YAML 配置文件
-│   ├── static/                     # 前端构建产物（被打包+服务）
+│   ├── static/                     # ⚠️ 含非构建产物，部署禁 `rm -rf static/`
+│   │   │                           #    item-icons/（1231 张图标）、lixiangxiang/（seed + uploads 用户数据）
+│   │   │                           #    只替换 assets/ + index.html；校验 item-icons=1231、fonts=404
 │   ├── tests/                      # pytest 测试
 │   ├── alembic/                    # 数据库迁移
+│   ├── deploy/                     # 部署件（install.sh / nginx/ / systemd/ / Dockerfile）
 │   ├── main.py
 │   └── pyproject.toml              # 依赖与打包
 ├── frontend/                       # Vue 3 + TS 前端
@@ -186,19 +195,18 @@ vmtools-next/
 │   ├── ws_protocol.js              # WebSocket 桥接协议
 │   ├── pathfinder_setup.js
 │   └── test_mock_ws_server.js
-├── mcc/                            # MCC 实例数据与日志 (!!!! 注意: 仓库提示不追踪本目录 !!!!)
-├── deploy/                         # 部署脚本 (install.sh / nginx / systemd)
 ├── docs/                           # 项目文档
 │   ├── dev/
 │   │   ├── mcc-capability-verification.md   # MCC MCP 能力验证
 │   │   └── prompt-building-system.md        # 地图画建造系统开发提示词
 │   ├── mcc-deployment-guide.md     # MCC 部署与运维指南
 │   └── server-ops-guide.md         # 服务器运维协作指南
-├── mineflayer-bots/
+├── scripts/                        # 构建辅助脚本（download-zh-fonts.js / frontend/）
 ├── .env.example                    # 环境变量模板
+├── .dockerignore                   # 构建上下文排除（防止 config.yaml 进镜像层）
 ├── docker-compose.yml
 ├── Dockerfile
-└── start.sh
+└── start.sh                        # 一键启动（自动生成密钥/口令并回写 .env）
 ```
 
 ---

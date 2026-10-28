@@ -26,7 +26,7 @@
         :instance-id="instance.instance_id"
         :slug="instance.slug"
         :title="instance.display_name || instance.slug"
-        height="calc(100vh - 300px)"
+        height="var(--terminal-h, calc(100vh - 300px))"
       />
     </div>
 
@@ -105,5 +105,9 @@ onMounted(() => refreshInstance())
   .header-actions .pixel-btn { font-size: 12px; padding: 6px 10px; }
   .terminal-meta { font-size: 11px; gap: 10px; }
   .terminal-card { min-height: calc(100dvh - 200px); }
+  /* 终端高度改用 dvh：原 100vh - 300px 在移动端浏览器地址栏收起/展开时
+     按「最大视口高度」计算，会导致终端底部被地址栏遮挡或留出空白；
+     dvh 跟随动态视口，且移动端工具栏更高，多扣 40px 避免页面整体滚动。 */
+  .terminal-page { --terminal-h: calc(100dvh - 380px); }
 }
 </style>

@@ -468,17 +468,20 @@ onMounted(() => {
 .bot-id { font-weight: 600; color: var(--text-primary); }
 .bot-name { font-size: 11px; color: var(--text-muted); }
 .status-badge { font-size: 11px; padding: 1px 8px; border-radius: 999px; }
-.status-badge.online { background: rgba(103, 194, 58, 0.15); color: #67c23a; }
-.status-badge.offline { background: rgba(144, 147, 153, 0.15); color: #909399; }
-.status-badge.connecting { background: rgba(230, 162, 60, 0.15); color: #e6a23c; }
-.status-badge.error { background: rgba(245, 108, 108, 0.15); color: #f56c6c; }
-.sys-task { font-size: 12px; padding: 1px 8px; border-radius: 999px; background: rgba(108, 122, 140, 0.12); color: #6c7a8c; }
+/* 状态/类型徽标统一走主题语义 Token：原 #67c23a/#909399/#e6a23c/#f56c6c/#409eff 为
+   Element Plus 冷色，落在暖墨深色底上发青、与全站暖橙体系割裂，且亮色下对比不足。 */
+.status-badge.online { background: var(--success-bg); color: var(--success); }
+.status-badge.offline { background: var(--info-bg); color: var(--info); }
+.status-badge.connecting { background: var(--warning-bg); color: var(--warning); }
+.status-badge.error { background: var(--danger-bg); color: var(--danger); }
+.sys-task { font-size: 12px; padding: 1px 8px; border-radius: 999px; background: var(--info-bg); color: var(--info); }
 .sys-task-name { margin-left: 4px; }
-.muted-text { color: var(--text-disabled); font-size: 12px; }
+/* 深色下 --text-disabled(#6A675F) 在卡片底仅 2.9:1，辅助文字提一级到 --text-muted */
+.muted-text { color: var(--text-muted); font-size: 12px; }
 .empty-text { text-align: center; padding: 24px; color: var(--text-muted); font-size: 14px; }
 .pixel-btn.mini { padding: 3px 10px; font-size: 12px; }
-.pixel-btn.danger { color: #f56c6c; border-color: rgba(245, 108, 108, 0.5); }
-.pixel-btn.danger:hover { background: rgba(245, 108, 108, 0.1); }
+.pixel-btn.danger { color: var(--danger); border-color: var(--danger-bg); }
+.pixel-btn.danger:hover { background: var(--danger-bg); }
 
 /* 定时任务（2026-08-13） */
 .sched-section { display: flex; flex-direction: column; gap: 12px; }
@@ -489,8 +492,8 @@ onMounted(() => {
 .sched-wrap { border: 1px solid var(--border-subtle); border-radius: var(--radius-lg); overflow: hidden; background: var(--bg-card); }
 .sched-table td { font-size: 12px; }
 .sched-type { font-size: 10px; font-weight: 700; padding: 1px 8px; border-radius: 999px; white-space: nowrap; }
-.sched-type.scan { background: rgba(64, 158, 255, 0.15); color: #409eff; }
-.sched-type.logistics { background: rgba(108, 122, 140, 0.15); color: #6c7a8c; }
+.sched-type.scan { background: var(--info-bg); color: var(--info); }
+.sched-type.logistics { background: var(--bg-active); color: var(--text-secondary); }
 .sched-type.map_art { background: rgba(217, 119, 87, 0.15); color: var(--accent); }
 .sched-bots { max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .auto-manage-tip { margin-left: 10px; font-size: 11px; color: var(--text-muted); line-height: 1.5; }
@@ -503,7 +506,12 @@ onMounted(() => {
   .sched-head .pixel-btn { align-self: flex-start; }
   .bot-table-wrap,
   .sched-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
-  .bot-table { min-width: 640px; }
-  .sched-table { min-width: 900px; }
+  /* 降低强制最小宽度：640/900px 在 390px 屏上要横滑近两屏才能看到操作列。
+     这里按内容实际需要收敛，并压缩单元格内边距，减少横向滚动距离。 */
+  .bot-table { min-width: 480px; }
+  .sched-table { min-width: 620px; }
+  .bot-table th,
+  .bot-table td { padding: 8px 8px; font-size: 12px; }
+  .sched-bots { max-width: 120px; }
 }
 </style>

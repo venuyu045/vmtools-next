@@ -75,6 +75,13 @@ class ServerConfig(BaseModel):
     database_url: str = "sqlite:///vmtools-next.db"
     secret_key: str = "change-in-production"
     jwt_algorithm: str = "HS256"
+    # 业务时区（定时任务 daily/weekly/once 的时间语义基准）。
+    # ⚠️ 2026-10-20 审查修复（中等·容器部署下定时任务整体偏移 8 小时）：
+    #   定时任务原用 `now.astimezone()` 取**进程时区**，而仓库里没有任何 TZ 设置：
+    #   Dockerfile 用 python:3.12-slim（默认 UTC）、docker-compose.yml 只设 VMT_*，
+    #   于是容器里"本地时间"= UTC → 用户选「每天 14:30」实际 22:30 才触发。
+    #   改为显式配置，不再依赖部署环境的进程时区（裸机/Docker 行为一致）。
+    timezone: str = "Asia/Shanghai"
     # CORS：显式白名单（生产部署按实际域名调整），禁止 "*" + allow_credentials 组合（M5）
     cors_origins: list[str] = Field(default_factory=lambda: [
         "http://localhost:5173",
@@ -156,6 +163,8 @@ class MineflayerConfig(BaseModel):
     # 每种材料一次补货补到多少组：目标持有量 = min(区域剩余需求, N组×64)。
     # ⚠️ 2026-08-15 用户实测纠正：一种颜色一次拿【1 组】（64 个）——4 组会导致
     # 背包被建材塞满、后续颜色装不下。默认 1。
+    # 2026-10-28：默认值唯一来源已收敛到 `core/map_art/settings.py`
+    #   （`restock_stacks: int = 1`，旧的 getattr 兜底 4 属历史笔误，已随重构删除）。
     map_art_restock_stacks: int = 1  # 1-16
     # 单 bot 两次补货最小间隔（秒）——防"取 64 用 165 块又传"的短周期反复（配合组数配置）
     map_art_min_restock_interval_s: int = 90
@@ -219,6 +228,15 @@ class MineflayerConfig(BaseModel):
     map_art_fall_threshold: int = 3
     # 进度持久化间隔（秒），默认 30
     map_art_checkpoint_interval_s: int = 30
+    # ── 缺块自动补放闭环（2026-10-28 重构，修 #51/B7 语义）──
+    # 任务判 completed 前：对账 → 补放缺口 → 复对账；仍失败则 failed 并记录剩余清单。
+    # 开关（默认开）：关掉则只对账不补放，行为回退到旧版。
+    map_art_auto_fix_enabled: bool = True
+    # 补放闭环最大轮数（默认 2）：每轮 = 一轮对账 + 一轮补放；
+    # 2 轮后仍有缺口即判 failed（防「补 → 对账 → 再补」无限循环）。
+    map_art_auto_fix_max_rounds: int = 2
+    # 单轮补放批量（默认 256 格）：一轮内最多补多少格，防一次性重扫/重放过大拖死任务。
+    map_art_auto_fix_batch: int = 256
 
 
 class MonitorConfig(BaseModel):
@@ -300,6 +318,18 @@ class BlueMapConfig(BaseModel):
     worlds: list[str] = Field(default_factory=lambda: ["world", "world_nether", "world_the_end"])
 
 
+class AccessControlConfig(BaseModel):
+    """子路径应用的访问白名单（nginx auth_request 用）。
+
+    背景：magpie / dsh 挂在平台子路径下，nginx 通过 auth_request 调后端校验身份。
+    默认只有 site_admin 能过；这里可以额外放行指定的 game_id。
+
+    ⚠️ 白名单只影响「能否进入该子路径应用」，不改变用户在平台内的角色权限。
+    """
+    # magpie Web UI 白名单（除 site_admin 外额外放行的 game_id）
+    magpie_whitelist: list[str] = Field(default_factory=list)
+
+
 class AppConfig(BaseSettings):
     """Top-level application configuration."""
 
@@ -323,6 +353,7 @@ class AppConfig(BaseSettings):
     qq_connect: QqConnectConfig = Field(default_factory=QqConnectConfig)
     player_tracking: PlayerTrackingConfig = Field(default_factory=PlayerTrackingConfig)
     bluemap: BlueMapConfig = Field(default_factory=BlueMapConfig)
+    access_control: AccessControlConfig = Field(default_factory=AccessControlConfig)
 
 
 # ── Loader ──────────────────────────────────────────────────────────────
@@ -420,10 +451,26 @@ def load_config() -> AppConfig:
 
     cfg = AppConfig(**merged)
     # 安全：JWT 签名密钥严禁使用默认/占位值，防止公开源码默认密钥伪造令牌
-    if cfg.server.secret_key in ("change-in-production", "change-me"):
+    #
+    # ⚠️ 2026-10-20 审查修复（严重·占位密钥绕过启动校验）：
+    #   原实现是**精确字符串黑名单** `in ("change-in-production", "change-me")`，
+    #   但仓库里实际流通的占位值有两个变体，都不在名单内：
+    #     · .env.example:  "change-me-to-a-random-string-at-least-32-chars"
+    #     · deploy/docker-compose.yml: "change-me-in-production"
+    #   而 README 允许直接 `docker compose up -d --build`（不经过 start.sh 的自动
+    #   替换兜底）→ 服务会以**仓库里公开可见的字符串**作为 HS256 签名密钥启动，
+    #   任何人 `jwt.encode({"sub": <site_admin id>}, "<该公开串>")` 即可伪造最高权限令牌。
+    #   改为「长度 + 占位前缀」双重判定，不再依赖枚举具体值。
+    _sk = (cfg.server.secret_key or "").strip()
+    # 只枚举「明确是占位模板」的前缀，避免误伤合法密钥（如 "secret..." 开头的自定密钥）
+    _placeholder_prefixes = (
+        "change-", "change_", "changeme", "your-", "your_",
+        "example", "placeholder", "todo",
+    )
+    if len(_sk) < 32 or _sk.lower().startswith(_placeholder_prefixes):
         raise RuntimeError(
-            "VMT_SERVER__SECRET_KEY 未设置或仍为默认值，禁止启动。"
-            "请设置随机密钥（如 openssl rand -hex 32）后重试。"
+            "VMT_SERVER__SECRET_KEY 未设置、长度不足 32 位或仍是占位值，禁止启动。"
+            "请用 `openssl rand -hex 32` 生成随机密钥后重试。"
         )
     return cfg
 

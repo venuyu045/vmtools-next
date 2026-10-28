@@ -24,7 +24,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends gcc && rm -rf /
 # Copy backend source
 COPY backend/pyproject.toml backend/README.md ./
 COPY backend/src/ src/
-COPY backend/config/ config/
+# ⚠️ 2026-10-20 审查修复（严重·真实密钥被打进镜像层）：
+#   原为 `COPY backend/config/ config/` —— 会把 backend/config/config.yaml
+#   （含真实 QQ app_id / app_key / redirect_uri；虽被 .gitignore 忽略，但存在于
+#   构建上下文）一并写入镜像层，docker history / 层解包可直接读出。
+#   改为只拷贝**模板**与无密钥的日志配置；真实配置由运行时通过 VMT_* 环境变量
+#   （见 docker-compose.yml）或挂载文件提供。配合新增的 .dockerignore 双重保险。
+COPY backend/config/config.yaml.example config/
+COPY backend/config/logging.yaml config/
+# 运行时若无 config.yaml，以模板为底（密钥等敏感项一律由环境变量覆盖）
+RUN cp config/config.yaml.example config/config.yaml
+
 COPY backend/alembic.ini ./
 COPY backend/alembic/ alembic/
 

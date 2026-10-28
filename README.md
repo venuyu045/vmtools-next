@@ -37,7 +37,7 @@
 git clone https://gitee.com/de-spider/vmtools-next.git
 cd vmtools-next
 
-# 2. 准备环境变量（必须修改 VMT_SECRET_KEY）
+# 2. 准备环境变量（VMT_SECRET_KEY 可留占位值，start.sh 会自动生成）
 cp .env.example .env
 vim .env
 
@@ -48,17 +48,30 @@ chmod +x start.sh
 
 访问 `http://<服务器IP>:8080` 即可使用。
 
+> 🔑 **`start.sh` 会自动生成密钥与口令并回写 `.env`**：首次运行若无 `.env` 会先 `cp .env.example .env`；随后
+> - `VMT_SECRET_KEY` **恰好等于占位串** `change-me-to-a-random-string-at-least-32-chars` → 自动 `openssl rand -hex 32` 生成并 `sed` 回写 `.env`；
+> - `SITE_ADMIN_PASSWORD` **为空或仍为 `change-me`** → 自动 `openssl rand -base64 18` 生成并回写 `.env`，同时在启动日志里打印一次（请立即登录后修改）。
+>
+> ⚠️ 注意 `VMT_SECRET_KEY` 的兜底只匹配那一个占位串：若你把它**留空**（不写这一行），脚本不会生成，最终由后端 `load_config()` 的强校验**拒绝启动**并提示用 `openssl rand -hex 32` 生成 —— 这是有意的失败而非静默降级。
+
 ### 环境变量说明（`.env`）
 
 | 变量 | 描述 | 默认值 |
 | :--- | :--- | :--- |
-| `VMT_SECRET_KEY` | **必须修改。** JWT 签名密钥（≥32 位随机串） | - |
+| `VMT_SECRET_KEY` | **必须修改。** JWT 签名密钥（≥32 位随机串）。**缺失 / 仍是默认值 / 长度 <32 / 占位值 → 服务直接拒绝启动**（`RuntimeError`，不是告警） | - |
 | `VMT_PORT` | Web 服务端口 | 8080 |
 | `SITE_ADMIN_GAME_ID` | 初始管理员游戏 ID | admin |
-| `SITE_ADMIN_PASSWORD` | 初始管理员密码 | - |
+| `SITE_ADMIN_PASSWORD` | 初始管理员密码。**留空 = 后端随机生成**（`uuid4().hex[:12]`）并写入 `config/.site_admin_password`（`chmod 600`），日志只提示路径；`debug` 模式才打印明文。⚠️ **切勿留 `change-me`** | - |
 | `MCC_RUNTIME_PATH` | MCC 程序目录（存放 MinecraftClient.exe/dll），挂载为只读 | /opt/vmtools/mcc-runtime |
 | `MCC_INSTANCE_ROOT` | MCC 实例数据目录 | /opt/vmtools/mcc-instances |
 | `MCC_PORT_RANGE` | MCP 协议端口分配范围 | 33333-33352 |
+
+> ⚠️ **命名铁律：后端配置项必须写成 `VMT_<SECTION>__<KEY>`，即「双下划线」分隔嵌套层级。**
+> - ✅ 正确：`VMT_SERVER__HOST` / `VMT_SERVER__PORT` / `VMT_SERVER__DATABASE_URL` / `VMT_SERVER__SECRET_KEY` / `VMT_MCC__MAX_INSTANCES`
+> - ❌ 错误：`VMT_SERVER_HOST`（单下划线）→ **静默失效**：不报错、也不生效，服务仍按 `config.yaml` 默认值启动
+>
+> 原因：`config.py` 的 `_apply_env_overrides` 用 `.split("__")` 切分路径，且要求层级数 ≥2；单下划线切不出层级，整条被 `continue` 跳过。**这是 2026-10-20 审查的严重项 S4**，原 systemd unit 三行全中招。
+> 说明：`VMT_SECRET_KEY` / `VMT_PORT` / `SITE_ADMIN_*` / `MCC_*` 是**顶层**变量（只有一段），由 `docker-compose.yml` 显式映射成 `VMT_SERVER__SECRET_KEY` 等嵌套变量后注入容器，所以它们本身不含 `__` 是正常的。
 
 ## 非 Docker 部署（裸机 / systemd）
 

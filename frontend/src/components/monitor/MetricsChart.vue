@@ -5,7 +5,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onBeforeUnmount, ref } from 'vue'
 import type { MetricSample } from '@/stores/monitor'
 import { useTheme } from '@/composables/useTheme'
 
@@ -31,7 +31,14 @@ function toKbps(n: number | undefined): number {
 
 const { resolved: themeResolved } = useTheme()
 const isDark = computed(() => themeResolved.value === 'dark')
-const isNarrow = window.matchMedia('(max-width: 480px)').matches
+// 响应式窄屏判定：原实现只在 setup 时取一次 matchMedia 结果，
+// 手机横竖屏切换 / 浏览器窗口缩放后图例与网格留白不会重算（轴标签被图例压住）。
+const narrowQuery = window.matchMedia('(max-width: 480px)')
+const isNarrowRef = ref(narrowQuery.matches)
+const onNarrowChange = (e: MediaQueryListEvent) => { isNarrowRef.value = e.matches }
+narrowQuery.addEventListener('change', onNarrowChange)
+onBeforeUnmount(() => narrowQuery.removeEventListener('change', onNarrowChange))
+const isNarrow = computed(() => isNarrowRef.value)
 
 const chartOption = computed(() => {
   // 图表配色跟随主题（亮：暖米底 + 深灰文字；暗：暖墨底 + 浅色文字）
@@ -76,11 +83,17 @@ const chartOption = computed(() => {
       data: ['CPU', '内存', '磁盘', '上行', '下行'],
       textStyle: { color: labelColor, fontSize: isNarrow ? 10 : 12 },
       top: 0,
+      // 窄屏图例项多时会换行（5 项 × 约 46px > 330px 可用宽），
+      // 单行 itemGap 过大导致第二行压到坐标轴，收窄间距并允许换行。
+      itemGap: isNarrow ? 8 : 10,
+      itemWidth: isNarrow ? 12 : 14,
+      itemHeight: isNarrow ? 8 : 10,
     },
     grid: {
       left: isNarrow ? 36 : 50,
       right: isNarrow ? 30 : 50,
-      top: 40,
+      // 顶部留白：图例换行到两排时（窄屏）预留约 2 行高度，避免与网格重叠
+      top: isNarrow ? 56 : 40,
       bottom: 30,
     },
     xAxis: {

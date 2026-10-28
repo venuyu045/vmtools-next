@@ -193,7 +193,18 @@ def _material_counts(db: Session, wh_ids: list[str]) -> dict[str, int]:
     return {wh_fk: int(c) for wh_fk, c in rows}
 
 
-def _to_response(wh: WarehouseModel, material_count: int | None = None) -> WarehouseResponse:
+def _to_response(wh: WarehouseModel, material_count: int | None = None,
+                 hide_teleport: bool = False) -> WarehouseResponse:
+    """构造仓库响应。
+
+    ⚠️ 2026-10-20 审查修复（中等·访客可读传送指令）：
+      列表/详情接口用 get_optional_user（未登录可访问，供访客只读页），
+      但原实现把 `logistics_teleport_cmd` / `teleport_cmd`（EssentialsX 传送指令
+      原文，如 `/res tp xxx`）一并返回。这是**服务器内可执行指令**，与访客浏览
+      库存的需求无关，泄露后可直接用于进入受限区域。
+      修复：访客（user is None）时 hide_teleport=True，两个字段置 None；
+      登录用户保持原样。
+    """
     return WarehouseResponse(
         warehouse_id=wh.warehouse_id,
         name=wh.name,
@@ -205,8 +216,8 @@ def _to_response(wh: WarehouseModel, material_count: int | None = None) -> Wareh
         group_id=wh.group_id,
         organization_id=wh.organization_id,
         logistics_enabled=wh.logistics_enabled,
-        logistics_teleport_cmd=wh.logistics_teleport_cmd,
-        teleport_cmd=wh.logistics_teleport_cmd,
+        logistics_teleport_cmd=None if hide_teleport else wh.logistics_teleport_cmd,
+        teleport_cmd=None if hide_teleport else wh.logistics_teleport_cmd,
     )
 
 
@@ -216,7 +227,9 @@ def _to_response(wh: WarehouseModel, material_count: int | None = None) -> Wareh
 def list_warehouses(db: Session = Depends(get_db), user=Depends(get_optional_user)):
     whs = _scoped_warehouse_query(db, user).all()
     counts = _material_counts(db, [w.warehouse_id for w in whs])
-    return [_to_response(w, counts.get(w.warehouse_id, 0)) for w in whs]
+    # 访客（user is None）不返回传送指令（见 _to_response 注释）
+    hide = user is None
+    return [_to_response(w, counts.get(w.warehouse_id, 0), hide_teleport=hide) for w in whs]
 
 
 @router.post("", response_model=WarehouseResponse)
@@ -384,7 +397,8 @@ def get_warehouse(warehouse_id: str, db: Session = Depends(get_db),
                   user=Depends(get_optional_user)):
     wh = _get_scoped_warehouse(db, user, warehouse_id)
     counts = _material_counts(db, [wh.warehouse_id])
-    return _to_response(wh, counts.get(wh.warehouse_id, 0))
+    # 访客（user is None）不返回传送指令（见 _to_response 注释）
+    return _to_response(wh, counts.get(wh.warehouse_id, 0), hide_teleport=user is None)
 
 
 @router.delete("/{warehouse_id}")

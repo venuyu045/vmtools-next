@@ -283,12 +283,14 @@ onBeforeUnmount(() => {
 
 .empty-text { color: var(--text-muted); text-align: center; padding: 20px; font-size: 14px; }
 
-.more-hint { font-size: 12px; color: var(--text-disabled); text-align: center; padding: 8px 0 2px; }
+/* 深色下 --text-disabled(#6A675F) 在 --bg-page 上仅 2.9:1，11–12px 辅助文字发虚；
+   提到 --text-muted（约 4.5:1）保证可读，视觉层级仍低于正文。 */
+.more-hint { font-size: 12px; color: var(--text-muted); text-align: center; padding: 8px 0 2px; }
 
 /* 在线玩家 */
 .world-groups { display: flex; flex-direction: column; gap: 10px; }
 .world-label { font-size: 13px; font-weight: 600; color: var(--text-secondary); margin-bottom: 6px; display: flex; align-items: center; gap: 6px; }
-.world-count { font-size: 11px; color: var(--text-disabled); }
+.world-count { font-size: 11px; color: var(--text-muted); }
 .player-tags { display: flex; flex-wrap: wrap; gap: 6px; }
 .player-tags :deep(.el-tag) {
   background: var(--info-bg);
@@ -317,10 +319,12 @@ onBeforeUnmount(() => {
 .build-head { display: flex; align-items: center; gap: 8px; }
 .build-name { font-size: 14px; color: var(--text-primary); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
 .build-status { font-size: 11px; padding: 1px 8px; border-radius: 999px; flex-shrink: 0; }
-.build-status.running { background: rgba(64, 158, 255, 0.15); color: #409eff; }
-.build-status.completed { background: rgba(103, 194, 58, 0.15); color: #67c23a; }
-.build-status.paused { background: rgba(230, 162, 60, 0.15); color: #e6a23c; }
-.build-status.cancelled, .build-status.draft, .build-status.pending { background: rgba(144, 147, 153, 0.15); color: #909399; }
+/* 状态色改用主题语义 Token：原 #409eff/#67c23a/#e6a23c/#909399 为 Element Plus 冷色，
+   落在暖墨深色底（#222119）上发青发脏，与全站暖橙语义色体系不一致。 */
+.build-status.running { background: var(--accent-soft); color: var(--accent); }
+.build-status.completed { background: var(--success-bg); color: var(--success); }
+.build-status.paused { background: var(--warning-bg); color: var(--warning); }
+.build-status.cancelled, .build-status.draft, .build-status.pending { background: var(--info-bg); color: var(--info); }
 .build-meta { font-size: 11px; color: var(--text-muted); }
 
 /* 上下线事件 */

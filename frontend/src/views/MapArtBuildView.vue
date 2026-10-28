@@ -7,7 +7,7 @@
         <h2>地图画建造 · {{ task?.name || '未命名任务' }}</h2>
       </div>
       <div class="header-right">
-        <el-tag :type="statusTagType">{{ statusLabel(task?.status) }}</el-tag>
+        <el-tag :type="statusTagType" :effect="isPaused ? 'dark' : 'light'">{{ statusLabel(displayStatus) }}</el-tag>
         <span class="progress-text">{{ task?.placed_blocks ?? 0 }} / {{ task?.total_blocks ?? 0 }} 方块</span>
       </div>
     </div>
@@ -16,7 +16,7 @@
          任何屏幕高度下都固定在页面顶部可见；task 未加载时不渲染空栏） -->
     <div class="control-bar" v-if="task">
       <el-button
-        v-if="task?.status === 'draft' || task?.status === 'pending'"
+        v-if="displayStatus === 'draft' || displayStatus === 'pending'"
         type="primary"
         @click="control('start')"
       >
@@ -30,25 +30,26 @@
         重新开始
       </el-button>
       <el-button
-        v-if="task?.status === 'running'"
+        v-if="displayStatus === 'running'"
         @click="control('pause')"
       >
         暂停
       </el-button>
       <el-button
-        v-if="task?.status === 'paused'"
+        v-if="isPaused"
         type="success"
         @click="control('resume')"
       >
         继续
       </el-button>
       <el-button
-        v-if="task?.status === 'running' || task?.status === 'paused'"
+        v-if="displayStatus === 'running' || isPaused"
         type="danger"
         @click="control('stop')"
       >
         停止
       </el-button>
+      <span v-if="isPaused" class="paused-hint">已暂停 · Bot 保持待命，点「继续」从断点恢复</span>
     </div>
 
     <!-- 主体：左侧面板（预览已彻底移除 2026-08-18，用户确认不需要）+ 右侧面板 -->
@@ -90,11 +91,11 @@
               <span class="manage-hint" v-if="!canManageBots">已完成任务不可管理</span>
             </el-tooltip>
           </div>
-          <div v-if="!bots.length" class="empty">暂无分配的 Bot</div>
-          <div v-for="bot in bots" :key="bot.bot_id" class="bot-row">
+          <div v-if="!botRows.length" class="empty">暂无分配的 Bot</div>
+          <div v-for="bot in botRows" :key="bot.bot_id" class="bot-row">
             <div class="bot-header">
               <span class="bot-dot" :style="{ background: botColor(bot.bot_id) }" />
-              <strong>{{ bot.bot_name || bot.bot_id }}</strong>
+              <strong>{{ bot.name }}</strong>
               <el-tag size="small" :type="botStateType(bot.state)">{{ botStateLabel(bot.state) }}</el-tag>
               <el-button
                 v-if="canManageBots"
@@ -107,19 +108,49 @@
             </div>
             <div class="bot-progress">
               <el-progress
-                :percentage="botPct(bot)"
+                :percentage="bot.pct"
                 :stroke-width="6"
                 :show-text="false"
               />
               <span class="bot-stats">{{ bot.placed }} / {{ bot.total }}</span>
             </div>
             <div class="bot-meta">
-              <span v-if="task?.build_mode === 'column'">列 {{ bot.column ?? '-' }} · 排 {{ bot.squad_index ?? 1 }}</span>
-              <span v-else>行 {{ bot.current_row >= 0 ? bot.current_row : '-' }}</span>
+              <span v-if="task?.build_mode === 'column'">列 {{ bot.column ?? '-' }} · 排 {{ bot.squadIndex ?? 1 }}</span>
+              <span v-else>行 {{ bot.currentRow !== null && bot.currentRow >= 0 ? bot.currentRow : '-' }}</span>
               <span class="bot-pos" :title="bot.position ? `世界坐标 (${fmtPos(bot.position)})` : '位置未知'">
                 {{ bot.position ? fmtPos(bot.position) : '位置?' }}
               </span>
-              <span>{{ (bot.rate ?? 0).toFixed(1) }} 块/分</span>
+              <span>{{ bot.rate.toFixed(1) }} 块/分</span>
+            </div>
+          </div>
+        </el-card>
+
+        <!-- 列式编队（契约 §四新 WS 事件 build_squad_status，可选订阅：
+             事件没来时 squadInfo 恒为 null，整块不渲染，不报错也不留空壳） -->
+        <el-card v-if="squadInfo" class="panel" header="列式编队">
+          <div class="stat-row">
+            <span>当前排 · 方向</span>
+            <span class="squad-headline">排 {{ squadInfo.squadIndex }} · 方向 {{ squadInfo.direction }}</span>
+          </div>
+          <div class="stat-row">
+            <span>剩余列</span>
+            <span>
+              {{ squadInfo.remaining === null ? '-' : `${squadInfo.remaining} 列` }}
+              <template v-if="squadInfo.totalColumns"> / 共 {{ squadInfo.totalColumns }} 列</template>
+            </span>
+          </div>
+          <div v-if="!squadInfo.columns.length" class="empty">等待各列进度…</div>
+          <div v-for="col in squadInfo.columns" :key="col.key" class="squad-col">
+            <div class="squad-col-head">
+              <span class="bot-dot" :style="{ background: botColor(col.botId || col.key) }" />
+              <span class="squad-col-name">{{ col.botName }}</span>
+              <el-tag v-if="col.done" size="small" type="success">已完成</el-tag>
+              <el-tag v-else-if="col.state === 'offline'" size="small" type="danger">离线</el-tag>
+              <span class="squad-col-x mono">世界 X {{ col.worldX ?? '-' }}</span>
+            </div>
+            <div class="squad-col-body">
+              <el-progress :percentage="col.pct" :stroke-width="4" :show-text="false" />
+              <span class="squad-col-stat">{{ col.placed }} / {{ col.total }}</span>
             </div>
           </div>
         </el-card>
@@ -137,16 +168,23 @@
         <!-- 统计 -->
         <el-card class="panel" header="统计">
           <div class="stat-row">
+            <span>任务状态</span>
+            <span :class="{ 'paused-text': isPaused }">{{ statusLabel(displayStatus) }}</span>
+          </div>
+          <div class="stat-row">
             <span>投影朝向</span>
             <span>{{ rotationLabel(task?.rotation) }}</span>
           </div>
           <div class="stat-row">
             <span>建造模式</span>
-            <span>{{ task?.build_mode === 'column' ? '多Bot协作（列式）' : '分区独立' }}</span>
+            <span>{{ task?.build_mode ? buildModeLabel(task?.build_mode) : '-' }}</span>
           </div>
           <div class="stat-row" v-if="task?.build_mode === 'column'">
             <span>当前排号</span>
-            <span>第 {{ squadIndex || task?.squad_index || 1 }} 排</span>
+            <span>
+              第 {{ squadInfo?.squadIndex || squadIndex || task?.squad_index || 1 }} 排
+              <template v-if="squadInfo"> · 方向 {{ squadInfo.direction }}</template>
+            </span>
           </div>
           <div class="stat-row">
             <span>已耗时</span>
@@ -183,18 +221,32 @@ import BuildLogPanel from '@/components/build/BuildLogPanel.vue'
 import BotInventoryPanel from '@/components/build/BotInventoryPanel.vue'
 import ItemIcon from '@/components/ItemIcon.vue'
 import { useSocketIO } from '@/composables/useSocketIO'
-import { mapArtApi } from '@/api/mapArt'
+import {
+  mapArtApi,
+  botProgress,
+  mergeBotList,
+  squadDirectionLabel,
+  buildModeLabel,
+  type MapArtBuildAlert,
+  type MapArtBuildProgress,
+  type MapArtControlAction,
+  type MapArtSquadColumn,
+  type MapArtSquadStatus,
+  type MapArtTaskBot,
+  type MapArtTaskDetail,
+  type MapArtTaskMaterial,
+} from '@/api/mapArt'
 import { botApi } from '@/api/bot'
 import { errMsg } from '@/utils/error'
 import { zhItemName } from '@/utils/itemZh'
 
 const route = useRoute()
 const taskId = computed(() => route.params.taskId as string)
-const { on: sockOn, off: sockOff, emit: sockEmit } = useSocketIO()
+const { on: sockOn, off: sockOff, emit: sockEmit, connectAsync: sockConnectAsync, connected: sockConnected } = useSocketIO()
 
-const task = ref<any>(null)
-const bots = ref<any[]>([])
-const materials = ref<any[]>([])
+const task = ref<MapArtTaskDetail | null>(null)
+const bots = ref<MapArtTaskBot[]>([])
+const materials = ref<MapArtTaskMaterial[]>([])
 const elapsed = ref(0)
 const eta = ref(0)
 const overallRate = ref('0')
@@ -203,6 +255,40 @@ const netRate = ref('0')
 const netEta = ref(0)
 const squadIndex = ref(0)
 
+/**
+ * 暂停态判定（修「暂停后仍显示运行中」+ 防「列式排尾等待被误显示成暂停」）。
+ *
+ * 两个来源：
+ *   - `restStatus`：REST GET /tasks/{id}（DB 落库值，用户点暂停后由后端 commit，
+ *     control() 之后必刷新）——**权威**
+ *   - `liveStatus`：WS build_progress.status（实时，但列式引擎在「本列建完、等下一排
+ *     分配」时会把 bot 置 waiting，后端 _compute_status 据此短暂返回 "paused"，
+ *     这不是用户暂停）→ 需连续 2 次推送（≈4s）才采信，且随时可被 running 解除
+ * 这样：用户暂停 → 立刻显示已暂停；排尾等待的抖动 → 不闪成暂停；恢复运行 → 立刻回来。
+ */
+const PAUSED_CONFIRM_PUSHES = 2
+const restStatus = ref('')
+const liveStatus = ref('')
+const pausedStreak = ref(0)
+/** 列式编队（可选事件 build_squad_status）：未收到时保持 null → 面板不渲染 */
+const squadStatus = ref<MapArtSquadStatus | null>(null)
+
+const displayStatus = computed(() => {
+  const rest = restStatus.value
+  const live = liveStatus.value
+  // DB 终态（completed/failed/cancelled）优先：socket 的 paused 不能盖掉终态
+  if (rest === 'completed' || rest === 'failed' || rest === 'cancelled') return rest
+  // DB 已落库的 paused = 用户真的暂停了
+  if (rest === 'paused') return 'paused'
+  if (live === 'paused') {
+    if (pausedStreak.value >= PAUSED_CONFIRM_PUSHES) return 'paused'
+    // 抖动中的 paused：退回 REST 状态（通常是 running），不闪成暂停
+    return rest || 'running'
+  }
+  return live || rest
+})
+const isPaused = computed(() => displayStatus.value === 'paused')
+
 // ── Bot 动态管理（需求4：添加/删除 bot，自动分配区域） ──
 const selectedAddBot = ref('')
 const availableBots = ref<any[]>([])
@@ -210,17 +296,99 @@ const availableBots = ref<any[]>([])
  * draft/pending 未开始、running/paused 运行中、failed/cancelled 可重新开始续建
  * （调整 bot 后再重启）；仅 completed 终态禁止（后端同样校验） */
 const canManageBots = computed(() => {
-  const s = task.value?.status
+  const s = displayStatus.value
   return s !== 'completed'
 })
 /** 2026-08-14：failed / cancelled / 未完成的 completed 任务可「重新开始」（断点续建，保留已放进度） */
 const canRestart = computed(() => {
-  const s = task.value?.status
+  const s = displayStatus.value
   if (s === 'failed' || s === 'cancelled') return true
   if (s === 'completed') {
     return (task.value?.placed_blocks ?? 0) < (task.value?.total_blocks ?? 0)
   }
   return false
+})
+
+/** Bot 列表展示行：进度字段统一由 botProgress() 归一化（A1），模板不再直读后端原始字段 */
+interface BotRow {
+  bot_id: string
+  name: string
+  state: string
+  placed: number
+  total: number
+  rate: number
+  pct: number
+  column: number | null
+  squadIndex: number | null
+  currentRow: number | null
+  position: MapArtTaskBot['position']
+}
+const botRows = computed<BotRow[]>(() => (bots.value || []).map((b) => {
+  const p = botProgress(b)
+  return {
+    bot_id: b.bot_id,
+    name: b.bot_name || b.name || b.bot_id,
+    state: b.state || '',
+    placed: p.placed,
+    total: p.total,
+    rate: p.rate,
+    pct: p.pct,
+    column: typeof b.column === 'number' ? b.column : null,
+    squadIndex: typeof b.squad_index === 'number' ? b.squad_index : null,
+    currentRow: typeof b.current_row === 'number' ? b.current_row : null,
+    position: b.position ?? null,
+  }
+}))
+
+/** 列式编队展示行（build_squad_status 归一化；列号 0-based，展示用世界 X） */
+interface SquadColumnRow {
+  key: string
+  botId: string
+  botName: string
+  worldX: number | null
+  done: boolean
+  state: string
+  placed: number
+  total: number
+  pct: number
+}
+const squadInfo = computed<{
+  squadIndex: number
+  direction: string
+  remaining: number | null
+  totalColumns: number | null
+  columns: SquadColumnRow[]
+} | null>(() => {
+  const s = squadStatus.value
+  if (!s) return null
+  const nameOf = (botId: string): string => {
+    const hit = bots.value.find(b => b.bot_id === botId)
+    return hit?.bot_name || hit?.name || botId
+  }
+  const columns: SquadColumnRow[] = (s.columns || []).map((c: MapArtSquadColumn, i: number) => {
+    const placed = Number(c.placed ?? 0) || 0
+    const total = Number(c.total ?? 0) || 0
+    return {
+      key: `${c.bot_id || 'col'}-${c.column_x ?? i}`,
+      botId: c.bot_id || '',
+      botName: c.bot_id ? nameOf(c.bot_id) : `第 ${i + 1} 列`,
+      worldX: typeof c.world_x === 'number' ? c.world_x : null,
+      done: !!c.done,
+      state: c.state || '',
+      placed,
+      total,
+      pct: total > 0
+        ? Math.min(100, Math.max(0, Math.round((placed / total) * 100)))
+        : (c.done ? 100 : 0),
+    }
+  })
+  return {
+    squadIndex: Number(s.squad_index ?? squadIndex.value ?? 1) || 1,
+    direction: squadDirectionLabel(s.direction),
+    remaining: typeof s.remaining_columns === 'number' ? s.remaining_columns : null,
+    totalColumns: typeof s.total_columns === 'number' ? s.total_columns : null,
+    columns,
+  }
 })
 
 async function loadAvailableBots() {
@@ -236,7 +404,7 @@ async function handleAddBot() {
   if (!selectedAddBot.value || !canManageBots.value) return
   try {
     const { data } = await mapArtApi.manageBot(taskId.value, 'add', selectedAddBot.value)
-    const running = task.value?.status === 'running' || task.value?.status === 'paused'
+    const running = displayStatus.value === 'running' || isPaused.value
     ElMessage.success(
       running
         ? 'Bot 已添加，自动分配待接管区域'
@@ -281,7 +449,7 @@ const STATUS_LABELS: Record<string, string> = {
 }
 const BOT_STATE_LABELS: Record<string, string> = {
   idle: '空闲', moving: '移动中', placing: '放置中', restocking: '补货中',
-  waiting: '等待中', completed: '已完成', offline: '已离线', released: '已释放',
+  waiting: '等待中', paused: '已暂停', completed: '已完成', offline: '已离线', released: '已释放',
 }
 const ROTATION_LABELS: Record<number, string> = {
   0: '0°（北 / 原方向）', 1: '90°（东 / 顺时针）',
@@ -296,7 +464,7 @@ function statusLabel(s?: string): string { return (s && STATUS_LABELS[s]) || s |
 function botStateLabel(s?: string): string { return (s && BOT_STATE_LABELS[s]) || s || '未知' }
 
 const statusTagType = computed(() => {
-  const s = task.value?.status
+  const s = displayStatus.value
   if (s === 'running') return 'success'
   if (s === 'completed') return ''
   if (s === 'failed') return 'danger'
@@ -329,20 +497,31 @@ function formatTime(secs: number): string {
   return `${m}分 ${s}秒`
 }
 
-/** 2026-08-16 审查修复：bot 进度百分比防 NaN/越界（total=0 或 placed>total） */
-function botPct(b: any): number {
-  if (!b || !b.total) return 0
-  const p = Math.round(((b.placed || 0) / b.total) * 100)
-  return Math.min(100, Math.max(0, p))
-}
-
 /** 2026-08-19：bot 世界坐标位置显示（build_bot_status 实时推送） */
-function fmtPos(pos: any): string {
+function fmtPos(pos: MapArtTaskBot['position']): string {
   if (!pos) return '-'
   const x = typeof pos.x === 'number' ? Math.round(pos.x) : pos.x
   const y = typeof pos.y === 'number' ? Math.round(pos.y) : pos.y
   const z = typeof pos.z === 'number' ? Math.round(pos.z) : pos.z
   return `${x},${y},${z}`
+}
+
+/** 记录 WS 推送的实时状态，并维护 paused 连续推送计数（见 displayStatus 注释） */
+function trackLiveStatus(status?: string) {
+  if (!status) return
+  liveStatus.value = status
+  pausedStreak.value = status === 'paused' ? pausedStreak.value + 1 : 0
+}
+
+/**
+ * Bot 列表合并（A1 补充 + 保留 per-bot state）。
+ *
+ * build_bot_status 不带 region，build_progress.bots 不带 position/column，
+ * 直接整体替换会来回丢字段（位置/列号一闪一闪）→ 按 bot_id 合并，见 mergeBotList()。
+ * 空数组默认忽略（防瞬时抖动把列表刷空），REST 全量刷新时传 allowEmpty。
+ */
+function mergeBots(incoming?: MapArtTaskBot[] | null, allowEmpty = false) {
+  bots.value = mergeBotList(bots.value, incoming, allowEmpty)
 }
 
 // ── 数据加载 ──
@@ -358,12 +537,16 @@ async function fetchTask() {
       placed_blocks: data.progress?.placed_blocks ?? data.placed_blocks ?? 0,
       total_blocks: data.progress?.total_blocks ?? data.total_blocks ?? 0,
     }
+    // REST 是暂停态的权威来源（DB 落库值；control 之后必刷新）
+    restStatus.value = data.status || ''
+    pausedStreak.value = 0
     // 材料名汉化（后端 display_name 可能为英文，前端映射兜底）
-    materials.value = (data.materials || []).map((m: any) => ({
+    materials.value = (data.materials || []).map((m) => ({
       ...m,
       display_name: m.display_name || zhItemName(m.item_id),
     }))
-    bots.value = data.bots || []
+    // REST 是 Bot 成员关系的权威来源（可整体为空），但保留 socket 带来的实时字段
+    mergeBots(data.bots, true)
     await loadAvailableBots()
   } catch (e) {
     ElMessage.error(errMsg(e, '获取任务详情失败'))
@@ -374,9 +557,14 @@ const ACTION_LABELS: Record<string, string> = {
   start: '开始', pause: '暂停', resume: '继续', stop: '停止',
 }
 
-async function control(action: string) {
+async function control(action: MapArtControlAction) {
   try {
-    await mapArtApi.controlTask(taskId.value, action)
+    const { data } = await mapArtApi.controlTask(taskId.value, action)
+    // 用户主动操作立即生效：用响应里的 status 先翻转按钮态，再 fetchTask 校准
+    const respStatus = (data as { status?: string } | undefined)?.status
+    if (respStatus) restStatus.value = respStatus
+    liveStatus.value = ''
+    pausedStreak.value = 0
     ElMessage.success(`任务已${ACTION_LABELS[action] || action}`)
     fetchTask()
   } catch (e) {
@@ -386,46 +574,111 @@ async function control(action: string) {
 
 // ── Socket.IO 进度更新（组件级 handler 必须 onUnmounted 注销防累积） ──
 
-onMounted(() => {
-  fetchTask()
+/**
+ * A4：深链进入时 socket 可能还没建连 —— 原实现先 `sockEmit('build_map_join')`
+ * 再注册监听，socket 为 null 时 emit 被静默丢弃 → 房间没进 → 历史日志回放和
+ * 进度推送全丢（页面看着正常但永远不刷新）。
+ *
+ * 现在的口径：
+ *   1) onMounted 先 await connectAsync()，连上再 join；连不上给可见提示
+ *   2) 'connect' 事件里也 join 一次 —— 覆盖「首次建连」与「断线后自动重连」
+ *      （room 成员关系不跨连接保留，重连必须重新进房）
+ */
+function joinBuildRoom() {
   sockEmit('build_map_join', { task_id: taskId.value })
+}
+
+function onSocketConnected() {
+  joinBuildRoom()
+}
+
+async function ensureJoined() {
+  const alreadyConnected = sockConnected()
+  const ok = await sockConnectAsync(8000)
+  if (!ok) {
+    ElMessage.warning('实时通道未连接：进度/日志可能不刷新（后台自动重连中，可稍后刷新页面）')
+    return
+  }
+  // 早已连接时 connect 事件不会再来，这里补一次 join；否则交给 onSocketConnected
+  if (alreadyConnected) joinBuildRoom()
+}
+
+onMounted(() => {
+  // useSocketIO 的 on() 已支持「未建连时先登记、建连时补挂」，故先注册再建连不会丢事件
+  sockOn('connect', onSocketConnected)
   sockOn('build_progress', onBuildProgress)
   sockOn('build_bot_status', onBuildBotStatus)
+  // 契约 §四新增事件：可选订阅，后端未实现/老任务永不触发 → 静默
+  sockOn('build_squad_status', onBuildSquadStatus)
+  // A3：非 admin 订阅会被后端回 build_alert（原来静默 return，前端毫无反馈）
+  sockOn('build_alert', onBuildAlert)
+  void ensureJoined()
+  fetchTask()
 })
 
 onUnmounted(() => {
+  sockOff('connect', onSocketConnected)
   sockOff('build_progress', onBuildProgress)
   sockOff('build_bot_status', onBuildBotStatus)
+  sockOff('build_squad_status', onBuildSquadStatus)
+  sockOff('build_alert', onBuildAlert)
   sockEmit('build_map_leave', { task_id: taskId.value })
 })
 
-function onBuildProgress(data: any) {
-  if (data.task_id !== taskId.value) return
-  task.value = { ...task.value, status: data.status, placed_blocks: data.placed_blocks, total_blocks: data.total_blocks }
+function onBuildProgress(data: MapArtBuildProgress) {
+  if (!data || data.task_id !== taskId.value) return
+  // status 可能缺省（failed / completed 的单发事件只有 status/error）→ 不覆盖已有值
+  const patch: Partial<MapArtTaskDetail> = {}
+  if (data.status) patch.status = data.status
+  if (typeof data.placed_blocks === 'number') patch.placed_blocks = data.placed_blocks
+  if (typeof data.total_blocks === 'number') patch.total_blocks = data.total_blocks
+  if (data.error_message) patch.error_message = data.error_message
+  task.value = { ...(task.value || { task_id: taskId.value }), ...patch }
+  trackLiveStatus(data.status)
+
   elapsed.value = data.elapsed_sec || 0
   eta.value = data.eta_sec || 0
-  overallRate.value = data.placed_blocks > 0 && data.elapsed_sec > 0
-    ? (data.placed_blocks / (data.elapsed_sec / 60)).toFixed(1)
+  overallRate.value = (data.placed_blocks ?? 0) > 0 && (data.elapsed_sec ?? 0) > 0
+    ? ((data.placed_blocks as number) / ((data.elapsed_sec as number) / 60)).toFixed(1)
     : '0'
   // 2026-08-19：净速率 / 排号（多Bot列式模式）
-  netRate.value = data.net_rate > 0 ? String(data.net_rate) : '0'
+  netRate.value = (data.net_rate ?? 0) > 0 ? String(data.net_rate) : '0'
   netEta.value = data.net_eta || 0
-  squadIndex.value = data.squad_index || 0
+  if (typeof data.squad_index === 'number' && data.squad_index > 0) {
+    squadIndex.value = data.squad_index
+  }
+  // A1 补充：build_progress.bots 里本来就有 placed/total/rate（旧代码直接丢弃了 bots）
+  // → 合并进 Bot 列表，进度不再等 2s 一次的 build_bot_status
+  mergeBots(data.bots)
   // 注意：后端 _aggregate 的 materials 当前为 {}（未填充），空对象是 truthy——
   // 不加 length 检查会每 2s 把材料面板清空
   if (data.materials && Object.keys(data.materials).length > 0) {
-    materials.value = Object.entries(data.materials).map(([k, v]: [string, any]) => ({
+    materials.value = Object.entries(data.materials).map(([k, v]) => ({
       item_id: k,
       display_name: zhItemName(k),
-      placed: v.placed,
-      required: v.required,
+      placed: v?.placed,
+      required: v?.required,
     }))
   }
 }
 
-function onBuildBotStatus(data: any) {
-  if (data.task_id !== taskId.value) return
-  bots.value = data.bots || []
+function onBuildBotStatus(data: { task_id?: string; bots?: MapArtTaskBot[] }) {
+  if (!data || data.task_id !== taskId.value) return
+  // 合并而非替换：保留 per-bot state / region / position，空 payload 不清空列表
+  mergeBots(data.bots)
+}
+
+/** 契约 §四新事件（可选）：列式编队状态 —— 排号/方向/各列进度/剩余列 */
+function onBuildSquadStatus(data: MapArtSquadStatus) {
+  if (!data || data.task_id !== taskId.value) return
+  squadStatus.value = data
+}
+
+/** A3/A4：订阅或控制失败时后端回 build_alert，必须给用户可见提示 */
+function onBuildAlert(data: MapArtBuildAlert) {
+  const msg = data?.message || '建造实时通道异常'
+  if (data?.type === 'error') ElMessage.error(msg)
+  else ElMessage.warning(msg)
 }
 </script>
 
@@ -496,6 +749,13 @@ function onBuildBotStatus(data: any) {
   border: 1px solid var(--border-subtle);
   border-radius: 8px;
 }
+/* 暂停态可见提示（控制栏右侧） */
+.paused-hint {
+  margin-left: auto;
+  align-self: center;
+  font-size: 12px;
+  color: var(--warning);
+}
 .side-panels {
   display: flex;
   flex-direction: column;
@@ -516,10 +776,19 @@ function onBuildBotStatus(data: any) {
   align-items: center;
   gap: 8px;
 }
-.bot-dot { width: 10px; height: 10px; border-radius: 50%; }
+.bot-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
 .bot-progress { display: flex; align-items: center; gap: 8px; margin: 4px 0; }
 .bot-stats { font-size: 12px; color: var(--text-muted); white-space: nowrap; }
 .bot-meta { display: flex; justify-content: space-between; font-size: 11px; color: var(--text-secondary); }
+/* 列式编队面板 */
+.squad-headline { color: var(--accent); }
+.squad-col { padding: 6px 0; border-bottom: 1px solid var(--border-subtle); }
+.squad-col:last-child { border-bottom: none; }
+.squad-col-head { display: flex; align-items: center; gap: 6px; font-size: 12px; }
+.squad-col-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.squad-col-x { color: var(--text-muted); font-size: 11px; }
+.squad-col-body { display: flex; align-items: center; gap: 8px; margin-top: 3px; }
+.squad-col-stat { font-size: 11px; color: var(--text-muted); white-space: nowrap; }
 .mat-row {
   display: flex; align-items: center; gap: 8px;
   padding: 3px 0; font-size: 12px;
@@ -528,6 +797,7 @@ function onBuildBotStatus(data: any) {
 .mat-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mat-count { color: var(--text-muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .stat-row { display: flex; justify-content: space-between; padding: 4px 0; font-size: 13px; }
+.paused-text { color: var(--warning); }
 .empty { color: var(--text-muted); padding: 12px 0; text-align: center; }
 
 /* 移动端：单列布局 */

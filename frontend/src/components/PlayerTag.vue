@@ -90,8 +90,10 @@ function msptClass(mspt: number | null): string {
 .pop-section { margin-bottom: 8px; }
 .pop-label { display: block; font-weight: 600; margin-bottom: 4px; font-size: 12px; color: var(--text-secondary); }
 .pop-value { font-size: 14px; font-weight: 600; }
-.pop-sub { display: block; color: var(--text-disabled); font-size: 12px; margin-top: 2px; }
-.pop-none { color: var(--text-disabled); font-style: italic; }
+/* 深色下 --text-disabled 对比度仅约 2.9:1，浮层内 12px 辅助文字几乎看不清；
+   统一提到 --text-muted（约 4.5:1），层级仍低于主值。 */
+.pop-sub { display: block; color: var(--text-muted); font-size: 12px; margin-top: 2px; }
+.pop-none { color: var(--text-muted); font-style: italic; }
 .pop-divider { height: 1px; background: var(--border-subtle); margin: 8px 0; }
 .pop-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 8px; }
 .pop-stat { display: flex; justify-content: space-between; font-size: 12px; color: var(--text-secondary); }
