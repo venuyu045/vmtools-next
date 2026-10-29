@@ -29,6 +29,9 @@ frontend/node_modules/
 
 # Config (local, not tracked — use config.yaml.example as template)
 backend/config/config.yaml
+# 首次启动时自动生成的初始管理员口令（0600），绝不能进仓库
+backend/config/.site_admin_password
+.site_admin_password
 
 # IDE
 .idea/
