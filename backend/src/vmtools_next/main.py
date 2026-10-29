@@ -36,6 +36,7 @@ from vmtools_next.api.routers.build_map_art import router as map_art_router
 from vmtools_next.api.routers.lixiangxiang import router as lixiangxiang_router
 from vmtools_next.api.routers.tasks import router as tasks_router
 from vmtools_next.api.routers.access import router as access_router
+from vmtools_next.api.routers.fashion import router as fashion_router
 from vmtools_next.adapters.mcc.mcc_session_pool import MccSessionPool
 from vmtools_next.adapters.mineflayer.mineflayer_session_pool import MineflayerSessionPool
 from vmtools_next.core.task_engine import TaskEngine
@@ -503,6 +504,9 @@ def create_app() -> FastAPI:
     app.include_router(lixiangxiang_router)
     app.include_router(tasks_router)
     app.include_router(access_router)
+    # VMT_FASHION__ENABLED（docs/fashion-api.md §11）：默认开启；关闭后不挂载时装路由
+    if config.fashion.enabled:
+        app.include_router(fashion_router)
 
     # Static files (Web UI — will be populated in phase 6)
     static_dir = BASE_DIR.parent.parent / "static"
@@ -545,6 +549,11 @@ def run():
         port=config.server.port,
         reload=debug,
         log_level="debug" if debug else "info",
+        # 部署在 nginx/OpenResty 后面时，使用 X-Forwarded-For 还原客户端 IP。
+        # fashion challenge 的来源 IP 绑定、登录限流都依赖 request.client.host。
+        # 注意：后端端口必须只对反代网段开放，不能直接暴露公网（否则可伪造 IP 头）。
+        proxy_headers=True,
+        forwarded_allow_ips="*",
     )
 
 

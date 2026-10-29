@@ -8,11 +8,11 @@ from __future__ import annotations
 import os
 import pathlib
 from functools import lru_cache
-from typing import Any
+from typing import Annotated, Any
 
 import yaml
-from pydantic import BaseModel, Field
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import BaseModel, Field, field_validator
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
 # ── Section models ──────────────────────────────────────────────────────
@@ -330,6 +330,71 @@ class AccessControlConfig(BaseModel):
     magpie_whitelist: list[str] = Field(default_factory=list)
 
 
+class FashionSettings(BaseModel):
+    """时装系统（VMFashion Fabric 客户端 mod）配置。
+
+    环境变量：``VMT_FASHION__YGGDRASIL_BASES=https://a,https://b``（逗号/空白分隔）。
+
+    认证只支持两条路径：Mojang 正版会话服务器 + 皮肤站（authlib-injector /
+    Yggdrasil）。目标服务器无离线玩家，**没有**离线 UUID 兜底。
+    """
+
+    enabled: bool = True
+
+    # ── 认证 ──
+    # 皮肤站 API 基地址白名单（可多个）。客户端上报的 authServer 只有落在
+    # 这个白名单内才会被使用 —— 白名单外的地址一律忽略（防 SSRF）。
+    # NoDecode：pydantic-settings 默认会把 list 类型的 env 值当 JSON 解析，
+    # 而运维写的是 `https://a,https://b`，不加 NoDecode 会在进校验器之前就报错。
+    yggdrasil_bases: Annotated[list[str], NoDecode] = Field(
+        default_factory=lambda: ["https://littleskin.cn/api/yggdrasil"]
+    )
+    # 正版会话服务器（Mojang / MSA）
+    mojang_session_server: str = "https://sessionserver.mojang.com"
+    # serverId 有效期（一次性，2 分钟）
+    challenge_ttl_seconds: int = 120
+    # 签发给 mod 的 fashion token 有效期（默认 24h）
+    token_ttl_seconds: int = 86400
+    # 所有对外 HTTP 调用的超时（秒），失败即降级
+    http_timeout_seconds: float = 5.0
+    # 设备码流程（网页绑定 MC 账号）：用户码有效期 + 建议轮询间隔
+    device_code_ttl_seconds: int = 600
+    device_poll_interval_seconds: int = 3
+
+    # ── 资产 / 目录 ──
+    # 资产根目录。相对路径按**仓库根目录**解析（vmtools-next/data/fashion-assets）
+    asset_dir: str = "data/fashion-assets"
+    # 目录缓存（catalog）TTL
+    catalog_cache_ttl_seconds: int = 30
+    # 批量 resolve 的单次 UUID 上限（热路径保护）
+    resolve_max_uuids: int = 200
+    # resolve 结果缓存 TTL（秒）；0 = 关闭
+    resolve_cache_ttl_seconds: int = 5
+    # 单个玩家的最大穿戴槽位数
+    max_loadout_items: int = 8
+
+    # ── 包级下发签名（可选，mod 契约 docs/fashion-api.md §6） ──
+    # Ed25519 私钥（base64：裸 32 字节种子或 PKCS#8 DER）。留空 = 清单不带
+    # signature 字段（mod 默认宽松模式放行 + 一次 warn；开了严格模式会拒绝）。
+    # ⚠️ 私钥只能放服务端（环境变量 / KMS），绝不能进客户端仓库或 git。
+    # 需要 `cryptography` 依赖；没装时自动降级为不签名（记一条 warn，不影响 /packs）。
+    pack_signing_key_b64: str = ""
+    # 与客户端 trusted_keys.json 里的 keys[].id 对应，便于轮换密钥
+    pack_signing_key_id: str = "vmtools-official"
+
+    @field_validator("yggdrasil_bases", mode="before")
+    @classmethod
+    def _split_bases(cls, value: Any) -> Any:
+        """兼容 `VMT_FASHION__YGGDRASIL_BASES=a,b` 这种逗号分隔写法。
+
+        pydantic-settings 对 ``list[str]`` 默认按 JSON 解析，运维不会去写
+        ``'["https://..."]'``，所以在进校验前先按逗号/空白切分。
+        """
+        if isinstance(value, str):
+            return [part.strip() for part in value.replace(";", ",").split(",") if part.strip()]
+        return value
+
+
 class AppConfig(BaseSettings):
     """Top-level application configuration."""
 
@@ -354,6 +419,7 @@ class AppConfig(BaseSettings):
     player_tracking: PlayerTrackingConfig = Field(default_factory=PlayerTrackingConfig)
     bluemap: BlueMapConfig = Field(default_factory=BlueMapConfig)
     access_control: AccessControlConfig = Field(default_factory=AccessControlConfig)
+    fashion: FashionSettings = Field(default_factory=FashionSettings)
 
 
 # ── Loader ──────────────────────────────────────────────────────────────

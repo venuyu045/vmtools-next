@@ -34,6 +34,10 @@ from vmtools_next.data.models.lixiangxiang import (  # noqa: F401
     OrganizationInfoModel, MemberModel, LxBaseModel,
     GalleryCategoryModel, GalleryImageModel,
 )
+from vmtools_next.data.models.fashion import (  # noqa: F401
+    FashionIdentityModel, FashionCatalogModel,
+    FashionLoadoutModel, FashionAssetModel,
+)
 
 __all__ = [
     # warehouse
@@ -47,7 +51,8 @@ __all__ = [
     "OperationLogModel",
     # build
     "BuildTaskModel", "BuildLayerModel",
-    # build_map_art（9 张地图画表，B10 补齐）
+    # build_map_art（全部 10 个表类，B10 补齐；索引文档写「9 张表」，实际含
+    # global_config / task_progress 共 10 个 ORM 类）
     "MapArtTask", "MapArtMaterial", "MapArtBotAssignment", "MapArtBlockState",
     "MapArtTaskProgress", "MapArtSupplyBox", "MapArtSupplyTemplate",
     "MapArtSupplyWarehouse", "MapArtFoodBox", "MapArtGlobalConfig",
@@ -62,4 +67,7 @@ __all__ = [
     # lixiangxiang
     "OrganizationInfoModel", "MemberModel", "LxBaseModel",
     "GalleryCategoryModel", "GalleryImageModel",
+    # fashion
+    "FashionIdentityModel", "FashionCatalogModel",
+    "FashionLoadoutModel", "FashionAssetModel",
 ]

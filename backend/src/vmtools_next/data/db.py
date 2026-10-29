@@ -147,7 +147,7 @@ def init_db() -> None:
     # Import all model modules so Base.metadata knows about every table
     from vmtools_next.data.models import (  # noqa: F401
         warehouse, auth, logistics, build, build_map_art, mcc_session, mcc_remote, plugin, monitor, player_tracking,
-        lixiangxiang, scheduled_task,
+        lixiangxiang, scheduled_task, fashion,
     )
 
     Base.metadata.create_all(bind=engine)
@@ -307,6 +307,14 @@ def _run_lightweight_migrations(engine) -> None:
                 if "food_config" not in mt_columns:
                     conn.execute(text("ALTER TABLE map_art_tasks ADD COLUMN food_config TEXT DEFAULT ''"))
                 # 2026-08-19 列式协作模式：建造模式
+                # ⚠️ 2026-10-28 决策（B12）：这里的 DEFAULT 'strip' **故意保持 strip，勿"统一"成 column**。
+                #   本迁移只影响「旧库首次加 build_mode 列」的那批**历史行**，而历史任务确实是
+                #   strip 时代建的（进度、map_art_bot_assignments.region_*、column_index 全是
+                #   strip 语义）；标成 column 会让续建时按列池重排、把已建区域当未建 → 数据破坏。
+                #   B12 要统一的是「**新建**任务的默认值」，那条链已统一：create_task 显式写
+                #   column + resolve_build_mode() 兜底 column + 模型列默认 column。
+                #   即：本行是「历史数据语义」，不是「默认值」。
+                # 历史行语义保持 strip（strip 时代的进度/分区数据），新建任务默认值由 create_task + resolve_build_mode 统一为 column
                 if "build_mode" not in mt_columns:
                     conn.execute(text("ALTER TABLE map_art_tasks ADD COLUMN build_mode VARCHAR DEFAULT 'strip'"))
             except Exception as _e:

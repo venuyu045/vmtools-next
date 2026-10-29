@@ -15,6 +15,7 @@
 - **BlueMap 监控**：轮询地图 API，精确检测机器人与玩家上下线状态。
 - **即时通知**：实例上下线、崩溃、自动重连事件通过 QQ 机器人实时推送。
 - **组织官网**：内置「理想乡」组织主页（介绍 / 成员 / 基地 / 相册），成员头像自动使用其 MC ID 的正版皮肤，自带管理后台。
+- **时装系统（VMFashion）**：配套的纯客户端时装 mod（[VMFashion-mod](https://github.com/venuyu045/VMFashion-mod)）的云端衣柜与**时装包级下发** —— 网页换装、游戏内实时生效，别人穿的时装没装也能自动下载（sha256 校验 + Ed25519 验签 + 安全解压）。详见 [时装系统](#时装系统vmfashion)。
 - **插件系统**：插件启停与在线配置管理。
 - **安全**：JWT 认证、角色权限（site_admin / admin / user）、操作审计日志、登录限流。
 
@@ -112,13 +113,91 @@ npm install
 
 > 前端构建产物直接进 git（`backend/static/`），改完前端必须重新 `npm run build` 后提交，服务器拉取即生效。
 
+## 时装系统（VMFashion）
+
+给纯客户端时装 mod [VMFashion](https://github.com/venuyu045/VMFashion-mod) 提供**云端衣柜**与**时装包级下发**。
+服务器（Minecraft 服务端）不需要装任何东西；玩家装 mod 后填上本站的 `apiBaseUrl` 即可。
+
+### 能力
+
+| 能力 | 说明 |
+| :--- | :--- |
+| **账号绑定** | 游戏内 `/vmfashion bind` 得到 6 位绑定码 → 本站「时装绑定」页输入 → 一个网站账号可绑多个 MC 账号 |
+| **双路认证** | 正版走 `sessionserver.mojang.com`，皮肤站走 Yggdrasil（**只信任白名单内的地址**，防 SSRF）；后端用 `hasJoined` 反查并**比对 UUID**，不做密码登录 |
+| **网页衣柜** | `/fashion/wardrobe`：按槽位（披风/翅膀/头饰/背饰/宠物/光环）挑选、调缩放、保存；进游戏自动生效，游戏内换装也会实时回传 |
+| **批量解析** | 进服时 `POST /loadouts/resolve` 一次最多 200 个 UUID，只回 `assetKey` 级元数据（热路径，5 秒缓存） |
+| **时装包下发** | `GET /packs` 清单 + `GET /packs/{id}/{version}/download` 整包 zip：200 直出、`Content-Length` 精确、**不重定向**、可选 Ed25519 签名；客户端按 sha256 校验后安全解压 |
+| **上传加固** | 服务端先按客户端同一套规则校验 zip（条目数/大小/压缩比、拒绝 `..`、符号链接、加密、ZIP64、可执行文件、Windows 保留名，`pack.json.id` 必须与 packId 一致），坏包进不了清单 |
+
+### 页面与接口
+
+- 前端页面：`/fashion/bind`（绑定）、`/fashion/wardrobe`（我的衣柜）—— 均需登录
+- 后端路由：`backend/src/vmtools_next/api/routers/fashion.py`，前缀 **`/api/fashion`**
+  - 公开：`/auth/challenge`、`/auth/verify`、`/packs`、`/packs/{id}/{version}/download`、`/assets/{assetKey}`
+  - mod（Bearer token）：`/loadout`（PUT）、`/loadout/me`、`/loadouts/resolve`、`/catalog`、`/device/*`
+  - 管理端（site_admin）：`/admin/catalog`、`/admin/assets`、`/admin/packs`（上下架）
+- 完整契约（含每个端点的字段表、错误码、签名规范、curl 自测）：[`docs/fashion-api.md`](docs/fashion-api.md)
+
+### 服务端配置
+
+全部走 `VMT_FASHION__*` 环境变量（嵌套配置必须**双下划线**，见上文命名铁律），默认值即开箱可用：
+
+| 变量 | 默认值 | 说明 |
+| :--- | :--- | :--- |
+| `VMT_FASHION__ENABLED` | `true` | 总开关（关掉后不挂载时装路由） |
+| `VMT_FASHION__YGGDRASIL_BASES` | `https://littleskin.cn/api/yggdrasil` | 皮肤站白名单，逗号分隔；**上线新皮肤站必须加进来** |
+| `VMT_FASHION__ASSET_DIR` | `data/fashion-assets` | 资产目录（相对仓库根），生产请挂持久卷 |
+| `VMT_FASHION__TOKEN_TTL_SECONDS` | `86400` | 发给 mod 的 token 有效期（无 refresh，过期后 mod 重新认证） |
+| `VMT_FASHION__RESOLVE_MAX_UUIDS` | `200` | 单次批量解析上限 |
+| `VMT_FASHION__PACK_SIGNING_KEY_B64` | 空 | 时装包 Ed25519 私钥（base64）。空 = 清单不带签名 |
+| `VMT_FASHION__PACK_SIGNING_KEY_ID` | `vmtools-official` | 签名 keyId（与客户端 `trusted_keys.json` 对应，用于轮换） |
+
+### 数据与迁移
+
+- 表：`fashion_identity`（已验证的 MC 身份）、`fashion_catalog`（时装目录）、`fashion_loadout`（穿戴，`(identity_id, slot)` 唯一）、`fashion_asset`（资产，按 sha256 去重；**时装包清单从 `.zip` 资产行派生，无需新表**）
+- 迁移：`backend/alembic/versions/20261028_fashion.py`（`alembic upgrade head`；`init_db()` 的 `create_all` 也会建表）
+- 资产目录：`data/fashion-assets/`（见该目录下 README）
+
+### 发布时装包（管理员）
+
+```bash
+BASE=https://your-host/api/fashion
+TOKEN=<site_admin 的登录 token>
+
+# 1) 发布一个时装包（zip 根目录必须有 pack.json，且 pack.json.id == pack_id）
+curl -s -X POST $BASE/admin/packs -H "Authorization: Bearer $TOKEN" \
+  -F "file=@wings-1.2.0.zip" -F "pack_id=wings" -F "version=1.2.0"
+
+# 2) 登记目录条目（cosmeticId 用全局 ID <packId>:<localId>，与 mod 上报的一致）
+curl -s -X POST $BASE/admin/catalog -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"cosmeticId":"wings:angel","packId":"wings","name":"天使之翼","category":"wings","sortOrder":10}'
+
+# 3) 验证清单与下载（200 直出、Content-Length == bytes、无 Location）
+curl -s "$BASE/packs" | jq '.packs[0]'
+curl -sI "$BASE/packs/wings/1.2.0/download" | grep -iE 'HTTP/|content-length|content-type|location'
+
+# 4) 下架（只从清单移除，玩家本地已下载的包不受影响）
+curl -s -X DELETE $BASE/admin/packs/wings/1.2.0 -H "Authorization: Bearer $TOKEN"
+```
+
+### 注意事项
+
+1. **多 worker 部署**：challenge / 设备码 / 限流都在**单进程内存**里，`--workers > 1` 时 mod 的
+   challenge→verify 可能落到不同进程 → `challenge_not_found`。请用单 worker 或 nginx `ip_hash` 粘性会话。
+2. **反向代理**：后端已开 `proxy_headers` + `forwarded_allow_ips="*"`，challenge 的来源 IP 绑定依赖它；
+   ⚠️ 因此后端端口**只能**对反代网段开放，否则任何人都能伪造 `X-Forwarded-For`。
+3. **nginx 上传上限**：资产 ≤64MB、时装包 ≤128MB，nginx 默认 `client_max_body_size 50m` 会先 413。
+4. **签名与严格模式**：配置了 `VMT_FASHION__PACK_SIGNING_KEY_B64`（且装了 `cryptography`）后清单才会带
+   `signature`；**在此之前不要**让玩家在客户端开 `requireSignature`，否则会拒绝全部服务端包。
+5. **测试**：`pytest tests/test_fashion_*.py -q`（163 条用例，覆盖认证/契约/包级下发/zip 安全校验）。
+
 ## 项目结构
 
 ```
 vmtools-next/
 ├── backend/                      # Python FastAPI 后端
 │   ├── src/vmtools_next/
-│   │   ├── api/routers/          # REST API 路由（auth/mcc_instances/logistics/build_map_art/lixiangxiang…）
+│   │   ├── api/routers/          # REST API 路由（auth/mcc_instances/logistics/build_map_art/lixiangxiang/fashion…）
 │   │   ├── core/                 # 核心业务逻辑
 │   │   │   ├── mcc_process_manager.py     # MCC 进程守护与终端管理
 │   │   │   ├── mineflayer_process_manager.py # Mineflayer 进程守护

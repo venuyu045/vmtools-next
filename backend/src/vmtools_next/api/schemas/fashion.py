@@ -1,0 +1,272 @@
+"""Pydantic schemas for the fashion (时装) API.
+
+对外 JSON 一律 **camelCase**（mod 是 Kotlin/Java 写的，字段名按 mod 侧约定），
+Python 侧保持 snake_case：用 ``alias`` + ``populate_by_name`` 两全。
+
+错误响应统一为::
+
+    {"detail": {"code": "challenge_expired", "message": "..."}}
+"""
+from __future__ import annotations
+
+from typing import Optional
+
+from pydantic import BaseModel, ConfigDict, Field
+
+
+class FashionSchema(BaseModel):
+    """所有 fashion schema 的基类：允许用字段名或别名（camelCase）赋值。"""
+
+    model_config = ConfigDict(populate_by_name=True, extra="ignore")
+
+
+# ── 认证 ────────────────────────────────────────────────────────────────
+
+class ChallengeRequest(FashionSchema):
+    mc_uuid: str = Field(..., alias="mcUuid", description="玩家 UUID（带/不带连字符均可）")
+    mc_name: str = Field(..., alias="mcName", description="玩家名（3-16 位）")
+    auth_server: str = Field(
+        default="", alias="authServer",
+        description="皮肤站 base URL；正版玩家留空。白名单外的地址会被忽略",
+    )
+
+
+class ChallengeResponse(FashionSchema):
+    server_id: str = Field(..., alias="serverId")
+    expires_in: int = Field(..., alias="expiresIn")
+    auth_type: str = Field(..., alias="authType", description="mojang | yggdrasil")
+
+
+class VerifyRequest(FashionSchema):
+    mc_uuid: str = Field(..., alias="mcUuid")
+    mc_name: str = Field(..., alias="mcName")
+    auth_server: str = Field(default="", alias="authServer")
+    server_id: str = Field(..., alias="serverId")
+
+
+class IdentityPayload(FashionSchema):
+    mc_uuid: str = Field(..., alias="mcUuid")
+    mc_name: str = Field(..., alias="mcName")
+    verified: bool = True
+
+
+class VerifyResponse(FashionSchema):
+    token: str
+    expires_in: int = Field(..., alias="expiresIn")
+    auth_type: str = Field(default="mojang", alias="authType")
+    identity: IdentityPayload
+
+
+class IdentityOut(FashionSchema):
+    id: str
+    mc_uuid: str = Field(..., alias="mcUuid")
+    mc_name: str = Field(..., alias="mcName")
+    auth_type: str = Field(..., alias="authType")
+    auth_server: str = Field(default="", alias="authServer")
+    verified: bool = True
+    verified_at: Optional[str] = Field(default=None, alias="verifiedAt")
+    user_id: Optional[str] = Field(default=None, alias="userId")
+    created_at: Optional[str] = Field(default=None, alias="createdAt")
+    last_seen_at: Optional[str] = Field(default=None, alias="lastSeenAt")
+
+
+class IdentityListResponse(FashionSchema):
+    items: list[IdentityOut]
+
+
+# ── 目录 ────────────────────────────────────────────────────────────────
+
+class CatalogItem(FashionSchema):
+    cosmetic_id: str = Field(..., alias="cosmeticId")
+    name: str = ""
+    category: str = "other"
+    asset_key: str = Field(default="", alias="assetKey")
+    sha256: str = ""
+    bytes: int = 0
+    pack_id: str = Field(default="", alias="packId")
+    sort_order: int = Field(default=0, alias="sortOrder")
+
+
+class CatalogResponse(FashionSchema):
+    items: list[CatalogItem]
+
+
+# ── 穿戴配置 ────────────────────────────────────────────────────────────
+
+class LoadoutItem(FashionSchema):
+    slot: str = Field(..., description="cape|wings|hat|back|pet|aura|other")
+    cosmetic_id: str = Field(..., alias="cosmeticId")
+    # 省略 = 沿用该槽位已保存的 scale（mod 不保存缩放）；显式传 null 也按省略处理
+    scale: Optional[float] = None
+
+
+class LoadoutPutRequest(FashionSchema):
+    items: list[LoadoutItem] = Field(default_factory=list)
+
+
+class LoadoutWarning(FashionSchema):
+    """某一条穿戴被跳过（时装不存在 / 已下架）—— 其余条目照常写入。"""
+
+    slot: str
+    cosmetic_id: str = Field(..., alias="cosmeticId")
+    code: str = Field(..., description="unknown_cosmetic | cosmetic_disabled")
+
+
+class LoadoutPutResponse(FashionSchema):
+    ok: bool = True
+    updated_at: str = Field(..., alias="updatedAt")
+    # 可选：被跳过的条目（老客户端忽略未知字段）
+    warnings: list[LoadoutWarning] = Field(default_factory=list)
+
+
+class LoadoutItemOut(FashionSchema):
+    slot: str
+    cosmetic_id: str = Field(..., alias="cosmeticId")
+    scale: float = 1.0
+    asset_key: str = Field(default="", alias="assetKey")
+    sha256: str = ""
+    bytes: int = 0
+    name: str = ""
+    category: str = "other"
+    missing: bool = False
+    # 包级下发：客户端据此知道这件时装属于哪个包、什么版本（mod 契约 §3）
+    pack_id: str = Field(default="", alias="packId")
+    pack_version: str = Field(default="", alias="packVersion")
+
+
+class LoadoutResponse(FashionSchema):
+    items: list[LoadoutItemOut]
+
+
+class ResolvedItem(FashionSchema):
+    """热路径返回项：只有 assetKey 级别元数据，不含资产内容。"""
+
+    slot: str
+    cosmetic_id: str = Field(..., alias="cosmeticId")
+    asset_key: str = Field(default="", alias="assetKey")
+    sha256: str = ""
+    bytes: int = 0
+    scale: float = 1.0
+    # 包级下发（mod 契约 §3）：客户端靠它判断要不要整包下载
+    pack_id: str = Field(default="", alias="packId")
+    pack_version: str = Field(default="", alias="packVersion")
+
+
+class ResolvedLoadout(FashionSchema):
+    items: list[ResolvedItem]
+
+
+class ResolveRequest(FashionSchema):
+    mc_uuids: list[str] = Field(default_factory=list, alias="mcUuids")
+
+
+class ResolveResponse(FashionSchema):
+    loadouts: dict[str, ResolvedLoadout] = Field(default_factory=dict)
+    missing: list[str] = Field(default_factory=list)
+
+
+# ── 设备码（网页绑定） ──────────────────────────────────────────────────
+
+class DeviceStartResponse(FashionSchema):
+    user_code: str = Field(..., alias="userCode")
+    device_code: str = Field(..., alias="deviceCode")
+    expires_in: int = Field(..., alias="expiresIn")
+    interval: int = 3
+
+
+class DeviceApproveRequest(FashionSchema):
+    user_code: str = Field(default="", alias="userCode")
+    device_code: str = Field(default="", alias="deviceCode")
+
+
+class DeviceApproveResponse(FashionSchema):
+    ok: bool = True
+    identity_id: str = Field(..., alias="identityId")
+    mc_uuid: str = Field(default="", alias="mcUuid")
+    mc_name: str = Field(default="", alias="mcName")
+
+
+class DeviceStatusResponse(FashionSchema):
+    status: str
+    user_code: str = Field(default="", alias="userCode")
+    bound_user_id: Optional[str] = Field(default=None, alias="boundUserId")
+
+
+# ── 管理端 ──────────────────────────────────────────────────────────────
+
+class CatalogUpsertRequest(FashionSchema):
+    cosmetic_id: str = Field(default="", alias="cosmeticId")
+    pack_id: str = Field(default="", alias="packId")
+    name: str = ""
+    category: str = "other"
+    asset_key: str = Field(default="", alias="assetKey")
+    sha256: str = ""
+    bytes: Optional[int] = None
+    enabled: Optional[bool] = None
+    sort_order: Optional[int] = Field(default=None, alias="sortOrder")
+
+
+class CatalogAdminItem(FashionSchema):
+    cosmetic_id: str = Field(..., alias="cosmeticId")
+    pack_id: str = Field(default="", alias="packId")
+    name: str = ""
+    category: str = "other"
+    asset_key: str = Field(default="", alias="assetKey")
+    sha256: str = ""
+    bytes: int = 0
+    enabled: bool = True
+    sort_order: int = Field(default=0, alias="sortOrder")
+
+
+class CatalogAdminResponse(FashionSchema):
+    items: list[CatalogAdminItem]
+
+
+class AssetOut(FashionSchema):
+    id: str
+    pack_id: str = Field(default="", alias="packId")
+    version: str = "1"
+    filename: str = ""
+    sha256: str = ""
+    bytes: int = 0
+    storage_path: str = Field(default="", alias="storagePath")
+    created_at: Optional[str] = Field(default=None, alias="createdAt")
+
+
+class AssetListResponse(FashionSchema):
+    items: list[AssetOut]
+
+
+class AssetUploadResponse(FashionSchema):
+    ok: bool = True
+    asset: AssetOut
+    cosmetic_id: str = Field(default="", alias="cosmeticId")
+
+
+# ── 包级下发（mod 契约：GET /packs + GET /packs/{id}/{version}/download） ──
+
+class PackItem(FashionSchema):
+    """一条包清单。
+
+    ``publishedAt`` 必须是**毫秒时间戳 number**（mod 的 ``PackCatalog`` 用
+    ``getAsLong()`` 读取；给 ISO-8601 字符串会静默变成 0）。
+    """
+
+    id: str
+    version: str
+    sha256: str
+    bytes: int
+    url: str = ""
+    published_at: Optional[int] = Field(default=None, alias="publishedAt")
+    # 可选签名（Ed25519，标准 base64）；未配置私钥时不输出这两个字段
+    signature: Optional[str] = None
+    signing_key_id: Optional[str] = Field(default=None, alias="signingKeyId")
+
+
+class PacksResponse(FashionSchema):
+    packs: list[PackItem] = Field(default_factory=list)
+
+
+class PackUploadResponse(FashionSchema):
+    ok: bool = True
+    pack: PackItem

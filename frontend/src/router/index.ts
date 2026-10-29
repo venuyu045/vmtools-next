@@ -57,6 +57,9 @@ const routes = [
       { path: 'warehouse-status/:id', name: 'WarehouseItems', component: () => import('@/views/WarehouseItemsView.vue'), meta: { title: '仓库物品', roles: ALL_LOGGED_IN, guestReadable: true } },
       // 任务中心（工具组）：地图画+物流统一任务列表与 Bot 执行/排队视角；访客只读可浏览
       { path: 'tasks', name: 'TaskCenter', component: () => import('@/views/TaskCenterView.vue'), meta: { title: '任务中心', roles: ALL_LOGGED_IN, guestReadable: true } },
+      // 时装系统（VMFashion mod）：绑定 MC 账号 + 网页衣柜（需登录，无 guestReadable）
+      { path: 'fashion/bind', name: 'FashionBind', component: () => import('@/views/fashion/FashionBindView.vue'), meta: { title: '时装绑定', roles: ALL_LOGGED_IN } },
+      { path: 'fashion/wardrobe', name: 'FashionWardrobe', component: () => import('@/views/fashion/FashionWardrobeView.vue'), meta: { title: '我的衣柜', roles: ALL_LOGGED_IN } },
 
       // --- 管理员及以上可见 ---
       // 任务管理（管理组第一个，2026-08-13）：自定义 MF 手动工作标记，被标记 bot 不被自动调度派活
