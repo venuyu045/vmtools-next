@@ -98,6 +98,8 @@ def _record(rt, res: CellResult, wx: int, wy: int, wz: int) -> None:
     """把结果写入进度/待补/待落库集合（两引擎统一）。"""
     if res.ok:
         rt.progress.record_place()
+        if res.outcome == "placed":
+            rt._new_placed = getattr(rt, "_new_placed", 0) + 1
         rt.progress.last_completed_x = res.x_rel
         rt._db_updates.append((wx, wy, wz, res.block_id))
         rt._placed_coords.add((wx, wy, wz))

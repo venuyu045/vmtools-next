@@ -91,7 +91,7 @@ class ColumnRegion:
 
     @property
     def block_count(self) -> int:
-        return self.z_end - self.z_start + 1
+        return abs(self.z_end - self.z_start) + 1
 
     @property
     def world_x_offset(self) -> int:
@@ -99,12 +99,19 @@ class ColumnRegion:
         return self.column_x
 
     def bounds(self) -> tuple[int, int, int, int]:
-        return (self.column_x, self.column_x, self.z_start, self.z_end)
+        lo, hi = sorted((self.z_start, self.z_end))
+        return (self.column_x, self.column_x, lo, hi)
 
     def z_order(self) -> list[int]:
-        """按建造方向排好序的行号列表。"""
-        rng = range(self.z_start, self.z_end + 1)
-        return list(rng) if self.direction >= 0 else list(reversed(rng))
+        """按建造方向排好序的行号列表。
+
+        ⚠️ 反向排（direction=-1）时调用方传的是 ``z_start=size-1, z_end=0``，
+        所以必须先取 min/max 再排序——直接 ``range(z_start, z_end+1)`` 会得到空列表
+        （实测：蛇形第二排整列一格都不建）。
+        """
+        lo, hi = sorted((self.z_start, self.z_end))
+        rng = list(range(lo, hi + 1))
+        return rng if self.direction >= 0 else list(reversed(rng))
 
 
 @dataclass

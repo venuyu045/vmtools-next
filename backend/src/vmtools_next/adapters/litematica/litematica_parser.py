@@ -1683,7 +1683,14 @@ def _file_sha256(path: str) -> str:
 
 
 class ParsedProjection:
-    """Fully parsed .litematic data."""
+    """Fully parsed .litematic data.
+
+    ⚠️ 坐标口径（坐标铁律，见 docs/dev/map-art-重构方案-2026-10-28.md §三）：
+    `layers` / `regions[*]["offset"]` 里的坐标一律是 **0-based 相对坐标**
+    （相对全局原点 = 所有 region Position 逐轴最小值），世界坐标 = origin + 相对。
+    2026-10-28 B9 修复前，`layers` 存的是 `region.Position + 局部坐标`（既不是相对也不是
+    世界坐标），且 `get_layer_blocks` 固定减「第一个 region 的 Position」→ 多 region 必错位。
+    """
 
     def __init__(self):
         self.name: str = ""
@@ -1691,9 +1698,189 @@ class ParsedProjection:
         self.description: str = ""
         self.total_volume: int = 0
         self.total_blocks: int = 0
-        self.regions: dict[str, dict] = {}  # name → {size, position, palette, block_states}
+        # name → {size, position(原始), offset(相对全局原点的偏移), palette, block_count}
+        self.regions: dict[str, dict] = {}
         self.materials: dict[str, int] = {}  # item_id → count
-        self.layers: dict[int, list[tuple[int, int, int, str]]] = {}  # y_offset → [(x,y,z,block_state)]
+        # y(相对全局原点) → [(x_rel, y_rel, z_rel, block_state)]
+        self.layers: dict[int, list[tuple[int, int, int, str]]] = {}
+        # B9：全局原点（所有 region Position 逐轴最小值；单 region 时 == 该 region 的 Position）
+        self.base_position: dict[str, int] = {"x": 0, "y": 0, "z": 0}
+        # B9：region 名 → 相对全局原点的偏移（= 自身 Position - base_position）
+        self.region_offsets: dict[str, dict[str, int]] = {}
+
+
+# ──────────────────────────────────────────────
+# 纯函数：region 解码 / 坐标归一化（不依赖 nbtlib 具体类型，便于单测直接喂 dict）
+# ──────────────────────────────────────────────
+
+def _region_geometry(region_data) -> tuple[tuple[int, int, int], tuple[int, int, int]]:
+    """读一个 region 的 Size/Position，并把负尺寸归一化成正尺寸。
+
+    Litematica 允许负的 Size（表示从 Position 反向延伸）：`sx<0` 等价于
+    `sx=-sx, px=px+sx`（旧实现同样处理，行为保持不变）。
+
+    Returns: ((sx, sy, sz), (px, py, pz)) —— 尺寸均非负，Position 已按负尺寸平移。
+    """
+    size = region_data.get("Size", {}) or {}
+    position = region_data.get("Position", {}) or {}
+    sx = int(size.get("x", 0) or 0)
+    sy = int(size.get("y", 0) or 0)
+    sz = int(size.get("z", 0) or 0)
+    px = int(position.get("x", 0) or 0)
+    py = int(position.get("y", 0) or 0)
+    pz = int(position.get("z", 0) or 0)
+    if sx < 0:
+        sx, px = -sx, px + sx
+    if sy < 0:
+        sy, py = -sy, py + sy
+    if sz < 0:
+        sz, pz = -sz, pz + sz
+    return (sx, sy, sz), (px, py, pz)
+
+
+def _palette_names(palette) -> list[str]:
+    """BlockStatePalette → 名称列表（保留 Properties，如 `oak_stairs[facing=north]`）。"""
+    names: list[str] = []
+    for entry in palette or []:
+        name = str(entry.get("Name", "minecraft:air"))
+        props = entry.get("Properties", {})
+        if props:
+            prop_str = ",".join(f"{k}={v}" for k, v in props.items())
+            names.append(f"{name}[{prop_str}]")
+        else:
+            names.append(name)
+    return names
+
+
+def _decode_region_states(region_name: str, block_states_raw,
+                           palette_names: list[str], expected_volume: int) -> list[int]:
+    """解码单个 region 的位流（含 nbtlib Long → int 双保险 + 长度校验）。"""
+    palette_bits = max(2, math.ceil(math.log2(max(len(palette_names), 1))))
+    # ⚠️ 2026-08-18 双保险：先显式转 int 再传解码器——实测 nbtlib LongArray
+    # 在解码函数内部 `[int(x) for x in raw_data]` 转换后结果仍异常（全 0，
+    # 外部先转 int 再传则正常 474538 块）→ 在此处先转 int 列表。
+    try:
+        block_states_int = [int(x) for x in block_states_raw]
+    except Exception:
+        block_states_int = block_states_raw
+
+    block_indices = _decode_block_states(block_states_int, palette_bits, expected_volume)
+    # P2-22：解码长度校验——数据不足时静默截断会导致"解析成功但缺块"
+    if len(block_indices) < expected_volume:
+        logger.warning(
+            "Region %s block states incomplete: %d/%d（投影可能损坏）",
+            region_name, len(block_indices), expected_volume,
+        )
+    return block_indices
+
+
+def _build_parsed_from_regions(regions, parsed: ParsedProjection) -> ParsedProjection:
+    """把 NBT `Regions` 结构（dict / nbtlib Compound 均可）解析进 `parsed`（纯逻辑）。
+
+    **B9 根因修复**：每个 region 用【自身 Position】换算相对坐标，再统一减去全局原点
+    （= 所有 region Position 逐轴最小值）归一化到 0-based。旧实现把 `Position + 局部坐标`
+    直接当坐标用，且 `get_layer_blocks` 固定减第一个 region 的 Position → 多 region 投影
+    必然错位（第二个 region 的块全部偏移到第一个 region 的坐标系里，重叠/越界）。
+
+    单 region：全局原点 == 该 region 的 Position、偏移恒为 (0,0,0) →
+    `layers` 与旧实现逐块一致（旧实现存 px+x，新实现存 x；`get_layer_blocks` 输出不变）。
+
+    两趟处理（先只读 Size/Position 算全局框架，再逐 region 解码）→ 不会同时持有
+    所有 region 的 block_indices，峰值内存与旧实现相当。
+    """
+    # 重置（便于同一 parsed 复用/单测多次调用）
+    parsed.regions = {}
+    parsed.materials = {}
+    parsed.layers = {}
+    parsed.region_offsets = {}
+
+    geoms: list[tuple[str, object, tuple[int, int, int], tuple[int, int, int]]] = []
+    for region_name, region_data in (regions or {}).items():
+        size, position = _region_geometry(region_data)
+        geoms.append((str(region_name), region_data, size, position))
+
+    if geoms:
+        base = {
+            "x": min(g[3][0] for g in geoms),
+            "y": min(g[3][1] for g in geoms),
+            "z": min(g[3][2] for g in geoms),
+        }
+    else:
+        base = {"x": 0, "y": 0, "z": 0}
+    parsed.base_position = base
+
+    for region_name, region_data, (sx, sy, sz), (px, py, pz) in geoms:
+        # 相对全局原点的偏移：多 region 各自平移，单 region 恒为 (0,0,0)
+        offset = {"x": px - base["x"], "y": py - base["y"], "z": pz - base["z"]}
+        parsed.region_offsets[region_name] = offset
+
+        palette_names = _palette_names(region_data.get("BlockStatePalette", []))
+        expected_volume = sx * sy * sz
+        block_indices = _decode_region_states(
+            region_name, region_data.get("BlockStates", []), palette_names, expected_volume)
+
+        parsed.regions[region_name] = {
+            "size": {"x": sx, "y": sy, "z": sz},
+            # ⚠️ position 保留【原始值】：创建任务时的原点校验（api/routers/build_map_art.py
+            # P2-12）读它判断投影是否已平移到 (0,0,0)，不能写成归一化后的 0。
+            "position": {"x": px, "y": py, "z": pz},
+            "offset": dict(offset),
+            "palette": palette_names,
+            "block_count": len(block_indices),
+        }
+
+        if sx <= 0 or sy <= 0 or not block_indices:
+            continue  # 空 region（尺寸为 0 / 无方块数据）→ 只登记元数据
+
+        for idx, palette_idx in enumerate(block_indices):
+            if palette_idx >= len(palette_names):
+                continue
+            block_name = palette_names[palette_idx]
+            if block_name == "minecraft:air":
+                continue
+
+            # 3D index → 局部坐标（2026-08-14 修复：Litematica 存储顺序为 x→y→z，
+            # 即 x 最快、y 次之、z 最慢；旧代码写成 x→z→y 会在多层(y>1)投影时错位）
+            x = idx % sx
+            y = (idx // sx) % sy
+            z = idx // (sx * sy)
+
+            # 局部坐标 → 相对全局原点（0-based）
+            rel_x = offset["x"] + x
+            rel_y = offset["y"] + y
+            rel_z = offset["z"] + z
+
+            # Material count
+            item_id = _block_state_to_item_id(block_name)
+            parsed.materials[item_id] = parsed.materials.get(item_id, 0) + 1
+
+            # Layer grouping（按相对 Y 分组：多 region 不同高度也不会混层）
+            parsed.layers.setdefault(rel_y, []).append((rel_x, rel_y, rel_z, block_name))
+
+    return parsed
+
+
+def _layer_blocks(parsed: ParsedProjection, layer_index: int, layer_height: int = 6,
+                  origin_x: int = 0, origin_y: int = 0, origin_z: int = 0
+                  ) -> list[tuple[int, int, int, str]]:
+    """从已解析的 layers 取指定层，换算成世界坐标（纯函数，便于单测）。
+
+    `parsed.layers` 已是 0-based 相对坐标（`_build_parsed_from_regions` 归一化过）→
+    这里只做 `origin + 相对`；不再需要减「某个 region 的 Position」（B9 前的错位来源）。
+    """
+    result: list[tuple[int, int, int, str]] = []
+    y_start = layer_index * layer_height
+    y_end = y_start + layer_height
+    for y_offset, blocks in (parsed.layers or {}).items():
+        if y_start <= y_offset < y_end:
+            for (rel_x, rel_y, rel_z, block_state) in blocks:
+                result.append((
+                    origin_x + rel_x,
+                    origin_y + rel_y,
+                    origin_z + rel_z,
+                    block_state,
+                ))
+    return result
 
 
 class LitematicaParser:
@@ -1740,93 +1927,9 @@ class LitematicaParser:
         parsed.total_volume = int(metadata.get("TotalVolume", 0))
         parsed.total_blocks = int(metadata.get("TotalBlocks", 0))
 
-        # Regions
-        regions = nbt_data.get("Regions", {})
-        materials: dict[str, int] = {}
-        layers: dict[int, list[tuple[int, int, int, str]]] = {}
-
-        for region_name, region_data in regions.items():
-            size = region_data.get("Size", {})
-            position = region_data.get("Position", {})
-            sx, sy, sz = int(size.get("x", 0)), int(size.get("y", 0)), int(size.get("z", 0))
-            px, py, pz = int(position.get("x", 0)), int(position.get("y", 0)), int(position.get("z", 0))
-
-            # Normalize negative sizes
-            if sx < 0: sx, px = -sx, px + sx
-            if sy < 0: sy, py = -sy, py + sy
-            if sz < 0: sz, pz = -sz, pz + sz
-
-            # Palette (preserve Properties for directional blocks)
-            palette = region_data.get("BlockStatePalette", [])
-            palette_names = []
-            for entry in palette:
-                name = str(entry.get("Name", "minecraft:air"))
-                props = entry.get("Properties", {})
-                if props:
-                    prop_str = ",".join(f"{k}={v}" for k, v in props.items())
-                    palette_names.append(f"{name}[{prop_str}]")
-                else:
-                    palette_names.append(name)
-
-            # Block states (bit-packed)
-            block_states_raw = region_data.get("BlockStates", [])
-            palette_bits = max(2, math.ceil(math.log2(max(len(palette_names), 1))))
-
-            # ⚠️ 2026-08-18 双保险：先显式转 int 再传解码器——实测 nbtlib LongArray
-            # 在解码函数内部 `[int(x) for x in raw_data]` 转换后结果仍异常（全 0，
-            # 外部先转 int 再传则正常 474538 块）→ 在此处先转 int 列表。
-            try:
-                block_states_int = [int(x) for x in block_states_raw]
-            except Exception:
-                block_states_int = block_states_raw
-
-            # Decode block states
-            block_indices = _decode_block_states(block_states_int, palette_bits, sx * sy * sz)
-            # P2-22：解码长度校验——数据不足时静默截断会导致"解析成功但缺块"
-            expected_volume = sx * sy * sz
-            if len(block_indices) < expected_volume:
-                logger.warning(
-                    "Region %s block states incomplete: %d/%d（投影可能损坏）",
-                    region_name, len(block_indices), expected_volume,
-                )
-
-            region_info = {
-                "size": {"x": sx, "y": sy, "z": sz},
-                "position": {"x": px, "y": py, "z": pz},
-                "palette": palette_names,
-                "block_count": len(block_indices),
-            }
-            parsed.regions[str(region_name)] = region_info
-
-            # Map blocks to materials and layers
-            for idx, palette_idx in enumerate(block_indices):
-                if palette_idx >= len(palette_names):
-                    continue
-                block_name = palette_names[palette_idx]
-                if block_name == "minecraft:air":
-                    continue
-
-                # 3D index → coordinates（2026-08-14 修复：Litematica 存储顺序为 x→y→z，
-                # 即 x 最快、y 次之、z 最慢；旧代码写成 x→z→y 会在多层(y>1)投影时错位）
-                x = idx % sx
-                y = (idx // sx) % sy
-                z = idx // (sx * sy)
-
-                world_x = px + x
-                world_y = py + y
-                world_z = pz + z
-
-                # Material count
-                item_id = _block_state_to_item_id(block_name)
-                materials[item_id] = materials.get(item_id, 0) + 1
-
-                # Layer grouping (by y offset)
-                if y not in layers:
-                    layers[y] = []
-                layers[y].append((world_x, world_y, world_z, block_name))
-
-        parsed.materials = materials
-        parsed.layers = layers
+        # Regions（2026-10-28 B9：解码 + 坐标归一化的纯逻辑抽到 _build_parsed_from_regions，
+        # 便于无 nbtlib 环境用构造 dict 单测；此处只负责读 NBT 后委派）
+        _build_parsed_from_regions(nbt_data.get("Regions", {}), parsed)
         return parsed
 
     @classmethod
@@ -1835,9 +1938,11 @@ class LitematicaParser:
                                     origin_z: int = 0) -> ProjectionInfo:
         """Get projection metadata (aligns with Java LitematicaAdapter.getProjectionInfo)."""
         parsed = await cls.parse_file(file_path)
-        max_x = max((r["size"]["x"] for r in parsed.regions.values()), default=0)
-        max_y = max((r["size"]["y"] for r in parsed.regions.values()), default=0)
-        max_z = max((r["size"]["z"] for r in parsed.regions.values()), default=0)
+        # 2026-10-28 B9：尺寸 = 所有 region 的【包围盒】（max(Position+Size) - min(Position)），
+        # 与 parse_file 里 layers 的 0-based 相对坐标口径一致。
+        # 单 region：包围盒恒等于该 region 的 Size（旧实现 max(size) 也是同一个值）→ 行为不变。
+        # 旧实现只取 max(各 region 的 Size)、完全不看 Position → 多 region 时尺寸偏小/错位。
+        size_x, size_y, size_z = cls.bounding_size(parsed)
         # ⚠️ 2026-08-18：metadata 的 TotalBlocks/TotalVolume 可能为 0（部分导出工具
         # 不写这两个字段，实测 schematic_part_1_2.litematic TotalBlocks=0 但实际
         # 474538 块）→ 以解析出的实际方块数/体积为准，避免任务 total_blocks=0。
@@ -1850,9 +1955,9 @@ class LitematicaParser:
             description=parsed.description,
             total_blocks=total_blocks or parsed.total_blocks,
             total_volume=total_volume or parsed.total_volume,
-            size_x=max_x,
-            size_y=max_y,
-            size_z=max_z,
+            size_x=size_x,
+            size_y=size_y,
+            size_z=size_z,
             region_count=len(parsed.regions),
             region_names=list(parsed.regions.keys()),
             origin_x=origin_x,
@@ -1860,6 +1965,33 @@ class LitematicaParser:
             origin_z=origin_z,
             file_path=file_path,
         )
+
+    @staticmethod
+    def bounding_size(parsed: ParsedProjection) -> tuple[int, int, int]:
+        """所有 region 的包围盒尺寸（逐轴 `max(Position+Size) - min(Position)`）。
+
+        单 region 恒等于该 region 的 Size；无 region 时 (0, 0, 0)。
+        与 `_build_parsed_from_regions` 的全局原点（min Position）配套：
+        layers 的相对坐标范围就是 `[0, bounding_size)`。
+        """
+        regions = list((parsed.regions or {}).values())
+        if not regions:
+            return 0, 0, 0
+
+        def _axis(key: str) -> int:
+            lo = 0
+            hi = 0
+            for i, region in enumerate(regions):
+                pos = int((region.get("position") or {}).get(key, 0) or 0)
+                size = int((region.get("size") or {}).get(key, 0) or 0)
+                if i == 0:
+                    lo, hi = pos, pos + size
+                else:
+                    lo = min(lo, pos)
+                    hi = max(hi, pos + size)
+            return hi - lo
+
+        return _axis("x"), _axis("y"), _axis("z")
 
     @classmethod
     async def get_material_requirements(cls, file_path: str) -> list[ProjectionMaterialRequirement]:
@@ -1882,22 +2014,15 @@ class LitematicaParser:
         """Get blocks for a specific layer (world coordinates).
 
         Returns [(world_x, world_y, world_z, block_state), ...]
+
+        2026-10-28 B9 修复：`parsed.layers` 已是 **0-based 相对坐标**（parse_file 里
+        按每个 region 自身的 Position 换算，再减去全局原点 = 所有 region Position 的最小值），
+        所以这里只需 `origin + 相对`。旧实现固定减「第一个 region 的 Position」——
+        多 region 投影时第二个 region 的块会整体平移错位（重叠/越界），单 region 时
+        `origin + (Position+局部 - Position) ≡ origin + 局部`，输出逐块一致（回归红线）。
         """
         parsed = await cls.parse_file(file_path)
-        result = []
-        y_start = layer_index * layer_height
-        y_end = y_start + layer_height
-
-        for y_offset, blocks in parsed.layers.items():
-            if y_start <= y_offset < y_end:
-                for (wx, wy, wz, block_state) in blocks:
-                    result.append((
-                        origin_x + (wx - list(parsed.regions.values())[0]["position"]["x"]),
-                        origin_y + (wy - list(parsed.regions.values())[0]["position"]["y"]),
-                        origin_z + (wz - list(parsed.regions.values())[0]["position"]["z"]),
-                        block_state,
-                    ))
-        return result
+        return _layer_blocks(parsed, layer_index, layer_height, origin_x, origin_y, origin_z)
 
 
 def _decode_block_states(raw_data, bits_per_entry: int, expected_count: int) -> list[int]:
@@ -1979,6 +2104,8 @@ def rotate_layers(
     """按朝向旋转投影层（y 分组坐标表），返回旋转后的新层。
 
     仅旋转 X/Z 平面坐标，Y（层高）不变；rotation 为 0 时原样返回。
+    入参 `layers` 必须是 0-based 相对坐标（`parse_file` 已保证，见 B9 修复），
+    尺寸用 `LitematicaParser.bounding_size(parsed)` 的 X/Z。
     调用方需同步把尺寸互换（90°/270°时宽深互换）后再落库。
     """
     rotation = int(rotation or 0) % 4

@@ -109,6 +109,32 @@ def _coord_total_blocks(coord) -> int:
     return 0
 
 
+def _loop_bounds(obj) -> Optional[tuple[int, int, int, int]]:
+    """从 loop / Region / ColumnRegion 上取区域边界 ``(x0, x1, z0, z1)``（相对坐标）。
+
+    三种形态都有 ``bounds()``（``Region`` / ``ColumnRegion`` / 两种 loop 各自实现），
+    统一用它，避免 API 依赖具体引擎类的字段名（列式是 ``column_region``、
+    strip 是 ``region``，重构期还会变）。
+    """
+    if obj is None:
+        return None
+    fn = getattr(obj, "bounds", None)
+    if callable(fn):
+        try:
+            b = fn()
+            if isinstance(b, (tuple, list)) and len(b) == 4:
+                return tuple(int(v) for v in b)  # type: ignore[return-value]
+        except Exception:
+            pass
+    for attr in ("region", "column_region"):
+        inner = getattr(obj, attr, None)
+        if inner is not None and inner is not obj:
+            got = _loop_bounds(inner)
+            if got is not None:
+                return got
+    return None
+
+
 def _region_world(ba, task) -> dict:
     """bot 分配区域（DB 存投影相对坐标）→ 世界坐标。
 
@@ -477,23 +503,34 @@ async def create_task(
                    "或重新在 Litematica 中导出（确保有实际放置的方块）",
         )
 
-    # P2-12：坐标系一致性校验——map_art 后端用「相对坐标+origin」放置、前端用投影
-    # 坐标渲染，均假设投影 Position=(0,0,0)；带偏移投影会"什么都建不出"或坐标错位。
-    for rname, rinfo in (parsed.regions or {}).items():
-        pos = rinfo.get("position") or {}
-        if pos.get("x") != 0 or pos.get("y") != 0 or pos.get("z") != 0:
-            raise HTTPException(
-                status_code=400,
-                detail=(f"投影 region '{rname}' 原点偏移 "
-                        f"({pos.get('x')},{pos.get('y')},{pos.get('z')})："
-                        "请先在 Litematica 中把投影平移到原点 (0,0,0) 后重新导出"),
-            )
+    # P2-12（2026-10-28 放宽）：原实现直接 400 拒绝任何 region Position≠0 的投影。
+    # B9 修复后解析层已把 `layers` 归一化成 **0-based 相对坐标**（相对全局原点 =
+    # 各 region Position 逐轴最小值，见 litematica_parser._build_parsed_from_regions），
+    # 落库时再 origin + 相对 → 带偏移/多 region 的投影现在能正确建造。
+    # 因此这里从「拒绝」降级为「告警」，只在日志里留痕便于排障。
+    _offset_regions = [
+        (rname, rinfo.get("position") or {})
+        for rname, rinfo in (parsed.regions or {}).items()
+        if (rinfo.get("position") or {}).get("x") != 0
+        or (rinfo.get("position") or {}).get("y") != 0
+        or (rinfo.get("position") or {}).get("z") != 0
+    ]
+    if _offset_regions:
+        logger.info(
+            "[map-art] 投影 %s 含 %d 个带偏移/多 region（%s），已按全局原点归一化为 0-based 相对坐标",
+            data.projection_file_path, len(_offset_regions),
+            ", ".join(f"{n}:({p.get('x')},{p.get('y')},{p.get('z')})" for n, p in _offset_regions[:3]))
 
     # 朝向旋转（2026-08-14）：解析结果统一按 rotation 旋转后落库，
     # 前端预览 / Bot 建造 / 断点续建全部使用旋转后坐标（DB 即旋转后的最终数据）。
     rotation = int(data.rotation or 0) % 4
     if rotation:
+        import copy as _copy
+
         from vmtools_next.adapters.litematica.litematica_parser import rotate_layers
+        # ⚠️ parse_file 带 TTLCache：`parsed` 是**缓存对象**，直接改它的 layers 会让
+        # 同一文件第二次带旋转建任务时二次旋转（整幅画错位）。先浅拷贝再换 layers。
+        parsed = _copy.copy(parsed)
         parsed.layers = rotate_layers(parsed.layers, rotation, info.size_x, info.size_z)
         # 90°/270° 时宽深互换（投影局部坐标已旋转，尺寸随之互换）
         if rotation in (1, 3):
@@ -609,6 +646,8 @@ def list_tasks(
                 "projection_size_x": t.projection_size_x,
                 "projection_size_z": t.projection_size_z,
                 "created_at": t.created_at.isoformat() if t.created_at else "",
+                # 2026-10-28：列表页要展示建造模式（前端缺失时降级为 '-'）
+                "build_mode": resolve_build_mode(t),
             }
             for t in tasks
         ],
@@ -629,6 +668,22 @@ def get_task(task_id: str, db: Session = Depends(get_db), user=Depends(require_a
     bots = db.query(MapArtBotAssignment).filter(
         MapArtBotAssignment.task_id == task_id
     ).all()
+
+    # 2026-10-28：运行中任务的「列号/排号/状态」用协调器实时值覆盖 DB 快照
+    # （DB 里的 column_index 是启动时写的，列式排级推进后会过期）。
+    _live: dict[str, dict] = {}
+    try:
+        _coord = resolve_coordinator(task_id)
+        for _bid, _lp in (getattr(_coord, "loops", None) or {}).items():
+            try:
+                _live[_bid] = {
+                    "state": _lp.progress.state,
+                    **( _lp.status_extra() or {} ),
+                }
+            except Exception:
+                continue
+    except Exception:
+        pass
 
     # 2026-08-16 审查修复：MapArtMaterial.placed_count 无更新路径 → 材料面板进度恒 0。
     # 以实际方块状态为准聚合：按 expected_block 分组统计 placed=True 的行数
@@ -693,10 +748,12 @@ def get_task(task_id: str, db: Session = Depends(get_db), user=Depends(require_a
             {
                 "bot_id": b.bot_id,
                 "bot_name": b.bot_name,
-                "state": b.state,
+                # 运行中优先用协调器实时状态（DB 快照会过期）
+                "state": (_live.get(b.bot_id) or {}).get("state") or b.state,
                 # 2026-08-19：列式协作模式扩展（旧任务无该字段，前端回退 0/1）
-                "column": b.column_index or 0,
-                "squad_index": 1,
+                "column": (_live.get(b.bot_id) or {}).get("column", b.column_index or 0),
+                # 2026-10-28：排号取协调器实时值（列式排级推进后 DB 快照过期）
+                "squad_index": (_live.get(b.bot_id) or {}).get("squad_index", 1),
                 # 2026-08-16 审查修复：region 为投影相对坐标，前端画布按世界坐标渲染
                 # （blocks 已是世界坐标）——统一转世界坐标（origin + 相对），防区域框错位。
                 "region": _region_world(b, task),
@@ -848,8 +905,13 @@ def _rebuild_assignments(task, db: Session) -> None:
     """未运行任务重新分配 bot 区域（2026-08-19 统一 add/remove 的 draft 分支）。
 
     - strip 模式：按 Z 轴重新分区（全 X 条带，region 字段更新）
-    - column 模式：按顺序分配 column_index（1..n，启动时协调器统一用）
+    - column 模式：按顺序分配 column_index（**0-based**，启动时协调器统一用）
     仅更新非 released 的 assignment 记录。
+
+    ⚠️ 2026-10-28 坐标铁律（重构方案 §三）：内存/DB/API 的相对坐标与列号一律
+    **0-based**（世界 X = origin_x + column_index）。旧实现此处写 1-based
+    （col=i+1、z 1..size_z）→ 与 `geometry.partition_rectangular` /
+    `plan_squad`（均 0-based）不一致，前端区域框整体 +1 偏移。
     """
     try:
         survivors = db.query(MapArtBotAssignment).filter(
@@ -863,14 +925,15 @@ def _rebuild_assignments(task, db: Session) -> None:
         size_x = task.projection_size_x or 128
         size_z = task.projection_size_z or 128
         if build_mode == "column":
-            # 列式：按顺序分配列号（列 x=1..n 为第1排），region 字段置整列虚拟范围
+            # 列式：按顺序分配列号（0-based，第 i 个 bot → 列 i），
+            # region 字段置「整列」虚拟范围 [col, col] × [0, size_z-1]（0-based）。
             for i, s in enumerate(survivors):
-                col = i + 1
+                col = i
                 s.column_index = col
                 s.region_x_start = col
                 s.region_x_end = col
-                s.region_z_start = 1
-                s.region_z_end = size_z
+                s.region_z_start = 0
+                s.region_z_end = max(0, size_z - 1)
                 s.blocks_total = size_z
                 s.blocks_placed = 0
                 s.current_row = -1
@@ -946,8 +1009,9 @@ async def manage_task_bot(
                 raise HTTPException(status_code=400, detail=f"Bot {data.bot_id} 未连接")
 
             result = await coordinator.add_bot(data.bot_id, data.bot_id, client)
-            # 兼容两种返回契约（防引擎重构期/旧协调器混跑）：
-            #   新契约 bool（True=已接管）/ 旧 strip 契约 Region|None（None=无待接管区域）
+            # 兼容两种返回契约（引擎重构后两者并存）：
+            #   · 列式（新契约）：bool —— True=已加入编队（下一排参与）/ False=无列可分配
+            #   · strip（旧契约）：Region|None —— None=无待接管区域
             if isinstance(result, bool):
                 ok, region = result, None
             else:
@@ -972,18 +1036,21 @@ async def manage_task_bot(
                 )
                 db.add(ba)
             ba.state = "running"
+            # 区域写回 DB：列式 add_bot 只回 bool（不回区域）→ 从协调器该 bot 的 loop
+            # 反查实际分配到的区域（Region / ColumnRegion 都有 bounds()）。
             region_payload = None
-            if region is not None:
-                ba.region_x_start = getattr(region, "x_start", 0)
-                ba.region_x_end = getattr(region, "x_end", 0)
-                ba.region_z_start = getattr(region, "z_start", 0)
-                ba.region_z_end = getattr(region, "z_end", 0)
-                ba.blocks_total = getattr(region, "block_count", 0)
+            bounds = _loop_bounds(region) or _loop_bounds(
+                (getattr(coordinator, "loops", None) or {}).get(data.bot_id))
+            if bounds is not None:
+                x0, x1, z0, z1 = bounds
+                ba.region_x_start, ba.region_x_end = x0, x1
+                ba.region_z_start, ba.region_z_end = z0, z1
+                # 列式：1 列 × 行数（与 _rebuild_assignments 的口径一致）
+                ba.blocks_total = max(0, (x1 - x0 + 1) * (z1 - z0 + 1))
                 ba.blocks_placed = 0
                 ba.current_row = -1
                 region_payload = {
-                    "x_start": ba.region_x_start, "x_end": ba.region_x_end,
-                    "z_start": ba.region_z_start, "z_end": ba.region_z_end,
+                    "x_start": x0, "x_end": x1, "z_start": z0, "z_end": z1,
                 }
             db.commit()
             return {

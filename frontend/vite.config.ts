@@ -9,9 +9,13 @@ export default defineConfig({
     {
       // 构建前只清理旧的 assets 产物，不清空整个 static 目录
       // （历史事故：emptyOutDir:true 曾删掉 item-icons 296 张图标等非构建产物）
+      // 注意：必须跟随实际 outDir；否则用 VITE_OUT_DIR 指到别处时仍会误删后端产物。
       name: 'clean-static-assets',
       buildStart() {
-        const assetsDir = path.resolve(__dirname, '../backend/static/assets')
+        const outDir = process.env.VITE_OUT_DIR
+          ? path.resolve(process.env.VITE_OUT_DIR)
+          : path.resolve(__dirname, '../backend/static')
+        const assetsDir = path.join(outDir, 'assets')
         if (fs.existsSync(assetsDir)) {
           fs.rmSync(assetsDir, { recursive: true, force: true })
         }

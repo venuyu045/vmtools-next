@@ -26,6 +26,8 @@ from vmtools_next.core.map_art.geometry import column_cells
 from vmtools_next.core.map_art.runtime import BotRuntime
 from vmtools_next.core.map_art.types import (
     STATE_COMPLETED,
+    TASK_COMPLETED,
+    TASK_FAILED,
     STATE_FAILED,
     STATE_OFFLINE,
     STATE_PLACING,
@@ -122,11 +124,20 @@ class ColumnBuildLoop(BotRuntime):
         self._build_ready.set()
 
     async def wait_for_ready(self) -> bool:
+        """等协调器的「开工」信号（就位完成后 signal_go）。"""
         while not self._build_ready.is_set():
             if self.is_stopping():
                 return False
             await asyncio.sleep(0.3)
         self._build_ready.clear()
+        return True
+
+    async def wait_for_assignment(self) -> bool:
+        """等协调器分配新一排（assign_squad）。"""
+        while not self._squad_assigned.is_set():
+            if self.is_stopping():
+                return False
+            await asyncio.sleep(0.3)
         return True
 
     # ── 主循环 ──
@@ -141,10 +152,17 @@ class ColumnBuildLoop(BotRuntime):
             await self.startup_sequence(reconcile=False)
             self._guard_task = asyncio.create_task(self.guard_monitor_loop())
             while not self.is_stopping():
-                if not self._squad_assigned.is_set():
-                    if not await self.wait_for_ready():
-                        break
+                # 两把闩，缺一不可（2026-10-28 竞态修复）：
+                #   ① _squad_assigned：协调器已把本排列号写给我
+                #   ② _build_ready  ：协调器已把我【移动到就位点】并广播开工
+                # 只在①之后、②之前就开建 → bot 还没到位就开始放，整列失败却被判"列完成"
+                # （实测 4×3 双 bot 偶发只建 8/12 格）。
+                if not await self.wait_for_assignment():
+                    break
+                if not await self.wait_for_ready():
+                    break
                 self._squad_assigned.clear()
+                self._build_ready.clear()
                 if self.is_stopping():
                     break
                 await self.build_column()
@@ -258,7 +276,8 @@ class ColumnBuildLoop(BotRuntime):
                        f"失败 {failed} / 缺口 {gap} / 跨越 {crossed}（排 {self.squad_index}）")
 
     def _mark_done(self, x_rel: int, z_rel: int) -> None:
-        self.progress.record_place()          # 速率统计
+        # 速率统计已由 placement.place_cell → progress.record_place() 记过，
+        # 这里只维护「本 bot 生命周期内完成的格集合」（跨列去重，断点续建不重复计数）
         self._unit_done.add((x_rel, z_rel))
         self.progress.blocks_placed = len(self._unit_done)
 
@@ -269,6 +288,14 @@ class ColumnBuildLoop(BotRuntime):
 
     async def _cross_transparent(self, world_x: int, world_z: int, z_rel: int) -> bool:
         """透明格跨越：临时方块垫脚，踩上继续（任务结束时统一拆除）。"""
+        # 连接条可能已经为空气列垫了方块 → 直接踩过去，别浪费一次放置
+        try:
+            cur = await self.mcp.get_world_block_at(world_x, self.origin_y, world_z)
+            name = ((cur.get("name") or "air").split("[")[0])
+            if name not in ("air", "", "water", "lava", "flowing_water", "flowing_lava"):
+                return True
+        except Exception:
+            pass
         chosen = None
         for tid in TEMP_BLOCK_CANDIDATES:
             if await self._ensure_item_in_hand(tid):
@@ -330,6 +357,8 @@ class MultiBotCoordinator(BaseCoordinator):
         self._build_active_sec: float = 0.0
         self._last_build_ts: float = 0.0
         self._connector_temps: list[tuple[int, int, int]] = []
+        self._column_attempts: dict[int, int] = {}     # 列 → 重排次数
+        self._abandoned_columns: set[int] = set()      # 零进展被放弃的列
         self._squad.offline_bots = []
 
     # ── 生命周期 ──
@@ -428,7 +457,7 @@ class MultiBotCoordinator(BaseCoordinator):
                     if loop is not None:
                         await loop.signal_go()
                 # 4) 排尾同步
-                await self._wait_squad_done()
+                await self._wait_squad_done(plan)
                 # 5) 完成列出池
                 self._retire_finished_columns(plan)
                 # 6) 蛇形掉头 + 减员重组
@@ -440,7 +469,10 @@ class MultiBotCoordinator(BaseCoordinator):
 
             # 收尾：拆临时方块 → 任务级对账 + 自动补放 → 落库终态
             await self._dismantle_connector_temps()
-            await self.finish_task(failed=bool(self._column_pool))
+            await self.finish_task(
+                failed=bool(self._column_pool or self._abandoned_columns),
+                reason=(f"{len(self._abandoned_columns)} 列零进展被放弃"
+                        if self._abandoned_columns else ""))
         except asyncio.CancelledError:
             pass
         except Exception as e:
@@ -511,7 +543,12 @@ class MultiBotCoordinator(BaseCoordinator):
                 ok = False
                 break
             if is_temp:
+                # 空气列的垫脚方块：不属于作品，只记临时清单（任务结束拆）
                 self._connector_temps.append((world_x, self.origin[1], world_z))
+            else:
+                # 作品格：连接条由开路 bot 直接铺（不走 place_cell）→ 必须显式记账，
+                # 否则任务级进度永远少算「每列起点那 1 格」
+                connector.note_external_placement(world_x, self.origin[1], world_z, place_id)
             await asyncio.sleep(connector._column_place_interval)
         self._activity("info",
                        f"排 {plan.squad_index} 连接条{'完成' if ok else '部分失败'}"
@@ -552,13 +589,24 @@ class MultiBotCoordinator(BaseCoordinator):
                 logger.warning("[%s] position %s failed: %s", self.task_id, a.bot_id, e)
             await asyncio.sleep(0.6)
 
-    async def _wait_squad_done(self, timeout: float = 7200.0) -> None:
-        """排尾同步：等所有活跃 bot 上报列完成。"""
+    async def _wait_squad_done(self, plan: Optional[SquadPlan] = None,
+                               timeout: float = 7200.0) -> None:
+        """排尾同步：只等**本排被分配的** bot 上报列完成。
+
+        ⚠️ 不能用「全部活跃 bot」：运行中 ``add_bot`` 新增的 bot 本排没有列，
+        用活跃集合会让本排永远等不完（实测卡死）。新增 bot 从下一排开始参与。
+        """
+        def _pending() -> list[str]:
+            """本排还在干活、且仍在本任务里的 bot（每次重算：允许运行中移除）。"""
+            ids = plan.active_bot_ids if plan else list(self._active_bot_ids)
+            return [b for b in ids
+                    if b in self._loops and b not in self._squad.offline_bots]
+
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             if self._stopped_check():
                 return
-            active = self._active_bots()
+            active = _pending()
             if not active:
                 return
             if all(b in self._squad.bot_done for b in active):
@@ -572,27 +620,55 @@ class MultiBotCoordinator(BaseCoordinator):
                         and b not in self._squad.bot_done:
                     self._mark_offline(b, "loop_offline")
             await asyncio.sleep(2)
-        missing = [b for b in self._active_bots() if b not in self._squad.bot_done]
+        missing = [b for b in _pending() if b not in self._squad.bot_done]
         if missing:
             self._activity("warn", f"排尾同步超时，标记离线：{missing}")
             for b in missing:
                 self._mark_offline(b, "squad_timeout")
 
+    def _column_progress(self, col: int, loop) -> tuple[int, int]:
+        """(已完成格数, 需要格数)——按本列非空气格统计。"""
+        need = sum(1 for (x, z), bid in self._block_matrix.items()
+                   if x == col and bid and bid != AIR)
+        if loop is None:
+            return 0, need
+        done = sum(1 for (x, _z) in getattr(loop, "_unit_done", ()) if x == col)
+        return done, need
+
     def _retire_finished_columns(self, plan: SquadPlan) -> None:
-        """把本排已完成的列从池中移除；未完成的列回到池首（下排重排）。"""
+        """把**真正建完**的列从池中移除；有缺口的列留在池里下排重排（最多 3 次）。
+
+        ⚠️ 不能只看「bot 上报列完成」：bot 可能在错位/无立足点时把整列都记成 gap，
+        仍然上报完成 → 列被出池 → 整列永久缺失（任务最后只能判 failed）。
+        """
         finished: list[int] = []
         for a in plan.assignments:
             loop = self._loops.get(a.bot_id)
-            done = (a.bot_id in self._squad.bot_done) and (
-                loop is None or loop.progress.state != STATE_OFFLINE)
-            if done and a.column_x in self._column_pool:
+            reported = a.bot_id in self._squad.bot_done
+            offline = loop is not None and loop.progress.state == STATE_OFFLINE
+            done_cnt, need_cnt = self._column_progress(a.column_x, loop)
+            if reported and not offline and done_cnt >= need_cnt:
                 finished.append(a.column_x)
+                continue
+            # 未建完：留池重排；连续 3 次仍无进展 → 放弃该列（防无限重排）
+            if a.column_x in self._column_pool:
+                attempts = self._column_attempts.get(a.column_x, 0) + 1
+                self._column_attempts[a.column_x] = attempts
+                if attempts >= 3 and done_cnt == 0:
+                    self._column_pool.remove(a.column_x)
+                    self._abandoned_columns.add(a.column_x)
+                    self._activity(
+                        "error",
+                        f"列 {a.column_x} 连续 {attempts} 次零进展，放弃（任务将按缺口判 failed）")
+                elif reported or offline:
+                    self._activity(
+                        "warn",
+                        f"列 {a.column_x} 未建完（{done_cnt}/{need_cnt}），留在列池下排重排")
         for col in finished:
             try:
                 self._column_pool.remove(col)
             except ValueError:
                 pass
-        # 未完成（离线/超时）的列留在池里（天然回到池首附近）
         if finished:
             self._activity("info",
                            f"排 {plan.squad_index} 收尾：完成 {len(finished)} 列，"
@@ -618,6 +694,14 @@ class MultiBotCoordinator(BaseCoordinator):
         if loop is not None:
             loop.progress.state = STATE_OFFLINE
 
+    def _retire_loop_count(self, loop) -> None:
+        """把某个 loop 的新增量沉淀进进度基线（bot 被移除/离线后进度不回退）。"""
+        try:
+            self._placed_seed += int(getattr(loop, "_new_placed", 0))
+            loop._new_placed = 0
+        except Exception:
+            pass
+
     async def _reorganize_squad(self) -> None:
         """减员重组：把离线 bot 的未完成列放回池首，剩余 bot 继续。"""
         offline = [b for b in self._squad.offline_bots if b in self._loops]
@@ -626,6 +710,7 @@ class MultiBotCoordinator(BaseCoordinator):
         for bid in offline:
             loop = self._loops.get(bid)
             if loop is not None:
+                self._retire_loop_count(loop)
                 try:
                     await loop.stop()
                 except Exception:
@@ -671,6 +756,7 @@ class MultiBotCoordinator(BaseCoordinator):
         if loop is None:
             return False
         await loop.stop()
+        self._retire_loop_count(loop)
         col = getattr(loop, "column_x", None)
         if col is not None and loop.progress.state != STATE_COMPLETED \
                 and col not in self._column_pool:
@@ -708,13 +794,17 @@ class MultiBotCoordinator(BaseCoordinator):
         return all(getattr(l, "is_stopping", lambda: False)() for l in self._loops.values())
 
     def _compute_status(self) -> str:
+        if self._final_status:
+            return self._final_status
         if self._completion_notified:
             return TASK_COMPLETED
+        if self._failed_loops:
+            return TASK_FAILED
         if not self._column_pool and not self._active_bots():
             return TASK_FAILED if self._failed_loops else TASK_COMPLETED
         if self._squad.offline_bots and not self._active_bots():
             return TASK_FAILED
-        if any(l.progress.state == STATE_WAITING for l in self._loops.values()):
+        if self._paused_by_user:
             return "paused"
         return "running"
 

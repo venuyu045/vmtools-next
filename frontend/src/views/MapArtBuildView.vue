@@ -112,7 +112,7 @@
                 :stroke-width="6"
                 :show-text="false"
               />
-              <span class="bot-stats">{{ bot.placed }} / {{ bot.total }}</span>
+              <span class="bot-stats">{{ bot.placed }} / {{ bot.total }} · {{ bot.pct }}%</span>
             </div>
             <div class="bot-meta">
               <span v-if="task?.build_mode === 'column'">列 {{ bot.column ?? '-' }} · 排 {{ bot.squadIndex ?? 1 }}</span>
@@ -150,7 +150,7 @@
             </div>
             <div class="squad-col-body">
               <el-progress :percentage="col.pct" :stroke-width="4" :show-text="false" />
-              <span class="squad-col-stat">{{ col.placed }} / {{ col.total }}</span>
+              <span class="squad-col-stat">{{ col.placed }} / {{ col.total }} · {{ col.pct }}%</span>
             </div>
           </div>
         </el-card>

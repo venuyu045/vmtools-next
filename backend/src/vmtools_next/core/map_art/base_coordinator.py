@@ -65,8 +65,14 @@ class BaseCoordinator:
         self._progress_task: Optional[asyncio.Task] = None
         self._checkpoint_task: Optional[asyncio.Task] = None
         self._completion_notified: bool = False
+        # 终态（completed/failed）：收尾后 _compute_status 必须返回它，不能恒返回 completed
+        # （否则 failed 任务收尾后的 build_progress 推送会报 completed，前端误显示"已完成"）
+        self._final_status: Optional[str] = None
         self._done_loops: set[str] = set()
         self._failed_loops: set[str] = set()
+        # 用户暂停标志（2026-10-28）：loop 的 STATE_WAITING 既可能是「用户暂停」也可能是
+        # 「列建完等下一排分配」，只用 loop 状态判 paused 会让正常建造间歇报暂停。
+        self._paused_by_user: bool = False
         self._pending_regions: list = []
 
         # 投影 → 矩阵 / 尺寸（0-based 相对坐标）
@@ -75,6 +81,8 @@ class BaseCoordinator:
         self._size_x, self._size_z = resolve_size(self.projection, self._block_matrix)
         self._total_blocks: int = sum(
             1 for v in self._block_matrix.values() if v and v != AIR)
+        # 进度基线（启动时 DB 已置位数）+ 各 loop 本次新增 → 进度只增不减
+        self._placed_seed: int = 0
 
         # 任务级配置（DB 一次读完）
         cfg = self.store.load_task_config()
@@ -107,11 +115,13 @@ class BaseCoordinator:
             self._failed_loops.add(bot_id)
 
     def _compute_status(self) -> str:
+        if self._final_status:
+            return self._final_status
         if self._completion_notified:
             return TASK_COMPLETED
         if self._failed_loops:
             return TASK_FAILED
-        if any(l.progress.state == "waiting" for l in self._loops.values()):
+        if self._paused_by_user:
             return "paused"
         return "running"
 
@@ -197,6 +207,7 @@ class BaseCoordinator:
     # ──────────────────────────────────────────
 
     async def pause(self) -> None:
+        self._paused_by_user = True
         for loop in self._loops.values():
             try:
                 await loop.pause()
@@ -205,6 +216,7 @@ class BaseCoordinator:
         self._activity("info", "任务已暂停")
 
     async def resume(self) -> None:
+        self._paused_by_user = False
         for loop in self._loops.values():
             try:
                 await loop.resume()
@@ -213,6 +225,7 @@ class BaseCoordinator:
         self._activity("info", "任务已继续")
 
     async def stop(self) -> None:
+        self._paused_by_user = False
         for loop in self._loops.values():
             try:
                 await loop.stop()
@@ -269,6 +282,10 @@ class BaseCoordinator:
     # ──────────────────────────────────────────
 
     def _start_push_loops(self) -> None:
+        try:
+            self._placed_seed = self.store.count_placed()
+        except Exception:
+            self._placed_seed = 0
         if self._progress_task is None:
             self._progress_task = asyncio.create_task(self._push_loop())
         if self._checkpoint_task is None:
@@ -301,7 +318,11 @@ class BaseCoordinator:
     def _aggregate(self) -> MapArtBuildState:
         total = self._total_blocks or sum(
             l.progress.blocks_total for l in self._loops.values())
-        placed = sum(l.progress.blocks_placed for l in self._loops.values())
+        # 进度 = DB 基线 + 本次新增（不用 loop.blocks_placed：它含 verified 跳过与已建格，
+        # 且 bot 被移除时会凭空减少 → 前端进度条回退）
+        placed = self._placed_seed + sum(
+            getattr(l, "_new_placed", 0) for l in self._loops.values())
+        placed = max(0, min(placed, total)) if total else placed
         elapsed = max(0.0, time.monotonic() - self._started_at) if self._started_at else 0.0
         rate = placed / (elapsed / 60) if elapsed > 0 else 0.0
         remaining = max(0, total - placed)
@@ -529,17 +550,45 @@ class BaseCoordinator:
                 except Exception:
                     pass
 
+            self._final_status = TASK_FAILED if final_failed else TASK_COMPLETED
             self.store.persist_status(
-                TASK_FAILED if final_failed else TASK_COMPLETED,
-                reason if final_failed else "")
+                self._final_status, reason if final_failed else "")
             self._activity(
                 "error" if final_failed else "info",
                 f"任务结束：{'失败' if final_failed else '完成'}"
                 + (f"（{reason}）" if reason else ""))
             await self._emit_final(final_failed, reason)
             self._notify_scheduler()
+            # 收尾后摘掉协调器（防「幽灵协调器」：任务已结束仍在每 2s 推送、
+            # 且 API 再查 get_coordinator 会拿到已死对象）
+            self._teardown_after_finish()
         except Exception as e:
             logger.error("[%s] finish_task failed: %s", self.task_id, e)
+
+    def _teardown_after_finish(self) -> None:
+        """收尾清理：停 loop + 停推送/落盘协程 + 从注册表摘除本协调器。"""
+        # 先让所有 loop 退出（列式 loop 在任务结束后会一直等下一次编队分配 →
+        # 不主动置停止信号就会留下一堆空闲协程）
+        for loop in self._loops.values():
+            try:
+                loop._stopped = True
+                loop._stop_requested.set()
+            except Exception:
+                pass
+        for t in (self._progress_task, self._checkpoint_task):
+            if t is not None:
+                try:
+                    t.cancel()
+                except Exception:
+                    pass
+        self._progress_task = None
+        self._checkpoint_task = None
+        try:
+            from vmtools_next.core.map_art.registry import unregister_coordinator
+
+            unregister_coordinator(self.task_id)
+        except Exception:
+            pass
 
     async def _emit_final(self, failed: bool, reason: str) -> None:
         sio = _sio()

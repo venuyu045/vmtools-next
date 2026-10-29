@@ -23,6 +23,7 @@ import time
 from typing import Iterable, Optional
 
 from vmtools_next.adapters.abstract.bot_agent import AbstractBotAgent
+from vmtools_next.config import get_config
 from vmtools_next.core.map_art.activity import ActivityLog
 from vmtools_next.core.map_art.geometry import tile_ranges
 from vmtools_next.core.map_art.placement import ensure_stand as _ensure_stand
@@ -154,6 +155,9 @@ class BotRuntime:
         self._pending_confirm: list[tuple[int, int, int, str]] = []
         self._pending_gaps: list[tuple[int, int, int, str]] = []
         self._placed_coords: set[tuple[int, int, int]] = set()
+        # 本次运行「真正新放置」的格数（verified 跳过的不算，DB 里已有）——
+        # 任务级进度 = DB 基线 + Σ 各 loop._new_placed，增删 bot 不会让进度回退
+        self._new_placed: int = 0
         self._reconcile_stats: dict = {"start": {}, "row": {}, "done": {}}
         self._recent_reports: list[ReconcileReport] = []
 
@@ -277,6 +281,23 @@ class BotRuntime:
     async def ensure_stand(self, stand: tuple[int, int, int], label: str = "") -> str:
         """移动站立点 + 脚下实体校验，返回 ok / gap / fail。"""
         return await _ensure_stand(self, stand, label or self.unit_label())
+
+    def note_external_placement(self, wx: int, wy: int, wz: int, block_id: str) -> None:
+        """记录「不是经 ``place_cell`` 放置」的方块（如列式连接条）。
+
+        这类格子如果只靠世界读回（后续 bot 会判 ``verified``）是不会进
+        ``_new_placed`` 的 → 任务级进度会长期偏低（少算每列起点那 1 格）。
+        在这里补一次记账：进度 +1、待落库 +1、实时预览 +1。
+        """
+        try:
+            # 只记「任务级新增 + 待落库 + 实时预览」：
+            # 不动 progress.blocks_placed（那是 per-bot 本列工作量的口径，
+            # 连接条是共享工作，算进去会让 per-bot 进度条超过 100%）
+            self._new_placed = getattr(self, "_new_placed", 0) + 1
+            self._db_updates.append((int(wx), int(wy), int(wz), block_id))
+            self._placed_coords.add((int(wx), int(wy), int(wz)))
+        except Exception:
+            pass
 
     # ──────────────────────────────────────────
     # 落库
@@ -1666,6 +1687,12 @@ class BotRuntime:
                 "world_nether": "world_nether",
                 "world_the_end": "world_the_end",
             }.get(env.get("dimension") or "", env.get("dimension") or "")
+            # 惰性导入：bluemap_monitor 会拉 httpx 等重依赖，而这里只用一个纯几何函数
+            try:
+                from vmtools_next.core.bluemap_monitor import _point_in_polygon_2d
+            except Exception:  # pragma: no cover - 依赖缺失时跳过领地判定
+                def _point_in_polygon_2d(_x, _z, _shape):
+                    return False
             dists: list = []
             for r in rs:
                 w = r.get("world") or ""
@@ -2172,10 +2199,17 @@ class BotRuntime:
                 self._activity("warn",
                                f"补货结束仍有缺失（{len(still_missing)}种）：{'，'.join(still_missing)}——"
                                f"可能是潜影盒取空/坐标不符，回建造点后再试")
-                # 本次有收获（至少一种补到 target）→ 重置计数；全无收获 → 累计
+                # 本次有收获判定（2026-10-28 修正）：只要**任一材料数量比补货前增加**
+                # 就算有收获。旧口径「至少一种补到 target」在 B2 修复后会把
+                # 「部分有货（have=32/target=64）且潜影盒已空」误判成零收获，
+                # 连续 3 轮就终止 bot —— 过于激进。
                 gained = False
                 for n in needs:
-                    if n.boxes and await self._check_inventory_level(n.item_id) >= n.target:
+                    try:
+                        _now_have = await self._check_inventory_level(n.item_id)
+                    except Exception:
+                        continue
+                    if _now_have > int(getattr(n, "have", 0) or 0):
                         gained = True
                         break
                 if not gained:

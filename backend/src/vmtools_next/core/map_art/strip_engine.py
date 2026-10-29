@@ -330,6 +330,7 @@ class MapArtCoordinator(BaseCoordinator):
         if loop is None:
             return False
         await loop.stop()
+        self._placed_seed += int(getattr(loop, "_new_placed", 0))
         self._done_loops.discard(bot_id)
         if loop.progress.state != STATE_COMPLETED:
             self._pending_regions.append(loop.region)
@@ -352,12 +353,14 @@ class MapArtCoordinator(BaseCoordinator):
                 reason=(f"{len(self._failed_loops)} 个 Bot 区域未完成" if self._failed_loops else "")))
 
     def _compute_status(self) -> str:
+        if self._final_status:
+            return self._final_status
         if self._completion_notified:
             return "completed"
         if self._failed_loops:
             return STATE_FAILED
         if self._done_loops and self._loops and len(self._done_loops) >= len(self._loops):
             return STATE_COMPLETED
-        if any(l.progress.state == STATE_WAITING for l in self._loops.values()):
+        if self._paused_by_user:
             return "paused"
         return "running"

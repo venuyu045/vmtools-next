@@ -4,10 +4,16 @@
 ContainerOpener / ItemTransferExecutor 的执行模式，配合现有 BotBuildLoop：
 
 - RestockPlanner：target/have 缺料计算
-  target = min(区域剩余需求, stacks×64)（stacks 默认 4，config.map_art_restock_stacks）
-  have  = 背包散装数量；need ⟺ have < target
-  未配置潜影盒坐标的材料：记录但不取（用户确认：提示跳过）
+  target = min(区域所需总量, stacks×64)（stacks = config.map_art_restock_stacks，夹紧 1–16，默认 1）
+  have  = 背包散装数量；need ⟺ have < target；缺料 = target - have
+  未配置潜影盒坐标的材料：记录但不取（用户确认：提示跳过），由 needs_with_boxes 过滤并带出清单
   取料顺序：满足度（have/target）最低优先（round-robin，防一种材料塞满背包）
+
+2026-10-28 B2 修复：`compute_needs` 曾硬编码 `have = 0`（2026-08-18 防「补货超量」的
+临时手段），副作用是 `Need.ratio` 恒 0 → 排序退化成按名字、`stacks_per_item` 完全不参与。
+现在恢复 target/have 模型（真实 have 参与 ratio/缺料），同时保留「每种最多 stacks 组」的
+上限（默认 1 组 = 64）——既不会像 2026-08-18 之前那样一次搬 4 组 = 256 把背包塞满，
+也不会把「部分有货」的材料当成满足（那会导致建造中途反复缺料）。
 - ShulkerRestocker：一次"寻路→开箱→取货→关箱→背包确认"的执行器
   dryTicks 取空记忆（本轮已判定无货的坐标跳过，防重复开空盒）
   背包满检查；withdraw 后背包轮询确认（防假成功）
@@ -39,18 +45,33 @@ class Need:
     """一种需要补货的材料。"""
 
     item_id: str                      # 归一化（无 minecraft: 前缀、无 [ 后缀）
-    target: int                       # 目标持有量 min(区域剩余需求, N组×64)
+    target: int                       # 目标持有量 min(区域所需总量, N组×64)
     have: int                         # 当前背包散装量
     boxes: list = field(default_factory=list)  # 潜影盒坐标列表（空 = 未配置）
+    # ── 2026-10-28 B2 新增字段：全部带默认值 → 向后兼容 ──
+    # 旧写法 Need(item_id, target, have, boxes) / Need(item_id=..., target=..., have=..., boxes=...)
+    # 均不受影响（runtime 侧触发材料的强制 Need 构造就是这样用的）。
+    needed_total: int = 0             # 区域该材料所需总量（target 由它按 stacks 派生）
+    stacks: int = 1                   # 本次规划使用的组数（stacks_per_item 夹紧后，排障用）
 
     @property
     def ratio(self) -> float:
-        """满足度：越小越缺（补货优先级越高）。"""
+        """满足度：越小越缺（补货优先级越高）。have/target，target<=0 视为已满足。"""
         return (self.have / self.target) if self.target > 0 else 1.0
 
     @property
     def missing(self) -> int:
+        """缺料量 = target - have（不小于 0）。"""
         return max(0, self.target - self.have)
+
+    @property
+    def is_boxed(self) -> bool:
+        """是否已配置潜影盒坐标（False = 无箱，调用方提示后跳过）。"""
+        return bool(self.boxes)
+
+    def label(self) -> str:
+        """日志用短标签：`white_concrete(12/64)`。"""
+        return f"{self.item_id}({self.have}/{self.target})"
 
 
 class RestockPlanner:
@@ -93,40 +114,146 @@ class RestockPlanner:
 
     @staticmethod
     def plan_target(needed_total: int, stacks_per_item: int = 4, stack_max: int = STACK_SIZE) -> int:
-        """目标持有量 = min(剩余需求, N组×最大堆叠)，至少 1。"""
-        return max(1, min(needed_total, stack_max * max(1, stacks_per_item)))
+        """目标持有量 = min(所需总量, N组×最大堆叠)；组数夹紧到 [1,16]，结果至少 1。
+
+        2026-10-28 B2：`stacks_per_item` 真正参与（此前 compute_needs 把 target 写死成
+        `min(64, 需求)`，config 的 map_art_restock_stacks 形同虚设）。
+        - plan_target(1000, stacks=2) == 128   （2 组封顶）
+        - plan_target(100,  stacks=4) == 100   （需求不足 4 组 → 按需求）
+        - plan_target(5000, stacks=99) == 1024 （组数上限 16）
+        - plan_target(0, ...) == 0             （无需补货，不产生 target=1 的假需求）
+        """
+        try:
+            needed_total = int(needed_total)
+        except (TypeError, ValueError):
+            needed_total = 0
+        try:
+            stacks = int(stacks_per_item)
+        except (TypeError, ValueError):
+            stacks = 1
+        try:
+            stack_max = int(stack_max)
+        except (TypeError, ValueError):
+            stack_max = STACK_SIZE
+        if stack_max <= 0:
+            stack_max = STACK_SIZE
+        stacks = max(1, min(16, stacks))   # 至少 1 组、最多 16 组
+        if needed_total <= 0:
+            return 0
+        return max(1, min(needed_total, stack_max * stacks))
 
     def compute_needs(self, region_materials: dict, have_counts: dict,
-                      supply_boxes: dict) -> list[Need]:
+                      supply_boxes: dict, include_partial: bool = True) -> list[Need]:
         """计算缺料清单（按满足度升序 = 最缺的在前）。
 
         region_materials: {归一化 item_id: 区域需求块数}（region_material_count 产出）
-        have_counts:      {归一化 item_id: 背包散装量}
+        have_counts:      {归一化 item_id: 背包散装量}（未归一化的 key 也接受）
         supply_boxes:     {item_id(任意格式): [坐标...]}（任务级+全局仓库合并后）
+        include_partial:  True（默认，B2 的 target/have 模型）→ have < target 即缺料；
+                          False → 兼容 2026-08-18 旧口径「只补完全没有的材料」（have>0 跳过）。
 
-        ⚠️ 2026-08-18 用户要求（每种超64仍补货）：【哪种用完只拿哪种，每种只补一组】——
-        - 背包还有该材料（have > 0）→ 不补（此前 have<target(256) 就补 → 没用完也拿 → 超64）
-        - 完全用完（have == 0）→ 补一组（target = min(64, 区域需求)，不再补 4 组=256）
+        决策（用户 2026-08-15 确认 + 2026-10-28 B2 修复）：
+        - target = plan_target(区域所需总量, stacks_per_item)，即 min(需求, stacks×64)，
+          组数夹紧 1–16（config 默认 1 组 = 64 → 不会一次搬 256 把背包塞满）
+        - have 取真实背包散装量；缺料 = target - have；ratio = have/target（越小越缺）
+        - have >= target → 已满足，不进清单
+        - 未配置潜影盒坐标的材料照样进清单（boxes 为空），由调用方提示后跳过；
+          需要「可补/跳过」两份清单时用 `needs_with_boxes`
         """
+        # 归一化入参（调用方可能传 minecraft: 前缀 / [ 后缀 / 未归一化 key）
+        have_norm: dict[str, int] = {}
+        for key, val in (have_counts or {}).items():
+            clean_key = self.normalize(key)
+            if not clean_key:
+                continue
+            try:
+                count = int(val)
+            except (TypeError, ValueError):
+                count = 0
+            have_norm[clean_key] = have_norm.get(clean_key, 0) + max(0, count)
+        # 潜影盒坐标表：首个命中的 key 优先（与原实现一致），空列表视为未配置
+        boxes_norm: dict[str, list] = {}
+        for key, box_list in (supply_boxes or {}).items():
+            clean_key = self.normalize(key)
+            if not clean_key or not box_list:
+                continue
+            boxes_norm.setdefault(clean_key, box_list)
+
         needs: list[Need] = []
-        for item_id, needed in region_materials.items():
-            if have_counts.get(item_id, 0) > 0:
-                continue  # 2026-08-18：背包还有 → 不补（用户：没用完的不要拿）
-            target = max(1, min(64, needed))  # 2026-08-18：只补一组（64），区域需求不足 64 则按需求
-            have = 0
-            boxes = []
-            for key, box_list in supply_boxes.items():
-                if self.normalize(key) == item_id and box_list:
-                    boxes = box_list
-                    break
-            needs.append(Need(item_id=item_id, target=target, have=have, boxes=boxes))
-        # 满足度最低优先（最缺的在前）；同满足度按名称稳定排序
+        for raw_id, needed in (region_materials or {}).items():
+            item_id = self.normalize(raw_id)
+            if not item_id:
+                continue
+            try:
+                needed_total = int(needed)
+            except (TypeError, ValueError):
+                continue
+            if needed_total <= 0:
+                continue
+            target = self.plan_target(needed_total, self.stacks_per_item)
+            have = have_norm.get(item_id, 0)
+            if have >= target:
+                continue                      # 已满足（ratio >= 1，无需补）
+            if not include_partial and have > 0:
+                continue                      # 2026-08-18 旧口径（可选，默认关闭）
+            needs.append(Need(
+                item_id=item_id,
+                target=target,
+                have=have,
+                boxes=list(boxes_norm.get(item_id) or []),
+                needed_total=needed_total,
+                stacks=self.stacks_per_item,
+            ))
+        # 满足度最低优先（最缺的在前）；同满足度按名称稳定排序（与 runtime 侧一致）
         needs.sort(key=lambda n: (n.ratio, n.item_id))
         return needs
 
-    def needs_with_boxes(self, needs: list[Need]) -> list[Need]:
-        """仅返回已配置潜影盒坐标的缺料（未配置的由调用方提示后跳过）。"""
-        return [n for n in needs if n.boxes]
+    def needs_with_boxes(self, needs: list[Need]) -> "NeedsSelection":
+        """过滤出已配置潜影盒坐标的缺料；无箱的进返回值的 `.skipped`（调用方提示后跳过）。
+
+        返回值是 `list[Need]` 子类 → 向后兼容（可迭代/索引/len/当 list 传），
+        额外带 `.skipped` / `.skipped_ids` / `.summary()` 暴露「无箱跳过」信息（B2 要求）。
+        """
+        with_boxes: list[Need] = []
+        skipped: list[Need] = []
+        for need in needs or []:
+            if need.is_boxed:
+                with_boxes.append(need)
+            else:
+                skipped.append(need)
+        return NeedsSelection(with_boxes, skipped)
+
+
+class NeedsSelection(list):
+    """`RestockPlanner.needs_with_boxes` 的返回值。
+
+    继承 list 保持向后兼容（旧契约 `list[Need]` 全部成立），并携带「无箱跳过」信息：
+    - 列表内容 = 已配置潜影盒坐标的缺料（按满足度升序，顺序与入参一致）
+    - `.skipped`     = 因未配置潜影盒坐标被跳过的 Need 列表
+    - `.skipped_ids` = 上述 item_id 列表（直接拼日志）
+    - `.summary()`   = 一行摘要，可直接进活动日志
+    """
+
+    def __init__(self, with_boxes=None, skipped=None):
+        super().__init__(with_boxes or [])
+        self.skipped: list[Need] = list(skipped or [])
+
+    @property
+    def with_boxes(self) -> list[Need]:
+        """可补材料清单（= 本列表内容的快照）。"""
+        return list(self)
+
+    @property
+    def skipped_ids(self) -> list[str]:
+        """无箱被跳过的 item_id 列表。"""
+        return [n.item_id for n in self.skipped]
+
+    def summary(self) -> str:
+        """一行摘要：`可补 3 种；无箱跳过 2 种（red_wool，blue_wool）`。"""
+        parts = [f"可补 {len(self)} 种"]
+        if self.skipped:
+            parts.append(f"无箱跳过 {len(self.skipped)} 种（{'，'.join(self.skipped_ids)}）")
+        return "；".join(parts)
 
 
 class ShulkerRestocker:
@@ -240,13 +367,6 @@ class ShulkerRestocker:
         self._drained.add((bx, by, bz))
         self._activity("warn", f"{clean_id} 在 ({bx},{by},{bz}) 未取到（可能取空/放错/坐标不符），标记跳过")
         return 0
-
-    async def _move_to_box(self, bx: int, by: int, bz: int) -> bool:
-        try:
-            return await self._move_to_cb(bx, by, bz)
-        except Exception as e:
-            self._activity("debug", f"寻路异常：{e}")
-            return False
 
     async def _open_box(self, bx: int, by: int, bz: int) -> str:
         """开箱（失败重试 1 次）。返回 container_id（空=失败）。"""
