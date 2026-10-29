@@ -115,11 +115,12 @@
             >
               <div class="cosmetic-thumb">
                 <img
-                  v-if="previewUrls.has(item.cosmeticId)"
+                  v-if="previewUrls.has(item.cosmeticId) && !brokenThumbs.has(item.cosmeticId)"
                   :src="previewUrls.get(item.cosmeticId) || ''"
                   :alt="item.name || '时装预览'"
                   loading="lazy"
                   decoding="async"
+                  @error="markThumbBroken(item.cosmeticId)"
                 />
                 <span v-else class="thumb-fallback">{{ (item.name || '?').slice(0, 1) }}</span>
               </div>
@@ -205,8 +206,8 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue'
-import { onBeforeRouteLeave, useRoute } from 'vue-router'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   CATEGORY_LABELS,
@@ -219,10 +220,14 @@ import {
 } from '@/api/fashion'
 
 const route = useRoute()
+const router = useRouter()
 
 const identities = ref<FashionIdentity[]>([])
 const activeIdentityId = ref('')
 const catalog = ref<CatalogItem[]>([])
+// 预览图加载失败（目录条目填了 assetKey 但资产还没上传 / 文件被删）的时装：
+// 退回首字占位，避免整面目录都是破图图标
+const brokenThumbs = ref<Set<string>>(new Set())
 const activeCategory = ref('all')
 const selection = ref<Record<string, { cosmeticId: string; scale: number }>>({})
 const missingSlots = ref<Set<string>>(new Set())
@@ -244,6 +249,66 @@ let identitiesSeq = 0
 let catalogSeq = 0
 // 记住切换前的身份，用于用户取消「放弃未保存修改」时回退下拉框
 let previousIdentityId = ''
+// 身份失效自愈：正在重拉身份列表时不再嵌套触发，避免 404/403 循环
+let identityRecovering = false
+
+/**
+ * 把当前生效的身份写回 URL（?identityId=）。
+ *
+ * 为什么需要：绑定页「去衣柜」会带上 identityId，但用户在下拉框里换了身份后
+ * URL 仍是旧值 —— 此时刷新 / 收藏 / 分享都会回到另一个身份，看到的穿戴也不是
+ * 刚才那一份。用 replace 而不是 push：切身份不该在浏览器历史里堆记录，
+ * 否则用户按「后退」会莫名其妙切回上一个身份。
+ */
+function syncIdentityQuery(): void {
+  const current = typeof route.query.identityId === 'string' ? route.query.identityId : ''
+  const next = activeIdentityId.value
+  if (current === next) return
+  const query = { ...route.query }
+  if (next) query.identityId = next
+  else delete query.identityId
+  void router.replace({ query })
+}
+
+/** 切换身份前确认是否丢弃未保存修改；返回 true 表示可以继续 */
+async function confirmDiscardChanges(): Promise<boolean> {
+  if (!dirty.value) return true
+  try {
+    await ElMessageBox.confirm(
+      '切换 Minecraft 身份会丢弃当前未保存的穿戴修改，是否继续？',
+      '切换身份',
+      { type: 'warning', confirmButtonText: '切换', cancelButtonText: '取消' }
+    )
+    return true
+  } catch {
+    return false
+  }
+}
+
+/**
+ * 身份在别处被解绑 / 转绑（后端 404 identity_not_found、403 forbidden）时自愈。
+ *
+ * 为什么需要：衣柜页的身份列表只在挂载时拉一次。若用户另一个标签页里解绑了
+ * 这个 MC 账号，本页的「重试」会拿着同一个失效 identityId 反复失败，除了手动
+ * 刷新页面没有任何出路 —— 等于把用户卡死在错误态。
+ *
+ * @returns 是否已回落到有效身份并重新读到穿戴配置
+ */
+async function recoverIdentity(staleId: string): Promise<boolean> {
+  if (identityRecovering || !staleId) return false
+  identityRecovering = true
+  try {
+    await loadIdentities()
+    if (identitiesError.value || noIdentity.value) return false
+    // loadIdentities 只在原身份不存在时才会改 activeIdentityId；没变说明不是身份问题
+    if (!activeIdentityId.value || activeIdentityId.value === staleId) return false
+    syncIdentityQuery()
+    await loadLoadout()
+    return true
+  } finally {
+    identityRecovering = false
+  }
+}
 
 const currentIdentity = computed(
   () => identities.value.find((item) => item.id === activeIdentityId.value) || null
@@ -300,6 +365,14 @@ function isEquipped(item: CatalogItem): boolean {
   return selection.value[itemSlot(item)]?.cosmeticId === item.cosmeticId
 }
 
+/** 预览图 404 / 解码失败：记下来并退回首字占位（后端 asset_not_found 是合法返回） */
+function markThumbBroken(cosmeticId: string): void {
+  if (brokenThumbs.value.has(cosmeticId)) return
+  const next = new Set(brokenThumbs.value)
+  next.add(cosmeticId)
+  brokenThumbs.value = next
+}
+
 function cosmeticName(slot: string): string {
   const selected = selection.value[slot]
   if (!selected) return ''
@@ -316,6 +389,14 @@ function slotScale(slot: string): number {
   return selection.value[slot]?.scale ?? 1
 }
 
+/** 槽位内容一换，它就不再是「已下架」条目：必须清掉标记 */
+function clearMissingSlot(slot: string): void {
+  if (!missingSlots.value.has(slot)) return
+  const next = new Set(missingSlots.value)
+  next.delete(slot)
+  missingSlots.value = next
+}
+
 function equip(item: CatalogItem): void {
   const slot = itemSlot(item)
   const existing = selection.value[slot]
@@ -323,12 +404,17 @@ function equip(item: CatalogItem): void {
     ...selection.value,
     [slot]: { cosmeticId: item.cosmeticId, scale: existing?.scale ?? 1 },
   }
+  // 目录里点得到的时装一定没下架。不清标记的话，保存时 save() 会把这件
+  // 刚选好的时装当成「已下架」自动移除（只留一句误导性的警告），
+  // 用户以为换装成功、进游戏却是旧的。
+  clearMissingSlot(slot)
 }
 
 function unequip(slot: string): void {
   const next = { ...selection.value }
   delete next[slot]
   selection.value = next
+  clearMissingSlot(slot)
 }
 
 function setScale(slot: string, value: number | number[]): void {
@@ -359,6 +445,9 @@ async function loadIdentities(): Promise<void> {
     }
     previousIdentityId = activeIdentityId.value
     noIdentity.value = identities.value.length === 0
+    // URL 里的 identityId 已失效（例如该 MC 账号刚被解绑）：改写成实际生效的身份，
+    // 否则地址栏一直挂着一个后端不认的身份，刷新/分享出去都还要再回落一次
+    if (queryId && queryId !== activeIdentityId.value) syncIdentityQuery()
   } catch (error) {
     if (seq !== identitiesSeq) return
     identitiesError.value = true
@@ -416,7 +505,8 @@ async function loadLoadout(): Promise<void> {
     savedSnapshot.value = snapshot()
   } catch (error) {
     if (seq !== loadoutSeq) return
-    if (fashionErrorCode(error) === 'no_identity') {
+    const code = fashionErrorCode(error)
+    if (code === 'no_identity') {
       noIdentity.value = true
       selection.value = {}
       missingSlots.value = new Set()
@@ -428,6 +518,14 @@ async function loadLoadout(): Promise<void> {
     selection.value = {}
     missingSlots.value = new Set()
     savedSnapshot.value = snapshot()
+    // 身份已失效（别处解绑 / 被转绑）：先回落到有效身份再读一次，
+    // 否则「重试」会一直用同一个失效 identityId 失败，用户只能手动刷新页面
+    if ((code === 'identity_not_found' || code === 'forbidden') && identityId) {
+      if (await recoverIdentity(identityId)) {
+        ElMessage.info('该 Minecraft 身份已失效，已自动切换到当前账号下的有效身份')
+        return
+      }
+    }
     ElMessage.error(fashionErrorMessage(error, '读取穿戴配置失败'))
   } finally {
     if (seq === loadoutSeq) loadingLoadout.value = false
@@ -435,26 +533,53 @@ async function loadLoadout(): Promise<void> {
 }
 
 async function onIdentityChange(): Promise<void> {
-  if (dirty.value) {
-    try {
-      await ElMessageBox.confirm(
-        '切换 Minecraft 身份会丢弃当前未保存的穿戴修改，是否继续？',
-        '切换身份',
-        { type: 'warning', confirmButtonText: '切换', cancelButtonText: '取消' }
-      )
-    } catch {
-      activeIdentityId.value = previousIdentityId
-      return
-    }
+  if (!(await confirmDiscardChanges())) {
+    activeIdentityId.value = previousIdentityId
+    return
   }
   previousIdentityId = activeIdentityId.value
+  // 下拉框换身份后同步 URL：刷新/收藏/分享都停在这一个身份上
+  syncIdentityQuery()
   await loadLoadout()
 }
+
+// URL 里的 identityId 变化时反向同步下拉框与穿戴数据，避免「地址栏是 A、页面是 B」：
+// 侧边栏「我的衣柜」是不带 query 的链接，浏览器前进/后退也可能落到别的 identityId 上。
+watch(
+  () => route.query.identityId,
+  async (raw) => {
+    const next = typeof raw === 'string' ? raw : ''
+    if (!next) {
+      // query 被清掉（例如点了侧边栏同名链接）：保留当前身份，把 URL 补回去
+      syncIdentityQuery()
+      return
+    }
+    if (next === activeIdentityId.value) return
+    // 未知 / 无权访问的身份：切过去后端只会 403/404，忽略并把 URL 改回当前身份
+    if (!identities.value.some((item) => item.id === next)) {
+      syncIdentityQuery()
+      return
+    }
+    // 保存中不允许换身份：保存成功的快照会记到另一个身份头上
+    if (saving.value) {
+      syncIdentityQuery()
+      return
+    }
+    if (!(await confirmDiscardChanges())) {
+      syncIdentityQuery()
+      return
+    }
+    activeIdentityId.value = next
+    previousIdentityId = next
+    await loadLoadout()
+  }
+)
 
 async function save(): Promise<void> {
   // 穿戴配置没加载成功时绝不允许保存：全量覆盖会把云端其它槽位清空
   if (saving.value || loadingIdentities.value || loadingLoadout.value || loadoutError.value) return
-  // 已下架/已删除的时装不能提交（后端会 404/409 导致整次保存失败），保存前自动移除
+  // 已下架/已删除的时装提交上去也只会被后端跳过（warnings 里列出来），
+  // 用户没动过的失效槽位在保存前先移除，免得每次保存都弹一串「未同步」
   const missingToDrop = Object.keys(selection.value).filter((slot) => missingSlots.value.has(slot))
   if (missingToDrop.length > 0) {
     const next = { ...selection.value }
@@ -490,10 +615,19 @@ async function save(): Promise<void> {
       ElMessage.success('已保存，进入服务器后生效')
     }
   } catch (error) {
-    if (fashionErrorCode(error) === 'no_identity') {
+    const code = fashionErrorCode(error)
+    if (code === 'no_identity') {
       noIdentity.value = true
       ElMessage.warning('请先在「时装绑定」页完成绑定')
       return
+    }
+    // 身份已失效（别处解绑 / 被转绑）：回落到有效身份，别让用户对着必然失败的
+    // 保存按钮反复点。回落后会重读穿戴配置，本地未保存的修改随之作废 —— 必须说清楚。
+    if ((code === 'identity_not_found' || code === 'forbidden') && identityId) {
+      if (await recoverIdentity(identityId)) {
+        ElMessage.warning('该 Minecraft 身份已失效，已自动切换身份，请确认穿戴后重新保存')
+        return
+      }
     }
     ElMessage.error(fashionErrorMessage(error, '保存失败'))
   } finally {
@@ -502,9 +636,11 @@ async function save(): Promise<void> {
 }
 
 onMounted(async () => {
+  // 同步注册（放在 await 之前）：若初始化期间用户就离开了本页，onUnmounted 已经跑过，
+  // 之后再 addEventListener 会留下一个永不释放的监听器（还会按旧状态弹刷新确认）
+  window.addEventListener('beforeunload', onBeforeUnload)
   await loadIdentities()
   await Promise.all([loadCatalog(), identitiesError.value ? Promise.resolve() : loadLoadout()])
-  window.addEventListener('beforeunload', onBeforeUnload)
 })
 
 onUnmounted(() => {
