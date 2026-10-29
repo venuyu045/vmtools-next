@@ -245,7 +245,11 @@ def _write_seed_assets(lx_dir: Path) -> None:
         if not p.is_file():
             write_gradient_png(p, 960, 540, c1, c2)
     for i, (_, _, filename, _) in enumerate(BASES_SEED, start=1):
-        p = seed_dir / filename
+        # 注意：BASES_SEED 的 filename 自带 "seed/" 前缀（DB 里直接拼成
+        # /static/lixiangxiang/seed/base-N.png），所以这里要挂在 lx_dir 下，
+        # **不能**再拼 seed_dir，否则会写成 seed/seed/base-N.png —— 页面按
+        # seed/base-N.png 取图，全新部署时基地图全是 404。
+        p = lx_dir / filename
         if not p.is_file():
             write_gradient_png(p, 1200, 600, (217, 119, 87), (90, 74, 66))
     logger.info("Lixiangxiang seed assets ensured ({} MC avatars, {} photos, {} bases)",
