@@ -156,10 +156,10 @@ const navGroups: NavGroup[] = [
   {
     title: '总览',
     expandMinRank: 1,
-    guestVisible: true, // 访客保留总览（仪表盘/理想乡官网本就对访客开放）
+    guestVisible: true, // 访客保留总览（仪表盘对访客开放）
     items: [
       { path: '/dashboard', label: '仪表盘', minRole: 1 },
-      { path: '/lixiangxiang', label: '理想乡官网', minRole: 1 },
+      // 理想乡官网入口已移至顶部横向入口（AppHeader），此处不再重复
     ],
   },
   {
@@ -170,9 +170,7 @@ const navGroups: NavGroup[] = [
     items: [
       { path: '/player-tracking', label: '玩家列表', minRole: 1 },
       { path: '/tasks', label: '任务中心', minRole: 1 },
-      // 时装系统（VMFashion mod）：绑定 MC 账号 / 网页衣柜
-      { path: '/fashion/wardrobe', label: '我的衣柜', minRole: 1 },
-      { path: '/fashion/bind', label: '时装绑定', minRole: 1 },
+      // 时装相关入口已收拢到「时装中心」（顶部入口 + 专属侧边栏），此处不再显示
       { path: '/miaomiao', label: '妙妙工具', minRole: 1 },
       { path: '/mcc-status', label: 'MCC 状态', minRole: 1 },
       { path: '/mf-status', label: 'MF 状态', minRole: 1 },
@@ -202,9 +200,7 @@ const navGroups: NavGroup[] = [
     guestExpandable: false, // 访客始终折叠不可展开
     items: [
       { path: '/members', label: '成员管理', minRole: 3 },
-      // 时装管理端：后端是 require_site_admin，必须放「系统」组（minRole 3）。
-      // 放「管理」组（minRole 2）会让 admin 看到入口却每次调接口 403。
-      { path: '/fashion/admin', label: '时装管理', minRole: 3 },
+      // 时装管理入口已移到「时装中心」专属侧边栏（仅站点管理员可见）
       { path: '/config', label: '系统配置', minRole: 3 },
       { path: '/plugins', label: '插件管理', minRole: 3 },
     ],

@@ -2,7 +2,13 @@
   <div class="app-layout" :class="{ 'mobile-open': mobileDrawerOpen }">
     <!-- Desktop Sidebar（访客也显示：未登录 roleRank=guest，侧边栏自动只显示总览+工具） -->
     <aside class="app-sidebar desktop-only" :class="{ collapsed: sidebarCollapsed }">
-      <AppSidebar :collapsed="sidebarCollapsed" @toggle="toggleSidebar" />
+      <!-- 时装中心是独立子应用：进入后侧边栏只保留时装内容（商店/衣柜/管理） -->
+      <FashionSidebar
+        v-if="isFashionCenter"
+        :collapsed="sidebarCollapsed"
+        @toggle="toggleSidebar"
+      />
+      <AppSidebar v-else :collapsed="sidebarCollapsed" @toggle="toggleSidebar" />
     </aside>
 
     <!-- Mobile Drawer Overlay -->
@@ -13,7 +19,18 @@
     <!-- Mobile Drawer Sidebar -->
     <Transition name="drawer-slide">
       <aside v-if="mobileDrawerOpen" ref="mobileDrawerRef" tabindex="-1" class="app-sidebar mobile-drawer">
-        <AppSidebar :collapsed="false" @toggle="mobileDrawerOpen = false" :is-mobile="true" />
+        <FashionSidebar
+          v-if="isFashionCenter"
+          :collapsed="false"
+          @toggle="mobileDrawerOpen = false"
+          :is-mobile="true"
+        />
+        <AppSidebar
+          v-else
+          :collapsed="false"
+          @toggle="mobileDrawerOpen = false"
+          :is-mobile="true"
+        />
       </aside>
     </Transition>
 
@@ -49,11 +66,21 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import AppSidebar from './AppSidebar.vue'
+import FashionSidebar from './FashionSidebar.vue'
 import AppHeader from './AppHeader.vue'
 
 const route = useRoute()
 const router = useRouter()
 const authStore = useAuthStore()
+
+/**
+ * 是否处于「时装中心」子应用。
+ *
+ * 时装中心（/fashion/*）的侧边栏只保留时装内容（时装商店 / 我的衣柜 / 时装管理），
+ * 主站侧边栏里的时装入口已全部移除 —— 由路由 meta.fashionCenter 标记，
+ * 新增时装相关页面时记得同样打上该 meta，否则会退回主站侧边栏。
+ */
+const isFashionCenter = computed(() => route.meta.fashionCenter === true)
 
 /** 访客模式：未登录（且不在登录/注册页）。访客同样显示侧边栏（总览+工具只读）与头部，
  *  但内容区任何交互都会跳转登录页（只读浏览）。 */

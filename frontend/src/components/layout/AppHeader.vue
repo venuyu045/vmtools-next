@@ -20,6 +20,26 @@
       </div>
     </div>
     <div class="header-right">
+      <!-- 顶部横向入口（与「个人中心」同一排）：理想乡官网 + 时装中心 -->
+      <nav class="top-nav" aria-label="站点入口">
+        <router-link
+          to="/lixiangxiang"
+          class="top-nav-link"
+          :class="{ active: route.path.startsWith('/lixiangxiang') }"
+          :aria-current="route.path.startsWith('/lixiangxiang') ? 'page' : undefined"
+        >
+          理想乡官网
+        </router-link>
+        <router-link
+          v-if="authStore.isLoggedIn"
+          to="/fashion/store"
+          class="top-nav-link"
+          :class="{ active: route.path.startsWith('/fashion') }"
+          :aria-current="route.path.startsWith('/fashion') ? 'page' : undefined"
+        >
+          时装中心
+        </router-link>
+      </nav>
       <!-- 网络延迟指示（前端→后端 RTT，每 5s 探测一次） -->
       <span class="latency" :class="latencyClass" :title="'浏览器→后端延迟（RTT），5 秒刷新一次'">
         {{ latencyMs === null ? '—' : latencyMs + 'ms' }}
@@ -243,6 +263,43 @@ async function submitChangePwd() {
   flex-shrink: 0;
 }
 
+/* ---- 顶部横向入口（理想乡官网 / 时装中心） ---- */
+.top-nav {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-right: 4px;
+  flex-shrink: 0;
+}
+
+.top-nav-link {
+  display: inline-flex;
+  align-items: center;
+  height: 32px;
+  padding: 0 12px;
+  border-radius: var(--radius-md);
+  border: 1px solid transparent;
+  color: var(--text-secondary);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 500;
+  text-decoration: none;
+  white-space: nowrap;
+  transition: background-color 150ms var(--ease-out), border-color 150ms var(--ease-out), color 150ms var(--ease-out);
+}
+
+.top-nav-link:hover {
+  border-color: var(--border-default);
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.top-nav-link.active {
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-color: var(--accent-soft);
+}
+
 /* 延迟指示（前端→后端 RTT） */
 .latency {
   font-family: var(--font-mono);
@@ -433,6 +490,16 @@ async function submitChangePwd() {
     padding: 0 12px;
   }
 
+  /* 窄屏下顶部入口压缩，为汉堡/头像留出空间 */
+  .top-nav { gap: 2px; margin-right: 0; }
+  .top-nav-link {
+    height: 30px;
+    padding: 0 8px;
+    font-size: 12px;
+  }
+  /* 延迟指示是诊断信息，窄屏让位给导航入口与账号区（否则顶栏溢出） */
+  .latency { display: none; }
+
   .header-left {
     gap: 10px;
     min-width: 0;
@@ -489,6 +556,13 @@ async function submitChangePwd() {
   .profile-btn {
     padding: 4px 8px;
     font-size: 10px;
+  }
+
+  /* 超窄屏：顶部入口再压一档，保证两个入口都点得到 */
+  .top-nav-link {
+    height: 28px;
+    padding: 0 6px;
+    font-size: 11px;
   }
 
   .header-right {

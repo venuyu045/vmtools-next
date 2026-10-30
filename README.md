@@ -14,8 +14,8 @@
 - **任务中心**：定时任务调度、任务模板、批量执行。
 - **BlueMap 监控**：轮询地图 API，精确检测机器人与玩家上下线状态。
 - **即时通知**：实例上下线、崩溃、自动重连事件通过 QQ 机器人实时推送。
-- **组织官网**：内置「理想乡」组织主页（介绍 / 成员 / 基地 / 相册），成员头像自动使用其 MC ID 的正版皮肤，自带管理后台。
-- **时装系统（VMFashion）**：配套的纯客户端时装 mod（[VMFashion-mod](https://github.com/venuyu045/VMFashion-mod)）的云端衣柜与**时装包级下发** —— 网页换装、游戏内实时生效，别人穿的时装没装也能自动下载（sha256 校验 + Ed25519 验签 + 安全解压）；站点管理员另有独立的**时装管理端**（目录 / 资产 / 时装包）。详见 [时装系统](#时装系统vmfashion)。
+- **组织官网**：内置「理想乡」组织主页（介绍 / 成员 / 基地 / 相册），成员头像自动使用其 MC ID 的正版皮肤，自带管理后台；入口在**顶栏「理想乡官网」**。
+- **时装系统（VMFashion）**：配套的纯客户端时装 mod（[VMFashion-mod](https://github.com/venuyu045/VMFashion-mod)）的云端衣柜与**时装包级下发** —— 网页换装、游戏内实时生效，别人穿的时装没装也能自动下载（sha256 校验 + Ed25519 验签 + 安全解压）；站点管理员另有独立的**时装管理端**（目录 / 资产 / 时装包）。入口在**顶栏「时装中心」**：点进去是独立子应用，侧边栏只保留时装内容（时装商店 / 我的衣柜 / 时装管理）。详见 [时装系统](#时装系统vmfashion)。
 - **插件系统**：插件启停与在线配置管理。
 - **安全**：JWT 认证、角色权限（site_admin / admin / user）、操作审计日志、登录限流。
 
@@ -122,8 +122,10 @@ npm install
 
 | 能力 | 说明 |
 | :--- | :--- |
+| **时装中心** | 顶栏「时装中心」入口 → 独立子应用，侧边栏只保留时装内容：**时装商店**（浏览全部目录）、**我的衣柜**（挑选 / 保存穿戴）、**时装管理**（仅 site_admin）；主站侧边栏不再出现时装入口，底部「返回主站」一键回主站 |
 | **账号绑定** | 游戏内 `/vmfashion bind` 得到 6 位绑定码 → 本站「时装绑定」页输入 → 一个网站账号可绑多个 MC 账号 |
 | **双路认证** | 正版走 `sessionserver.mojang.com`，皮肤站走 Yggdrasil（**只信任白名单内的地址**，防 SSRF）；后端用 `hasJoined` 反查并**比对 UUID**，不做密码登录 |
+| **时装商店** | `/fashion/store`：目录网格（缩略图 / 槽位 / 所属时装包）、搜索、按槽位筛选、分页、详情大图；「去穿戴」深链到衣柜并定位该件时装 |
 | **网页衣柜** | `/fashion/wardrobe`：按槽位（披风/翅膀/头饰/背饰/宠物/光环）挑选、调缩放、保存；进游戏自动生效，游戏内换装也会实时回传；支持搜索、详情大图与分页 |
 | **时装管理端** | `/fashion/admin`（仅 site_admin）：目录管理（增删改查 / 启用开关 / 排序 / 资产缺失徽标）、资产管理（上传 + 一键填入目录）、时装包（上传 zip 发布 / 下架，409 `pack_in_use` 有专门引导）；上传带进度 / 网速 / ETA 与大小预检 |
 | **批量解析** | 进服时 `POST /loadouts/resolve` 一次最多 200 个 UUID，只回 `assetKey` 级元数据（热路径，5 秒缓存） |
@@ -132,8 +134,10 @@ npm install
 
 ### 页面与接口
 
-- 前端页面：`/fashion/bind`（绑定）、`/fashion/wardrobe`（我的衣柜）—— 均需登录；
-  `/fashion/admin`（时装管理端）—— 仅 site_admin
+- 前端页面（均在**时装中心** `/fashion/*` 子应用内，需登录；路由 meta `fashionCenter` 决定侧边栏切换）：
+  `/fashion/store`（时装商店）、`/fashion/wardrobe`（我的衣柜）、`/fashion/bind`（时装绑定）；
+  `/fashion/admin`（时装管理端）—— 仅 site_admin，普通 admin / user 在侧边栏看不到入口，直连也会被后端 403 拦下
+- 顶栏入口（`AppHeader`）：**理想乡官网** `/lixiangxiang`（访客可见）、**时装中心** `/fashion/store`（登录后可见）
 - 后端路由：`backend/src/vmtools_next/api/routers/fashion.py`，前缀 **`/api/fashion`**
   - 公开：`/auth/challenge`、`/auth/verify`、`/packs`、`/packs/{id}/{version}/download`、`/assets/{assetKey}`
   - mod（Bearer token）：`/loadout`（PUT）、`/loadout/me`、`/loadouts/resolve`、`/catalog`、`/device/*`

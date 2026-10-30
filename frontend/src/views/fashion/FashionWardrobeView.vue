@@ -885,7 +885,27 @@ onMounted(async () => {
   window.addEventListener('beforeunload', onBeforeUnload)
   await loadIdentities()
   await Promise.all([loadCatalog(), identitiesError.value ? Promise.resolve() : loadLoadout()])
+  applyStoreDeepLink()
 })
+
+/**
+ * 「时装商店」的「去穿戴」深链：`/fashion/wardrobe?cosmeticId=xxx`。
+ *
+ * 只做定位提示（打开详情弹窗），**不强制穿戴** —— 用户仍可在目录里改选、调缩放，
+ * 也不该因为从商店点进来就悄悄改掉他的穿戴。
+ * 处理完把 query 删掉：否则刷新 / 前进后退都会再弹一次，且地址栏会挂着一个
+ * 与当前状态无关的参数。
+ */
+function applyStoreDeepLink(): void {
+  const cosmeticId = typeof route.query.cosmeticId === 'string' ? route.query.cosmeticId : ''
+  if (!cosmeticId) return
+  const item = catalogMap.value.get(cosmeticId) || catalogMap.value.get(localIdOf(cosmeticId))
+  if (item) openDetail(item)
+  else ElMessage.warning('商店里选中的时装已下架，可在目录里重新挑选')
+  const query = { ...route.query }
+  delete query.cosmeticId
+  void router.replace({ query })
+}
 
 onUnmounted(() => {
   window.removeEventListener('beforeunload', onBeforeUnload)

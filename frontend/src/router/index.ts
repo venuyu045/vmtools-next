@@ -57,9 +57,16 @@ const routes = [
       { path: 'warehouse-status/:id', name: 'WarehouseItems', component: () => import('@/views/WarehouseItemsView.vue'), meta: { title: '仓库物品', roles: ALL_LOGGED_IN, guestReadable: true } },
       // 任务中心（工具组）：地图画+物流统一任务列表与 Bot 执行/排队视角；访客只读可浏览
       { path: 'tasks', name: 'TaskCenter', component: () => import('@/views/TaskCenterView.vue'), meta: { title: '任务中心', roles: ALL_LOGGED_IN, guestReadable: true } },
-      // 时装系统（VMFashion mod）：绑定 MC 账号 + 网页衣柜（需登录，无 guestReadable）
-      { path: 'fashion/bind', name: 'FashionBind', component: () => import('@/views/fashion/FashionBindView.vue'), meta: { title: '时装绑定', roles: ALL_LOGGED_IN } },
-      { path: 'fashion/wardrobe', name: 'FashionWardrobe', component: () => import('@/views/fashion/FashionWardrobeView.vue'), meta: { title: '我的衣柜', roles: ALL_LOGGED_IN } },
+      // 时装中心（VMFashion mod）：独立子应用——进入后侧边栏只保留时装内容
+      // （时装商店 / 我的衣柜 / 时装管理）。由 AppLayout 依据 meta.fashionCenter
+      // 切换到 FashionSidebar。入口在顶部「个人中心那一排」（AppHeader）。
+      { path: 'fashion', redirect: '/fashion/store' },
+      { path: 'fashion/store', name: 'FashionStore', component: () => import('@/views/fashion/FashionStoreView.vue'), meta: { title: '时装商店', roles: ALL_LOGGED_IN, fashionCenter: true } },
+      { path: 'fashion/wardrobe', name: 'FashionWardrobe', component: () => import('@/views/fashion/FashionWardrobeView.vue'), meta: { title: '我的衣柜', roles: ALL_LOGGED_IN, fashionCenter: true } },
+      { path: 'fashion/bind', name: 'FashionBind', component: () => import('@/views/fashion/FashionBindView.vue'), meta: { title: '时装绑定', roles: ALL_LOGGED_IN, fashionCenter: true } },
+      // 时装管理端：后端是 require_site_admin（不是 require_admin）→ 必须用 ROLES.siteAdmin，
+      // 否则 admin 能进页面但每个接口都 403。
+      { path: 'fashion/admin', name: 'FashionAdmin', component: () => import('@/views/fashion/FashionAdminView.vue'), meta: { title: '时装管理', roles: [...ROLES.siteAdmin], fashionCenter: true } },
 
       // --- 管理员及以上可见 ---
       // 任务管理（管理组第一个，2026-08-13）：自定义 MF 手动工作标记，被标记 bot 不被自动调度派活
@@ -97,9 +104,6 @@ const routes = [
       { path: 'plugins', name: 'Plugins', component: () => import('@/views/PluginView.vue'), meta: { title: '插件管理', roles: [...ROLES.siteAdmin] } },
       { path: 'plugins/:name/config', name: 'PluginConfig', component: () => import('@/views/PluginConfigView.vue'), meta: { title: '插件配置', roles: [...ROLES.siteAdmin] } },
       { path: 'monitor', name: 'Monitor', component: () => import('@/views/MonitorView.vue'), meta: { title: '系统监控', roles: [...ROLES.admin, ...ROLES.siteAdmin] } },
-      // 时装管理端：后端是 require_site_admin（不是 require_admin）→ 必须用 ROLES.siteAdmin，
-      // 否则 admin 能进页面但每个接口都 403。
-      { path: 'fashion/admin', name: 'FashionAdmin', component: () => import('@/views/fashion/FashionAdminView.vue'), meta: { title: '时装管理', roles: [...ROLES.siteAdmin] } },
 
       // --- 旧 MCC 路由（重定向到新拆分路由） ---
       { path: 'mcc/instances', redirect: '/mcc-instances' },
