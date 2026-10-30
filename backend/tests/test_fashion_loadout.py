@@ -264,8 +264,13 @@ class TestLoadoutCRUD(_Base):
         self.assertEqual(item["scale"], 1.5)
         self.assertFalse(item["missing"])
 
-    def test_put_accepts_mod_global_id_and_stores_canonical_id(self):
-        """mod 上报 packId:localId（如 pack1:cape_dragon）时回退查到简单 cosmeticId。"""
+    def test_put_accepts_mod_global_id_and_stores_global_id(self):
+        """mod 上报 pack1:cape_dragon、目录里是简单 ID → **落库仍是全局 ID**。
+
+        回归（审计 A2，P0）：旧实现把上报的全局 ID 改写成目录里的简单 ID 落库，
+        客户端 ``AssetSyncService.requestMissing`` 因为「没有冒号前缀」直接 return
+        → 这件时装永远不会被整包下发，其他玩家也看不到。
+        """
         svc.put_loadout(
             self.db,
             self.identity.id,
@@ -274,7 +279,65 @@ class TestLoadoutCRUD(_Base):
         )
         items = svc.get_loadout(self.db, self.identity.id)
         self.assertEqual(len(items), 1)
+        self.assertEqual(items[0]["cosmeticId"], "pack1:cape_dragon")
+        # 目录元数据仍要解析出来（别名表兜底），否则网页衣柜/渲染会缺 assetKey
+        self.assertEqual(items[0]["assetKey"], "cape/dragon.png")
+        self.assertEqual(items[0]["packId"], "pack1")
+        self.assertFalse(items[0]["missing"])
+
+    def test_put_keeps_global_id_in_resolve(self):
+        """落库的全局 ID 要能被热路径 resolve 解析（其他玩家看得到）。"""
+        svc.put_loadout(
+            self.db,
+            self.identity.id,
+            [{"slot": "cape", "cosmeticId": "pack1:cape_dragon", "scale": 1.0}],
+            settings=self.settings,
+        )
+        payload = svc.resolve_loadouts(
+            self.db, [UUID_A], settings=self.settings
+        )
+        items = payload["loadouts"][UUID_A]["items"]
+        self.assertEqual(items[0]["cosmeticId"], "pack1:cape_dragon")
+        self.assertEqual(items[0]["assetKey"], "cape/dragon.png")
+
+    def test_put_simple_id_upgrades_to_catalog_global_id(self):
+        """目录是全局 ID、旧客户端上报简单 ID → 落库升级成目录的全局 ID。"""
+        svc.upsert_catalog_item(
+            self.db, {"cosmeticId": "pack2:wings_blue", "category": "wings"}
+        )
+        svc.put_loadout(
+            self.db,
+            self.identity.id,
+            [{"slot": "wings", "cosmeticId": "wings_blue", "scale": 1.0}],
+            settings=self.settings,
+        )
+        items = svc.get_loadout(self.db, self.identity.id)
+        self.assertEqual(items[0]["cosmeticId"], "pack2:wings_blue")
+        self.assertFalse(items[0]["missing"])
+
+    def test_put_simple_id_stays_simple_for_legacy_catalog(self):
+        """两边都是简单 ID（历史数据）→ 保持简单 ID，不擅自改写（向后兼容）。"""
+        svc.put_loadout(
+            self.db,
+            self.identity.id,
+            [{"slot": "cape", "cosmeticId": "cape_dragon", "scale": 1.0}],
+            settings=self.settings,
+        )
+        items = svc.get_loadout(self.db, self.identity.id)
         self.assertEqual(items[0]["cosmeticId"], "cape_dragon")
+
+    def test_put_disabled_global_id_warns(self):
+        svc.upsert_catalog_item(
+            self.db, {"cosmeticId": "pack3:hat_off", "category": "hat", "enabled": False}
+        )
+        _updated, warnings = svc.put_loadout(
+            self.db,
+            self.identity.id,
+            [{"slot": "hat", "cosmeticId": "pack3:hat_off"}],
+            settings=self.settings,
+        )
+        self.assertEqual(warnings[0]["code"], "cosmetic_disabled")
+        self.assertEqual(warnings[0]["cosmeticId"], "pack3:hat_off")
 
     def test_put_without_scale_preserves_saved_scale(self):
         """mod 不带 scale 上报时，不能把网页衣柜保存的缩放重置为 1.0。"""
@@ -589,6 +652,80 @@ class TestCatalog(_Base):
                 self.db, {"cosmeticId": "evil", "assetKey": "../../etc/passwd"}
             )
         self.assertEqual(ctx.exception.code, "invalid_asset_key")
+
+
+class TestCosmeticIdContract(_Base):
+    """cosmeticId = ``<packId>:<localId>`` 契约（审计 A1/A2，P0）。
+
+    客户端只认冒号前缀来决定整包下发（``AssetSyncService.requestMissing``），
+    所以后端必须保证「前缀 == packId」，否则客户端会去下载一个不存在的包。
+    """
+
+    def test_global_id_with_matching_pack_id_ok(self):
+        item = svc.upsert_catalog_item(
+            self.db, {"cosmeticId": "pack1:cape_blue", "packId": "pack1"}
+        )
+        self.assertEqual(item["cosmeticId"], "pack1:cape_blue")
+        self.assertEqual(item["packId"], "pack1")
+
+    def test_global_id_prefix_mismatch_rejected(self):
+        with self.assertRaises(svc.FashionServiceError) as ctx:
+            svc.upsert_catalog_item(
+                self.db, {"cosmeticId": "pack2:cape_blue", "packId": "pack1"}
+            )
+        self.assertEqual(ctx.exception.code, "invalid_cosmetic_id")
+        self.assertIn("pack1", ctx.exception.message)
+
+    def test_global_id_infers_pack_id_when_omitted(self):
+        """只给 cosmeticId 时按规则校验：前缀即 packId。"""
+        item = svc.upsert_catalog_item(self.db, {"cosmeticId": "pack9:hat_red"})
+        self.assertEqual(item["packId"], "pack9")
+
+    def test_partial_update_keeps_pack_id_and_validates_prefix(self):
+        # 只改 name：packId 不在 payload 里 → 用旧行的 pack1 校验前缀
+        item = svc.upsert_catalog_item(
+            self.db, {"cosmeticId": "pack1:cape_dragon", "name": "改名"}
+        )
+        self.assertEqual(item["packId"], "pack1")
+        self.assertEqual(item["name"], "改名")
+
+    def test_malformed_global_ids_rejected(self):
+        cases = (
+            ":cape_blue",            # 前缀为空
+            "pack1:",                # localId 为空
+            "pack1:cape:blue",       # 多个冒号
+            "pack 1:cape_blue",      # 前缀含空格（不满足 packId 规则）
+            ".hidden:cape_blue",     # 点开头 packId（客户端会当残留目录）
+            "server:cape_blue",      # 保留 packId
+            "pack1:cape blue",       # localId 含空格
+        )
+        for cosmetic_id in cases:
+            with self.subTest(cosmeticId=cosmetic_id):
+                with self.assertRaises(svc.FashionServiceError) as ctx:
+                    svc.upsert_catalog_item(
+                        self.db, {"cosmeticId": cosmetic_id, "packId": "pack1"}
+                    )
+                self.assertEqual(ctx.exception.code, "invalid_cosmetic_id")
+
+    def test_invalid_pack_id_rejected(self):
+        with self.assertRaises(svc.FashionServiceError) as ctx:
+            svc.upsert_catalog_item(
+                self.db, {"cosmeticId": "legacy_hat", "packId": "pack 1"}
+            )
+        self.assertEqual(ctx.exception.code, "invalid_pack_id")
+
+    def test_legacy_simple_id_still_accepted(self):
+        """历史目录数据（简单 ID + packId）必须继续能写，否则旧数据无法维护。"""
+        item = svc.upsert_catalog_item(
+            self.db, {"cosmeticId": "legacy_backboard", "packId": "pack1"}
+        )
+        self.assertEqual(item["cosmeticId"], "legacy_backboard")
+        self.assertEqual(item["packId"], "pack1")
+
+    def test_empty_cosmetic_id_rejected(self):
+        with self.assertRaises(svc.FashionServiceError) as ctx:
+            svc.upsert_catalog_item(self.db, {"cosmeticId": "   "})
+        self.assertEqual(ctx.exception.code, "invalid_cosmetic_id")
 
 
 # ── 资产 ────────────────────────────────────────────────────────────────

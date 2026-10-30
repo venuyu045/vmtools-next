@@ -54,6 +54,18 @@ SLOT_ORDER = {slot: idx for idx, slot in enumerate(SLOTS)}
 MIN_SCALE = 0.25
 MAX_SCALE = 4.0
 
+# ── cosmeticId 契约（mod docs/fashion-api.md §3） ────────────────────────
+#
+# 客户端**只认** ``<packId>:<localId>`` 的冒号前缀来决定「要不要整包下发」
+# （``sync/AssetSyncService.requestMissing``：没有冒号直接 return，既不下载也解析不到
+# packId）。所以全局 ID 是唯一能让**其他玩家**看见这件时装的形态，后端必须：
+#   1. 管理端写入时校验「冒号前缀 == packId 字段」，别让脏数据进目录；
+#   2. 写 loadout 时**绝不把玩家上报的全局 ID 降级成简单 ID**。
+# 简单 ID（无冒号）仍被接受：历史目录数据与旧客户端都还在用它，但它是 legacy 形态。
+COSMETIC_ID_RE = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
+# 全局 ID 里 localId 的字符集（比 packId 宽一点点：不参与路径拼接）
+LOCAL_ID_RE = re.compile(r"^[A-Za-z0-9._-]{1,96}$")
+
 # 资产文件名允许的扩展名（避免上传 .php/.sh 之类被当成脚本）
 ALLOWED_ASSET_EXTS = {
     ".png", ".jpg", ".jpeg", ".webp", ".gif",
@@ -308,13 +320,129 @@ def get_catalog_by_asset_key(db: Any, asset_key: str) -> Any:
     )
 
 
+def split_global_cosmetic_id(cosmetic_id: Any) -> tuple[str, str]:
+    """拆 ``<packId>:<localId>``，返回 ``(packId, localId)``；非全局 ID 返回 ``("", "")``。"""
+    value = str(cosmetic_id or "").strip()
+    if ":" not in value:
+        return "", ""
+    pack_id, _, local_id = value.partition(":")
+    return pack_id.strip(), local_id.strip()
+
+
 def _catalog_map(
     db: Any, *, enabled_only: bool = True, settings: Any = None
 ) -> dict[str, dict]:
-    return {
-        item["cosmeticId"]: item
-        for item in list_catalog(db, enabled_only=enabled_only, settings=settings)
-    }
+    """``cosmeticId → 目录项``，并登记全局 ID ↔ 简单 ID 的**别名**。
+
+    历史原因，目录里可能同时存在两种形态的 ID：
+
+    - 新数据：全局 ID ``pack1:cape_dragon``（客户端可直接整包下发）
+    - 旧数据：简单 ID ``cape_dragon`` + ``packId=pack1`` 字段
+
+    而 loadout 里存的也可能是任一种形态（旧客户端上报简单 ID、mod 上报全局 ID）。
+    为了两个方向都能查到同一件时装，这里除精确 ID 外再补一类别名：
+
+    - 目录是简单 ID 且有 packId → 别名 ``<packId>:<cosmeticId>``
+    - 目录是全局 ID → 别名 ``<localId>``
+
+    精确 ID **永远优先**（先登记全部真实条目，别名只在缺失时补），所以别名不会
+    覆盖真实条目；同一 localId 出现在多个包时按 ``sort_order, cosmeticId`` 取第一条
+    （与 :func:`list_catalog` 的排序一致，行为可预期）。
+    """
+    items = list_catalog(db, enabled_only=enabled_only, settings=settings)
+    mapping: dict[str, dict] = {item["cosmeticId"]: item for item in items}
+    for item in items:
+        cosmetic_id = item["cosmeticId"]
+        _, local_id = split_global_cosmetic_id(cosmetic_id)
+        if local_id:
+            mapping.setdefault(local_id, item)
+        else:
+            pack_id = item.get("packId", "") or ""
+            if pack_id:
+                mapping.setdefault(f"{pack_id}:{cosmetic_id}", item)
+    return mapping
+
+
+def validate_cosmetic_id(cosmetic_id: Any, pack_id: Any = None) -> tuple[str, str]:
+    """校验 ``cosmeticId`` 契约，返回 ``(cosmeticId, packId)``。
+
+    规则（mod 契约 §3 / 站点文档 §4/§10）：
+
+    - **全局形式** ``<packId>:<localId>``：只能有一个冒号，两段都不能为空，
+      前缀必须能当客户端目录名（:func:`is_safe_pack_id`），localId 字符集受限；
+      并且**冒号前缀必须等于 ``packId`` 字段**。只给了 ``cosmeticId`` 时按前缀推导
+      ``packId``（等价于「前缀即 packId」）；只给了 ``packId`` 时由调用方先查旧行。
+    - **简单形式**（无冒号）：历史目录数据 / 旧客户端仍在用，接受（legacy），
+      ``packId`` 字段独立生效。
+
+    Raises:
+        FashionServiceError: ``invalid_cosmetic_id`` / ``invalid_pack_id``
+    """
+    cid = str(cosmetic_id or "").strip()
+    pid = str(pack_id or "").strip()
+    if not cid:
+        raise FashionServiceError("invalid_cosmetic_id", "cosmeticId 不能为空")
+    if not COSMETIC_ID_RE.match(cid):
+        raise FashionServiceError(
+            "invalid_cosmetic_id", "cosmeticId 只允许字母/数字/._:-，长度 ≤128"
+        )
+    if pid and not is_safe_pack_id(pid):
+        raise FashionServiceError(
+            "invalid_pack_id",
+            "packId 只允许字母/数字/._-，长度 1-64，且不能是 . / .. / server / 点开头",
+        )
+    if ":" not in cid:
+        return cid, pid
+
+    parts = cid.split(":")
+    if len(parts) != 2:
+        raise FashionServiceError(
+            "invalid_cosmetic_id",
+            f"cosmeticId 必须形如 <packId>:<localId>（只能有一个冒号）：{cid}",
+        )
+    prefix, local_id = parts[0].strip(), parts[1].strip()
+    if not prefix or not local_id:
+        raise FashionServiceError(
+            "invalid_cosmetic_id",
+            f"cosmeticId 必须形如 <packId>:<localId>（两段都不能为空）：{cid}",
+        )
+    if not is_safe_pack_id(prefix):
+        raise FashionServiceError(
+            "invalid_cosmetic_id",
+            f"cosmeticId 的 packId 前缀（{prefix}）不符合 packId 规则"
+            "（字母/数字/._-，长度 1-64，不能是 . / .. / server / 点开头）",
+        )
+    if not LOCAL_ID_RE.match(local_id):
+        raise FashionServiceError(
+            "invalid_cosmetic_id",
+            f"cosmeticId 的 localId 只允许字母/数字/._-，长度 1-96：{local_id}",
+        )
+    if pid and pid != prefix:
+        raise FashionServiceError(
+            "invalid_cosmetic_id",
+            f"cosmeticId 的 packId 前缀（{prefix}）必须与 packId 字段（{pid}）一致",
+        )
+    # 只给了 cosmeticId：前缀即 packId（客户端就是按冒号前缀找包的）
+    return cid, pid or prefix
+
+
+def canonical_loadout_cosmetic_id(catalog_item: dict, reported_id: Any) -> str:
+    """写 loadout 用的规范 ID：**全局 ID 优先**。
+
+    1. 目录条目本身就是全局 ID → 用它（最权威，能保证与其他玩家一致）；
+    2. 目录是 legacy 简单 ID，但玩家上报的是全局 ID → **保留上报的全局 ID**；
+    3. 两边都是简单 ID → 保持简单 ID（旧数据/旧客户端不动，向后兼容）。
+
+    第 2 条是这次修复的核心：旧实现把 ``example:backboard`` 改写成目录里的
+    ``backboard`` 落库，客户端因为「没有冒号前缀」永远不会整包下发这件时装。
+    """
+    catalog_id = str((catalog_item or {}).get("cosmeticId") or "").strip()
+    if ":" in catalog_id:
+        return catalog_id
+    reported = str(reported_id or "").strip()
+    if ":" in reported:
+        return reported
+    return catalog_id or reported
 
 
 def upsert_catalog_item(db: Any, payload: dict) -> dict:
@@ -322,14 +450,20 @@ def upsert_catalog_item(db: Any, payload: dict) -> dict:
 
     部分更新语义：payload 里没出现的字段保持原值（创建时用默认值），
     避免「只改 enabled」把 name / packId / assetKey 等顺手清空。
+
+    ``cosmeticId`` 按 :func:`validate_cosmetic_id` 校验：全局形式
+    ``<packId>:<localId>`` 的冒号前缀必须等于 ``packId`` 字段（只给其一时按规则推导），
+    否则 ``invalid_cosmetic_id`` —— 前缀对不上会让客户端去下载一个不存在的包。
     """
-    cosmetic_id = str(payload.get("cosmeticId") or "").strip()
-    if not cosmetic_id:
-        raise FashionServiceError("invalid_cosmetic_id", "cosmeticId 不能为空")
-    if not re.match(r"^[A-Za-z0-9._:-]{1,128}$", cosmetic_id):
-        raise FashionServiceError(
-            "invalid_cosmetic_id", "cosmeticId 只允许字母/数字/._:-，长度 ≤128"
-        )
+    raw_cosmetic_id = payload.get("cosmeticId")
+    # 先按原样查旧行：部分更新时 packId 可能不在 payload 里，校验要用旧值
+    row = get_catalog_item(db, str(raw_cosmetic_id or "").strip())
+    existing_pack_id = str(getattr(row, "pack_id", "") or "") if row is not None else ""
+    if "packId" in payload:
+        pack_id = str(payload.get("packId") or "").strip()
+    else:
+        pack_id = existing_pack_id
+    cosmetic_id, pack_id = validate_cosmetic_id(raw_cosmetic_id, pack_id)
     if "category" in payload:
         category = str(payload.get("category") or "other").strip().lower()
         if category not in CATEGORIES:
@@ -345,7 +479,6 @@ def upsert_catalog_item(db: Any, payload: dict) -> dict:
             except FashionServiceError as exc:
                 raise FashionServiceError("invalid_asset_key", exc.message) from exc
 
-    row = get_catalog_item(db, cosmetic_id)
     created = row is None
     if created:
         row = FashionCatalogModel(cosmetic_id=cosmetic_id, created_at=utcnow())
@@ -360,8 +493,8 @@ def upsert_catalog_item(db: Any, payload: dict) -> dict:
         row.sort_order = 0
         row.sha256 = ""
         row.bytes = 0
-    if "packId" in payload:
-        row.pack_id = str(payload.get("packId") or "")[:64]
+    # 全局 ID 的前缀就是权威 packId（validate 已保证两者一致 / 已推导）
+    row.pack_id = pack_id[:64]
     if "name" in payload:
         row.name = str(payload.get("name") or "")[:128]
     if "category" in payload:
@@ -539,6 +672,32 @@ def get_loadout_rows(db: Any, identity_id: str) -> list[Any]:
     )
 
 
+def _lookup_catalog_item(
+    db: Any, cosmetic_id: str, catalog: Optional[dict[str, dict]] = None
+) -> Optional[dict]:
+    """把玩家上报的 cosmeticId 解析成目录条目（返回 dict，查不到返回 None）。
+
+    三级兜底，顺序即优先级：
+
+    1. 精确 DB 查询（最新数据，不吃缓存）；
+    2. 旧逻辑：全局 ID 精确查不到时用冒号后的 ``localId`` 再查一次
+       （兼容「目录里是简单 ID」的历史数据）；
+    3. 目录别名表（:func:`_catalog_map` 已登记全局 ID ↔ 简单 ID 双向别名，
+       覆盖「目录是全局 ID、客户端上报简单 ID」的反方向）。
+    """
+    row = get_catalog_item(db, cosmetic_id)
+    if row is not None:
+        return _catalog_row_to_dict(row)
+    _, local_id = split_global_cosmetic_id(cosmetic_id)
+    if local_id:
+        row = get_catalog_item(db, local_id)
+        if row is not None:
+            return _catalog_row_to_dict(row)
+    if catalog:
+        return catalog.get(cosmetic_id)
+    return None
+
+
 def get_loadout(db: Any, identity_id: str, *, settings: Any = None) -> list[dict]:
     """玩家穿戴配置（含目录元数据，方便网页衣柜直接渲染）。"""
     rows = get_loadout_rows(db, identity_id)
@@ -586,6 +745,11 @@ def put_loadout(
     ``scale`` 可省略：省略时沿用该槽位已保存的缩放值（mod 不保存 scale，
     不能让它每次换装都把网页衣柜的缩放重置成 1.0）。
 
+    ``cosmeticId`` 落库规则（mod 契约 §3）：**写规范全局 ID**。目录条目本身就是
+    ``<packId>:<localId>`` 时原样落库；目录仍是历史简单 ID 而玩家上报了全局 ID 时，
+    保留玩家上报的全局 ID（**绝不降级成简单 ID** —— 客户端只认冒号前缀，降级会让
+    这件时装永远不被整包下发）。两边都是简单 ID 时保持简单 ID（向后兼容）。
+
     **部分成功语义**（mod 契约补充）：目录里查不到 / 已下架的 ``cosmeticId`` 只跳过
     该条并返回 warning，其余照常写入 —— 否则 mod 首次启动自带的本地示例包
     （``example:crown`` 等）会让整条 PUT 404，玩家连本地其它时装都同步不了。
@@ -608,6 +772,8 @@ def put_loadout(
         )
 
     existing = {getattr(row, "slot", ""): row for row in get_loadout_rows(db, identity_id)}
+    # 目录快照（含 disabled）：用来做「全局 ID ↔ 简单 ID」双向兜底匹配
+    catalog = _catalog_map(db, enabled_only=False, settings=cfg)
     seen: set[str] = set()
     normalized: list[dict] = []
     warnings: list[dict] = []
@@ -623,22 +789,17 @@ def put_loadout(
         cosmetic_id = str((raw or {}).get("cosmeticId") or "").strip()
         if not cosmetic_id:
             raise FashionServiceError("invalid_cosmetic_id", "cosmeticId 不能为空")
-        cosmetic = get_catalog_item(db, cosmetic_id)
-        if cosmetic is None and ":" in cosmetic_id:
-            # mod 的 LocalLoadout 存的是全局 ID（packId:localId，如 example:backboard），
-            # 而 README/常见目录配置用的是简单 cosmeticId（backboard）。精确查不到时
-            # 回退用 localId 再查一次，并把 catalog 里的规范 ID 写入 loadout。
-            local_id = cosmetic_id.rsplit(":", 1)[1].strip()
-            if local_id:
-                cosmetic = get_catalog_item(db, local_id)
+        cosmetic = _lookup_catalog_item(db, cosmetic_id, catalog)
         if cosmetic is None:
             # 未知时装（典型：mod 本地包的 example:crown）只跳过该条，不整条失败
             warnings.append(
                 {"slot": slot, "cosmeticId": cosmetic_id, "code": "unknown_cosmetic"}
             )
             continue
-        canonical_id = str(getattr(cosmetic, "cosmetic_id", "") or cosmetic_id)
-        if not bool(getattr(cosmetic, "enabled", True)):
+        # 落库用规范全局 ID：绝不把玩家上报的 packId:localId 降级成简单 ID
+        # （客户端只认冒号前缀决定整包下发，降级 = 这件时装永远不自动下发）
+        canonical_id = canonical_loadout_cosmetic_id(cosmetic, cosmetic_id)
+        if not bool(cosmetic.get("enabled", True)):
             warnings.append(
                 {"slot": slot, "cosmeticId": cosmetic_id, "code": "cosmetic_disabled"}
             )

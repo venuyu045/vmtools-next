@@ -157,7 +157,7 @@ sequenceDiagram
 {
   "items": [
     {
-      "cosmeticId": "cape_dragon",
+      "cosmeticId": "pack1:cape_dragon",
       "name": "龙翼披风",
       "category": "cape",
       "assetKey": "cape/dragon.png",
@@ -174,6 +174,23 @@ sequenceDiagram
 - `sha256` 可用于本地缓存判重：**同 sha256 不必重复下载**
 - 目录缓存 30s（`VMT_FASHION__CATALOG_CACHE_TTL_SECONDS`），mod 端建议自己缓存 ≥60s
 
+### 4.1 `cosmeticId` 契约（v1.0.1 起后端强制校验）
+
+客户端的自动下发**只认冒号前缀**：`sync/AssetSyncService.requestMissing` 里
+`cosmeticId.indexOf(':')` 找不到冒号就直接 `return`（既不下载包、也解析不出 packId）。
+所以「目录里的 ID 形态」直接决定**别人穿这件时装时我能不能看见**：
+
+| 形态 | 例子 | 后端行为 |
+|---|---|---|
+| **全局 ID**（推荐，也是新写入的规范形态） | `example:backboard` | 冒号前缀必须等于 `packId` 字段，`localId` 字符集 `[A-Za-z0-9._-]{1,96}`；否则 `invalid_cosmetic_id` 400 |
+| 简单 ID（**legacy**，仅为兼容历史目录数据而保留） | `backboard` + `packId: "example"` | 仍可读写（否则旧数据无法维护），但客户端拿不到冒号前缀 → **不会整包下发**；建议尽快迁移成全局 ID |
+
+- 全局 ID **只能有一个冒号**：`pack1:a:b`、`:cape`、`pack1:` 一律 `invalid_cosmetic_id`；
+  前缀还必须能当客户端目录名（不能是 `server`、不能点开头，见 §6.3 的 packId 规则）。
+- 管理端只给 `cosmeticId`（全局形式）时，`packId` 会**按前缀推导**；
+  两边都写且不一致 → `invalid_cosmetic_id`。
+- `GET /catalog` 返回的是**目录里存的原始形态**；`PUT /loadout` 落库时会规范成全局 ID（§5.1）。
+
 ---
 
 ## 5. 穿戴配置
@@ -185,8 +202,8 @@ sequenceDiagram
 ```json
 {
   "items": [
-    { "slot": "cape",  "cosmeticId": "cape_dragon", "scale": 1.0 },
-    { "slot": "wings", "cosmeticId": "wings_angel", "scale": 0.75 }
+    { "slot": "cape",  "cosmeticId": "pack1:cape_dragon", "scale": 1.0 },
+    { "slot": "wings", "cosmeticId": "pack1:wings_angel", "scale": 0.75 }
   ]
 }
 ```
@@ -194,9 +211,27 @@ sequenceDiagram
 | 约束 | 值 |
 |---|---|
 | `slot` | `cape|wings|hat|back|pet|aura|other`，同一请求内不可重复 |
-| `cosmeticId` | 目录里查不到 / 已下架 → **只跳过该条**（见下方部分成功语义） |
-| `scale` | 0.25 – 4.0，越界自动夹紧 |
+| `cosmeticId` | 全局 ID `<packId>:<localId>`（§4.1）；目录里查不到 / 已下架 → **只跳过该条**（见下方部分成功语义） |
+| `scale` | 0.25 – 4.0，越界自动夹紧；**省略（或传 `null`）= 沿用该槽位已保存的缩放值**，不是重置成 1.0 |
 | 条数 | ≤ 8（`VMT_FASHION__MAX_LOADOUT_ITEMS`） |
+
+**`scale` 省略语义（mod 正确性关键）**：mod 的 `HttpLoadoutProvider` **不上报 `scale`**
+（缩放只由网页衣柜调），所以后端必须把「没传 scale」理解成「保持原值」：
+
+- 首次穿戴（该槽位没有旧行）→ 用 `1.0`；
+- 已存在该槽位 → 沿用旧 `scale`（例如网页里调成 2.5，mod 换装后仍是 2.5）；
+- 显式传 `scale` → 按新值覆盖（越界夹紧到 `[0.25, 4.0]`）；
+- 显式传 `null` 与省略等价（pydantic 的 `Optional[float]`，两者都落到「沿用」分支）。
+
+**`cosmeticId` 落库规则**（A2 修复，2026-10-30 起）：
+
+- 目录条目是全局 ID → 原样落库；
+- 目录仍是 legacy 简单 ID、但玩家上报了全局 ID → **保留上报的全局 ID**（绝不降级成简单 ID）；
+- 两边都是简单 ID → 保持简单 ID（旧数据/旧客户端向后兼容）。
+
+> 为什么不能降级：客户端只认冒号前缀决定整包下发（§4.1）。旧实现把
+> `example:backboard` 改写成目录里的 `backboard` 落库，结果这件时装**永远不会被
+> 自动下发**，其他玩家也渲染不出来。
 
 **部分成功语义**（2026-10-29 起）：
 
@@ -405,7 +440,9 @@ UTF-8( trim(packId) + "\n" + trim(version) + "\n" + lowercase(sha256hex) )
 后端行为：
 
 - 配置了 `VMT_FASHION__PACK_SIGNING_KEY_B64`（且装了 `cryptography`）→ 清单自动带
-  `signature` / `signingKeyId`；
+  `signature` / `signingKeyId`；**两条部署路径（`deploy/Dockerfile`、`deploy/install.sh`）
+  现在都会安装 `[signing]` extra**，所以配了私钥就能真正签上（此前 Dockerfile 只装
+  `[dev]`、install.sh 只装 `.`，配了私钥也只会 warn 降级）；
 - **没配置**（默认）→ 不输出这两个字段。此时客户端宽松模式放行并记一次 warn，
   但**严格模式（`requireSignature: true`）会拒绝全部服务端包** ——
   **未配置私钥时不要在客户端开严格模式**（fail-closed）。
@@ -481,6 +518,7 @@ HTTP 状态码 + 结构化 detail：
 | `uuid_mismatch` | 403 | 会话服务器返回的 UUID ≠ 声明的 UUID（**冒用/作弊信号**） |
 | `not_joined` | 403 | 会话服务器没确认 join → 检查 join 是否成功、顺序是否颠倒 |
 | `upstream_unavailable` | 503 | 会话服务器超时/不可用（5s 超时）→ 稍后重试 |
+| `server_misconfigured` | 500 | 服务端未配置 JWT 签名密钥（`VMT_SERVER__SECRET_KEY` 缺失/过短/占位值）→ 运维问题，不是玩家问题 |
 | `invalid_token` | 401 | token 过期/无效 → 重新认证 |
 | `unauthorized` | 401 | 没带 Bearer |
 | `no_identity` | 409 | 网页 JWT 尚未绑定 MC 身份 |
@@ -488,6 +526,9 @@ HTTP 状态码 + 结构化 detail：
 | `forbidden` | 403 | 越权访问他人身份 |
 | `too_many_uuids` | 400 | resolve 超过 200 |
 | `invalid_slot` / `duplicate_slot` | 400 | 槽位非法/重复 |
+| `invalid_cosmetic_id` | 400 | `cosmeticId` 不符合 `<packId>:<localId>`（空 / 多个冒号 / 前缀≠`packId` / 前缀不能当 packId 用 / localId 字符非法）。**管理端写入**严格校验（§4.1）；`PUT /loadout` 只有「`cosmeticId` 为空」才 4xx，其余查不到的一律按 `unknown_cosmetic` 跳过（见 §5.1） |
+| `invalid_category` | 400 | `category` 不在 `cape` / `wings` / `hat` / `back` / `pet` / `aura` / `other` 内（管理端写入 / `GET /catalog` 过滤参数） |
+| `invalid_request` | 400 | 请求体结构不对（如 `mcUuids` 不是数组） |
 | `unknown_cosmetic` | — | **不再作为整条 4xx**：只在 `PUT /loadout` 的 `warnings[].code` 里出现 |
 | `cosmetic_disabled` | — | 同上（`warnings[].code`），条目被跳过 |
 | `pack_not_found` | 404 | 包不存在 / 已下架 / 文件丢失（客户端冷却 10 分钟） |
@@ -505,6 +546,12 @@ HTTP 状态码 + 结构化 detail：
 | `device_bound_to_other` | 409 | 绑定码已被其他账号使用 |
 | `identity_bound_to_other` | 409 | 该 MC 身份已绑定到其他网站账号 |
 | `asset_not_found` | 404 | 资产不存在 |
+| `asset_too_large` | 413 | 单个资产超过 64MB（`/admin/assets`、`/admin/packs` 都会在读流时提前 413） |
+| `empty_asset` | 400 | 上传内容为空（0 字节） |
+| `invalid_asset_key` | 400 | `assetKey` 非法（绝对路径 / 含 `..` 等穿越形态） |
+| `invalid_filename` | 400 | 上传文件名非法（清洗后为空 / 含控制字符） |
+| `unsupported_asset_type` | 400 | 扩展名不在白名单（png/jpg/jpeg/webp/gif/glb/gltf/bin/ogg/wav/json/zip/bbmodel） |
+| `cosmetic_not_found` | 404 | 管理端引用的 `cosmeticId` 在目录里不存在（`POST /admin/assets` 的 `cosmetic_id`、`PUT /admin/catalog/{id}`） |
 | `rate_limited` | 429 | challenge / device-approve / device-start 太频繁；响应带 `Retry-After: 60`（秒） |
 
 ---
@@ -529,10 +576,17 @@ HTTP 状态码 + 结构化 detail：
 > （根目录 `pack.json` 且 id 与 packId 一致）。**发布时装包请用 `/admin/packs`**：
 > 它的 packId / version 是严格校验的（不做静默清洗），并且会直接返回清单项。
 
-> **`cosmeticId` 命名（与 mod 对齐）**：mod 上报的穿戴 ID 是全局 ID `<packId>:<localId>`
-> （例如 `example:backboard`）。catalog 的 `cosmeticId` 建议直接使用该全局 ID；
-> 后端在精确匹配不到时会回退用冒号后的 `localId` 再查一次（兼容历史简单 ID 目录），
-> 但同一 `localId` 出现在多个包时会产生歧义，生产环境建议统一使用全局 ID。
+> **`cosmeticId` 命名（与 mod 对齐，后端已强制校验）**：mod 上报的穿戴 ID 是全局 ID
+> `<packId>:<localId>`（例如 `example:backboard`）。catalog 的 `cosmeticId` 请直接使用
+> 该全局 ID：**冒号前缀必须等于 `packId` 字段**，否则 `invalid_cosmetic_id` 400（§4.1）。
+>
+> 兼容性说明（2026-10-30 起）：
+> - 历史**简单 ID** 目录条目仍可读写（不会让旧数据变成不可维护），但它们**不会触发**
+>   客户端整包下发，建议用 `PUT /admin/catalog/{id}` 之外的方式迁移（删旧建新，并把
+>   loadout 里引用的旧 ID 一并改写）；迁移期间 `PUT /loadout` 的 `localId` 回退匹配
+>   仍然生效，保证「玩家上报全局 ID、目录还是简单 ID」的组合不会丢件。
+> - 写入 loadout 时后端**不会**再把全局 ID 降级成简单 ID（§5.1），这是 v1.0.1 客户端
+>   「别人穿的时装我能不能看见」的前提。
 
 ---
 
@@ -609,8 +663,11 @@ curl -s -X POST $BASE/loadouts/resolve -H "Authorization: Bearer $TOKEN" -H 'Con
    玩家会收到 `not_joined`（客户端上报的地址不在白名单会被忽略）。
 6. **限流是进程内的**：challenge / device-approve / device-start 的滑动窗口在单进程内存里，
    `--workers > 1` 时实际上限 = 单进程上限 × worker 数；要严格限流需在反代层做。
-7. **时装包签名需要 `cryptography`**：`pyproject.toml` 里它是**可选依赖**（未默认安装）。
-   配置了 `VMT_FASHION__PACK_SIGNING_KEY_B64` 但没装 `cryptography` 时，后端会记一条
-   warn 并降级为不签名（`/packs` 不会 500）；此时同样**不要**开客户端严格模式。
+7. **时装包签名需要 `cryptography`**：`pyproject.toml` 里它是可选 extra `signing`。
+   `deploy/Dockerfile` 装的是 `.[dev,signing]`、`deploy/install.sh` 装的是 `.[signing]`，
+   所以按仓库脚本部署默认就带签名能力。**只有手工 `pip install -e .` 才需要自己补
+   `.[signing]`**。没装时后端记一条 warn 并降级为不签名（`/packs` 不会 500），
+   此时同样**不要**开客户端严格模式。升级后请用
+   `curl -s /api/fashion/packs | grep signature` 确认签名真的生效。
 8. **下架不等于远程删除**：`DELETE /admin/packs/{id}/{version}` 只从清单移除，
    玩家本地已下载的包不受影响（需要时让玩家 `/vmfashion cache clear`）。

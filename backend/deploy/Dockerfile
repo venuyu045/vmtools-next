@@ -32,7 +32,7 @@ COPY alembic/ alembic/
 COPY --from=frontend-builder /frontend/dist/ static/
 
 # Install Python dependencies
-RUN pip install --no-cache-dir -e ".[dev]"
+RUN pip install --no-cache-dir -e ".[dev,signing]"
 
 # Create data directory
 RUN mkdir -p /app/data /app/logs

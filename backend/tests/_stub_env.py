@@ -50,6 +50,12 @@ _STUB_TOP_LEVEL = (
     "psutil",
     "watchdog",
     "bcrypt",
+    # httpx 必须进 preflight 名单：真 httpx 装了就不能被 stub 覆盖。
+    # 否则 ``fastapi.testclient``（starlette 1.x）会拿到 ``Response=dict`` 的假模块，
+    # 在 ``class WebSocketDenialResponse(httpx.Response, WebSocketDisconnect)`` 处
+    # 直接 ``TypeError: multiple bases have instance lay-out conflict``，
+    # HTTP 级集成测试（tests/test_fashion_http.py）就再也 import 不起来。
+    "httpx",
 )
 
 _PREFLIGHT: dict[str, bool] = {}
