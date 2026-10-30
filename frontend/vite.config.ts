@@ -11,6 +11,10 @@ export default defineConfig({
       // （历史事故：emptyOutDir:true 曾删掉 item-icons 296 张图标等非构建产物）
       // 注意：必须跟随实际 outDir；否则用 VITE_OUT_DIR 指到别处时仍会误删后端产物。
       name: 'clean-static-assets',
+      // ⚠️ 只在 build 阶段生效：`npm run dev` 同样会触发 buildStart，
+      // 而 dev 不会产出新文件 —— 结果是「跑一次开发服务器，就把已提交进 git 的
+      // backend/static/assets 全删了」，工作区凭空多出一堆 D 状态。
+      apply: 'build',
       buildStart() {
         const outDir = process.env.VITE_OUT_DIR
           ? path.resolve(process.env.VITE_OUT_DIR)
