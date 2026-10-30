@@ -15,7 +15,7 @@
 - **BlueMap 监控**：轮询地图 API，精确检测机器人与玩家上下线状态。
 - **即时通知**：实例上下线、崩溃、自动重连事件通过 QQ 机器人实时推送。
 - **组织官网**：内置「理想乡」组织主页（介绍 / 成员 / 基地 / 相册），成员头像自动使用其 MC ID 的正版皮肤，自带管理后台。
-- **时装系统（VMFashion）**：配套的纯客户端时装 mod（[VMFashion-mod](https://github.com/venuyu045/VMFashion-mod)）的云端衣柜与**时装包级下发** —— 网页换装、游戏内实时生效，别人穿的时装没装也能自动下载（sha256 校验 + Ed25519 验签 + 安全解压）。详见 [时装系统](#时装系统vmfashion)。
+- **时装系统（VMFashion）**：配套的纯客户端时装 mod（[VMFashion-mod](https://github.com/venuyu045/VMFashion-mod)）的云端衣柜与**时装包级下发** —— 网页换装、游戏内实时生效，别人穿的时装没装也能自动下载（sha256 校验 + Ed25519 验签 + 安全解压）；站点管理员另有独立的**时装管理端**（目录 / 资产 / 时装包）。详见 [时装系统](#时装系统vmfashion)。
 - **插件系统**：插件启停与在线配置管理。
 - **安全**：JWT 认证、角色权限（site_admin / admin / user）、操作审计日志、登录限流。
 
@@ -124,14 +124,16 @@ npm install
 | :--- | :--- |
 | **账号绑定** | 游戏内 `/vmfashion bind` 得到 6 位绑定码 → 本站「时装绑定」页输入 → 一个网站账号可绑多个 MC 账号 |
 | **双路认证** | 正版走 `sessionserver.mojang.com`，皮肤站走 Yggdrasil（**只信任白名单内的地址**，防 SSRF）；后端用 `hasJoined` 反查并**比对 UUID**，不做密码登录 |
-| **网页衣柜** | `/fashion/wardrobe`：按槽位（披风/翅膀/头饰/背饰/宠物/光环）挑选、调缩放、保存；进游戏自动生效，游戏内换装也会实时回传 |
+| **网页衣柜** | `/fashion/wardrobe`：按槽位（披风/翅膀/头饰/背饰/宠物/光环）挑选、调缩放、保存；进游戏自动生效，游戏内换装也会实时回传；支持搜索、详情大图与分页 |
+| **时装管理端** | `/fashion/admin`（仅 site_admin）：目录管理（增删改查 / 启用开关 / 排序 / 资产缺失徽标）、资产管理（上传 + 一键填入目录）、时装包（上传 zip 发布 / 下架，409 `pack_in_use` 有专门引导）；上传带进度 / 网速 / ETA 与大小预检 |
 | **批量解析** | 进服时 `POST /loadouts/resolve` 一次最多 200 个 UUID，只回 `assetKey` 级元数据（热路径，5 秒缓存） |
 | **时装包下发** | `GET /packs` 清单 + `GET /packs/{id}/{version}/download` 整包 zip：200 直出、`Content-Length` 精确、**不重定向**、可选 Ed25519 签名；客户端按 sha256 校验后安全解压 |
 | **上传加固** | 服务端先按客户端同一套规则校验 zip（条目数/大小/压缩比、拒绝 `..`、符号链接、加密、ZIP64、可执行文件、Windows 保留名，`pack.json.id` 必须与 packId 一致），坏包进不了清单 |
 
 ### 页面与接口
 
-- 前端页面：`/fashion/bind`（绑定）、`/fashion/wardrobe`（我的衣柜）—— 均需登录
+- 前端页面：`/fashion/bind`（绑定）、`/fashion/wardrobe`（我的衣柜）—— 均需登录；
+  `/fashion/admin`（时装管理端）—— 仅 site_admin
 - 后端路由：`backend/src/vmtools_next/api/routers/fashion.py`，前缀 **`/api/fashion`**
   - 公开：`/auth/challenge`、`/auth/verify`、`/packs`、`/packs/{id}/{version}/download`、`/assets/{assetKey}`
   - mod（Bearer token）：`/loadout`（PUT）、`/loadout/me`、`/loadouts/resolve`、`/catalog`、`/device/*`
@@ -187,9 +189,11 @@ curl -s -X DELETE $BASE/admin/packs/wings/1.2.0 -H "Authorization: Bearer $TOKEN
 2. **反向代理**：后端已开 `proxy_headers` + `forwarded_allow_ips="*"`，challenge 的来源 IP 绑定依赖它；
    ⚠️ 因此后端端口**只能**对反代网段开放，否则任何人都能伪造 `X-Forwarded-For`。
 3. **nginx 上传上限**：资产 ≤64MB、时装包 ≤128MB，nginx 默认 `client_max_body_size 50m` 会先 413。
-4. **签名与严格模式**：配置了 `VMT_FASHION__PACK_SIGNING_KEY_B64`（且装了 `cryptography`）后清单才会带
-   `signature`；**在此之前不要**让玩家在客户端开 `requireSignature`，否则会拒绝全部服务端包。
-5. **测试**：`pytest tests/test_fashion_*.py -q`（163 条用例，覆盖认证/契约/包级下发/zip 安全校验）。
+4. **签名与严格模式**：`cryptography` 已随部署依赖安装（`pip install -e ".[signing]"`，Docker 为 `.[dev,signing]`）；
+   配置 `VMT_FASHION__PACK_SIGNING_KEY_B64` 后清单即带 `signature`。**在确认签名生效之前不要**让玩家在客户端开
+   `requireSignature`，否则会拒绝全部服务端包。
+5. **测试**：`pytest tests/test_fashion_*.py -q`（206 条用例 + 42 subtests，覆盖认证 / 契约 / 包级下发 /
+   zip 安全校验 / Ed25519 真签真验 / TestClient 管理端 401·403 / HEAD 下载头）。
 
 ## 项目结构
 
