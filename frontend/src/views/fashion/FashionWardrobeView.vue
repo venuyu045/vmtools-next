@@ -30,7 +30,7 @@
         <el-button
           type="primary"
           :loading="saving"
-          :disabled="!dirty || noIdentity || identitiesError || loadingIdentities || loadingLoadout || loadoutError"
+          :disabled="saveDisabled"
           @click="save"
         >
           保存穿戴
@@ -72,16 +72,41 @@
         <template #header>
           <div class="panel-header">
             <span class="panel-title">时装目录</span>
-            <el-radio-group v-model="activeCategory" size="small" aria-label="按槽位筛选时装">
-              <el-radio-button value="all">全部</el-radio-button>
-              <el-radio-button v-for="slot in FASHION_SLOTS" :key="slot.value" :value="slot.value">
-                {{ slot.label }}
-              </el-radio-button>
-            </el-radio-group>
+            <div class="panel-tools">
+              <el-input
+                v-model="searchKeyword"
+                size="small"
+                clearable
+                placeholder="搜索名称 / ID"
+                aria-label="搜索时装名称或 ID"
+                class="catalog-search"
+              />
+              <!-- B7：目录只在挂载时拉一次 → 管理员上新后玩家必须整页刷新。这里补一个刷新入口 -->
+              <el-button
+                size="small"
+                text
+                :loading="loadingCatalog"
+                :disabled="loadingCatalog"
+                @click="loadCatalog"
+              >
+                刷新
+              </el-button>
+            </div>
           </div>
+          <el-radio-group
+            v-model="activeCategory"
+            size="small"
+            class="catalog-filters"
+            aria-label="按槽位筛选时装"
+          >
+            <el-radio-button value="all">全部</el-radio-button>
+            <el-radio-button v-for="slot in FASHION_SLOTS" :key="slot.value" :value="slot.value">
+              {{ slot.label }}
+            </el-radio-button>
+          </el-radio-group>
         </template>
 
-        <div v-loading="loadingCatalog" class="catalog-body">
+        <div v-loading="loadingCatalog" class="catalog-body" :aria-busy="loadingCatalog">
           <el-alert
             v-if="catalogError"
             class="panel-error"
@@ -99,38 +124,68 @@
             :description="emptyCatalogText"
             :image-size="72"
           />
-          <div v-else class="catalog-grid">
-            <div
-              v-for="item in filteredCatalog"
-              :key="item.cosmeticId"
-              class="cosmetic-card"
-              :class="{ equipped: isEquipped(item) }"
-              role="button"
-              tabindex="0"
-              :aria-pressed="isEquipped(item)"
-              :aria-label="`${item.name || item.cosmeticId}，${CATEGORY_LABELS[itemSlot(item)] || item.category}`"
-              @click="equip(item)"
-              @keydown.enter.prevent="equip(item)"
-              @keydown.space.prevent="equip(item)"
-            >
-              <div class="cosmetic-thumb">
-                <img
-                  v-if="previewUrls.has(item.cosmeticId) && !brokenThumbs.has(item.cosmeticId)"
-                  :src="previewUrls.get(item.cosmeticId) || ''"
-                  :alt="item.name || '时装预览'"
-                  loading="lazy"
-                  decoding="async"
-                  @error="markThumbBroken(item.cosmeticId)"
-                />
-                <span v-else class="thumb-fallback">{{ (item.name || '?').slice(0, 1) }}</span>
-              </div>
-              <div class="cosmetic-name" :title="item.name">{{ item.name }}</div>
-              <div class="cosmetic-meta mono">
-                {{ CATEGORY_LABELS[itemSlot(item)] || item.category }}
-                <span v-if="isEquipped(item)" class="equipped-tag">已穿戴</span>
+          <template v-else>
+            <div class="catalog-grid" role="group" :aria-label="`时装目录，共 ${filteredCatalog.length} 件`">
+              <div
+                v-for="item in pagedCatalog"
+                :key="item.cosmeticId"
+                class="cosmetic-card"
+                :class="{ equipped: isEquipped(item) }"
+                role="button"
+                tabindex="0"
+                :aria-pressed="isEquipped(item)"
+                :aria-label="`${displayName(item)}，${CATEGORY_LABELS[itemSlot(item)] || item.category}`"
+                @click="equip(item)"
+                @keydown.enter.prevent="equip(item)"
+                @keydown.space.prevent="equip(item)"
+              >
+                <div class="cosmetic-thumb">
+                  <img
+                    v-if="previewUrls.has(item.cosmeticId) && !brokenThumbs.has(item.cosmeticId)"
+                    :src="previewUrls.get(item.cosmeticId) || ''"
+                    :alt="displayName(item)"
+                    loading="lazy"
+                    decoding="async"
+                    @error="markThumbBroken(item.cosmeticId)"
+                  />
+                  <span v-else class="thumb-fallback">{{ (displayName(item) || '?').slice(0, 1) }}</span>
+                </div>
+                <div class="cosmetic-name" :title="displayName(item)">{{ displayName(item) }}</div>
+                <div class="cosmetic-meta mono">
+                  {{ CATEGORY_LABELS[itemSlot(item)] || item.category }}
+                  <span v-if="isEquipped(item)" class="equipped-tag">已穿戴</span>
+                  <span
+                    v-else-if="item.assetKey && !previewUrls.has(item.cosmeticId)"
+                    class="meta-tag"
+                    title="该资产不是图片（glb / json / zip 等），网页衣柜无法预览"
+                  >
+                    无预览
+                  </span>
+                  <!-- B3：点卡片 = 立即穿戴，没有「先看大图/看元信息」的中间态 -->
+                  <button
+                    type="button"
+                    class="detail-link"
+                    :aria-label="`查看 ${displayName(item)} 的详情`"
+                    @click.stop="openDetail(item)"
+                    @keydown.enter.stop.prevent="openDetail(item)"
+                    @keydown.space.stop.prevent="openDetail(item)"
+                  >
+                    详情
+                  </button>
+                </div>
               </div>
             </div>
-          </div>
+            <!-- B2：一次渲染全部卡片，200 件时每张卡还要跑 4 次 isEquipped → 分页 -->
+            <div v-if="filteredCatalog.length > pageSize" class="catalog-pager">
+              <el-pagination
+                layout="prev, pager, next"
+                :total="filteredCatalog.length"
+                :page-size="pageSize"
+                :current-page="catalogPage"
+                @current-change="catalogPage = $event"
+              />
+            </div>
+          </template>
         </div>
       </el-card>
 
@@ -178,8 +233,8 @@
                 <el-slider
                   :model-value="slotScale(slot.value)"
                   :aria-label="`${slot.label}缩放`"
-                  :min="0.25"
-                  :max="4"
+                  :min="MIN_SCALE"
+                  :max="MAX_SCALE"
                   :step="0.05"
                   size="small"
                   class="scale-slider"
@@ -195,13 +250,64 @@
             <span class="mono save-hint" role="status" aria-live="polite">
               {{ loadingLoadout ? '正在读取穿戴配置…' : dirty ? '有未保存的修改' : '已与服务器同步' }}
             </span>
-            <el-button type="primary" :loading="saving" :disabled="!dirty || loadingIdentities || loadingLoadout || loadoutError" @click="save">
+            <el-button type="primary" :loading="saving" :disabled="saveDisabled" @click="save">
               保存穿戴
             </el-button>
           </div>
         </div>
       </el-card>
     </div>
+
+    <!-- 详情弹窗（B3）：点卡片是「立即穿戴」，这里给一个先看大图/元信息的中间态 -->
+    <el-dialog
+      v-model="detailOpen"
+      :title="detailItem ? displayName(detailItem) : '时装详情'"
+      width="520px"
+      class="detail-dialog"
+    >
+      <div v-if="detailItem" class="detail-body">
+        <div class="detail-preview">
+          <el-image
+            v-if="detailUrl"
+            :src="detailUrl"
+            :preview-src-list="[detailUrl]"
+            preview-teleported
+            fit="contain"
+            class="detail-image"
+            :alt="displayName(detailItem)"
+          />
+          <span v-else class="detail-fallback">{{ (displayName(detailItem) || '?').slice(0, 1) }}</span>
+        </div>
+        <p v-if="!detailUrl" class="detail-hint mono">
+          {{ detailItem.assetKey ? '该资产不是图片格式，网页无法预览。' : '这件时装还没有上传资产（assetKey 为空）。' }}
+        </p>
+        <el-descriptions :column="1" border size="small" class="detail-meta">
+          <el-descriptions-item label="ID">
+            <span class="mono">{{ detailItem.cosmeticId }}</span>
+          </el-descriptions-item>
+          <el-descriptions-item label="槽位">{{ detailSlotLabel }}</el-descriptions-item>
+          <el-descriptions-item label="时装包">
+            <span class="mono">{{ detailItem.packId || '—' }}</span>
+          </el-descriptions-item>
+          <el-descriptions-item label="当前缩放">
+            <span class="mono">{{ detailScale.toFixed(2) }}</span>
+          </el-descriptions-item>
+          <el-descriptions-item label="状态">
+            {{ isEquipped(detailItem) ? '已穿戴（保存后生效）' : '未穿戴' }}
+          </el-descriptions-item>
+        </el-descriptions>
+      </div>
+      <template #footer>
+        <el-button @click="detailOpen = false">关闭</el-button>
+        <el-button
+          type="primary"
+          :disabled="!detailItem || isEquipped(detailItem)"
+          @click="equipFromDetail"
+        >
+          {{ detailItem ? `穿戴到${detailSlotLabel}` : '穿戴' }}
+        </el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -222,6 +328,12 @@ import {
 const route = useRoute()
 const router = useRouter()
 
+// 缩放区间：与后端 core/fashion_service.py:54-55 的 0.25 / 4.0 对齐
+const MIN_SCALE = 0.25
+const MAX_SCALE = 4
+/** 合法槽位集合：用于过滤后端返回的历史脏数据（未知 slot 会让保存整条 400） */
+const validSlots = new Set<string>(FASHION_SLOTS.map((slot) => slot.value))
+
 const identities = ref<FashionIdentity[]>([])
 const activeIdentityId = ref('')
 const catalog = ref<CatalogItem[]>([])
@@ -229,6 +341,14 @@ const catalog = ref<CatalogItem[]>([])
 // 退回首字占位，避免整面目录都是破图图标
 const brokenThumbs = ref<Set<string>>(new Set())
 const activeCategory = ref('all')
+// B1：目录 200+ 件时只能靠肉眼扫 → 加搜索（名称 / ID，大小写不敏感）
+const searchKeyword = ref('')
+// B2：一次渲染全部卡片（每张卡还要跑 4 次 isEquipped）→ 分页，一页 60 张
+const catalogPage = ref(1)
+const pageSize = 60
+// B3：详情弹窗（大图 + 元信息）
+const detailOpen = ref(false)
+const detailItem = ref<CatalogItem | null>(null)
 const selection = ref<Record<string, { cosmeticId: string; scale: number }>>({})
 const missingSlots = ref<Set<string>>(new Set())
 const savedSnapshot = ref('{}')
@@ -314,17 +434,78 @@ const currentIdentity = computed(
   () => identities.value.find((item) => item.id === activeIdentityId.value) || null
 )
 
+/**
+ * 全局 ID 的 localId（`pack:local` → `local`；没有冒号时原样返回）。
+ *
+ * 为什么需要：后端把 loadout 统一存成全局 ID（`<packId>:<localId>`），而目录里可能还有
+ * 历史「简单 ID」条目（只有 localId）。两种形态指同一件时装，UI 匹配必须兼容。
+ */
+function localIdOf(cosmeticId: string): string {
+  const idx = cosmeticId.indexOf(':')
+  return idx > 0 && idx < cosmeticId.length - 1 ? cosmeticId.slice(idx + 1) : cosmeticId
+}
+
+/**
+ * 两个 ID 是否指同一件时装。
+ *
+ * 只有「一个全局 + 一个简单、且 localId 相同」才视为同一件；两个不同的全局 ID
+ * （不同包的同名 localId）或两个不同的简单 ID 都不算 —— 避免串包误高亮。
+ */
+function sameCosmetic(a: string, b: string): boolean {
+  if (a === b) return true
+  const aGlobal = a.includes(':')
+  const bGlobal = b.includes(':')
+  if (aGlobal === bGlobal) return false
+  return localIdOf(a) === localIdOf(b)
+}
+
 const catalogMap = computed(() => {
   const map = new Map<string, CatalogItem>()
-  for (const item of catalog.value) map.set(item.cosmeticId, item)
+  for (const item of catalog.value) {
+    map.set(item.cosmeticId, item)
+    // 全局 ID 再登记一个 localId 别名，供 loadout（可能存简单 ID）反查名称
+    const local = localIdOf(item.cosmeticId)
+    if (local !== item.cosmeticId && !map.has(local)) map.set(local, item)
+  }
   return map
 })
 
-const filteredCatalog = computed(() =>
-  activeCategory.value === 'all'
-    ? catalog.value
-    : catalog.value.filter((item) => itemSlot(item) === activeCategory.value)
-)
+/**
+ * 卡片/弹窗显示名：`name` 为空时回落 `cosmeticId`（B6）。
+ * 后端 `name` 默认是空串，直接渲染会得到一张空白卡片。
+ */
+function displayName(item: CatalogItem): string {
+  return (item.name || '').trim() || item.cosmeticId
+}
+
+const filteredCatalog = computed(() => {
+  const keyword = searchKeyword.value.trim().toLowerCase()
+  return catalog.value.filter((item) => {
+    if (activeCategory.value !== 'all' && itemSlot(item) !== activeCategory.value) return false
+    if (!keyword) return true
+    return (
+      displayName(item).toLowerCase().includes(keyword) ||
+      item.cosmeticId.toLowerCase().includes(keyword)
+    )
+  })
+})
+
+const pagedCatalog = computed(() => {
+  const start = (catalogPage.value - 1) * pageSize
+  return filteredCatalog.value.slice(start, start + pageSize)
+})
+
+// 搜索 / 切分类后回到第一页，否则可能停在一个空页上
+watch([searchKeyword, activeCategory], () => {
+  catalogPage.value = 1
+})
+
+/** 缩放夹紧（B9）：后端两条写路径都会夹，但载入时也夹一次，避免「值 99 / 滑块卡在 4」 */
+function clampScale(value: unknown): number {
+  const num = Number(value)
+  if (!Number.isFinite(num)) return 1
+  return Math.min(MAX_SCALE, Math.max(MIN_SCALE, num))
+}
 
 // 预览图地址只算一次，模板里用 Map 取值（避免 v-if 与 :src 各自重复计算）
 const previewUrls = computed(() => {
@@ -337,11 +518,13 @@ const previewUrls = computed(() => {
   return map
 })
 
-const emptyCatalogText = computed(() =>
-  activeCategory.value === 'all'
-    ? '目录里还没有可用的时装（管理员可在后台导入）'
+const emptyCatalogText = computed(() => {
+  const keyword = searchKeyword.value.trim()
+  if (keyword) return `没有匹配「${keyword}」的时装`
+  return activeCategory.value === 'all'
+    ? '目录里还没有可用的时装（站点管理员可在「时装管理」里导入）'
     : '该分类下暂无可用时装'
-)
+})
 
 const equippedCount = computed(() => Object.keys(selection.value).length)
 
@@ -355,6 +538,53 @@ function snapshot(): string {
 
 const dirty = computed(() => snapshot() !== savedSnapshot.value)
 
+/**
+ * 两处「保存穿戴」按钮共用一个 disabled 条件（B8）。
+ * 原来顶部按钮含 `noIdentity / identitiesError`、底部按钮不含，是「两处真理」；
+ * 现在虽然被 `v-else` 挡住不可达，但一旦布局改动就会漏。
+ */
+const saveDisabled = computed(
+  () =>
+    !dirty.value ||
+    noIdentity.value ||
+    identitiesError.value ||
+    loadingIdentities.value ||
+    loadingLoadout.value ||
+    loadoutError.value ||
+    saving.value
+)
+
+// ── 详情弹窗 ──
+const detailUrl = computed(() => {
+  const item = detailItem.value
+  if (!item) return ''
+  return previewUrls.value.get(item.cosmeticId) || ''
+})
+
+const detailSlotLabel = computed(() => {
+  const item = detailItem.value
+  if (!item) return ''
+  return CATEGORY_LABELS[itemSlot(item)] || item.category || '其它'
+})
+
+const detailScale = computed(() => {
+  const item = detailItem.value
+  if (!item) return 1
+  return selection.value[itemSlot(item)]?.scale ?? 1
+})
+
+function openDetail(item: CatalogItem): void {
+  detailItem.value = item
+  detailOpen.value = true
+}
+
+function equipFromDetail(): void {
+  const item = detailItem.value
+  if (!item) return
+  equip(item)
+  detailOpen.value = false
+}
+
 /** 目录分类归一化：大小写/非法分类归入合法槽位，避免写入后端不认的槽位 */
 function itemSlot(item: CatalogItem): string {
   const category = String(item.category || 'other').trim().toLowerCase()
@@ -362,7 +592,8 @@ function itemSlot(item: CatalogItem): string {
 }
 
 function isEquipped(item: CatalogItem): boolean {
-  return selection.value[itemSlot(item)]?.cosmeticId === item.cosmeticId
+  const selected = selection.value[itemSlot(item)]
+  return !!selected && sameCosmetic(selected.cosmeticId, item.cosmeticId)
 }
 
 /** 预览图 404 / 解码失败：记下来并退回首字占位（后端 asset_not_found 是合法返回） */
@@ -376,8 +607,11 @@ function markThumbBroken(cosmeticId: string): void {
 function cosmeticName(slot: string): string {
   const selected = selection.value[slot]
   if (!selected) return ''
-  const name = catalogMap.value.get(selected.cosmeticId)?.name
-  if (name) return name
+  // 先精确、再按 localId 兜底（catalog 简单 ID ↔ loadout 全局 ID 的历史数据）
+  const item =
+    catalogMap.value.get(selected.cosmeticId) ||
+    catalogMap.value.get(localIdOf(selected.cosmeticId))
+  if (item) return displayName(item)
   return missingSlots.value.has(slot) ? `${selected.cosmeticId}（已下架）` : selected.cosmeticId
 }
 
@@ -421,7 +655,7 @@ function setScale(slot: string, value: number | number[]): void {
   const current = selection.value[slot]
   if (!current) return
   const raw = Array.isArray(value) ? value[0] : value
-  const scale = Math.min(4, Math.max(0.25, Number(raw) || 1))
+  const scale = clampScale(raw)
   selection.value = { ...selection.value, [slot]: { ...current, scale } }
 }
 
@@ -470,6 +704,12 @@ async function loadCatalog(): Promise<void> {
     const { data } = await fashionApi.catalog()
     if (seq !== catalogSeq) return // 已被更新的请求取代，丢弃本次响应
     catalog.value = data.items || []
+    // B4（真 bug）：brokenThumbs 原来一旦标记就永不重置 —— 管理员补传资产后，
+    // 玩家必须硬刷新才看得到缩略图。目录重新拉成功 = 资产可能已经补齐，全部重试一次。
+    brokenThumbs.value = new Set()
+    // 目录变短（下架）时把页码夹回有效范围，避免停在空页
+    const maxPage = Math.max(1, Math.ceil(filteredCatalog.value.length / pageSize))
+    if (catalogPage.value > maxPage) catalogPage.value = maxPage
   } catch (error) {
     if (seq !== catalogSeq) return
     catalogError.value = true
@@ -497,7 +737,11 @@ async function loadLoadout(): Promise<void> {
     const next: Record<string, { cosmeticId: string; scale: number }> = {}
     const missing = new Set<string>()
     for (const item of data.items || []) {
-      next[item.slot] = { cosmeticId: item.cosmeticId, scale: item.scale ?? 1 }
+      // B10：未知 slot 不可见但会计入 equippedCount、并在保存时回传 ——
+      // 后端 put_loadout 对未知 slot 是**整条 400 失败**，所以载入时直接丢弃。
+      if (!validSlots.has(item.slot)) continue
+      // B9：载入时夹紧 scale（后端两条写路径都夹，这里再兜一层，避免手改 DB 后自相矛盾）
+      next[item.slot] = { cosmeticId: item.cosmeticId, scale: clampScale(item.scale ?? 1) }
       if (item.missing) missing.add(item.slot)
     }
     selection.value = next
@@ -764,7 +1008,26 @@ onBeforeRouteLeave(async () => {
   flex-wrap: wrap;
 }
 
-/* 8 个槽位按钮在窄屏必须换行，否则横向溢出卡片 */
+.panel-tools {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.catalog-search {
+  width: 200px;
+  max-width: 100%;
+}
+
+/* 分类按钮在窄屏必须换行，否则横向溢出卡片 */
+.catalog-filters {
+  display: flex;
+  flex-wrap: wrap;
+  row-gap: var(--space-2);
+  margin-top: var(--space-3);
+}
+
 .panel-header :deep(.el-radio-group) {
   flex-wrap: wrap;
   row-gap: var(--space-2);
@@ -868,6 +1131,84 @@ onBeforeRouteLeave(async () => {
   border-radius: 4px;
 }
 
+.meta-tag {
+  color: var(--text-muted);
+  border: 1px solid var(--border-subtle);
+  padding: 0 4px;
+  border-radius: 4px;
+}
+
+/* 卡片内的「详情」按钮：用原生 button 以免多一层 el-button 的盒模型开销 */
+.detail-link {
+  margin-left: auto;
+  background: none;
+  border: none;
+  padding: 0 2px;
+  font: inherit;
+  color: var(--text-secondary);
+  text-decoration: underline;
+  text-decoration-color: var(--border-strong);
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.detail-link:hover {
+  color: var(--accent);
+  text-decoration-color: var(--accent);
+}
+
+.detail-link:focus-visible {
+  outline: 2px solid var(--accent-active);
+  outline-offset: 1px;
+  border-radius: 2px;
+}
+
+.catalog-pager {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: var(--space-3);
+}
+
+/* 详情弹窗 */
+.detail-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.detail-preview {
+  height: 200px;
+  border-radius: var(--radius-md);
+  background: var(--bg-hover);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.detail-image {
+  max-width: 100%;
+  max-height: 200px;
+  cursor: zoom-in;
+}
+
+.detail-fallback {
+  font-family: var(--font-display);
+  font-size: 56px;
+  color: var(--text-secondary);
+}
+
+.detail-hint {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.7;
+}
+
+.detail-meta :deep(.el-descriptions__label) {
+  width: 96px;
+}
+
 .slot-row {
   border-bottom: 1px dashed var(--border-subtle);
   padding: var(--space-3) 0;
@@ -927,6 +1268,8 @@ onBeforeRouteLeave(async () => {
   align-items: center;
   justify-content: space-between;
   gap: var(--space-3);
+  /* B13：320px 下「提示 + 按钮」会挤成一行放不下 */
+  flex-wrap: wrap;
   margin-top: var(--space-4);
   padding-top: var(--space-3);
   border-top: 1px solid var(--border-subtle);

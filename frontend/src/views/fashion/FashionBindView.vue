@@ -38,9 +38,17 @@
           </el-alert>
           <el-empty
             v-if="!loadingIdentities && !identitiesError && identities.length === 0"
-            description="还没有绑定任何 Minecraft 账号"
             :image-size="72"
-          />
+          >
+            <template #description>
+              <div class="empty-desc">
+                <p class="mono">还没有绑定任何 Minecraft 账号</p>
+                <p class="hint mono">
+                  先在游戏内执行 <code>/vmfashion bind</code> 拿到 6 位绑定码，再到右侧输入。
+                </p>
+              </div>
+            </template>
+          </el-empty>
           <div v-else-if="identities.length > 0" class="identity-list">
             <div v-for="identity in identities" :key="identity.id" class="identity-item">
               <div class="identity-main">
@@ -52,8 +60,8 @@
               </div>
               <div class="identity-meta mono">{{ identity.mcUuid }}</div>
               <div class="identity-meta mono">
-                认证于 {{ formatTime(identity.verifiedAt) }}
-                <template v-if="identity.lastSeenAt"> · 最近上线 {{ formatTime(identity.lastSeenAt) }}</template>
+                认证于 {{ fmtApiTime(identity.verifiedAt) }}
+                <template v-if="identity.lastSeenAt"> · 最近上线 {{ fmtApiTime(identity.lastSeenAt) }}</template>
               </div>
               <div class="identity-actions">
                 <el-button size="small" :disabled="!!unbindingId" @click="goWardrobe(identity.id)">去衣柜</el-button>
@@ -88,9 +96,10 @@
 
           <div class="code-row">
             <el-input
+              ref="codeInputRef"
               v-model="userCode"
               class="code-input"
-              maxlength="12"
+              maxlength="6"
               placeholder="例如 7K2M9Q"
               aria-label="6 位绑定码"
               autocomplete="one-time-code"
@@ -108,6 +117,17 @@
             </el-button>
           </div>
 
+          <!-- C1：长度不足时明确告诉用户还差几位（原来只体现为按钮 disabled） -->
+          <p class="hint mono code-hint" role="status" aria-live="polite">
+            <template v-if="normalizedCode.length === 0">
+              绑定码为 6 位（去掉了容易看错的 I / O / 0 / 1），10 分钟内有效
+            </template>
+            <template v-else-if="normalizedCode.length < 6">
+              还差 {{ 6 - normalizedCode.length }} 位
+            </template>
+            <template v-else>格式正确，点「绑定」即可</template>
+          </p>
+
           <el-alert
             v-if="lastBound"
             class="bound-alert"
@@ -118,6 +138,12 @@
             :description="lastBound.mcUuid"
             @close="lastBound = null"
           />
+          <!-- C3：绑定成功给一个直达衣柜的 CTA（原来只有一句提示） -->
+          <div v-if="lastBound" class="bound-actions">
+            <el-button size="small" type="primary" @click="goWardrobe(lastBound.identityId)">
+              去衣柜换装
+            </el-button>
+          </div>
 
           <p class="hint mono">
             绑定成功后可用
@@ -155,12 +181,16 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import type { InputInstance } from 'element-plus'
 import {
   fashionApi,
+  fashionErrorCode,
   fashionErrorMessage,
+  fashionRetryAfter,
   type DeviceApproveResult,
   type FashionIdentity,
 } from '@/api/fashion'
+import { fmtApiTime } from '@/utils/time'
 
 const router = useRouter()
 
@@ -171,16 +201,36 @@ const userCode = ref('')
 const approving = ref(false)
 const unbindingId = ref('')
 const lastBound = ref<DeviceApproveResult | null>(null)
+const codeInputRef = ref<InputInstance | null>(null)
 
 // 身份列表请求竞态保护：刷新与绑定后的重新加载可能并发
 let identitiesSeq = 0
 
 const normalizedCode = computed(() => userCode.value.replace(/[\s-_]/g, '').toUpperCase())
 
-function formatTime(value: string | null): string {
-  if (!value) return '—'
-  const date = new Date(value)
-  return Number.isNaN(date.getTime()) ? value : date.toLocaleString()
+/**
+ * 绑定链路的 6 类可区分错误（契约 §9）。
+ *
+ * 后端 `detail.message` 本身是中文，但通用兜底会把「过期」和「被占用」都显示成
+ * 同一句「请确认绑定码是否正确/未过期」→ 用户不知道该重新生成还是去解绑。
+ * 429 还带 `Retry-After`，能直接告诉用户等多少秒。
+ */
+const APPROVE_ERRORS: Record<string, string> = {
+  device_not_found: '绑定码不存在，请在游戏内重新执行 /vmfashion bind',
+  device_expired: '绑定码已过期（10 分钟有效），请在游戏内重新生成',
+  device_bound_to_other: '这个绑定码已经被其他账号使用，请重新生成',
+  identity_bound_to_other: '该 Minecraft 身份已绑定到其他网站账号，请先在那边解绑',
+}
+
+function approveErrorMessage(error: unknown): string {
+  const code = fashionErrorCode(error)
+  if (code === 'rate_limited') {
+    const retry = fashionRetryAfter(error)
+    return retry ? `操作太频繁，请等待 ${retry} 秒后再试` : '操作太频繁，请稍后再试'
+  }
+  const mapped = APPROVE_ERRORS[code]
+  if (mapped) return mapped
+  return fashionErrorMessage(error, '绑定失败，请确认绑定码是否正确/未过期')
 }
 
 async function loadIdentities(): Promise<void> {
@@ -215,7 +265,7 @@ async function handleApprove(): Promise<void> {
     ElMessage.success(`绑定成功：${data.mcName}`)
     await loadIdentities()
   } catch (error) {
-    ElMessage.error(fashionErrorMessage(error, '绑定失败，请确认绑定码是否正确/未过期'))
+    ElMessage.error(approveErrorMessage(error))
   } finally {
     approving.value = false
   }
@@ -235,8 +285,13 @@ async function handleUnbind(identity: FashionIdentity): Promise<void> {
   unbindingId.value = identity.id
   try {
     await fashionApi.unbind(identity.id)
-    ElMessage.success('已解绑')
     await loadIdentities()
+    // C4：解绑最后一个身份后列表变空态，得告诉用户下一步要回游戏敲命令
+    if (identities.value.length === 0) {
+      ElMessage.success('已解绑（最后一个身份）· 回游戏执行 /vmfashion bind 可重新绑定')
+    } else {
+      ElMessage.success('已解绑')
+    }
   } catch (error) {
     ElMessage.error(fashionErrorMessage(error, '解绑失败'))
   } finally {
@@ -248,7 +303,12 @@ function goWardrobe(identityId: string): void {
   router.push({ path: '/fashion/wardrobe', query: { identityId } })
 }
 
-onMounted(loadIdentities)
+onMounted(() => {
+  // C1：进入页面直接聚焦绑定码输入框（原来要点一下才输入）。
+  // 放在 loadIdentities 之前：身份列表是网络请求，等它回来再聚焦会让自动聚焦来得太晚。
+  codeInputRef.value?.focus()
+  void loadIdentities()
+})
 </script>
 
 <style scoped>
@@ -368,6 +428,26 @@ onMounted(loadIdentities)
   font-size: 20px;
   letter-spacing: 4px;
   text-transform: uppercase;
+}
+
+.code-hint {
+  margin: calc(var(--space-1) * -1) 0 var(--space-3);
+  font-size: 12px;
+}
+
+.empty-desc {
+  text-align: center;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.empty-desc .hint {
+  margin-top: var(--space-1);
+  font-size: 12px;
+}
+
+.bound-actions {
+  margin-bottom: var(--space-3);
 }
 
 .bound-alert {

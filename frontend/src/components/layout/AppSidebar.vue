@@ -202,6 +202,9 @@ const navGroups: NavGroup[] = [
     guestExpandable: false, // 访客始终折叠不可展开
     items: [
       { path: '/members', label: '成员管理', minRole: 3 },
+      // 时装管理端：后端是 require_site_admin，必须放「系统」组（minRole 3）。
+      // 放「管理」组（minRole 2）会让 admin 看到入口却每次调接口 403。
+      { path: '/fashion/admin', label: '时装管理', minRole: 3 },
       { path: '/config', label: '系统配置', minRole: 3 },
       { path: '/plugins', label: '插件管理', minRole: 3 },
     ],
