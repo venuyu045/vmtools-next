@@ -509,7 +509,12 @@ function setupTerminalTouch(): () => void {
   window.addEventListener('pointerup', onPointerUp, { capture: true })
   window.addEventListener('pointercancel', onPointerUp, { capture: true })
   // 任何位置发生真实触摸 → 标记触屏设备（供 mouse 类型 pointer 接管判断）
-  window.addEventListener('touchstart', () => { touchSeen = true }, { passive: true, capture: true })
+  //
+  // ⚠️ 2026-10-30 审查修复（中等·监听器泄漏）：原为匿名函数，teardown 里
+  //   无法移除 → 每次终端挂载（抽屉/终端页反复开关）都会永久泄漏一个
+  //   window 捕获监听。改为具名并在 teardown 中对称移除。
+  function onTouchSeen() { touchSeen = true }
+  window.addEventListener('touchstart', onTouchSeen, { passive: true, capture: true })
   window.addEventListener('touchstart', onTouchStart, { passive: true, capture: true })
   window.addEventListener('touchmove', onTouchMove, { passive: false, capture: true })
   window.addEventListener('touchend', onTouchEnd, { passive: true, capture: true })
@@ -520,6 +525,7 @@ function setupTerminalTouch(): () => void {
     window.removeEventListener('pointermove', onPointerMove, { capture: true } as any)
     window.removeEventListener('pointerup', onPointerUp, { capture: true } as any)
     window.removeEventListener('pointercancel', onPointerUp, { capture: true } as any)
+    window.removeEventListener('touchstart', onTouchSeen, { capture: true } as any)
     window.removeEventListener('touchstart', onTouchStart, { capture: true } as any)
     window.removeEventListener('touchmove', onTouchMove, { capture: true } as any)
     window.removeEventListener('touchend', onTouchEnd, { capture: true } as any)

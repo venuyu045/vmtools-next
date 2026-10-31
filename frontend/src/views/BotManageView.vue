@@ -21,7 +21,12 @@
         v-for="instance in sortedInstances"
         :key="instance.instance_id"
         class="pixel-card instance-card"
+        role="button"
+        tabindex="0"
+        :aria-label="`打开实例 ${instance.display_name || instance.slug} 的详情`"
         @click="openInstance(instance, 'terminal')"
+        @keydown.enter.self.prevent="openInstance(instance, 'terminal')"
+        @keydown.space.self.prevent="openInstance(instance, 'terminal')"
       >
         <div class="instance-head">
           <div>
@@ -93,7 +98,7 @@
       </el-form>
       <template #footer>
         <el-button @click="showCreate = false">取消</el-button>
-        <el-button type="primary" @click="handleCreate">创建</el-button>
+        <el-button type="primary" :loading="creating" @click="handleCreate">创建</el-button>
       </template>
     </el-dialog>
 
@@ -630,17 +635,34 @@ async function refreshAll() {
   await Promise.all([mccStore.fetchInstances(), mccStore.fetchProfiles(), botStore.fetchBots()])
 }
 
+/**
+ * 创建实例。
+ *
+ * ⚠️ 2026-10-30 审查修复（中等·重复提交 / 失败静默）：
+ *   原实现无 `creating` 守卫、无 try/catch —— 双击「创建」会发两次 POST
+ *   （产生两个实例）；后端报错时是未捕获 rejection，界面无任何提示、对话框不关。
+ */
+const creating = ref(false)
+
 async function handleCreate() {
+  if (creating.value) return
   if (!createForm.slug.trim()) {
     ElMessage.warning('请输入 slug')
     return
   }
-  const payload: any = { ...createForm, bot_engine: engine.value }
-  if (!payload.bot_id) delete payload.bot_id
-  await mccStore.createInstance(payload)
-  showCreate.value = false
-  Object.assign(createForm, { slug: '', display_name: '', bot_id: '', account_profile_id: null, binary_mode: 'symlink', mc_username: '', mc_server_host: '', mc_server_port: 25565, mc_version: '1.21.1' })
-  ElMessage.success('实例已创建')
+  creating.value = true
+  try {
+    const payload: any = { ...createForm, bot_engine: engine.value }
+    if (!payload.bot_id) delete payload.bot_id
+    await mccStore.createInstance(payload)
+    showCreate.value = false
+    Object.assign(createForm, { slug: '', display_name: '', bot_id: '', account_profile_id: null, binary_mode: 'symlink', mc_username: '', mc_server_host: '', mc_server_port: 25565, mc_version: '1.21.1' })
+    ElMessage.success('实例已创建')
+  } catch (e: any) {
+    ElMessage.error(errMsg(e, '创建实例失败'))
+  } finally {
+    creating.value = false
+  }
 }
 
 async function handleStart(instance: MccInstance) {
@@ -655,8 +677,12 @@ async function handleStart(instance: MccInstance) {
 }
 
 async function handleStop(instance: MccInstance) {
-  await mccStore.stopInstance(instance.instance_id)
-  ElMessage.success('停止命令已发送')
+  try {
+    await mccStore.stopInstance(instance.instance_id)
+    ElMessage.success('停止命令已发送')
+  } catch (e: any) {
+    ElMessage.error(errMsg(e, '停止失败'))
+  }
 }
 
 async function stopAll() {
@@ -699,14 +725,27 @@ async function toggleReconnect(instance: MccInstance, event: Event) {
   }
 }
 
+/**
+ * ⚠️ 2026-10-30 审查修复（中等·未捕获 rejection）：
+ *   ElMessageBox.confirm 在用户点「取消」时以 'cancel' reject；
+ *   原实现直接 await（无 try/catch）→ 每次取消都产生一条 unhandled rejection。
+ */
 async function handleRestart(instance: MccInstance) {
-  await ElMessageBox.confirm('配置已保存后通常需要重启 MCC 才会生效，确认重启？', '重启确认', { type: 'warning' })
+  try {
+    await ElMessageBox.confirm('配置已保存后通常需要重启 MCC 才会生效，确认重启？', '重启确认', { type: 'warning' })
+  } catch {
+    return // 用户取消
+  }
   await handleStop(instance)
   await handleStart(instance)
 }
 
 async function handleDelete(instance: MccInstance) {
-  await ElMessageBox.confirm(`确认删除实例 ${instance.slug}？当前只软删除，不会删除目录文件。`, '删除确认', { type: 'warning' })
+  try {
+    await ElMessageBox.confirm(`确认删除实例 ${instance.slug}？当前只软删除，不会删除目录文件。`, '删除确认', { type: 'warning' })
+  } catch {
+    return // 用户取消
+  }
   // Also delete associated bot if exists
   const bot = getBot(instance)
   if (bot) {
@@ -715,7 +754,13 @@ async function handleDelete(instance: MccInstance) {
       ElMessage.warning(`实例已删除，但关联 Bot「${bot.bot_id}」删除失败（可能仍在运行），可稍后手动清理`)
     }
   }
-  await mccStore.deleteInstance(instance.instance_id)
+  // 实例删除失败必须可见：否则 Bot 已删、实例仍在，列表与实际状态不一致且用户无感
+  try {
+    await mccStore.deleteInstance(instance.instance_id)
+  } catch (e: any) {
+    ElMessage.error(errMsg(e, '删除实例失败'))
+    return
+  }
   ElMessage.success('实例已删除')
 }
 
@@ -901,6 +946,10 @@ onMounted(() => {
 })
 onBeforeUnmount(() => {
   if (latencyTimer) clearInterval(latencyTimer)
+  // ⚠️ 2026-10-30 审查修复（中等·定时器泄漏）：
+  //   MF 坐标轮询（coordTimer）原先只在「抽屉关闭」时清（watch(detailOpen) → clearMfPreview）；
+  //   若用户开着抽屉直接切路由，定时器会常驻并每 5s 继续请求 /mcc-bots/{id}/state。
+  clearMfPreview()
 })
 
 // 同一组件在 /mcc-instances 与 /mf-instances 间切换时（组件复用、不重新挂载），
@@ -925,6 +974,8 @@ watch(
 .instance-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; min-height: 160px; }
 .instance-card { display: flex; flex-direction: column; gap: 12px; cursor: pointer; transition: border-color 0.15s; }
 .instance-card:hover { border-color: var(--border-active); }
+/* 键盘可达（role=button + tabindex=0）：聚焦时必须有可见焦点环，否则键盘用户无法定位 */
+.instance-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .instance-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
 .instance-name { color: var(--text-primary); font-weight: bold; font-size: 16px; }
 .instance-slug { color: var(--text-muted); font-size: 14px; margin-top: 4px; }

@@ -393,7 +393,8 @@
           <el-switch v-model="catalogForm.enabled" />
           <span class="field-hint mono inline">关闭后玩家衣柜里看不到（已穿戴的配置会保留）</span>
         </el-form-item>
-        <el-form-item v-if="catalogDialog.isEdit" label="sha256 / 大小">
+        <!-- 编辑时展示落库的 sha256/大小；「填入目录」新建时也展示（否则带过来的哈希不可见） -->
+        <el-form-item v-if="catalogDialog.isEdit || catalogForm.sha256 || catalogForm.bytes" label="sha256 / 大小">
           <span class="mono muted">
             {{ catalogForm.sha256 ? `${catalogForm.sha256.slice(0, 12)}…` : '（无）' }}
             <template v-if="catalogForm.bytes"> · {{ fmtBytes(catalogForm.bytes) }}</template>
@@ -857,6 +858,13 @@ function buildCatalogPayload(): CatalogUpsertPayload {
   const name = catalogForm.name.trim()
   // 新建时留空不传：后端会把 name 默认成 cosmeticId（比存空串好）
   if (name || catalogDialog.isEdit) payload.name = name
+  // v1.2 修复：「资产管理 → 填入目录」会把资产的 sha256/bytes 填进表单，但这里原来
+  // 没带上它们 → 后端 upsert 落库成 sha256="" / bytes=0，目录条目与真实资产脱钩
+  // （mod 端按 sha256 判重/校验、后端按 sha256 判 pack_in_use 都依赖这两个字段）。
+  // 空值不传，保持 PUT 的部分更新语义。
+  const sha256 = catalogForm.sha256.trim()
+  if (sha256) payload.sha256 = sha256
+  if (catalogForm.bytes > 0) payload.bytes = catalogForm.bytes
   return payload
 }
 

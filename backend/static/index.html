@@ -8,6 +8,8 @@
     <meta name="color-scheme" content="light dark" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <!-- SEO：原来没有 description，搜索结果/分享卡片只能拿到空摘要 -->
+    <meta name="description" content="VMTools —— Minecraft 服务器自动化工具台与 VMFashion 时装系统：网页衣柜、时装商店、时装包分发与 mod 同步。" />
     <title>VenusYu的第一个网站</title>
     <script>
       // 防闪白：在任何 CSS 加载前，按 localStorage / 系统偏好设置 data-theme
@@ -37,16 +39,36 @@
     </script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=DM+Sans:wght@400;500;600&family=Lora:ital,wght@0,400;0,500;1,400&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <!--
+      拉丁字体（DM Serif / DM Sans / Lora / JetBrains Mono）走 Google Fonts，中文已自托管
+      （styles/fonts.css，/fonts/*.woff2）。原写法是同步 <link rel="stylesheet">：
+      国内网络下 fonts.googleapis.com 不可达，浏览器要等连接超时才继续解析 → 首屏白屏。
+      改成 media="print" + onload 切回 all：CSS 不阻塞渲染，字体到了再换（display=swap
+      已经保证先用兜底字体显示）。noscript 场景保留同步加载。
+    -->
+    <link
+      href="https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=DM+Sans:wght@400;500;600&family=Lora:ital,wght@0,400;0,500;1,400&family=JetBrains+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+      media="print"
+      onload="this.media='all'"
+    />
+    <noscript>
+      <link
+        href="https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=DM+Sans:wght@400;500;600&family=Lora:ital,wght@0,400;0,500;1,400&family=JetBrains+Mono:wght@400;500&display=swap"
+        rel="stylesheet"
+      />
+    </noscript>
     <style>
       :root { color-scheme: light; }
       [data-theme="dark"], html.dark { color-scheme: dark; }
       body { margin: 0; background: #ECE9E0; }
       [data-theme="dark"] body, html.dark body { background: #1A1916; }
     </style>
-    <script type="module" crossorigin src="/static/assets/index-CuYDkZli.js"></script>
-    <link rel="modulepreload" crossorigin href="/static/assets/pinia-BQ0QZJ0O.js">
-    <link rel="modulepreload" crossorigin href="/static/assets/auth-1hePCzAM.js">
+    <script type="module" crossorigin src="/static/assets/index-BDyDBX_V.js"></script>
+    <link rel="modulepreload" crossorigin href="/static/assets/rolldown-runtime-QTnfLwEv.js">
+    <link rel="modulepreload" crossorigin href="/static/assets/runtime-core.esm-bundler-D9iYKO94.js">
+    <link rel="modulepreload" crossorigin href="/static/assets/pinia-_Qnr4wii.js">
+    <link rel="modulepreload" crossorigin href="/static/assets/auth-BxIZmoj5.js">
     <link rel="stylesheet" crossorigin href="/static/assets/index-D8T68g_M.css">
   </head>
   <body>

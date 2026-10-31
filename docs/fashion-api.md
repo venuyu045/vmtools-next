@@ -484,13 +484,18 @@ sequenceDiagram
 绑定后 `fashion_identity.user_id` 指向网站账号，网页衣柜即可操作同一份穿戴配置。
 一个网站账号可绑定多个 MC 身份；网页接口可用 `?identityId=` 指定操作哪一个。
 
+> `deviceCode` 只能走 query（mod 端 `FashionApi.java` 固定拼 `GET /device/status?deviceCode=…`，
+> 改成 body 会破坏客户端契约）。因此它可能进入反代 access log（combined 格式记录 `$request`），
+> 生产请对 access log 脱敏或限权；后端自身的日志只打印脱敏后的 `userCode`（前 2 位 + `***`）。
+
 ---
 
 ## 8. `GET /assets/{assetKey}`
 
 - **公开可读**（不需要 token）：资产按 sha256 内容寻址、本身无隐私；`<img src>` 也无法带 Authorization 头
 - 响应头：`Cache-Control: public, max-age=31536000, immutable`、`ETag`、`X-Content-Type-Options: nosniff`
-- 解析顺序：`catalog.asset_key → catalog.sha256 → fashion_asset.storage_path`；找不到再退回 `{assetDir}/{assetKey}` 静态文件
+- 解析顺序：`catalog.asset_key → catalog.sha256 → fashion_asset.storage_path`；若目录条目**没有 sha256**（手工静态资产起步流），再退回 `{assetDir}/{assetKey}`
+- 回退分支的安全边界（2026-10-30 审计修复）：只服务「目录里登记过」或「`fashion_asset` 表里登记过的 `storagePath`」（管理端资产列表预览用）且扩展名在白名单内的文件；asset root 下的其它文件（README、DB、误放文件）一律 404，已下架（`enabled=false`）条目的资产也不会再被该分支绕过
 - 目录穿越防护：`..`、绝对路径、盘符、空字节一律 404
 - 404 → `{"detail":{"code":"asset_not_found","message":"资产不存在"}}`
 
@@ -500,11 +505,17 @@ mod 端建议：先看本地 `sha256` 是否已有；没有才下载，下载后
 
 ## 9. 错误码
 
-HTTP 状态码 + 结构化 detail：
+**时装业务层**的错误统一是 HTTP 状态码 + 结构化 detail：
 
 ```json
 { "detail": { "code": "challenge_expired", "message": "serverId 已过期，请重新发起认证" } }
 ```
+
+> 例外（不是时装业务层产生，客户端按 HTTP 状态兜底即可，**不要假设一定有 `code`**）：
+> - 401/403 来自共享鉴权依赖（`api/deps.py`），detail 是字符串（如 `"Missing authentication token"`）；
+> - 422 是 FastAPI 请求体校验，detail 是数组（`[{type, loc, msg, input}]`）；
+> - 未命中路由的 404 是 `{"detail":"Not found"}`（含 `/api`、`/api/xxx` 等未注册路径，不会回落 index.html）；
+> - `/api/xxx/` 带尾斜杠且存在同名精确路由时返回 307，否则 404。
 
 | code | HTTP | 含义 / mod 处理 |
 |---|---|---|
@@ -536,8 +547,9 @@ HTTP 状态码 + 结构化 detail：
 | `invalid_pack_version` | 400 | packVersion 不合规（`[A-Za-z0-9._-]{1,64}`） |
 | `invalid_pack_zip` | 400 | zip 结构不安全 / 缺 pack.json / 含可执行文件等（见 §6.3） |
 | `pack_id_mismatch` | 400 | pack.json 的 id 与 packId 不一致 |
-| `pack_too_large` | 413 | 单个 zip 超过上限 |
+| `pack_too_large` | — | **不会出现**：HTTP 上传在读流阶段就被 64MB 上限拦下并返回 `asset_too_large`（见下一行）；`pack_too_large` 只是 `validate_pack_zip` 内部的兜底分支（HTTP 不可达） |
 | `pack_in_use` | 409 | 包的 sha256 仍被目录条目引用，不能下架 |
+| `conflict` | 409 | 并发写冲突（同一身份同时保存 loadout / 同一 MC UUID 并发 verify / 管理端并发创建同一条目）；客户端整体重试即可，不要当成永久错误 |
 | `pack_not_published` | 500 | 包已保存但未能生成清单项（异常兜底，正常不会出现） |
 | `invalid_scale` | 400 | scale 非数字 |
 | `too_many_items` | 400 | 超过 8 个槽位 |
@@ -570,7 +582,8 @@ HTTP 状态码 + 结构化 detail：
 | DELETE | `/api/fashion/admin/packs/{packId}/{version}` | 下架时装包（`pack_in_use` → 409） |
 
 资产限制：≤64MB，扩展名白名单（png/jpg/jpeg/webp/gif/glb/gltf/bin/ogg/wav/json/zip/bbmodel），
-同 `sha256` + 文件名 + packId + version 自动去重。
+同 `sha256` + 文件名 + packId + version 自动去重（**同内容不同文件名会各存一份**，历史行为；
+模型注释里的「同一 sha256 只落盘一份」是旧描述，以本节为准）。
 
 > `.zip` 无论走 `/admin/assets` 还是 `/admin/packs`，都会按 §6.3 的时装包规则校验
 > （根目录 `pack.json` 且 id 与 packId 一致）。**发布时装包请用 `/admin/packs`**：
@@ -586,7 +599,11 @@ HTTP 状态码 + 结构化 detail：
 >   loadout 里引用的旧 ID 一并改写）；迁移期间 `PUT /loadout` 的 `localId` 回退匹配
 >   仍然生效，保证「玩家上报全局 ID、目录还是简单 ID」的组合不会丢件。
 > - 写入 loadout 时后端**不会**再把全局 ID 降级成简单 ID（§5.1），这是 v1.0.1 客户端
->   「别人穿的时装我能不能看见」的前提。
+>   「别人穿的时装我能不能看见」的前提。**例外**：上报前缀与目录 `packId` 不一致（或目录
+>   `packId` 为空）时，后端按目录 ID 纠正后保存并记一条 warn 日志——避免落库一个
+>   `_catalog_map` 里解析不到的 ID（那会让 `loadout/me` 立即 `missing`、`resolve` 丢弃）。
+> - 并发写冲突（同一身份同时保存、同一 MC UUID 并发 verify 等）返回 409 `conflict`，
+>   客户端整体重试即可。
 
 ---
 
@@ -652,6 +669,9 @@ curl -s -X POST $BASE/loadouts/resolve -H "Authorization: Bearer $TOKEN" -H 'Con
    127.0.0.1 —— 握手仍能成功（两端一致），但「来源绑定」的防重放强度下降。
    ⚠️ **后端端口必须只对反代网段开放**：`forwarded_allow_ips="*"` 意味着任何能直连
    后端端口的人都能伪造 `X-Forwarded-For`，challenge 的来源 IP 绑定与限流就形同虚设。
+   默认 `docker-compose.yml` 把 `8080:8080` 映射到宿主机（nginx 服务默认注释掉），
+   等于满足「可直连」条件——生产请改成 `127.0.0.1:8080:8080` 并启用 nginx 反代，
+   或至少用防火墙限制 8080 来源。后端启动时若监听地址不是回环会打印一条 warn 提示。
 2. **多 worker**：challenge / deviceCode 存在进程内存，`--workers > 1` 时 mod 的
    challenge→verify 可能落到不同进程 → `challenge_not_found`。要么单 worker（默认），
    要么 nginx `ip_hash` 粘性会话。
@@ -664,10 +684,10 @@ curl -s -X POST $BASE/loadouts/resolve -H "Authorization: Bearer $TOKEN" -H 'Con
 6. **限流是进程内的**：challenge / device-approve / device-start 的滑动窗口在单进程内存里，
    `--workers > 1` 时实际上限 = 单进程上限 × worker 数；要严格限流需在反代层做。
 7. **时装包签名需要 `cryptography`**：`pyproject.toml` 里它是可选 extra `signing`。
-   `deploy/Dockerfile` 装的是 `.[dev,signing]`、`deploy/install.sh` 装的是 `.[signing]`，
-   所以按仓库脚本部署默认就带签名能力。**只有手工 `pip install -e .` 才需要自己补
-   `.[signing]`**。没装时后端记一条 warn 并降级为不签名（`/packs` 不会 500），
-   此时同样**不要**开客户端严格模式。升级后请用
+   根 `Dockerfile` 与 `backend/deploy/Dockerfile` 都装 `.[dev,signing]`、
+   `backend/deploy/install.sh` 装 `.[signing]`，所以按仓库脚本部署默认就带签名能力。
+   **只有手工 `pip install -e .` 才需要自己补 `.[signing]`**。没装时后端记一条 warn
+   并降级为不签名（`/packs` 不会 500），此时同样**不要**开客户端严格模式。升级后请用
    `curl -s /api/fashion/packs | grep signature` 确认签名真的生效。
 8. **下架不等于远程删除**：`DELETE /admin/packs/{id}/{version}` 只从清单移除，
    玩家本地已下载的包不受影响（需要时让玩家 `/vmfashion cache clear`）。

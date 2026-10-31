@@ -68,12 +68,20 @@ chown -R "$SERVICE_USER:$SERVICE_GROUP" data logs
 # 7. Copy default config if not exists
 if [ ! -f "config/config.yaml" ]; then
     log "Creating default config..."
-    cat > config/config.yaml << 'EOF'
+    # 审计 v1.2 P1-3：config.load_config() 会拒绝占位/过短密钥（config.py:530-540），
+    # 旧脚本写死 "change-me-in-production" → 装完必然启动失败。这里直接生成随机密钥。
+    _SECRET_KEY="$(python3 -c 'import secrets; print(secrets.token_hex(32))' 2>/dev/null \
+        || openssl rand -hex 32 2>/dev/null || true)"
+    if [ -z "$_SECRET_KEY" ]; then
+        error "无法生成随机密钥（需要 python3 或 openssl）"
+    fi
+    umask 077
+    cat > config/config.yaml << EOF
 server:
   host: 0.0.0.0
   port: 8080
   database_url: sqlite:///data/vmtools-next.db
-  secret_key: change-me-in-production
+  secret_key: $_SECRET_KEY
 
 generic:
   enabled: true
@@ -83,6 +91,8 @@ mcc:
   protocol: mcp
   mcp_endpoint: http://127.0.0.1:33333/mcp
 EOF
+    chmod 600 config/config.yaml
+    unset _SECRET_KEY
 fi
 
 # 8. Install systemd service

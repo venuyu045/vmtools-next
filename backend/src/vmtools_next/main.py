@@ -8,9 +8,9 @@ from __future__ import annotations
 import pathlib
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 import socketio
@@ -456,6 +456,27 @@ async def _periodic_broadcast():
             logger.warning("Periodic broadcast error: {}", e)
 
 
+def _collect_route_paths(routes) -> set[str]:
+    """收集已注册路由的精确 path（SPA fallback 判定用）。
+
+    FastAPI 0.162 起 ``include_router`` 产生惰性 ``_IncludedRouter`` 对象，
+    顶层 ``route.path`` 是 ``None``；真实 path 在 ``original_router.routes`` 里，
+    所以这里递归收集。全部用 ``getattr`` 兜底，未来 FastAPI 内部结构变化时
+    最坏情况是退化成「收集不到 → 不 307，只 404」，不影响安全性。
+    """
+    paths: set[str] = set()
+    for route in routes or []:
+        original = getattr(route, "original_router", None)
+        nested = getattr(original, "routes", None) if original is not None else None
+        if nested is not None:
+            paths |= _collect_route_paths(nested)
+            continue
+        path = getattr(route, "path", None)
+        if path:
+            paths.add(path)
+    return paths
+
+
 def create_app() -> FastAPI:
     """Create and configure the FastAPI application."""
     config = get_config()
@@ -517,9 +538,22 @@ def create_app() -> FastAPI:
     # ⚠️ 2026-08-14 修复：index.html 必须 no-cache——前端构建产物（assets/*.js）带内容 hash，
     # 若浏览器缓存旧 index.html 会引用已删除的旧 chunk（懒加载 404 → 页面点击无反应/白屏）。
     # assets 本身带 hash 可安全长缓存（浏览器按新 hash 重新拉取），index.html 每次都必须重新验证。
+    #
+    # ⚠️ 审计 v1.2 P3-4：`/api`（无尾斜杠）曾经也落到 SPA 返回 200 HTML；且 catch-all 会
+    # 先于 Starlette 的 redirect_slashes 命中，`/api/xxx/` 拿不到 307。这里：
+    #   · api / static 命名空间（含无斜杠的 /api 本身）一律不回落 index.html；
+    #   · 尾斜杠请求若「去掉斜杠后确实存在精确路由」，手动补 307（等价 redirect_slashes）。
+    # 路由表在挂载 catch-all 之前快照一次（FastAPI 0.162 的 include_router 是惰性对象，
+    # 需要递归进 original_router 才能拿到真实 path）。
+    _known_route_paths = _collect_route_paths(app.router.routes)
+
     @app.get("/{full_path:path}")
-    def spa_index(full_path: str):
-        if full_path.startswith(("api/", "static/")):
+    def spa_index(full_path: str, request: Request):
+        if full_path == "api" or full_path.startswith(("api/", "static/")):
+            stripped = "/" + full_path.rstrip("/")
+            if full_path.endswith("/") and request.method in ("GET", "HEAD"):
+                if stripped in _known_route_paths:
+                    return RedirectResponse(url=stripped, status_code=307)
             raise HTTPException(status_code=404, detail="Not found")
         index = BASE_DIR.parent.parent / "static" / "index.html"
         if index.is_file():
@@ -543,6 +577,20 @@ def run():
 
     config = get_config()
     debug = config.server.debug
+    # ⚠️ 审计 v1.2 P1-4（只告警，不改行为）：forwarded_allow_ips="*" 表示信任任何
+    # 来源的 X-Forwarded-For。若后端端口还能被公网直连（默认 docker-compose 就把
+    # 8080 映射到宿主机），攻击者可以伪造任意来源 IP → 登录/认证限流与 challenge
+    # 的来源 IP 绑定全部失效。生产请只让反代网段访问后端端口，或把 8080 绑到
+    # 127.0.0.1（compose: "127.0.0.1:8080:8080"）并启用 nginx 反代。
+    if config.server.host not in ("127.0.0.1", "localhost", "::1"):
+        logger.warning(
+            "安全提示：uvicorn forwarded_allow_ips='*'，而服务监听在 {}:{}。"
+            "任何能直连该端口的客户端都能伪造 X-Forwarded-For，"
+            "绕过登录/认证限流与 challenge 来源 IP 绑定；"
+            "请限制后端端口只对反代网段开放（或改绑 127.0.0.1）。",
+            config.server.host,
+            config.server.port,
+        )
     uvicorn.run(
         "vmtools_next.main:sio_app" if debug else sio_app,
         host=config.server.host,

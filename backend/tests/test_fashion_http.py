@@ -344,6 +344,9 @@ class TestPacksManifestHttp(_HttpBase):
         self.assertNotIn("signingKeyId", pack)
 
 
+@unittest.skipUnless(
+    HAVE_CRYPTOGRAPHY, "需要 cryptography（pip install '.[signing]'）；未装时签名会降级"
+)
 class TestPacksManifestSignatureHttp(_HttpBase):
     PACK_SIGNING_KEY_B64 = seed_b64()
 

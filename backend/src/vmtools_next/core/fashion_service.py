@@ -45,6 +45,7 @@ from vmtools_next.data.models.fashion import (
     FashionLoadoutModel,
 )
 from loguru import logger
+from sqlalchemy.exc import IntegrityError
 
 # 槽位 = 时装类别（mod 侧渲染器按类别找模型）
 SLOTS: tuple[str, ...] = ("cape", "wings", "hat", "back", "pet", "aura", "other")
@@ -136,6 +137,26 @@ class FashionServiceError(Exception):
         self.status_code = status_code
 
 
+def _commit_or_conflict(db: Any, *, what: str) -> None:
+    """提交；并发触发唯一约束时转成 409 业务错误（审计 v1.2 P2-2）。
+
+    典型场景：mod 与网页衣柜同时保存同一身份、同一 MC UUID 并发 verify、
+    管理端并发创建同一条目录。路由只捕获 :class:`FashionServiceError`，
+    这里统一翻译成 ``conflict``，避免把 ``IntegrityError`` 漏成 500。
+
+    不做重试循环：客户端拿到 409 后整体重试即可，重试留在请求线程里只会
+    放大写冲突。
+    """
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        logger.warning("fashion: {} 并发写入冲突（已转 409）：{}", what, exc)
+        raise FashionServiceError(
+            "conflict", "数据已被其他请求修改，请重试", status_code=409
+        ) from exc
+
+
 # ── 配置 / 路径 ─────────────────────────────────────────────────────────
 
 def _settings(settings: Any = None) -> Any:
@@ -217,16 +238,19 @@ _CATALOG_CACHE: dict[tuple, tuple[float, list[dict]]] = {}
 _RESOLVE_CACHE: dict[str, tuple[float, dict]] = {}
 # 包清单快照（/packs + resolve 里的 packVersion 都读它）
 _PACK_CACHE: dict[str, tuple[float, dict]] = {}
+# 已上传资产的 storage_path 集合（/assets 回退分支鉴权用；TTL 复用目录缓存）
+_STORAGE_PATHS_CACHE: dict[str, tuple[float, set[str]]] = {}
 # resolve 缓存上限（防被大量不同 UUID 刷爆内存）
 _RESOLVE_CACHE_MAX = 5000
 
 
 def invalidate_caches() -> None:
-    """清空本进程的目录/解析/包清单缓存（管理端写入后调用）。"""
+    """清空本进程的目录/解析/包清单/资产路径缓存（管理端写入后调用）。"""
     with _CACHE_LOCK:
         _CATALOG_CACHE.clear()
         _RESOLVE_CACHE.clear()
         _PACK_CACHE.clear()
+        _STORAGE_PATHS_CACHE.clear()
 
 
 def _catalog_cache_ttl(settings: Any = None) -> float:
@@ -243,6 +267,35 @@ def _resolve_cache_ttl(settings: Any = None) -> float:
         return float(getattr(cfg, "resolve_cache_ttl_seconds", 5) or 0)
     except (TypeError, ValueError):
         return 0.0
+
+
+def _asset_storage_paths(db: Any, settings: Any = None) -> set[str]:
+    """``fashion_asset.storage_path`` 集合（进程内 TTL 缓存）。
+
+    用途：``GET /assets/{assetKey}`` 的回退分支只服务「目录登记过的静态文件」
+    或「确实存在于 fashion_asset 表的 storage_path」。后者是管理端资产列表
+    预览所必需的（前端用 ``assetUrl(row.storagePath)`` 直接拼 URL）。不在集合
+    里的路径一律 404 —— 否则 asset root 下的 README / DB / 误放文件会被匿名
+    读取（审计 v1.2 P2-3）。
+
+    TTL 复用目录缓存（默认 30s）；管理端上传后 ``invalidate_caches()`` 会清掉
+    它，所以刚上传的资产立刻可预览。
+    """
+    cfg = _settings(settings)
+    ttl = _catalog_cache_ttl(cfg)
+    now = time.time()
+    if ttl > 0:
+        with _CACHE_LOCK:
+            hit = _STORAGE_PATHS_CACHE.get("all")
+            if hit and hit[0] > now:
+                return hit[1]
+    rows = db.query(FashionAssetModel).all() or []
+    paths = {str(getattr(row, "storage_path", "") or "") for row in rows}
+    paths.discard("")
+    if ttl > 0:
+        with _CACHE_LOCK:
+            _STORAGE_PATHS_CACHE["all"] = (now + ttl, paths)
+    return paths
 
 
 # ── 目录（catalog） ─────────────────────────────────────────────────────
@@ -427,21 +480,38 @@ def validate_cosmetic_id(cosmetic_id: Any, pack_id: Any = None) -> tuple[str, st
 
 
 def canonical_loadout_cosmetic_id(catalog_item: dict, reported_id: Any) -> str:
-    """写 loadout 用的规范 ID：**全局 ID 优先**。
+    """写 loadout 用的规范 ID：**全局 ID 优先，但前缀必须与目录 packId 一致**。
 
     1. 目录条目本身就是全局 ID → 用它（最权威，能保证与其他玩家一致）；
-    2. 目录是 legacy 简单 ID，但玩家上报的是全局 ID → **保留上报的全局 ID**；
-    3. 两边都是简单 ID → 保持简单 ID（旧数据/旧客户端不动，向后兼容）。
+    2. 目录是 legacy 简单 ID，且玩家上报的全局 ID **前缀 == 目录 packId** →
+       保留上报的全局 ID（客户端靠冒号前缀整包下发）；
+    3. 两边都是简单 ID → 保持简单 ID（旧数据/旧客户端不动，向后兼容）；
+    4. 目录是 legacy 简单 ID 但 `packId` 为空 / 上报前缀对不上 → **回目录 ID**。
 
-    第 2 条是这次修复的核心：旧实现把 ``example:backboard`` 改写成目录里的
-    ``backboard`` 落库，客户端因为「没有冒号前缀」永远不会整包下发这件时装。
+    第 2 条是 v1.1 修复的核心（旧实现把 ``example:backboard`` 改写成目录里的
+    ``backboard`` 落库，客户端因为「没有冒号前缀」永远不会整包下发这件时装）。
+
+    第 4 条是 v1.2 补的边界：旧实现无条件保留上报的全局 ID，于是
+    ``pack2:backboard``（目录 packId=pack1）或目录 packId 为空时会落库一个
+    ``_catalog_map`` 里不存在的 ID → ``loadout/me`` 立刻 missing、``resolve`` 丢弃，
+    玩家**静默丢件**。回目录 ID 至少保证自己/其他玩家能按 legacy 简单 ID 解析到。
     """
     catalog_id = str((catalog_item or {}).get("cosmeticId") or "").strip()
     if ":" in catalog_id:
         return catalog_id
     reported = str(reported_id or "").strip()
     if ":" in reported:
-        return reported
+        pack_id = str((catalog_item or {}).get("packId") or "").strip()
+        prefix, _, _ = reported.partition(":")
+        if pack_id and prefix.strip() == pack_id:
+            return reported
+        logger.warning(
+            "fashion: 上报的 cosmeticId 前缀与目录 packId 不一致，已按目录 ID 保存 "
+            "catalog={} packId={} reported={}",
+            catalog_id,
+            pack_id,
+            reported,
+        )
     return catalog_id or reported
 
 
@@ -509,7 +579,7 @@ def upsert_catalog_item(db: Any, payload: dict) -> dict:
         row.enabled = bool(payload.get("enabled"))
     if payload.get("sortOrder") is not None:
         row.sort_order = int(payload.get("sortOrder") or 0)
-    db.commit()
+    _commit_or_conflict(db, what="catalog")
     invalidate_caches()
     logger.info("fashion catalog {} cosmetic={}", "created" if created else "updated", cosmetic_id)
     return _catalog_row_to_dict(row)
@@ -622,7 +692,7 @@ def upsert_identity(
         row.last_seen_at = now
         if user_id:
             row.user_id = str(user_id)
-    db.commit()
+    _commit_or_conflict(db, what="identity")
     return row
 
 
@@ -799,6 +869,14 @@ def put_loadout(
         # 落库用规范全局 ID：绝不把玩家上报的 packId:localId 降级成简单 ID
         # （客户端只认冒号前缀决定整包下发，降级 = 这件时装永远不自动下发）
         canonical_id = canonical_loadout_cosmetic_id(cosmetic, cosmetic_id)
+        # 防御（v1.2 P2-1）：规范 ID 必须能在目录别名表里解析到，否则落库后
+        # `loadout/me` 会 missing、`resolve` 会丢弃 —— 宁可跳过并给 warning，
+        # 也不要把一个「永远解析不到」的 ID 静默写进库。
+        if canonical_id not in catalog:
+            warnings.append(
+                {"slot": slot, "cosmeticId": cosmetic_id, "code": "unknown_cosmetic"}
+            )
+            continue
         if not bool(cosmetic.get("enabled", True)):
             warnings.append(
                 {"slot": slot, "cosmeticId": cosmetic_id, "code": "cosmetic_disabled"}
@@ -845,7 +923,7 @@ def put_loadout(
         if slot not in keep:
             db.delete(row)
 
-    db.commit()
+    _commit_or_conflict(db, what="loadout")
     # 本进程缓存立即失效（其他 worker 靠 5s TTL 自愈）
     with _CACHE_LOCK:
         _RESOLVE_CACHE.clear()
@@ -1601,7 +1679,7 @@ def store_asset(
         created_at=utcnow(),
     )
     db.add(row)
-    db.commit()
+    _commit_or_conflict(db, what="asset")
     # 新包 / 新资产立刻反映到 /packs 与 resolve 的 packVersion（不等 TTL 自愈）
     invalidate_caches()
     logger.info(
@@ -1683,11 +1761,29 @@ def resolve_asset_file(
                     "etag": f'"{digest}"',
                 }
 
-    # 回退：asset_key 直接当相对路径（data/fashion-assets/<assetKey>）
+    # 回退：只允许「目录里登记过、但没有 sha256」的手工静态资产（docs §6.2 的
+    # 「本地静态目录起步流」），或「确实在 fashion_asset 表里登记过的 storage_path」
+    # （管理端资产列表预览直接用 storagePath 拼 URL）。安全（审计 v1.2 P2-3）：
+    # 不再把任意相对路径当资产公开——否则 asset root 下的 README / DB / 误放文件
+    # 都能被匿名读取，且已下架资产可绕开 catalog 的 enabled 检查。
+    if catalog_row is None and key not in _asset_storage_paths(db, settings):
+        return None
+    if _asset_ext(key) not in ALLOWED_ASSET_EXTS:
+        logger.warning("fashion: 拒绝非资产扩展名的 assetKey {}", key)
+        return None
     try:
         path = safe_join(root, key)
     except FashionServiceError:
         logger.warning("fashion: 拒绝非法 assetKey {}", key)
+        return None
+    # 双保险：safe_join 内部已 resolve 并校验过，这里再显式确认一次落在 asset root 内
+    try:
+        path = path.resolve()
+    except OSError:  # pragma: no cover - 极端文件系统错误
+        return None
+    root_resolved = root.resolve()
+    if path != root_resolved and root_resolved not in path.parents:
+        logger.warning("fashion: assetKey 越界 {}", key)
         return None
     if path.is_file():
         size = path.stat().st_size

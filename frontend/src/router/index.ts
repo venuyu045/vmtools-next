@@ -118,7 +118,7 @@ const router = createRouter({
   routes,
 })
 
-router.beforeEach((to) => {
+router.beforeEach(async (to) => {
   const authStore = useAuthStore()
   // 未登录（访客）：public 与 guestReadable（总览/工具只读页）放行，
   // 其余受限区域跳登录页并提示「前面的区域以后再来探索吧」
@@ -126,11 +126,34 @@ router.beforeEach((to) => {
     return { path: '/login', query: { reason: 'locked' } }
   }
 
+  // 刷新 / 直接输 URL 时 state.user 还是 null：必须先补齐用户信息再做角色判定。
+  // 原实现 `allowedRoles && authStore.user` 在 user 为 null 时整段跳过 →
+  // 管理页先渲染、再被接口 403（一闪而过的报错；admin 还能短暂看到管理端骨架）。
+  if (authStore.isLoggedIn && !authStore.user) {
+    await authStore.ensureUser()
+  }
+
   // 角色路由守卫：登录用户无权访问时，回落到其有权限的首页
   const allowedRoles = to.meta.roles as string[] | undefined
-  if (allowedRoles && authStore.user && !allowedRoles.includes(authStore.user.role)) {
-    return '/dashboard'
+  if (allowedRoles) {
+    if (!authStore.user) {
+      // token 失效 / 拉不到用户信息：按未登录处理，别把受限页面放出去
+      if (!to.meta.public && !to.meta.guestReadable) {
+        return { path: '/login', query: { reason: 'locked' } }
+      }
+      return
+    }
+    if (!allowedRoles.includes(authStore.user.role)) {
+      return '/dashboard'
+    }
   }
+})
+
+// 路由标题：原来全站 <title> 永远是 index.html 里的固定文案，
+// 多标签页无法区分、收藏/分享也没有页面标识（meta.title 已逐条写好，只是没人用）。
+router.afterEach((to) => {
+  const title = to.meta.title as string | undefined
+  document.title = title ? `${title} · VMTools` : 'VMTools · VenusYu 的网站'
 })
 
 export default router

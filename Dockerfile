@@ -42,7 +42,10 @@ COPY backend/alembic/ alembic/
 COPY --from=frontend-builder /build/dist/ static/
 
 # Install Python dependencies
-RUN pip install --no-cache-dir -e ".[dev]"
+# 时装包 Ed25519 签名需要 `cryptography`（可选 extra `signing`）。审计 v1.2 P1-2：
+# 这里之前只装 `.[dev]`，生产镜像里 `_ed25519_signer` 会 ImportError → `/packs`
+# 永远不带 signature（客户端严格模式不可用）。显式带上 `signing`。
+RUN pip install --no-cache-dir -e ".[dev,signing]"
 
 RUN mkdir -p /app/data /app/logs
 

@@ -154,6 +154,12 @@ def normalize_user_code(code: Any) -> str:
     return re.sub(r"[\s\-_]", "", raw)
 
 
+def mask_user_code(code: Any) -> str:
+    """日志脱敏：6 位用户码本身是「绑定凭据」，日志里只留前 2 位。"""
+    raw = normalize_user_code(code)
+    return f"{raw[:2]}***" if raw else ""
+
+
 def _safe_auth_server_for_log(value: Any) -> str:
     """日志脱敏：绝不把带 userinfo/query 的原始 authServer 写进日志。"""
     raw = str(value or "").strip()
@@ -652,7 +658,11 @@ def start_device_flow(identity_id: str, *, settings: Any = None) -> DeviceCode:
             expires_at=now + ttl,
         )
         _DEVICE_CODES[record.device_code] = record
-    logger.info("fashion device flow started identity={} user_code={}", identity_id, user_code)
+    logger.info(
+        "fashion device flow started identity={} user_code={}",
+        identity_id,
+        mask_user_code(user_code),
+    )
     return record
 
 

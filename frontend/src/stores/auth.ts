@@ -32,6 +32,9 @@ interface UserInfo {
   organization_id: string | null
 }
 
+/** `/auth/me` 的并发去重句柄（守卫在多次导航中可能同时触发） */
+let userInflight: Promise<void> | null = null
+
 export const useAuthStore = defineStore('auth', {
   state: () => ({
     token: localStorage.getItem('token') || null as string | null,
@@ -101,6 +104,32 @@ export const useAuthStore = defineStore('auth', {
       } catch {
         this.logout()
       }
+    },
+    /**
+     * 确保 `user` 已加载（去重；失败不清 token、不跳转）。
+     *
+     * 为什么需要：`state.user` 只在内存里，刷新页面后是 null，而路由守卫原来只在
+     * `user` 存在时才做角色校验 —— 于是「刷新 / 直接输 URL 进管理页」时守卫放行，
+     * 页面先渲染、再被接口 403（用户看到一闪而过的报错，admin 还能短暂看到管理端骨架）。
+     * 守卫里 await 本方法后即可拿到真实角色再决定放行/回落。
+     */
+    async ensureUser(): Promise<UserInfo | null> {
+      if (this.user) return this.user
+      if (!userInflight) {
+        userInflight = authApi
+          .getMe()
+          .then(({ data }) => {
+            this.user = data
+          })
+          .catch(() => {
+            // 保持 null：由调用方（守卫）或接口 401 拦截器统一处理
+          })
+          .finally(() => {
+            userInflight = null
+          })
+      }
+      await userInflight
+      return this.user
     },
     logout() {
       this.token = null

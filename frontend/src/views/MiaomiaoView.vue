@@ -380,6 +380,7 @@ const loadedTabs = ref<Set<string>>(new Set())
 
 async function loadTabData(tab: string) {
   if (loadedTabs.value.has(tab)) return
+  // 先登记（并发去重：onMounted 与 tab 切换可能同时触发同一 tab），失败再撤销
   loadedTabs.value.add(tab)
   try {
     if (tab === 'residences') {
@@ -403,7 +404,14 @@ async function loadTabData(tab: string) {
       const { data: rg } = await client.get('/bluemap/regions')
       playerStore.setRegions(rg.regions || [])
     }
-  } catch { /* Socket.IO will populate */ }
+  } catch {
+    // ⚠️ 2026-10-30 审查修复（中等·永久空态）：
+    //   原实现「先标记已加载再请求」且 catch 里静默 → 首次请求失败后该 tab
+    //   被永久视为已加载，切走再切回不再重试，表格永久空白且无任何提示
+    //   （只有整页刷新能恢复）。现在失败即撤销标记（下次切回会重试）并给一次可见提示。
+    loadedTabs.value.delete(tab)
+    ElMessage.warning('数据加载失败，可切换页签或点击刷新重试')
+  }
 }
 
 function onTabChange() {

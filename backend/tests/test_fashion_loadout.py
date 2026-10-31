@@ -326,6 +326,37 @@ class TestLoadoutCRUD(_Base):
         items = svc.get_loadout(self.db, self.identity.id)
         self.assertEqual(items[0]["cosmeticId"], "cape_dragon")
 
+    def test_put_wrong_pack_prefix_falls_back_to_catalog_id(self):
+        """审计 v1.2 P2-1：上报前缀与目录 packId 不一致 → 回目录 ID，不能静默丢件。"""
+        _updated, warnings = svc.put_loadout(
+            self.db,
+            self.identity.id,
+            [{"slot": "cape", "cosmeticId": "pack2:cape_dragon", "scale": 1.0}],
+            settings=self.settings,
+        )
+        self.assertEqual(warnings, [])
+        items = svc.get_loadout(self.db, self.identity.id)
+        self.assertEqual(items[0]["cosmeticId"], "cape_dragon")
+        self.assertFalse(items[0]["missing"])
+        self.assertEqual(items[0]["assetKey"], "cape/dragon.png")
+
+    def test_put_global_id_with_empty_catalog_pack_id_falls_back(self):
+        """目录是 legacy 简单 ID 且 packId 为空 → 回目录 ID，保证 loadout/me 能解析。"""
+        svc.upsert_catalog_item(
+            self.db,
+            {"cosmeticId": "crown", "category": "hat", "assetKey": "hat/crown.png"},
+        )
+        svc.put_loadout(
+            self.db,
+            self.identity.id,
+            [{"slot": "hat", "cosmeticId": "example:crown", "scale": 1.0}],
+            settings=self.settings,
+        )
+        items = svc.get_loadout(self.db, self.identity.id)
+        self.assertEqual(items[0]["cosmeticId"], "crown")
+        self.assertFalse(items[0]["missing"])
+        self.assertEqual(items[0]["assetKey"], "hat/crown.png")
+
     def test_put_disabled_global_id_warns(self):
         svc.upsert_catalog_item(
             self.db, {"cosmeticId": "pack3:hat_off", "category": "hat", "enabled": False}

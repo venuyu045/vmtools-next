@@ -275,10 +275,27 @@ async function downloadSingleFile(path: string) {
   }
 }
 
+/**
+ * 在线写入上限（字节），与后端口径一致：
+ *   backend/src/vmtools_next/core/mcc_file_service.py:59  max_write_bytes = 1024 * 1024
+ *   backend/src/vmtools_next/api/schemas/mcc_instance.py:112 content max_length=1_398_104
+ *
+ * ⚠️ 2026-10-30 审查修复（中等·大文件卡死）：
+ *   原实现无任何大小判断，直接把整个文件读入内存、逐字符拼 base64 再上传。
+ *   上传 10MB+ 文件时主线程长时间阻塞（页面「假死」），最终仍被后端 413 拒绝。
+ *   现在超限直接提示并 return，不发请求。
+ */
+const MAX_UPLOAD_BYTES = 1024 * 1024
+
 async function handleUpload(event: Event) {
   const input = event.target as HTMLInputElement
   const file = input.files?.[0]
   if (!file) return
+  if (file.size > MAX_UPLOAD_BYTES) {
+    ElMessage.warning(`文件过大（${formatSize(file.size)}），在线写入上限 1 MB，请用其他方式传输`)
+    input.value = ''
+    return
+  }
   try {
     const raw = await file.arrayBuffer()
     const bytes = new Uint8Array(raw)

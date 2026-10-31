@@ -22,17 +22,25 @@
           <el-form-item>
             <el-input
               v-model="form.game_id"
+              name="game_id"
+              autocomplete="username"
+              aria-label="Game ID"
               placeholder="Game ID"
               size="large"
+              @keyup.enter="handleLogin"
             />
           </el-form-item>
           <el-form-item>
             <el-input
               v-model="form.password"
               type="password"
+              name="password"
+              autocomplete="current-password"
+              aria-label="密码"
               placeholder="Password"
               size="large"
               show-password
+              @keyup.enter="handleLogin"
             />
           </el-form-item>
           <el-button

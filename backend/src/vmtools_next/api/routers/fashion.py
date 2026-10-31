@@ -667,6 +667,12 @@ def device_status(
 
     ``deviceCode`` 是 camelCase（与文档 / mod 一致）；Python 形参保持 snake_case
     方便测试直调路由函数。
+
+    ⚠️ 审计 v1.2 P3-7：``deviceCode`` 只能走 query——mod 端 ``FashionApi.java:155``
+    固定拼 ``GET /device/status?deviceCode=...``，改成 POST body 会破坏客户端契约。
+    因此这里保持 query，仅保证**服务端日志**不打印该值；代价是它可能进入 nginx
+    access log（默认 combined 会记录 ``$request``）。有日志读权限的人可在 10 分钟
+    有效期内用它轮询绑定状态（不能直接完成绑定），生产建议对 access log 做脱敏/限权。
     """
     identity = _resolve_identity(principal, db)
     try:

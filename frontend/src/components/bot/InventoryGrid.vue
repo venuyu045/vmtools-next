@@ -145,7 +145,7 @@
 
 <script setup lang="ts">
 import { ref, computed } from 'vue'
-import { onMounted } from 'vue'
+import { onBeforeUnmount, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import ItemIcon from '@/components/ItemIcon.vue'
 import { botApi } from '@/api/bot'
@@ -446,10 +446,26 @@ function doDrop(a: string) {
 
 function doRefresh() { cursorSlot.value = -1; emit('refresh') }
 
-// Esc to cancel
+// Esc 取消手持 / 点击空白关闭右键菜单
+//
+// ⚠️ 2026-10-30 审查修复（中等·监听器泄漏）：
+//   原实现用**匿名函数**在 onMounted 里挂 document 监听，且全文件无
+//   onBeforeUnmount → 每开关一次「背包」页签（本组件随抽屉反复挂载/卸载）
+//   就永久新增 2 个 document 监听，闭包还持有已卸载组件的状态
+//   → 监听数量与内存随使用线性增长，且每次按键会执行 N 份重复逻辑。
+//   改为具名 handler + 对称移除。
+function onDocKeydown(e: KeyboardEvent) {
+  if (e.key === 'Escape') { cursorSlot.value = -1; moveFrom.value = -1 }
+}
+function onDocClick() { menu.value.show = false }
+
 onMounted(() => {
-  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { cursorSlot.value = -1; moveFrom.value = -1 } })
-  document.addEventListener('click', () => menu.value.show = false)
+  document.addEventListener('keydown', onDocKeydown)
+  document.addEventListener('click', onDocClick)
+})
+onBeforeUnmount(() => {
+  document.removeEventListener('keydown', onDocKeydown)
+  document.removeEventListener('click', onDocClick)
 })
 </script>
 
