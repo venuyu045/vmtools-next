@@ -103,12 +103,20 @@ def cryptography_missing():
 
 
 class _AssetRowsDB:
-    """``_pack_snapshot`` 只需要 ``db.query(Model).all()``。"""
+    """``_pack_snapshot`` 用到的极简 DB 替身：``db.query(Model).filter(...).all()``。
+
+    ``filter`` 直接返回自身（不解释 SQL 表达式）：真实实现会在 SQL 里筛 ``.zip``，
+    服务层拿回结果后**还会在 Python 里再过滤一次**（防御式），所以替身返回超集
+    不会让测试失去意义 —— 签名/清单逻辑本身仍被完整覆盖。
+    """
 
     def __init__(self, rows):
         self.rows = list(rows)
 
     def query(self, _model):
+        return self
+
+    def filter(self, *_args, **_kwargs):
         return self
 
     def all(self):

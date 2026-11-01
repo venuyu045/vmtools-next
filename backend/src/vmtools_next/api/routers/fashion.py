@@ -59,6 +59,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Reques
 from fastapi.responses import FileResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
+from starlette.concurrency import run_in_threadpool
 
 from vmtools_next.api.deps import get_current_user, get_db, require_site_admin
 from vmtools_next.api.schemas.fashion import (
@@ -408,7 +409,9 @@ async def auth_verify(
             source_ip=source_ip,
         )
         info = await verify_with_session_server(challenge)
-        identity = svc.upsert_identity(
+        # 落库是同步阻塞（SQLite 写 + 可能的唯一约束重查），别在事件循环里做
+        identity = await run_in_threadpool(
+            svc.upsert_identity,
             db,
             mc_uuid=info["mc_uuid"],
             mc_name=info["mc_name"],
@@ -651,6 +654,7 @@ def list_packs(response: Response, db: Session = Depends(get_db)) -> PacksRespon
 def download_pack(
     pack_id: str,
     version: str,
+    db: Session = Depends(get_db),
 ) -> FileResponse:
     """整包 zip 字节流（公开）。
 
@@ -659,13 +663,13 @@ def download_pack(
     同时注册 HEAD：mod 文档 §8 的联调自测用 ``curl -sI``（HEAD）核对
     ``Content-Length`` / ``Content-Type`` / 有无 ``Location``，只注册 GET 会拿到 405。
 
-    ⚠️ 2026-11-01 事故（§六.106）：同 ``get_asset`` —— 不用 ``Depends(get_db)``，
-    否则整包 zip 传输期间会独占一个 DB 连接（大包能占几十秒）。
+    ⚠️ 2026-11-01 事故（§六.106）：**查完 DB 必须立刻 ``db.close()``**，再返回
+    ``FileResponse``。FastAPI 把 ``yield`` 依赖（``get_db``）挂在 ``request_stack`` 上，
+    而该栈是在 ``await response(...)``（= 文件流发完）之后才退出的 —— 只靠依赖收尾，
+    一个 zip 的整个传输期间都会**独占一个 DB 连接**（大包能占几十秒）。
+    这里显式提前关会话（Session.close() 幂等，依赖收尾再关一次无害），
+    既保住事故修复，也保住 ``Depends(get_db)`` 的可注入性（测试能 override）。
     """
-    from vmtools_next.data.db import get_session_factory
-
-    Session = get_session_factory()
-    db = Session()
     try:
         pack = svc.get_pack_asset(db, pack_id, version)
     finally:
@@ -710,23 +714,21 @@ def download_pack(
 # ── 资产（公开，长缓存） ────────────────────────────────────────────────
 
 @router.get("/assets/{asset_key:path}")
-def get_asset(asset_key: str):
+def get_asset(asset_key: str, db: Session = Depends(get_db)):
     """下载资产文件。
 
     公开可读：资产按 sha256 内容寻址、本身不含隐私；且 ``<img src>`` 无法带
     Authorization 头，网页衣柜预览需要匿名可读。响应带 immutable 长缓存。
 
-    ⚠️ 2026-11-01 事故（§六.106）：**本端点不能依赖 ``Depends(get_db)``**。
-    FastAPI 0.139 把 `yield` 依赖挂在 ``request_stack`` 上，而该栈是在
-    ``await response(scope, receive, send)``（= FileResponse **整个文件流发完**）
+    ⚠️ 2026-11-01 事故（§六.106）：**查完 DB 必须立刻 ``db.close()``**，再返回
+    ``FileResponse``。FastAPI 0.139 把 ``yield`` 依赖挂在 ``request_stack`` 上，而该栈
+    是在 ``await response(scope, receive, send)``（= FileResponse **整个文件流发完**）
     之后才退出的。于是每下载一个资产文件都会**独占一个 DB 连接直到传完**；
     时装页一次并发几十个资产 → 连接池（5+10）瞬间打满 → 全站 504。
-    改为「手动开短会话，查完立刻关」，文件流期间不再持有连接。
+    这里显式提前关会话，文件流期间不再持有连接；同时保留 ``Depends(get_db)``，
+    测试仍能 override 注入临时库（事故修复最初把依赖换成手动 ``get_session_factory()``，
+    代价是绕过了 DI：测试注入的临时库失效，只能连到真实库）。
     """
-    from vmtools_next.data.db import get_session_factory
-
-    Session = get_session_factory()
-    db = Session()
     try:
         asset = svc.resolve_asset_file(db, asset_key)
     finally:
@@ -1008,7 +1010,11 @@ async def admin_upload_asset(
             )
     data = await _read_asset_upload(file)
     try:
-        asset = svc.store_asset(
+        # 落盘（最大 64MB 写 + fsync）是**同步阻塞**操作：单 worker 部署下直接
+        # 跑在事件循环里会把 socket.io 推送与其它请求一起卡住，所以丢进线程池。
+        # 会话在等待期间不被事件循环使用，SQLite 连接已设 check_same_thread=False。
+        asset = await run_in_threadpool(
+            svc.store_asset,
             db,
             pack_id=pack_id,
             version=version,
@@ -1055,7 +1061,9 @@ async def admin_upload_pack(
     """
     data = await _read_asset_upload(file)
     try:
-        svc.store_asset(
+        # 同上：zip 校验（可到 128MB）与落盘都是同步 CPU/IO，放线程池，别卡事件循环
+        await run_in_threadpool(
+            svc.store_asset,
             db,
             pack_id=pack_id,
             version=version,
@@ -1063,7 +1071,7 @@ async def admin_upload_pack(
             data=data,
             pack_zip=True,
         )
-        entry = svc.pack_entry(db, pack_id, version)
+        entry = await run_in_threadpool(svc.pack_entry, db, pack_id, version)
     except FashionServiceError as exc:
         raise _http_error(exc)
     if entry is None:

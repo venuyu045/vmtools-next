@@ -46,6 +46,7 @@ from vmtools_next.data.models.fashion import (
     FashionWardrobeModel,
 )
 from loguru import logger
+from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 
 # 槽位 = 时装类别（mod 侧渲染器按类别找模型）
@@ -239,8 +240,6 @@ _CATALOG_CACHE: dict[tuple, tuple[float, list[dict]]] = {}
 _RESOLVE_CACHE: dict[str, tuple[float, dict]] = {}
 # 包清单快照（/packs + resolve 里的 packVersion 都读它）
 _PACK_CACHE: dict[str, tuple[float, dict]] = {}
-# 已上传资产的 storage_path 集合（/assets 回退分支鉴权用；TTL 复用目录缓存）
-_STORAGE_PATHS_CACHE: dict[str, tuple[float, set[str]]] = {}
 # 单个 storage_path 是否已登记（精确查缓存，替代全表扫描；§六.106）
 _STORAGE_PATH_EXISTS_CACHE: dict[str, tuple[float, bool]] = {}
 # resolve 缓存上限（防被大量不同 UUID 刷爆内存）
@@ -253,7 +252,6 @@ def invalidate_caches() -> None:
         _CATALOG_CACHE.clear()
         _RESOLVE_CACHE.clear()
         _PACK_CACHE.clear()
-        _STORAGE_PATHS_CACHE.clear()
         _STORAGE_PATH_EXISTS_CACHE.clear()
 
 
@@ -271,39 +269,6 @@ def _resolve_cache_ttl(settings: Any = None) -> float:
         return float(getattr(cfg, "resolve_cache_ttl_seconds", 5) or 0)
     except (TypeError, ValueError):
         return 0.0
-
-
-def _asset_storage_paths(db: Any, settings: Any = None) -> set[str]:
-    """``fashion_asset.storage_path`` 集合（进程内 TTL 缓存）。
-
-    用途：``GET /assets/{assetKey}`` 的回退分支只服务「目录登记过的静态文件」
-    或「确实存在于 fashion_asset 表的 storage_path」。后者是管理端资产列表
-    预览所必需的（前端用 ``assetUrl(row.storagePath)`` 直接拼 URL）。不在集合
-    里的路径一律 404 —— 否则 asset root 下的 README / DB / 误放文件会被匿名
-    读取（审计 v1.2 P2-3）。
-
-    TTL 复用目录缓存（默认 30s）；管理端上传后 ``invalidate_caches()`` 会清掉
-    它，所以刚上传的资产立刻可预览。
-
-    ⚠️ 2026-11-01 事故（§六.106）：**不要再用 ``db.query(...).all()`` 拉全表**。
-    原实现每次缓存未命中都把 4396 行资产全量物化成 ORM 对象（几百 ms CPU
-    全在事件循环里），且缓存 TTL 30s 一到期就重来；时装页一次并发几十个
-    资产请求 → 连接池瞬间打满 → 全站 504。
-    改为按需精确查询单个 key（``storage_path`` 已有索引），开销从 O(全表)
-    降到 O(1)，且结果仍进同一份缓存。
-    """
-    cfg = _settings(settings)
-    ttl = _catalog_cache_ttl(cfg)
-    now = time.time()
-    if ttl > 0:
-        with _CACHE_LOCK:
-            hit = _STORAGE_PATHS_CACHE.get("all")
-            if hit and hit[0] > now:
-                return hit[1]
-    # 缓存未命中时返回空集合（保守：不放行任何未登记路径）。
-    # 真正的判定改由 ``asset_storage_path_exists(db, key)`` 逐 key 精确查，
-    # 避免这里再做一次全表扫描。
-    return set()
 
 
 def asset_storage_path_exists(db: Any, storage_path: str) -> bool:
@@ -1059,6 +1024,15 @@ def list_wardrobe(db: Any, user_id: str, *, settings: Any = None) -> list[dict]:
 def add_wardrobe_item(db: Any, user_id: str, cosmetic_id: Any) -> tuple[dict, bool]:
     """把一件时装加入衣柜；已收藏时幂等返回 ``(item, False)``。
 
+    **落库用规范 ID**（与 ``put_loadout`` 同一套 ``canonical_loadout_cosmetic_id``
+    规则）：商店页传的是目录原值，历史目录里可能是简单 ID，而 mod 端
+    ``WardrobeCollection`` 拿 ``cosmeticId`` 跟本地已装包的**全局 ID** 比对 ——
+    存简单 ID 会在「同一 localId 分布在多个包」时匹配不上（短 ID 别名有歧义），
+    也会让 ``/wardrobe/me`` 返回一个客户端认不出的形态。
+
+    幂等判定同时看「上报值」和「规范值」：旧版本按简单 ID 存过的行，再次加入
+    时不该因为 ID 形态不同而插出第二条。
+
     Raises:
         FashionServiceError: ``invalid_cosmetic_id``（空 / 超长 / 字符非法，400）、
             ``cosmetic_not_found``（目录里没有或已停用，404）
@@ -1066,23 +1040,34 @@ def add_wardrobe_item(db: Any, user_id: str, cosmetic_id: Any) -> tuple[dict, bo
     # validate_cosmetic_id 同时挡掉空串与 >128 字符（COSMETIC_ID_RE 是 {1,128}）
     cid, _pack_id = validate_cosmetic_id(cosmetic_id)
     # _lookup_catalog_item 在 get_catalog_item 之上补了全局 ID ↔ 简单 ID 的别名
-    # 兜底（与 loadout 同一套规则）：商店页传目录里的原值，这里也能吃到历史数据
-    meta = _lookup_catalog_item(db, cid)
+    # 兜底（与 loadout 同一套规则）：商店页传目录里的原值，这里也能吃到历史数据。
+    # 必须把 catalog 快照传进去 —— 别名兜底（第三级）只在有快照时生效，
+    # 否则「目录是全局 ID、调用方传简单 ID」的反方向永远解析不到。
+    catalog = _catalog_map(db, enabled_only=False)
+    meta = _lookup_catalog_item(db, cid, catalog)
     if meta is None or not bool(meta.get("enabled", True)):
         raise FashionServiceError(
             "cosmetic_not_found", "时装不存在或已下架", status_code=404
         )
-    row = (
-        db.query(FashionWardrobeModel)
-        .filter_by(user_id=str(user_id), cosmetic_id=cid)
-        .first()
+    stored_id = canonical_loadout_cosmetic_id(meta, cid) or cid
+    # 幂等判定要认「同一件时装的任意历史形态」：上报值 / 规范值 / 目录原值
+    # 都算同一件（旧版本按简单 ID 存过、新版按全局 ID 存的都会命中）。
+    candidates = {cid, stored_id, str(meta.get("cosmeticId") or "").strip()}
+    candidates.discard("")
+    row = next(
+        (
+            existing
+            for existing in _wardrobe_rows(db, user_id)
+            if str(getattr(existing, "cosmetic_id", "")) in candidates
+        ),
+        None,
     )
     added = False
     if row is None:
         row = FashionWardrobeModel(
             id=str(uuid_lib.uuid4()),
             user_id=str(user_id),
-            cosmetic_id=cid,
+            cosmetic_id=stored_id,
             added_at=utcnow(),
         )
         db.add(row)
@@ -1092,10 +1077,13 @@ def add_wardrobe_item(db: Any, user_id: str, cosmetic_id: Any) -> tuple[dict, bo
             # 并发双击「加入衣柜」：另一请求先插入了同一行，唯一约束兜底。
             # 这是幂等接口，不该把 409 甩给前端 —— 回滚后按「已存在」处理。
             db.rollback()
-            row = (
-                db.query(FashionWardrobeModel)
-                .filter_by(user_id=str(user_id), cosmetic_id=cid)
-                .first()
+            row = next(
+                (
+                    existing
+                    for existing in _wardrobe_rows(db, user_id)
+                    if str(getattr(existing, "cosmetic_id", "")) in candidates
+                ),
+                None,
             )
             if row is None:  # pragma: no cover - 约束冲突却查不到行，说明库异常
                 raise FashionServiceError(
@@ -1103,7 +1091,19 @@ def add_wardrobe_item(db: Any, user_id: str, cosmetic_id: Any) -> tuple[dict, bo
                 )
         else:
             added = True
-    return _wardrobe_item_dict(cid, getattr(row, "added_at", None), meta), added
+    elif str(getattr(row, "cosmetic_id", "")) != stored_id:
+        # 历史行是简单 ID / 另一种形态：就地升级成目录的规范 ID。
+        # 不新增行（幂等），但让 /wardrobe/me 逐步收敛到客户端能匹配的全局 ID。
+        row.cosmetic_id = stored_id
+        db.commit()
+    return (
+        _wardrobe_item_dict(
+            getattr(row, "cosmetic_id", stored_id),
+            getattr(row, "added_at", None),
+            meta,
+        ),
+        added,
+    )
 
 
 def remove_wardrobe_item(db: Any, user_id: str, cosmetic_id: Any) -> bool:
@@ -1668,8 +1668,22 @@ def _pack_snapshot(db: Any, settings: Any = None) -> dict:
             if hit and hit[0] > now:
                 return hit[1]
 
-    rows = db.query(FashionAssetModel).all() or []
-    zips = [row for row in rows if str(getattr(row, "filename", "") or "").lower().endswith(".zip")]
+    # ⚠️ 2026-11-01 事故（§六.106）同源优化：只在 SQL 里取 .zip 行。
+    # 原实现 `db.query(FashionAssetModel).all()` 会把**全部**资产行（生产 5000+）
+    # 物化成 ORM 对象再在 Python 里过滤 —— 而 /packs 与 resolve/loadout 的
+    # packVersion 都读这份快照，缓存一过期就在请求线程里做一次全表物化。
+    # SQLite 的 LIKE 对 ASCII 大小写不敏感，`func.lower()` 再兜一层保证跨库一致。
+    rows = (
+        db.query(FashionAssetModel)
+        .filter(func.lower(FashionAssetModel.filename).like("%.zip"))
+        .all()
+        or []
+    )
+    zips = [
+        row
+        for row in rows
+        if str(getattr(row, "filename", "") or "").lower().endswith(".zip")
+    ]
     zips.sort(key=lambda r: _dt_sort_key(getattr(r, "created_at", None)), reverse=True)
     packs: list[dict] = []
     versions: dict[str, str] = {}

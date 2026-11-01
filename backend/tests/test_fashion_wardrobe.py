@@ -347,6 +347,51 @@ class TestAddWardrobeItem(_Base):
         self.assertEqual([it["cosmeticId"] for it in listed], ["pack1:cape_dragon"])
         self.assertFalse(listed[0]["missing"])
 
+    def test_add_normalizes_legacy_simple_id_to_catalog_global_id(self):
+        """目录是**全局 ID** 而调用方传的是简单 ID（别名）时，落库必须是全局 ID。
+
+        为什么：mod 的 ``WardrobeCollection`` 拿 ``cosmeticId`` 跟本地已装包的
+        ``CosmeticDefinition#id()``（永远是 ``packId:localId``）比对。若衣柜里存
+        简单 ID，同一 ``localId`` 分布在多个包时短 ID 别名有歧义 → 玩家在游戏里
+        明明收藏了却匹配不上（卡片消失 / 重复）。所以落库统一走
+        ``canonical_loadout_cosmetic_id``，与 ``put_loadout`` 同一套规则。
+        """
+        svc.upsert_catalog_item(self.db, {
+            "cosmeticId": "pack2:angel_wing",
+            "packId": "pack2",
+            "name": "天使翼（全局 ID）",
+            "category": "wings",
+            "assetKey": "pack2/angel.glb",
+        })
+
+        item, added = self.add("angel_wing")  # 传简单 ID（历史别名）
+        self.assertTrue(added)
+        self.assertEqual(item["cosmeticId"], "pack2:angel_wing", "必须落库全局 ID")
+        self.assertEqual(item["name"], "天使翼（全局 ID）")
+        self.assertEqual([row.cosmetic_id for row in self.rows(USER_A)], ["pack2:angel_wing"])
+
+        # 再按全局 ID 加一次：仍是幂等（不能因为形态不同插出第二条）
+        again, added_again = self.add("pack2:angel_wing")
+        self.assertFalse(added_again)
+        self.assertEqual(again["cosmeticId"], "pack2:angel_wing")
+        self.assertEqual(len(self.rows(USER_A)), 1)
+
+    def test_add_legacy_row_then_global_id_is_still_idempotent(self):
+        """旧版本已按简单 ID 存过的行：再按全局 ID 加一次也不能插出第二条。
+
+        且这一次会把行**就地升级**成全局 ID（``canonical_loadout_cosmetic_id`` 规则 2：
+        目录是简单 ID + 上报前缀与 packId 一致 → 保留上报的全局 ID），这样
+        ``/wardrobe/me`` 逐步收敛到 mod 能匹配的形态，又不会多出一条记录。
+        """
+        self.add("cape_dragon")  # 目录是简单 ID + packId=pack1
+        self.assertEqual([row.cosmetic_id for row in self.rows(USER_A)], ["cape_dragon"])
+
+        item, added = self.add("pack1:cape_dragon")
+        self.assertFalse(added, "同一件时装（不同 ID 形态）不该重复插入")
+        self.assertEqual(item["cosmeticId"], "pack1:cape_dragon", "就地升级为全局 ID")
+        self.assertEqual([row.cosmetic_id for row in self.rows(USER_A)], ["pack1:cape_dragon"])
+        self.assertEqual(len(self.rows(USER_A)), 1)
+
 
 # ── 衣柜列表 ────────────────────────────────────────────────────────────
 
@@ -520,13 +565,21 @@ class TestWardrobeApiWiring(_Base):
             raise unittest.SkipTest(f"无法导入路由模块：{exc}")
 
     def test_four_endpoints_registered(self):
+        # 真 fastapi.APIRouter 的 route.path 带 router prefix（/api/fashion），
+        # _stub_env 的假 _Router 不带；断言前统一剥掉前缀，两种环境都能跑。
+        prefix = "/api/fashion"
+
+        def _strip(path: str) -> str:
+            path = str(path or "")
+            return path[len(prefix):] if path.startswith(prefix) else path
+
         table = set()
         for route in getattr(self.api.router, "routes", []):
             if isinstance(route, dict):  # _stub_env 的假 APIRouter
-                table.add((route["method"].upper(), route["path"]))
+                table.add((route["method"].upper(), _strip(route["path"])))
             else:  # 真 fastapi.APIRoute
                 for method in getattr(route, "methods", set()) or set():
-                    table.add((method.upper(), route.path))
+                    table.add((method.upper(), _strip(route.path)))
 
         self.assertIn(("GET", "/wardrobe"), table)
         self.assertIn(("POST", "/wardrobe"), table)

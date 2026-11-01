@@ -360,6 +360,7 @@
           />
           <p class="field-hint mono">
             与 mod 对齐请用 <code>&lt;packId&gt;:&lt;localId&gt;</code>；仅字母/数字/._:-，长度 ≤128。
+            <strong>冒号前缀必须与下方「时装包」字段一致</strong>，否则后端 400。
             编辑时不可改（主键）。
           </p>
         </el-form-item>
@@ -749,8 +750,13 @@ function adminErrorMessage(error: unknown, fallback: string): string {
   if (code === 'invalid_pack_zip') return 'zip 结构不合规：需根目录 pack.json、不能含可执行/隐藏文件、不能有路径穿越'
   if (code === 'pack_id_mismatch') return 'pack.json 里的 id 与 packId 不一致'
   if (code === 'pack_too_large' || code === 'asset_too_large') return '文件超过 64MB 上限'
-  if (code === 'invalid_cosmetic_id') return 'cosmeticId 只允许字母/数字/._:-，长度 ≤128'
   if (code === 'invalid_category') return '槽位（category）不合法'
+  // ⚠️ 不要把 `invalid_cosmetic_id` 压成一句固定的「只允许字母/数字/._:-，长度 ≤128」：
+  // 后端 validate_cosmetic_id 有 5 种更具体的原因（空 / 冒号不是恰好一个 / packId 前缀
+  // 不合规 / localId 字符集 / **前缀与 packId 字段不一致**），文案各不相同。
+  // 最常见的一种恰恰是最后那条（编辑时改了「时装包」、或「填入目录」自动带进来的
+  // packId 与手填前缀冲突），压成字符集提示会把管理员引到错误的修改方向。
+  // 这里直接透传后端的中文 message（fashionErrorMessage 会取 detail.message）。
   const axiosCode = (error as { code?: string })?.code
   if (axiosCode === 'ECONNABORTED') return '请求超时，请检查网络后重试'
   return fashionErrorMessage(error, fallback)
@@ -844,7 +850,12 @@ function fillCatalogFromAsset(asset: FashionAsset): void {
   catalogForm.sha256 = asset.sha256 || ''
   catalogForm.bytes = asset.bytes || 0
   catalogForm.name = (asset.filename || '').replace(/\.[^.]+$/, '')
-  ElMessage.info('已带入资产信息，确认 cosmeticId / 槽位后保存')
+  // 「时装包」已被自动填成资产的 packId：新建的 cosmeticId 若用全局形式，
+  // 冒号前缀必须与它一致（后端 validate_cosmetic_id 强制），这里提前说清楚，
+  // 否则保存时只会看到一句 invalid_cosmetic_id。
+  ElMessage.info(
+    `已带入资产信息（时装包 ${asset.packId || '—'}）。cosmeticId 若用 <packId>:<localId> 形式，前缀必须是 ${asset.packId || '上面的时装包'}`
+  )
 }
 
 function buildCatalogPayload(): CatalogUpsertPayload {
@@ -868,14 +879,46 @@ function buildCatalogPayload(): CatalogUpsertPayload {
   return payload
 }
 
+/**
+ * 目录表单的前端预校验：与后端 `core/fashion_service.py:validate_cosmetic_id` 对齐。
+ *
+ * 为什么不能只靠后端：`invalid_cosmetic_id` 的 5 种原因里，管理员最常踩的是
+ * **全局 ID 的冒号前缀必须等于「时装包」字段**（编辑时改了 packId、或「填入目录」
+ * 自动带进来的 packId 与手填前缀不一致）—— 只发一次 400 往返，用户还得自己猜
+ * 该改哪一边。这里逐条给出「改哪边」的提示。
+ *
+ * @returns 错误文案；空串表示通过
+ */
+function validateCatalogCosmeticId(cosmeticId: string, packId: string): string {
+  if (!cosmeticId) return 'cosmeticId 不能为空'
+  if (!/^[A-Za-z0-9._:-]{1,128}$/.test(cosmeticId)) {
+    return 'cosmeticId 只允许字母/数字/._:-，长度 ≤128'
+  }
+  const colons = (cosmeticId.match(/:/g) || []).length
+  if (colons === 0) return '' // 历史简单 ID：接受（legacy），packId 独立生效
+  if (colons > 1) return 'cosmeticId 只能有一个冒号（形如 <packId>:<localId>）'
+  const [rawPrefix, rawLocal] = cosmeticId.split(':')
+  const prefix = rawPrefix.trim()
+  const local = rawLocal.trim()
+  if (!prefix || !local) return 'cosmeticId 形如 <packId>:<localId>，冒号两段都不能为空'
+  if (!/^[A-Za-z0-9._-]{1,64}$/.test(prefix) || prefix === '.' || prefix === '..' || prefix === 'server' || prefix.startsWith('.')) {
+    return `cosmeticId 的包前缀「${prefix}」不能当目录名：只允许字母/数字/._-，长度 1-64，且不能是 . / .. / server / 点开头`
+  }
+  if (!/^[A-Za-z0-9._-]{1,96}$/.test(local)) {
+    return 'cosmeticId 的 localId 只允许字母/数字/._-，长度 ≤96'
+  }
+  if (packId && packId !== prefix) {
+    return `cosmeticId 的包前缀「${prefix}」必须与「时装包」字段「${packId}」一致：改前缀，或把「时装包」改成 ${prefix}`
+  }
+  return ''
+}
+
 async function saveCatalog(): Promise<void> {
   const cosmeticId = catalogForm.cosmeticId.trim()
-  if (!cosmeticId) {
-    ElMessage.warning('cosmeticId 不能为空')
-    return
-  }
-  if (!/^[A-Za-z0-9._:-]{1,128}$/.test(cosmeticId)) {
-    ElMessage.warning('cosmeticId 只允许字母/数字/._:-，长度 ≤128')
+  const packId = catalogForm.packId.trim()
+  const invalid = validateCatalogCosmeticId(cosmeticId, packId)
+  if (invalid) {
+    ElMessage.warning(invalid)
     return
   }
   catalogDialog.saving = true
@@ -931,6 +974,11 @@ async function removeCatalog(row: AdminCatalogItem): Promise<void> {
   try {
     await fashionApi.adminDeleteCatalog(row.cosmeticId)
     catalogRows.value = catalogRows.value.filter((item) => item.cosmeticId !== row.cosmeticId)
+    // 删掉「最后一页的最后一条」后页码会越界：表格拿到空数组 → 显示 empty-text
+    // 「目录里还没有时装」，而分页器还停在已经不存在的第 N 页（用户以为目录被清空了）。
+    // 与 loadCatalog 同一条夹紧规则。
+    const maxPage = Math.max(1, Math.ceil(filteredCatalogRows.value.length / pageSize))
+    if (catalogPage.value > maxPage) catalogPage.value = maxPage
     ElMessage.success('已删除')
   } catch (error) {
     ElMessage.error(adminErrorMessage(error, '删除失败'))

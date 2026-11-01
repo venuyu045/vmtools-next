@@ -62,9 +62,16 @@
       title="当前账号还没有绑定 Minecraft 身份"
     >
       <template #default>
-        请先到
-        <router-link class="link" to="/fashion/bind">时装绑定</router-link>
-        页输入 mod 显示的 6 位绑定码。
+        <p class="no-identity-line">
+          请先到
+          <router-link class="link" to="/fashion/bind">时装绑定</router-link>
+          页输入 mod 显示的 6 位绑定码。
+        </p>
+        <!-- 衣柜收藏是**账号维度**（不是身份维度）：没绑定时左侧列表整块被这里挡住，
+             但商店页仍然能「加入衣柜」。明确告诉用户收藏不会丢，避免他以为白加了。 -->
+        <p class="no-identity-line mono">
+          你在「时装商店」加入衣柜的时装不会丢失 —— 绑定后回到本页即可管理（穿戴 / 移除）。
+        </p>
       </template>
     </el-alert>
 
@@ -358,7 +365,13 @@
       class="detail-dialog"
     >
       <div v-if="detailItem" class="detail-body">
-        <div class="detail-preview">
+        <!-- el-image 没有 alt prop（`:alt` 只会落到根 div 上），读屏拿不到名称：
+             由容器给 role=img + aria-label，替大图提供可读的替代文本 -->
+        <div
+          class="detail-preview"
+          :role="detailUrl ? 'img' : undefined"
+          :aria-label="detailUrl ? `${displayName(detailItem)} 预览图` : undefined"
+        >
           <el-image
             v-if="detailUrl"
             :src="detailUrl"
@@ -1009,7 +1022,21 @@ async function removeOne(item: WardrobeItem): Promise<void> {
   }
 }
 
-/** 批量移除：确认 → batch-delete → 回读列表并退出管理模式 */
+/**
+ * 批量移除：确认 → batch-delete → 回读列表并退出管理模式。
+ *
+ * **分片提交**：后端 `POST /wardrobe/batch-delete` 的上限是**去重后 500 条**
+ * （`fashion_service.MAX_WARDROBE_BATCH_DELETE`，超出返回 400 `too_many_items`）。
+ * 而「全选」作用于**当前筛选结果（跨分页）**，衣柜件数多时一次勾选可能超过 500 件 ——
+ * 不分片的话用户只会看到一句「一次最多删除 500 件」却无从下手（要么手动取消勾选，
+ * 要么反复操作）。这里按 500 一件一件切开发，逐片累加 `removed`。
+ *
+ * 分片失败时的语义：前面几片可能已经删成功，后面没删 —— 所以失败也要
+ * **把已删的从本地列表摘掉**并提示「已删除 X 件，剩余失败可重试」，否则
+ * 用户重试会把已删的再发一遍（幂等无害，但计数会骗人）。
+ */
+const BATCH_DELETE_CHUNK = 500
+
 async function batchDelete(): Promise<void> {
   if (batchDeleting.value) return
   const ids = [...selectedIds.value]
@@ -1024,13 +1051,20 @@ async function batchDelete(): Promise<void> {
     return // 用户取消
   }
   batchDeleting.value = true
+  let removedTotal = 0
+  const removedIdSet = new Set<string>()
   try {
-    const { data } = await fashionApi.batchRemoveFromWardrobe(ids)
-    // 后端可能只删掉其中一部分（别的标签页已删）：以它返回的 removed 为准显示数量
-    const removedCount = typeof data.removed === 'number' ? data.removed : ids.length
-    // 同单件删除：先本地摘掉，回读失败也不会留下「已经删掉却还在列表里」的卡片
-    const removedIdSet = new Set(ids)
-    wardrobe.value = wardrobe.value.filter((row) => !removedIdSet.has(row.cosmeticId))
+    for (let start = 0; start < ids.length; start += BATCH_DELETE_CHUNK) {
+      const chunk = ids.slice(start, start + BATCH_DELETE_CHUNK)
+      const { data } = await fashionApi.batchRemoveFromWardrobe(chunk)
+      // 后端可能只删掉其中一部分（别的标签页已删）：以它返回的 removed 为准显示数量
+      removedTotal += typeof data.removed === 'number' ? data.removed : chunk.length
+      for (const id of chunk) removedIdSet.add(id)
+      // 每片成功就先从本地摘掉：后面某片失败时，已删的卡片不会留在列表里
+      if (removedIdSet.size > 0) {
+        wardrobe.value = wardrobe.value.filter((row) => !removedIdSet.has(row.cosmeticId))
+      }
+    }
     const dropped = dropWornSelection(removedIdSet)
     // 成功即退出管理模式（并在 loadWardrobe 里清掉勾选）：
     // 一次批量清理通常就结束了，留在管理模式里只剩一个空选择没有意义
@@ -1038,14 +1072,27 @@ async function batchDelete(): Promise<void> {
     await loadWardrobe({ silent: true })
     if (dropped.length > 0) {
       ElMessage.warning(
-        `已从衣柜移除 ${removedCount} 件，同时取消了${slotLabelsOf(dropped)}槽位的穿戴（记得点保存穿戴）`
+        `已从衣柜移除 ${removedTotal} 件，同时取消了${slotLabelsOf(dropped)}槽位的穿戴（记得点保存穿戴）`
       )
     } else {
-      ElMessage.success(`已从衣柜移除 ${removedCount} 件时装`)
+      ElMessage.success(`已从衣柜移除 ${removedTotal} 件时装`)
     }
   } catch (error) {
-    // 失败保留勾选，用户可直接重试（不用重新挑一遍）
-    ElMessage.error(fashionErrorMessage(error, '批量移除失败'))
+    // 部分分片可能已经删成功：先把它们从本地列表摘掉、收敛勾选，再报错
+    if (removedIdSet.size > 0) {
+      wardrobe.value = wardrobe.value.filter((row) => !removedIdSet.has(row.cosmeticId))
+      dropWornSelection(removedIdSet)
+      selectedIds.value = new Set(
+        [...selectedIds.value].filter((id) => !removedIdSet.has(id))
+      )
+      await loadWardrobe({ silent: true })
+      ElMessage.error(
+        `${fashionErrorMessage(error, '批量移除失败')}（已成功移除 ${removedTotal} 件，剩余可重试）`
+      )
+    } else {
+      // 一件都没删成功：保留勾选，用户可直接重试（不用重新挑一遍）
+      ElMessage.error(fashionErrorMessage(error, '批量移除失败'))
+    }
   } finally {
     batchDeleting.value = false
   }
@@ -1349,6 +1396,18 @@ onBeforeRouteLeave(async () => {
 
 .no-identity-alert {
   margin-bottom: var(--space-4);
+}
+
+/* 未绑定身份时的两行说明：第一行给操作路径，第二行说明收藏不会丢 */
+.no-identity-line {
+  margin: 0;
+  line-height: 1.8;
+}
+
+.no-identity-line + .no-identity-line {
+  margin-top: var(--space-1);
+  color: var(--text-secondary);
+  font-size: 12px;
 }
 
 .link {

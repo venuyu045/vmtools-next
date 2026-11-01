@@ -119,7 +119,7 @@ class FashionAssetModel(Base):
     bytes = Column(Integer, nullable=False, default=0)
     # 相对 asset_dir 的落盘路径（禁止绝对路径 / ..）
     # index=True：`/assets/{key}` 的回退分支按 storage_path 精确查（见
-    # core.fashion_service._asset_storage_paths）；无索引时会退化成全表扫描，
+    # core.fashion_service.asset_storage_path_exists）；无索引时会退化成全表扫描，
     # 4396 行资产下每个资产请求都全表扫一遍 —— 时装页一次拉几十个资产，
     # 直接把连接池打满（2026-11-01 事故 §六.106）。
     storage_path = Column(String, nullable=False, default="", index=True)

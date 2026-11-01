@@ -313,8 +313,8 @@ sequenceDiagram
 
 ### 5.4 我的衣柜（收藏制）——`/wardrobe`（网站专用）
 
-> **只服务网站**，mod 不调用（mod 没有「收藏」概念，它只读 `/loadout/me`）。
-> 鉴权一律 **网页登录 JWT**（`api/deps.py:get_current_user`），维度是**网站账号**：
+> **主要服务网站**，mod 只在 §5.5 用精简版 `/wardrobe/me` 拉同一份收藏（v1.3.0 起）。
+> 本组接口鉴权一律 **网页登录 JWT**（`api/deps.py:get_current_user`），维度是**网站账号**：
 > 一个账号绑定的多个 MC 身份共享同一份衣柜；穿戴配置（§5）才是身份维度。
 
 「衣柜」是**玩家主动收藏的时装**，不是站点目录的子集查询：商店页点「加入衣柜」才进衣柜，
@@ -342,8 +342,9 @@ sequenceDiagram
 | `missing` | 目录里已删除或已停用（`enabled=false`）→ **条目仍返回**（玩家才删得掉），此时不可穿戴；目录行还在时 `name` 等字段用残留值，目录行已删则给空串 |
 | `added` | `POST` 的 `added=false` 表示本来就在衣柜里（幂等，仍是 `200`），前端不必当失败 |
 | `removed` | `DELETE` / 批量删除的 `removed` 是**真正删掉**的数量；不存在的 id 静默忽略（幂等） |
+| **落库 ID（v1.3.1 起）** | 一律存**规范全局 ID** `packId:localId`（`canonical_loadout_cosmetic_id`，与 `PUT /loadout` 同一套规则）。历史「简单 ID」行在**再次加入**时就地升级（不新增行）；幂等判定同时认「上报值 / 规范值 / 目录原值」。原因：mod 端拿 `cosmeticId` 跟本地已装包的全局 ID 比对，存简单 ID 会在「同一 localId 分布在多个包」时匹配不上（卡片显示「未下载」且点了不动） |
 | 目录校验 | 加入衣柜时 cosmeticId 必须在目录里且 `enabled=true`，否则 `404 cosmetic_not_found`；空/超长 → `400 invalid_cosmetic_id` |
-| 批量上限 | 去重后 **500** 条（`MAX_WARDROBE_BATCH_DELETE`），超出 `400 too_many_items`；空数组 `400 empty_selection` |
+| 批量上限 | 去重后 **500** 条（`MAX_WARDROBE_BATCH_DELETE`），超出 `400 too_many_items`；空数组 `400 empty_selection`。前端「全选」作用于筛选结果全集（跨分页），所以前端按 500 **分片提交**（v1.3.1 起） |
 | 外键 | `fashion_wardrobe.user_id → users.id`；`cosmetic_id` **故意不做外键**（删目录不该清空玩家衣柜） |
 | 唯一约束 | `(user_id, cosmetic_id)`，并发重复加入靠它兜底（回滚重查后仍返回 `added=false`，不抛 409） |
 
@@ -369,18 +370,21 @@ Authorization: Bearer <fashion token 或 网页 JWT>
 
 | 字段 | 说明 |
 |---|---|
-| `linked` | 该 MC 身份是否已绑定网站账号。**`false` 时 `items` 必为空**，客户端必须理解成「没有衣柜可参照」→ 退回显示本地已装全部，而不是"衣柜是空的" |
-| `items[].cosmeticId` | 全局 ID `<packId>:<localId>` |
+| `linked` | 该 MC 身份是否已绑定网站账号。**`false` 时 `items` 必为空**，客户端必须理解成「没有衣柜可参照」→ 退回显示本地已装全部，而不是"衣柜是空的"。服务端省略该字段时，mod 按「`items` 非空即已绑定」推断（v1.3.1 起） |
+| `items[].cosmeticId` | 全局 ID `<packId>:<localId>`（v1.3.1 起服务端保证是规范全局 ID，见 §5.4「落库 ID」） |
 | `items[].name` / `category` / `packId` | 供"本地没装包"时也能在界面列出这件时装 |
-| `items[].missing` | 目录里已删除/已停用：mod 显示但禁止穿戴 |
+| `items[].missing` | 目录里已删除/已停用：mod **显示但禁止穿戴**（v1.3.1 起 GUI 真的实现了：置灰 + 「已下架」角标 + 点击不下载不穿戴 + 保存时自动丢弃该槽位） |
 
 客户端行为（`VMFashion-mod` 的 `WardrobeCollection` + `SyncService#refreshWardrobe`）：
 
 - 进服认证成功后拉一次；此后每 **5 分钟**最多一次；绑定成功后再拉一次（`linked` 会变）；
 - 401 → 走 mod 既有的重新认证流程，**只重试一次**（防认证风暴）；
 - 404/405/501（自建后端没实现这个端点）→ 记一次日志后本会话不再重试；
-- 其它失败 → 指数退避（30s 起，封顶 5min），**绝不清空**已有收藏；
-- 拉到后落盘 `config/vmfashion/wardrobe.json`（原子写），断网/后端挂了时用缓存过滤。
+- 其它失败 → 退避（30s 起、按 2 倍递增、封顶 5min），**绝不清空**已有收藏。
+  退避只作用于手动刷新与开界面时的节流刷新；自动刷新本身由 tick 的 5 分钟节流驱动，
+  实际效果是「失败后最多 5 分钟自动再试一次、且不清缓存」（v1.3.1 起文档按实现修正）；
+- 拉到后落盘 `config/vmfashion/wardrobe.json`（原子写 + 记录归属 `owner = <mcUuid>|<apiBaseUrl>`，
+  换号/换后端自动清空，避免串号），断网/后端挂了时用缓存过滤。
 
 ---
 

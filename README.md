@@ -126,7 +126,7 @@ npm install
 | **账号绑定** | 游戏内 `/vmfashion bind` 得到 6 位绑定码 → 本站「时装绑定」页输入 → 一个网站账号可绑多个 MC 账号 |
 | **双路认证** | 正版走 `sessionserver.mojang.com`，皮肤站走 Yggdrasil（**只信任白名单内的地址**，防 SSRF）；后端用 `hasJoined` 反查并**比对 UUID**，不做密码登录 |
 | **时装商店** | `/fashion/store`：目录网格（缩略图 / 槽位 / 所属时装包）、搜索、按槽位筛选、分页、详情大图；卡片「加入衣柜」把时装收进自己的衣柜（已在衣柜则变为「去穿戴 →」深链到衣柜并定位该件时装） |
-| **网页衣柜** | `/fashion/wardrobe`：**只显示自己在商店里加入衣柜的时装**（收藏制，不再展示全站目录）；按槽位（披风/翅膀/头饰/背饰/宠物/光环）挑选、调缩放、保存；支持单件移除与**批量管理（勾选 / 全选 / 删除选中）**；进游戏自动生效，游戏内换装也会实时回传 |
+| **网页衣柜** | `/fashion/wardrobe`：**只显示自己在商店里加入衣柜的时装**（收藏制，不再展示全站目录）；按槽位（披风/翅膀/头饰/背饰/宠物/光环）挑选、调缩放、保存；支持单件移除与**批量管理（勾选 / 全选 / 删除选中，超过后端 500 上限自动分片提交）**；目录里已删除/停用的条目仍显示并标「已下架」（可删不可穿）；进游戏自动生效，游戏内换装也会实时回传 |
 | **时装管理端** | `/fashion/admin`（仅 site_admin）：目录管理（增删改查 / 启用开关 / 排序 / 资产缺失徽标）、资产管理（上传 + 一键填入目录）、时装包（上传 zip 发布 / 下架，409 `pack_in_use` 有专门引导）；上传带进度 / 网速 / ETA 与大小预检 |
 | **批量解析** | 进服时 `POST /loadouts/resolve` 一次最多 200 个 UUID，只回 `assetKey` 级元数据（热路径，5 秒缓存） |
 | **时装包下发** | `GET /packs` 清单 + `GET /packs/{id}/{version}/download` 整包 zip：200 直出、`Content-Length` 精确、**不重定向**、可选 Ed25519 签名；客户端按 sha256 校验后安全解压 |
@@ -197,8 +197,8 @@ curl -s -X DELETE $BASE/admin/packs/wings/1.2.0 -H "Authorization: Bearer $TOKEN
 4. **签名与严格模式**：`cryptography` 已随部署依赖安装（`pip install -e ".[signing]"`，Docker 为 `.[dev,signing]`）；
    配置 `VMT_FASHION__PACK_SIGNING_KEY_B64` 后清单即带 `signature`。**在确认签名生效之前不要**让玩家在客户端开
    `requireSignature`，否则会拒绝全部服务端包。
-5. **测试**：`pytest tests/test_fashion_*.py -q`（206 条用例 + 42 subtests，覆盖认证 / 契约 / 包级下发 /
-   zip 安全校验 / Ed25519 真签真验 / TestClient 管理端 401·403 / HEAD 下载头）。
+5. **测试**：`pytest tests/test_fashion_*.py -q`（**250 条用例 + 42 subtests**，覆盖认证 / 契约 / 包级下发 /
+   zip 安全校验 / Ed25519 真签真验 / TestClient 管理端 401·403 / HEAD 下载头 / 衣柜收藏制与 `/wardrobe/me`）。
 
 ## 项目结构
 

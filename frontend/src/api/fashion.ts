@@ -376,15 +376,42 @@ export function fashionErrorCode(error: unknown): string {
   return ''
 }
 
-/** 后端错误的中文提示 */
+/**
+ * 后端错误的中文提示。
+ *
+ * 优先级：结构化 `detail.message`（后端所有业务错误都是中文）→ 字符串 `detail`
+ * （400 业务错误是中文）→ **按 HTTP 状态码兜底中文** → 调用方给的 fallback。
+ *
+ * 为什么最后要按状态码兜底：鉴权类错误（`api/deps.py:get_current_user`）的
+ * `detail` 是**英文字符串**（"Invalid or expired token" / "User not approved" /
+ * require_site_admin 的 "Only site admin can access this resource"），
+ * 直接原样弹给用户就是一句英文；401 还会和 client.ts 拦截器的「登录已过期」
+ * 提示重复出现。四个时装页面都走这个函数，所以在这里统一兜底。
+ */
 export function fashionErrorMessage(error: unknown, fallback = '操作失败'): string {
-  const err = error as { response?: { data?: { detail?: unknown } } }
+  const err = error as {
+    response?: { data?: { detail?: unknown }; status?: number }
+  }
   const detail = err?.response?.data?.detail
+  const status = typeof err?.response?.status === 'number' ? err.response.status : 0
+  // 401：登录态失效由拦截器统一提示 + 跳登录，这里不再把英文串弹出来
+  if (status === 401) return '登录已过期，请重新登录'
   if (detail && typeof detail === 'object' && 'message' in detail) {
     const message = (detail as { message: unknown }).message
     if (typeof message === 'string' && message.trim()) return message.trim()
   }
-  if (typeof detail === 'string' && detail.trim()) return detail
+  if (typeof detail === 'string' && detail.trim()) {
+    // 403 的字符串 detail 是英文（require_site_admin / User not approved）→ 中文兜底；
+    // 业务错误（fashion_service 的 4xx）是结构化对象，不会走到这里
+    if (status === 403) return '没有权限执行该操作（403）'
+    return detail.trim()
+  }
+  if (status === 403) return '没有权限执行该操作（403）'
+  if (status === 413) return '文件超过 64MB 上限（nginx 直接拒绝），请压缩或拆分后再传'
+  if (status === 429) {
+    const retry = fashionRetryAfter(error)
+    return retry ? `操作太频繁，请等待 ${retry} 秒后再试` : '操作太频繁，请稍后再试'
+  }
   return fallback
 }
 

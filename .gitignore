@@ -55,3 +55,6 @@ backend/logs/
 
 # mineflayer 运行时生成的账号缓存（空壳，但可能被写入令牌）
 mineflayer-bots/launcher_accounts.json
+
+# 审查/研究产物（不进仓库）
+/research/

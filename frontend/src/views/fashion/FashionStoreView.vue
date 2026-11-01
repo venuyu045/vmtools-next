@@ -150,7 +150,13 @@
       class="detail-dialog"
     >
       <div v-if="detailItem" class="detail-body">
-        <div class="detail-preview">
+        <!-- el-image 没有 alt prop（`:alt` 只会落到根 div 上），读屏拿不到名称：
+             由容器给 role=img + aria-label，替大图提供可读的替代文本 -->
+        <div
+          class="detail-preview"
+          :role="detailUrl ? 'img' : undefined"
+          :aria-label="detailUrl ? `${displayName(detailItem)} 预览图` : undefined"
+        >
           <el-image
             v-if="detailUrl"
             :src="detailUrl"
@@ -231,6 +237,17 @@ const detailItem = ref<CatalogItem | null>(null)
 // 商店页只需要知道「哪些 cosmeticId 已经在衣柜里」，所以只存 id 集合，
 // 不缓存整份 WardrobeItem（衣柜页才是它的唯一渲染方）。
 const wardrobeIds = ref<Set<string>>(new Set())
+/**
+ * 衣柜里「全局 ID」的 localId 别名集合（`pack:local` → `local`）。
+ *
+ * 为什么要单独一个集合：目录里可能还有历史**简单 ID** 条目（`backboard`），
+ * 而衣柜里存的是同一件时装的**全局 ID**（`example:backboard`，mod 或旧版加入的）。
+ * 只做精确匹配时这类条目会一直显示「加入衣柜」，点下去才被后端告知「已经在衣柜里」。
+ *
+ * 不把简单 ID 直接塞进 `wardrobeIds` 的原因：页头「我的衣柜 N 件」用的是
+ * `wardrobeIds.size`，混入别名会把件数算多。
+ */
+const wardrobeLocalIds = ref<Set<string>>(new Set())
 const wardrobeError = ref(false)
 const loadingWardrobe = ref(false)
 // 正在「加入衣柜」的 cosmeticId：给按钮上 loading，防连点（同一件重复点只会发一次请求）
@@ -335,8 +352,23 @@ function goWardrobe(item?: CatalogItem): void {
   void router.push({ path: '/fashion/wardrobe', query })
 }
 
+/** 全局 ID 的 localId（`pack:local` → `local`；没有冒号时原样返回），与衣柜页同规则 */
+function localIdOf(cosmeticId: string): string {
+  const idx = cosmeticId.indexOf(':')
+  return idx > 0 && idx < cosmeticId.length - 1 ? cosmeticId.slice(idx + 1) : cosmeticId
+}
+
+/**
+ * 这件时装是否已在衣柜里。
+ *
+ * 精确匹配优先；**目录是历史简单 ID** 时再按 localId 兜底（衣柜里可能存的是
+ * 同一件时装的全局 ID）。两个不同的全局 ID（不同包同名 localId）不算同一件，
+ * 避免串包误标「已在衣柜」。
+ */
 function isInWardrobe(item: CatalogItem): boolean {
-  return wardrobeIds.value.has(item.cosmeticId)
+  if (wardrobeIds.value.has(item.cosmeticId)) return true
+  if (item.cosmeticId.includes(':')) return false
+  return wardrobeLocalIds.value.has(item.cosmeticId)
 }
 
 /**
@@ -354,7 +386,17 @@ async function addToWardrobe(item: CatalogItem): Promise<void> {
   try {
     const { data } = await fashionApi.addToWardrobe(cosmeticId)
     // 幂等：added=false 表示本来就在（例如另一个标签页刚加过）→ 同样切成「已在衣柜」
-    wardrobeIds.value = new Set(wardrobeIds.value).add(cosmeticId)
+    //
+    // 以**响应里的落库 ID** 为准：后端 `add_wardrobe_item` 会把历史简单 ID 就地升级成
+    // 目录的规范全局 ID（`canonical_loadout_cosmetic_id`），只认自己发出去的值会出现
+    // 「加了却还显示加入衣柜」（v1.3.0 审查 F2）。上报值不塞进 wardrobeIds —— 页头件数
+    // 用的是它的 size，混入别名会算多；简单 ID 的匹配交给 wardrobeLocalIds。
+    const storedId = (data.item && data.item.cosmeticId) || cosmeticId
+    wardrobeIds.value = new Set(wardrobeIds.value).add(storedId)
+    const storedLocal = localIdOf(storedId)
+    if (storedLocal !== storedId) {
+      wardrobeLocalIds.value = new Set(wardrobeLocalIds.value).add(storedLocal)
+    }
     if (data.added) ElMessage.success(`已把「${displayName(item)}」加入衣柜`)
     else ElMessage.info(`「${displayName(item)}」已经在你的衣柜里了`)
   } catch (error) {
@@ -379,7 +421,16 @@ async function loadWardrobe(): Promise<void> {
   try {
     const { data } = await fashionApi.wardrobe()
     if (seq !== wardrobeSeq) return
-    wardrobeIds.value = new Set((data.items || []).map((item) => item.cosmeticId))
+    // 精确 ID 与 localId 别名分开收集：前者用于「件数」，后者只用于匹配历史简单 ID
+    const ids = new Set<string>()
+    const localIds = new Set<string>()
+    for (const item of data.items || []) {
+      ids.add(item.cosmeticId)
+      const local = localIdOf(item.cosmeticId)
+      if (local !== item.cosmeticId) localIds.add(local)
+    }
+    wardrobeIds.value = ids
+    wardrobeLocalIds.value = localIds
   } catch (error) {
     if (seq !== wardrobeSeq) return
     wardrobeError.value = true
