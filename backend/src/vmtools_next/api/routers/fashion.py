@@ -26,6 +26,10 @@ mod（Bearer fashion token）::
     DELETE /api/fashion/identities/{id}          （解绑）
     PUT    /api/fashion/loadout                  （衣柜页保存，同一套接口）
     GET    /api/fashion/loadout/me
+    GET    /api/fashion/wardrobe                 （我的衣柜，user 维度收藏）
+    POST   /api/fashion/wardrobe                 （加入衣柜，幂等）
+    DELETE /api/fashion/wardrobe/{cosmeticId}    （单件删除）
+    POST   /api/fashion/wardrobe/batch-delete    （批量删除）
 
 管理端（site_admin）::
 
@@ -86,6 +90,13 @@ from vmtools_next.api.schemas.fashion import (
     ResolveResponse,
     VerifyRequest,
     VerifyResponse,
+    WardrobeAddRequest,
+    WardrobeAddResponse,
+    WardrobeBatchDeleteRequest,
+    WardrobeBatchDeleteResponse,
+    WardrobeItemOut,
+    WardrobeListResponse,
+    WardrobeRemoveResponse,
 )
 from vmtools_next.core import fashion_service as svc
 from vmtools_next.core.fashion_auth import (
@@ -504,6 +515,76 @@ def resolve_loadouts(
     except FashionServiceError as exc:
         raise _http_error(exc)
     return ResolveResponse(**payload)
+
+
+# ── 我的衣柜（收藏，网页 JWT / user 维度） ──────────────────────────────
+#
+# 与 /loadout 的分工：loadout 是「穿在身上什么」（MC 身份维度，mod 也读写）；
+# wardrobe 是「我收藏了哪些时装」（网站账号维度），只服务商店页/衣柜页。
+# 一个账号绑定的多个 MC 身份共享同一份衣柜，所以鉴权只认网页 JWT（get_current_user），
+# 不接受 mod 的 fashion token —— mod 侧没有「收藏」概念。
+
+@router.get("/wardrobe", response_model=WardrobeListResponse)
+def list_wardrobe(
+    user: UserModel = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> WardrobeListResponse:
+    """我的衣柜（按加入时间倒序；目录已删除/已停用的条目仍返回并标 ``missing``）。"""
+    items = svc.list_wardrobe(db, str(user.id))
+    return WardrobeListResponse(items=[WardrobeItemOut(**item) for item in items])
+
+
+@router.post("/wardrobe", response_model=WardrobeAddResponse)
+def add_wardrobe_item(
+    body: WardrobeAddRequest,
+    user: UserModel = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> WardrobeAddResponse:
+    """把一件时装加入衣柜。
+
+    幂等：已经在衣柜里时返回 ``added=false`` + 该条目（仍是 200），前端不必区分
+    「首次加入」和「重复点击」的失败态。目录里没有 / 已停用 → 404
+    ``cosmetic_not_found``；空或超长 cosmeticId → 400 ``invalid_cosmetic_id``。
+    """
+    try:
+        item, added = svc.add_wardrobe_item(db, str(user.id), body.cosmetic_id)
+    except FashionServiceError as exc:
+        raise _http_error(exc)
+    return WardrobeAddResponse(ok=True, added=added, item=WardrobeItemOut(**item))
+
+
+@router.post("/wardrobe/batch-delete", response_model=WardrobeBatchDeleteResponse)
+def batch_delete_wardrobe_items(
+    body: WardrobeBatchDeleteRequest,
+    user: UserModel = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> WardrobeBatchDeleteResponse:
+    """批量删除（衣柜页「全选删除」）。
+
+    ``removed`` 是**真正删掉**的条数：不存在的 id 静默忽略（并发删除、目录被删的
+    残留条目都走这条路径，不该让整批失败）。空数组 → 400 ``empty_selection``；
+    去重后超过 500 条 → 400 ``too_many_items``。
+    """
+    try:
+        removed = svc.remove_wardrobe_items(db, str(user.id), body.cosmetic_ids)
+    except FashionServiceError as exc:
+        raise _http_error(exc)
+    return WardrobeBatchDeleteResponse(ok=True, removed=removed)
+
+
+@router.delete("/wardrobe/{cosmetic_id}", response_model=WardrobeRemoveResponse)
+def delete_wardrobe_item(
+    cosmetic_id: str,
+    user: UserModel = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> WardrobeRemoveResponse:
+    """单件删除（幂等：不在衣柜里时 ``removed=false``，仍是 200）。
+
+    cosmeticId 里可能有冒号（``pack1:cape_dragon``），作为单个路径段直接传即可，
+    前端记得 ``encodeURIComponent``。
+    """
+    removed = svc.remove_wardrobe_item(db, str(user.id), cosmetic_id)
+    return WardrobeRemoveResponse(ok=True, removed=removed)
 
 
 # ── 包级下发（公开，mod 自动下发用） ────────────────────────────────────

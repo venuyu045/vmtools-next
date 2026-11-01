@@ -311,6 +311,44 @@ sequenceDiagram
 
 ---
 
+### 5.4 我的衣柜（收藏制）——`/wardrobe`（网站专用）
+
+> **只服务网站**，mod 不调用（mod 没有「收藏」概念，它只读 `/loadout/me`）。
+> 鉴权一律 **网页登录 JWT**（`api/deps.py:get_current_user`），维度是**网站账号**：
+> 一个账号绑定的多个 MC 身份共享同一份衣柜；穿戴配置（§5）才是身份维度。
+
+「衣柜」是**玩家主动收藏的时装**，不是站点目录的子集查询：商店页点「加入衣柜」才进衣柜，
+衣柜页左侧只渲染这份收藏（历史行为是直接渲染全站目录，玩家反馈「衣柜里全是时装」后改的）。
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/api/fashion/wardrobe` | 我的衣柜，按 `addedAt` **倒序** |
+| POST | `/api/fashion/wardrobe` | `{cosmeticId}` 加入衣柜，**幂等** |
+| DELETE | `/api/fashion/wardrobe/{cosmeticId}` | 单件移除，**幂等**（含冒号的 id 前端要 `encodeURIComponent`） |
+| POST | `/api/fashion/wardrobe/batch-delete` | `{cosmeticIds:[…]}` 批量移除（衣柜页「全选删除」） |
+
+`GET` 响应 `200`：
+
+```json
+{ "items": [
+  { "cosmeticId": "lw_angel:angel", "name": "Angel Wings", "category": "wings",
+    "packId": "lw_angel", "assetKey": "lw_angel/1.0.0/xxx.webp", "sha256": "…", "bytes": 5670,
+    "sortOrder": 0, "addedAt": "2026-11-01T03:04:15.346360+00:00", "missing": false }
+] }
+```
+
+| 规则 | 说明 |
+|---|---|
+| `missing` | 目录里已删除或已停用（`enabled=false`）→ **条目仍返回**（玩家才删得掉），此时不可穿戴；目录行还在时 `name` 等字段用残留值，目录行已删则给空串 |
+| `added` | `POST` 的 `added=false` 表示本来就在衣柜里（幂等，仍是 `200`），前端不必当失败 |
+| `removed` | `DELETE` / 批量删除的 `removed` 是**真正删掉**的数量；不存在的 id 静默忽略（幂等） |
+| 目录校验 | 加入衣柜时 cosmeticId 必须在目录里且 `enabled=true`，否则 `404 cosmetic_not_found`；空/超长 → `400 invalid_cosmetic_id` |
+| 批量上限 | 去重后 **500** 条（`MAX_WARDROBE_BATCH_DELETE`），超出 `400 too_many_items`；空数组 `400 empty_selection` |
+| 外键 | `fashion_wardrobe.user_id → users.id`；`cosmetic_id` **故意不做外键**（删目录不该清空玩家衣柜） |
+| 唯一约束 | `(user_id, cosmetic_id)`，并发重复加入靠它兜底（回滚重查后仍返回 `added=false`，不抛 409） |
+
+---
+
 ## 6. 包级下发（时装包 zip）
 
 > 为什么需要这一层：`resolve` / `loadout/me` 是**按单件资源**设计的（`assetKey` 是单个文件），
@@ -565,6 +603,8 @@ mod 端建议：先看本地 `sha256` 是否已有；没有才下载，下载后
 | `unsupported_asset_type` | 400 | 扩展名不在白名单（png/jpg/jpeg/webp/gif/glb/gltf/bin/ogg/wav/json/zip/bbmodel） |
 | `cosmetic_not_found` | 404 | 管理端引用的 `cosmeticId` 在目录里不存在（`POST /admin/assets` 的 `cosmetic_id`、`PUT /admin/catalog/{id}`） |
 | `rate_limited` | 429 | challenge / device-approve / device-start 太频繁；响应带 `Retry-After: 60`（秒） |
+| `empty_selection` | 400 | 我的衣柜批量删除时 `cosmeticIds` 去重后为空（§5.4） |
+| `too_many_items` | 400 | 槽位超过 8 个（`PUT /loadout`）；**我的衣柜**批量删除去重后超过 500 条也用这个 code（§5.4） |
 
 ---
 

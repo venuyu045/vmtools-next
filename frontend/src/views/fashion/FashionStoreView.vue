@@ -4,12 +4,23 @@
       <div>
         <h2 class="page-title">时装商店</h2>
         <p class="page-subtitle mono">
-          浏览站点全部时装 · 挑中后到「我的衣柜」穿戴，游戏内 mod 会同步生效
+          浏览站点全部时装 · 点「加入衣柜」收藏后才会出现在「我的衣柜」，穿戴后游戏内 mod 会同步生效
         </p>
       </div>
       <div class="head-actions">
         <span class="stat-chip mono">{{ filteredCatalog.length }} 件</span>
-        <el-button size="small" text :loading="loading" :disabled="loading" @click="loadCatalog">
+        <!-- 衣柜件数用「已加入收藏」的集合大小，而不是目录条数：用户在商店页
+             一眼就能确认刚才的「加入衣柜」有没有生效 -->
+        <span class="stat-chip mono" :title="wardrobeError ? '衣柜读取失败，点击「刷新」重试' : '已加入衣柜的时装数量'">
+          我的衣柜 {{ wardrobeChipText }}
+        </span>
+        <el-button
+          size="small"
+          text
+          :loading="loading || loadingWardrobe"
+          :disabled="loading || loadingWardrobe"
+          @click="loadAll"
+        >
           刷新
         </el-button>
         <el-button size="small" type="primary" plain @click="goWardrobe">去我的衣柜</el-button>
@@ -46,7 +57,8 @@
           title="时装目录加载失败"
         >
           <template #default>
-            <el-button size="small" text type="primary" @click="loadCatalog">重试</el-button>
+            <!-- 目录和衣柜是并行加载的：重试时一起重来，避免「目录好了但衣柜还是空的」 -->
+            <el-button size="small" text type="primary" @click="loadAll">重试</el-button>
           </template>
         </el-alert>
 
@@ -86,9 +98,32 @@
                 </div>
                 <div class="item-actions">
                   <el-button size="small" text class="detail-btn" @click="openDetail(item)">详情</el-button>
-                  <el-button size="small" text type="primary" class="equip-btn" @click="goWardrobe(item)">
-                    去穿戴 →
-                  </el-button>
+                  <div class="action-right">
+                    <!-- 已在衣柜：状态标签 + 去穿戴入口；未加入：主按钮「加入衣柜」 -->
+                    <span v-if="isInWardrobe(item)" class="ward-tag">已在衣柜 ✓</span>
+                    <el-button
+                      v-if="isInWardrobe(item)"
+                      size="small"
+                      text
+                      type="primary"
+                      class="equip-btn"
+                      @click="goWardrobe(item)"
+                    >
+                      去穿戴 →
+                    </el-button>
+                    <el-button
+                      v-else
+                      size="small"
+                      text
+                      type="primary"
+                      class="equip-btn"
+                      :loading="addingIds.has(item.cosmeticId)"
+                      :disabled="addingIds.has(item.cosmeticId)"
+                      @click="addToWardrobe(item)"
+                    >
+                      加入衣柜
+                    </el-button>
+                  </div>
                 </div>
               </div>
             </article>
@@ -147,7 +182,20 @@
       </div>
       <template #footer>
         <el-button @click="detailOpen = false">关闭</el-button>
-        <el-button type="primary" @click="goWardrobe(detailItem || undefined)">去我的衣柜穿戴</el-button>
+        <!-- 详情弹窗与卡片同款动作：未加入 → 加入衣柜；已加入 → 状态 + 去穿戴 -->
+        <template v-if="detailItem">
+          <span v-if="isInWardrobe(detailItem)" class="ward-tag dialog-ward-tag">已在衣柜 ✓</span>
+          <el-button
+            v-if="!isInWardrobe(detailItem)"
+            type="primary"
+            :loading="addingIds.has(detailItem.cosmeticId)"
+            :disabled="addingIds.has(detailItem.cosmeticId)"
+            @click="addToWardrobe(detailItem)"
+          >
+            加入衣柜
+          </el-button>
+          <el-button v-else type="primary" @click="goWardrobe(detailItem)">去穿戴 →</el-button>
+        </template>
       </template>
     </el-dialog>
   </div>
@@ -179,8 +227,19 @@ const brokenThumbs = ref<Set<string>>(new Set())
 const detailOpen = ref(false)
 const detailItem = ref<CatalogItem | null>(null)
 
+// ── 我的衣柜（收藏制）──
+// 商店页只需要知道「哪些 cosmeticId 已经在衣柜里」，所以只存 id 集合，
+// 不缓存整份 WardrobeItem（衣柜页才是它的唯一渲染方）。
+const wardrobeIds = ref<Set<string>>(new Set())
+const wardrobeError = ref(false)
+const loadingWardrobe = ref(false)
+// 正在「加入衣柜」的 cosmeticId：给按钮上 loading，防连点（同一件重复点只会发一次请求）
+const addingIds = ref<Set<string>>(new Set())
+
 // 目录请求竞态保护：连点刷新时只采纳最后一次响应
 let catalogSeq = 0
+// 衣柜请求竞态保护：同上
+let wardrobeSeq = 0
 
 /** 槽位归一化：后端历史脏数据（大小写 / 未知分类）统一落到 other */
 function itemSlot(item: CatalogItem): string {
@@ -225,6 +284,11 @@ const emptyText = computed(() => {
     ? '目录里还没有时装（站点管理员可在「时装管理」里导入）'
     : '该分类下暂无时装'
 })
+
+/** 页头「我的衣柜 N 件」：衣柜没读到时显示「—」，避免把失败渲染成「0 件」误导用户 */
+const wardrobeChipText = computed(() =>
+  wardrobeError.value ? '—' : `${wardrobeIds.value.size} 件`
+)
 
 // 预览图只接受图片扩展名；其余资产（glb/json/zip）无法在网页预览
 const previewUrls = computed(() => {
@@ -271,6 +335,65 @@ function goWardrobe(item?: CatalogItem): void {
   void router.push({ path: '/fashion/wardrobe', query })
 }
 
+function isInWardrobe(item: CatalogItem): boolean {
+  return wardrobeIds.value.has(item.cosmeticId)
+}
+
+/**
+ * 加入衣柜。
+ *
+ * 这里**不做乐观切换**：一旦本地先把卡片切成「已在衣柜 ✓」，加入按钮就消失了，
+ * 用户既看不到 loading 也无法在失败后立刻重试（回滚会让卡片闪一下）。
+ * 用按钮 loading 挡住连点、成功后翻转卡片，失败只弹错误、卡片保持原样 ——
+ * 交互最稳，且后端是幂等接口，重复点也不会写坏数据。
+ */
+async function addToWardrobe(item: CatalogItem): Promise<void> {
+  const cosmeticId = item.cosmeticId
+  if (addingIds.value.has(cosmeticId)) return
+  addingIds.value = new Set(addingIds.value).add(cosmeticId)
+  try {
+    const { data } = await fashionApi.addToWardrobe(cosmeticId)
+    // 幂等：added=false 表示本来就在（例如另一个标签页刚加过）→ 同样切成「已在衣柜」
+    wardrobeIds.value = new Set(wardrobeIds.value).add(cosmeticId)
+    if (data.added) ElMessage.success(`已把「${displayName(item)}」加入衣柜`)
+    else ElMessage.info(`「${displayName(item)}」已经在你的衣柜里了`)
+  } catch (error) {
+    ElMessage.error(fashionErrorMessage(error, '加入衣柜失败'))
+  } finally {
+    const rest = new Set(addingIds.value)
+    rest.delete(cosmeticId)
+    addingIds.value = rest
+  }
+}
+
+/**
+ * 读我的衣柜（只要 id 集合）。
+ *
+ * 失败不阻断商店浏览：目录照常可用，只是所有卡片都会显示「加入衣柜」——
+ * 此时点击也是安全的（后端幂等），所以只提示、不把整页打成错误态。
+ */
+async function loadWardrobe(): Promise<void> {
+  const seq = ++wardrobeSeq
+  loadingWardrobe.value = true
+  wardrobeError.value = false
+  try {
+    const { data } = await fashionApi.wardrobe()
+    if (seq !== wardrobeSeq) return
+    wardrobeIds.value = new Set((data.items || []).map((item) => item.cosmeticId))
+  } catch (error) {
+    if (seq !== wardrobeSeq) return
+    wardrobeError.value = true
+    ElMessage.error(fashionErrorMessage(error, '读取我的衣柜失败'))
+  } finally {
+    if (seq === wardrobeSeq) loadingWardrobe.value = false
+  }
+}
+
+/** 目录 + 衣柜并行加载：挂载与「刷新」都走这里 */
+async function loadAll(): Promise<void> {
+  await Promise.all([loadCatalog(), loadWardrobe()])
+}
+
 async function loadCatalog(): Promise<void> {
   const seq = ++catalogSeq
   loading.value = true
@@ -292,7 +415,7 @@ async function loadCatalog(): Promise<void> {
   }
 }
 
-onMounted(loadCatalog)
+onMounted(loadAll)
 </script>
 
 <style scoped>
@@ -478,6 +601,32 @@ onMounted(loadCatalog)
   gap: 4px;
   margin-top: auto;
   padding-top: 2px;
+  /* 「已在衣柜 ✓」+「去穿戴 →」两个元素在窄卡片里必须能换行，否则会被压成省略号 */
+  flex-wrap: wrap;
+}
+
+/* 卡片右侧动作组：状态标签 + 文字按钮，右对齐 */
+.action-right {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: auto;
+}
+
+/* 「已在衣柜 ✓」状态标签：用语义色而不是强调橙，和可点击的橙色动作区分开 */
+.ward-tag {
+  font-size: 11px;
+  line-height: 18px;
+  white-space: nowrap;
+  color: var(--success);
+  background: var(--success-bg);
+  border-radius: 999px;
+  padding: 0 8px;
+}
+
+.dialog-ward-tag {
+  margin: 0 var(--space-2);
+  vertical-align: middle;
 }
 
 /* 卡片内两个动作都走文字按钮：12 张卡各一个实心主按钮会把整页压成一片橙色，

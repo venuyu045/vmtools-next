@@ -37,6 +37,7 @@ from vmtools_next.data.models.lixiangxiang import (  # noqa: F401
 from vmtools_next.data.models.fashion import (  # noqa: F401
     FashionIdentityModel, FashionCatalogModel,
     FashionLoadoutModel, FashionAssetModel,
+    FashionWardrobeModel,
 )
 
 __all__ = [
@@ -70,4 +71,5 @@ __all__ = [
     # fashion
     "FashionIdentityModel", "FashionCatalogModel",
     "FashionLoadoutModel", "FashionAssetModel",
+    "FashionWardrobeModel",
 ]

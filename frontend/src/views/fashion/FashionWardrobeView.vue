@@ -1,5 +1,7 @@
 <template>
-  <div class="wardrobe-page">
+  <!-- @keydown.esc 挂在本页根节点而不是 window：焦点在本页内时 Esc 才退出批量模式，
+       弹窗/确认框打开时焦点在它们自己的遮罩里，不会误触（见 onEscape） -->
+  <div class="wardrobe-page" @keydown.esc="onEscape">
     <div class="page-head">
       <div>
         <h2 class="page-title">我的衣柜</h2>
@@ -67,78 +69,164 @@
     </el-alert>
 
     <div v-else v-loading="loadingIdentities" class="wardrobe-grid">
-      <!-- 左：目录 -->
+      <!-- 左：我的衣柜（收藏制：只有商店里主动「加入衣柜」的时装才在这里） -->
       <el-card shadow="never" class="panel">
         <template #header>
           <div class="panel-header">
-            <span class="panel-title">时装目录</span>
+            <span class="panel-title">
+              我的衣柜
+              <span class="mono count-hint">（{{ wardrobe.length }} 件）</span>
+            </span>
             <div class="panel-tools">
               <el-input
                 v-model="searchKeyword"
                 size="small"
                 clearable
                 placeholder="搜索名称 / ID"
-                aria-label="搜索时装名称或 ID"
-                class="catalog-search"
+                aria-label="搜索衣柜中的时装名称或 ID"
+                class="wardrobe-search"
               />
-              <!-- B7：目录只在挂载时拉一次 → 管理员上新后玩家必须整页刷新。这里补一个刷新入口 -->
+              <!-- 衣柜是收藏制：在别的标签页加过之后，玩家需要一个不刷新整页的同步入口 -->
               <el-button
                 size="small"
                 text
-                :loading="loadingCatalog"
-                :disabled="loadingCatalog"
-                @click="loadCatalog"
+                :loading="loadingWardrobe"
+                :disabled="loadingWardrobe"
+                @click="loadWardrobe()"
               >
                 刷新
               </el-button>
+              <!-- 批量管理模式：开关 + 全选/取消全选/删除选中(n)/完成 -->
+              <el-button
+                v-if="!batchMode"
+                size="small"
+                text
+                type="primary"
+                :disabled="wardrobe.length === 0 || loadingWardrobe"
+                @click="enterBatchMode"
+              >
+                批量管理
+              </el-button>
+              <template v-else>
+                <el-button
+                  size="small"
+                  text
+                  :disabled="filteredWardrobe.length === 0 || allFilteredSelected"
+                  @click="selectAllFiltered"
+                >
+                  全选
+                </el-button>
+                <el-button size="small" text :disabled="selectedIds.size === 0" @click="clearSelection">
+                  取消全选
+                </el-button>
+                <el-button
+                  size="small"
+                  type="danger"
+                  plain
+                  :loading="batchDeleting"
+                  :disabled="selectedIds.size === 0 || batchDeleting"
+                  @click="batchDelete"
+                >
+                  删除选中({{ selectedIds.size }})
+                </el-button>
+                <el-button size="small" text @click="exitBatchMode">完成</el-button>
+              </template>
             </div>
           </div>
           <el-radio-group
             v-model="activeCategory"
             size="small"
-            class="catalog-filters"
-            aria-label="按槽位筛选时装"
+            class="wardrobe-filters"
+            aria-label="按槽位筛选衣柜中的时装"
           >
             <el-radio-button value="all">全部</el-radio-button>
             <el-radio-button v-for="slot in FASHION_SLOTS" :key="slot.value" :value="slot.value">
               {{ slot.label }}
             </el-radio-button>
           </el-radio-group>
+          <p v-if="batchMode" class="batch-hint mono" role="status" aria-live="polite">
+            批量管理中：点击卡片勾选要移除的时装，再点「删除选中」；按 Esc 可退出。
+          </p>
         </template>
 
-        <div v-loading="loadingCatalog" class="catalog-body" :aria-busy="loadingCatalog">
+        <div v-loading="loadingWardrobe" class="wardrobe-body" :aria-busy="loadingWardrobe">
+          <!-- 只有「一件都没读到」时才整块显示错误态：删除后静默回读失败时，
+               列表里已有的数据仍然可信，不该被一个错误面板盖掉（错误另有 toast） -->
           <el-alert
-            v-if="catalogError"
+            v-if="wardrobeError && wardrobe.length === 0"
             class="panel-error"
             type="error"
             :closable="false"
             show-icon
-            title="时装目录加载失败"
+            title="我的衣柜加载失败"
           >
             <template #default>
-              <el-button size="small" text type="primary" @click="loadCatalog">重试</el-button>
+              <el-button size="small" text type="primary" @click="loadWardrobe()">重试</el-button>
             </template>
           </el-alert>
+
+          <!-- 空衣柜：这里不再是「全站目录」，空就是真的没收藏 → 引导去商店 -->
           <el-empty
-            v-else-if="filteredCatalog.length === 0"
-            :description="emptyCatalogText"
+            v-else-if="wardrobe.length === 0"
+            :image-size="72"
+            description="你的衣柜还是空的"
+          >
+            <p class="empty-hint">到「时装商店」挑中喜欢的时装，点「加入衣柜」后才会出现在这里。</p>
+            <router-link to="/fashion/store" custom v-slot="{ navigate }">
+              <el-button type="primary" size="small" @click="navigate">去时装商店挑选</el-button>
+            </router-link>
+          </el-empty>
+
+          <el-empty
+            v-else-if="filteredWardrobe.length === 0"
+            :description="emptyFilterText"
             :image-size="72"
           />
+
           <template v-else>
-            <div class="catalog-grid" role="group" :aria-label="`时装目录，共 ${filteredCatalog.length} 件`">
+            <div class="wardrobe-cards" role="group" :aria-label="`我的衣柜，共 ${filteredWardrobe.length} 件`">
               <div
-                v-for="item in pagedCatalog"
+                v-for="item in pagedWardrobe"
                 :key="item.cosmeticId"
                 class="cosmetic-card"
-                :class="{ equipped: isEquipped(item) }"
+                :class="{
+                  equipped: isEquipped(item),
+                  selected: batchMode && isSelected(item),
+                  missing: item.missing,
+                  'batch-mode': batchMode,
+                }"
                 role="button"
                 tabindex="0"
-                :aria-pressed="isEquipped(item)"
-                :aria-label="`${displayName(item)}，${CATEGORY_LABELS[itemSlot(item)] || item.category}`"
-                @click="equip(item)"
-                @keydown.enter.prevent="equip(item)"
-                @keydown.space.prevent="equip(item)"
+                :aria-pressed="batchMode ? isSelected(item) : isEquipped(item)"
+                :aria-disabled="!batchMode && item.missing ? 'true' : undefined"
+                :aria-label="cardAriaLabel(item)"
+                @click="onCardActivate(item)"
+                @keydown.enter.prevent="onCardActivate(item)"
+                @keydown.space.prevent="onCardActivate(item)"
               >
+                <!-- 批量管理：勾选框只是「选中的视觉」，真正的勾选逻辑在卡片点击上，
+                     这样键盘（Enter/Space）和触屏都能操作，不必精确点中小方块 -->
+                <el-checkbox
+                  v-if="batchMode"
+                  class="card-check"
+                  :model-value="isSelected(item)"
+                  :aria-label="`选择 ${displayName(item)}`"
+                  @click.stop
+                  @change="toggleSelect(item)"
+                />
+                <!-- 单件移除：批量模式下隐藏，避免和「删除选中」混淆 -->
+                <button
+                  v-else
+                  type="button"
+                  class="card-remove"
+                  :aria-label="`从衣柜移除 ${displayName(item)}`"
+                  :disabled="deletingIds.has(item.cosmeticId)"
+                  @click.stop="removeOne(item)"
+                  @keydown.enter.stop.prevent="removeOne(item)"
+                  @keydown.space.stop.prevent="removeOne(item)"
+                >
+                  ✕
+                </button>
                 <div class="cosmetic-thumb">
                   <img
                     v-if="previewUrls.has(item.cosmeticId) && !brokenThumbs.has(item.cosmeticId)"
@@ -153,9 +241,13 @@
                 <div class="cosmetic-name" :title="displayName(item)">{{ displayName(item) }}</div>
                 <div class="cosmetic-meta mono">
                   {{ CATEGORY_LABELS[itemSlot(item)] || item.category }}
+                  <!-- missing = 站点目录里已下架：仍显示、仍可移除，但不能穿戴 -->
+                  <span v-if="item.missing" class="missing-tag" title="站点目录里已下架，无法穿戴，但仍可移除">
+                    已下架
+                  </span>
                   <span v-if="isEquipped(item)" class="equipped-tag">已穿戴</span>
                   <span
-                    v-else-if="item.assetKey && !previewUrls.has(item.cosmeticId)"
+                    v-else-if="!item.missing && item.assetKey && !previewUrls.has(item.cosmeticId)"
                     class="meta-tag"
                     title="该资产不是图片（glb / json / zip 等），网页衣柜无法预览"
                   >
@@ -176,13 +268,13 @@
               </div>
             </div>
             <!-- B2：一次渲染全部卡片，200 件时每张卡还要跑 4 次 isEquipped → 分页 -->
-            <div v-if="filteredCatalog.length > pageSize" class="catalog-pager">
+            <div v-if="filteredWardrobe.length > pageSize" class="wardrobe-pager">
               <el-pagination
                 layout="prev, pager, next"
-                :total="filteredCatalog.length"
+                :total="filteredWardrobe.length"
                 :page-size="pageSize"
-                :current-page="catalogPage"
-                @current-change="catalogPage = $event"
+                :current-page="wardrobePage"
+                @current-change="wardrobePage = $event"
               />
             </div>
           </template>
@@ -293,7 +385,11 @@
             <span class="mono">{{ detailScale.toFixed(2) }}</span>
           </el-descriptions-item>
           <el-descriptions-item label="状态">
-            {{ isEquipped(detailItem) ? '已穿戴（保存后生效）' : '未穿戴' }}
+            <span v-if="detailItem.missing" class="missing-tag">已下架（不可穿戴）</span>
+            <template v-else>{{ isEquipped(detailItem) ? '已穿戴（保存后生效）' : '未穿戴' }}</template>
+          </el-descriptions-item>
+          <el-descriptions-item label="加入时间">
+            <span class="mono">{{ fmtApiTime(detailItem.addedAt) }}</span>
           </el-descriptions-item>
         </el-descriptions>
       </div>
@@ -301,10 +397,10 @@
         <el-button @click="detailOpen = false">关闭</el-button>
         <el-button
           type="primary"
-          :disabled="!detailItem || isEquipped(detailItem)"
+          :disabled="!detailItem || isEquipped(detailItem) || detailItem.missing"
           @click="equipFromDetail"
         >
-          {{ detailItem ? `穿戴到${detailSlotLabel}` : '穿戴' }}
+          {{ detailEquipLabel }}
         </el-button>
       </template>
     </el-dialog>
@@ -321,9 +417,10 @@ import {
   fashionApi,
   fashionErrorCode,
   fashionErrorMessage,
-  type CatalogItem,
   type FashionIdentity,
+  type WardrobeItem,
 } from '@/api/fashion'
+import { fmtApiTime } from '@/utils/time'
 
 const route = useRoute()
 const router = useRouter()
@@ -336,37 +433,51 @@ const validSlots = new Set<string>(FASHION_SLOTS.map((slot) => slot.value))
 
 const identities = ref<FashionIdentity[]>([])
 const activeIdentityId = ref('')
-const catalog = ref<CatalogItem[]>([])
-// 预览图加载失败（目录条目填了 assetKey 但资产还没上传 / 文件被删）的时装：
-// 退回首字占位，避免整面目录都是破图图标
+// 我的衣柜（收藏制）：左侧面板的唯一数据源。原来是「全站目录」，用户抱怨
+// 「衣柜里还是全时装都在」，所以现在只渲染玩家主动加入的收藏。
+const wardrobe = ref<WardrobeItem[]>([])
+// 预览图加载失败（条目填了 assetKey 但资产还没上传 / 文件被删）的时装：
+// 退回首字占位，避免整面衣柜都是破图图标
 const brokenThumbs = ref<Set<string>>(new Set())
 const activeCategory = ref('all')
-// B1：目录 200+ 件时只能靠肉眼扫 → 加搜索（名称 / ID，大小写不敏感）
+// B1：衣柜件数多了只能靠肉眼扫 → 加搜索（名称 / ID，大小写不敏感）
 const searchKeyword = ref('')
 // B2：一次渲染全部卡片（每张卡还要跑 4 次 isEquipped）→ 分页，一页 60 张
-const catalogPage = ref(1)
+const wardrobePage = ref(1)
 const pageSize = 60
 // B3：详情弹窗（大图 + 元信息）
 const detailOpen = ref(false)
-const detailItem = ref<CatalogItem | null>(null)
+const detailItem = ref<WardrobeItem | null>(null)
 const selection = ref<Record<string, { cosmeticId: string; scale: number }>>({})
 const missingSlots = ref<Set<string>>(new Set())
 const savedSnapshot = ref('{}')
-const loadingCatalog = ref(false)
+const loadingWardrobe = ref(false)
 const loadingLoadout = ref(false)
 const loadingIdentities = ref(false)
 const saving = ref(false)
 const noIdentity = ref(false)
 const identitiesError = ref(false)
-const catalogError = ref(false)
+const wardrobeError = ref(false)
 const loadoutError = ref(false)
+
+// ── 批量管理 / 删除 ──
+// batchMode 开启后「点卡片」从「穿戴」变成「勾选」，避免误穿；
+// 单件删除与批量删除都只动衣柜收藏，不动云端穿戴（见 dropWornSelection）。
+const batchMode = ref(false)
+const selectedIds = ref<Set<string>>(new Set())
+// 正在删除的单件（给 ✕ 按钮上 disabled，防连点重复弹确认框）
+const deletingIds = ref<Set<string>>(new Set())
+const batchDeleting = ref(false)
+// 穿戴配置里后端回填的名称（slot → name）：衣柜只存收藏，被穿戴但没收藏的时装
+// 名字只能从这里取，否则右侧「当前穿戴」会退化成裸 cosmeticId。
+const loadoutLabels = ref<Record<string, string>>({})
 
 // 请求竞态保护：切换身份时旧响应不得覆盖新身份的数据
 let loadoutSeq = 0
 // 身份列表请求竞态保护：重试期间只采纳最后一次响应
 let identitiesSeq = 0
-// 目录请求竞态保护：连点重试时只采纳最后一次响应
-let catalogSeq = 0
+// 衣柜请求竞态保护：连点重试时只采纳最后一次响应
+let wardrobeSeq = 0
 // 记住切换前的身份，用于用户取消「放弃未保存修改」时回退下拉框
 let previousIdentityId = ''
 // 身份失效自愈：正在重拉身份列表时不再嵌套触发，避免 404/403 循环
@@ -459,9 +570,9 @@ function sameCosmetic(a: string, b: string): boolean {
   return localIdOf(a) === localIdOf(b)
 }
 
-const catalogMap = computed(() => {
-  const map = new Map<string, CatalogItem>()
-  for (const item of catalog.value) {
+const wardrobeMap = computed(() => {
+  const map = new Map<string, WardrobeItem>()
+  for (const item of wardrobe.value) {
     map.set(item.cosmeticId, item)
     // 全局 ID 再登记一个 localId 别名，供 loadout（可能存简单 ID）反查名称
     const local = localIdOf(item.cosmeticId)
@@ -474,13 +585,13 @@ const catalogMap = computed(() => {
  * 卡片/弹窗显示名：`name` 为空时回落 `cosmeticId`（B6）。
  * 后端 `name` 默认是空串，直接渲染会得到一张空白卡片。
  */
-function displayName(item: CatalogItem): string {
+function displayName(item: WardrobeItem): string {
   return (item.name || '').trim() || item.cosmeticId
 }
 
-const filteredCatalog = computed(() => {
+const filteredWardrobe = computed(() => {
   const keyword = searchKeyword.value.trim().toLowerCase()
-  return catalog.value.filter((item) => {
+  return wardrobe.value.filter((item) => {
     if (activeCategory.value !== 'all' && itemSlot(item) !== activeCategory.value) return false
     if (!keyword) return true
     return (
@@ -490,14 +601,14 @@ const filteredCatalog = computed(() => {
   })
 })
 
-const pagedCatalog = computed(() => {
-  const start = (catalogPage.value - 1) * pageSize
-  return filteredCatalog.value.slice(start, start + pageSize)
+const pagedWardrobe = computed(() => {
+  const start = (wardrobePage.value - 1) * pageSize
+  return filteredWardrobe.value.slice(start, start + pageSize)
 })
 
 // 搜索 / 切分类后回到第一页，否则可能停在一个空页上
 watch([searchKeyword, activeCategory], () => {
-  catalogPage.value = 1
+  wardrobePage.value = 1
 })
 
 /** 缩放夹紧（B9）：后端两条写路径都会夹，但载入时也夹一次，避免「值 99 / 滑块卡在 4」 */
@@ -510,7 +621,7 @@ function clampScale(value: unknown): number {
 // 预览图地址只算一次，模板里用 Map 取值（避免 v-if 与 :src 各自重复计算）
 const previewUrls = computed(() => {
   const map = new Map<string, string>()
-  for (const item of catalog.value) {
+  for (const item of wardrobe.value) {
     if (!item.assetKey) continue
     if (!/\.(png|jpe?g|webp|gif)$/i.test(item.assetKey)) continue
     map.set(item.cosmeticId, fashionApi.assetUrl(item.assetKey))
@@ -518,12 +629,11 @@ const previewUrls = computed(() => {
   return map
 })
 
-const emptyCatalogText = computed(() => {
+/** 有收藏但筛不出来时的空态文案（真正的空衣柜有单独的引导，不共用这里） */
+const emptyFilterText = computed(() => {
   const keyword = searchKeyword.value.trim()
-  if (keyword) return `没有匹配「${keyword}」的时装`
-  return activeCategory.value === 'all'
-    ? '目录里还没有可用的时装（站点管理员可在「时装管理」里导入）'
-    : '该分类下暂无可用时装'
+  if (keyword) return `衣柜里没有匹配「${keyword}」的时装`
+  return activeCategory.value === 'all' ? '衣柜里暂无时装' : '该分类下暂无收藏的时装'
 })
 
 const equippedCount = computed(() => Object.keys(selection.value).length)
@@ -573,7 +683,15 @@ const detailScale = computed(() => {
   return selection.value[itemSlot(item)]?.scale ?? 1
 })
 
-function openDetail(item: CatalogItem): void {
+/** 详情弹窗主按钮文案：已下架 / 已穿戴时给出「为什么点不动」的原因，而不是灰着一个「穿戴」 */
+const detailEquipLabel = computed(() => {
+  const item = detailItem.value
+  if (!item) return '穿戴'
+  if (item.missing) return '已下架，不可穿戴'
+  return `穿戴到${detailSlotLabel.value}`
+})
+
+function openDetail(item: WardrobeItem): void {
   detailItem.value = item
   detailOpen.value = true
 }
@@ -581,19 +699,34 @@ function openDetail(item: CatalogItem): void {
 function equipFromDetail(): void {
   const item = detailItem.value
   if (!item) return
+  if (item.missing) {
+    ElMessage.warning('这件时装已下架，无法穿戴')
+    return
+  }
   equip(item)
   detailOpen.value = false
 }
 
-/** 目录分类归一化：大小写/非法分类归入合法槽位，避免写入后端不认的槽位 */
-function itemSlot(item: CatalogItem): string {
+/** 衣柜分类归一化：大小写/非法分类归入合法槽位，避免写入后端不认的槽位 */
+function itemSlot(item: WardrobeItem): string {
   const category = String(item.category || 'other').trim().toLowerCase()
   return FASHION_SLOTS.some((slot) => slot.value === category) ? category : 'other'
 }
 
-function isEquipped(item: CatalogItem): boolean {
+function isEquipped(item: WardrobeItem): boolean {
   const selected = selection.value[itemSlot(item)]
   return !!selected && sameCosmetic(selected.cosmeticId, item.cosmeticId)
+}
+
+/** 卡片无障碍标签：批量模式下读「选中状态」，否则读「穿戴状态 + 是否已下架」 */
+function cardAriaLabel(item: WardrobeItem): string {
+  const name = displayName(item)
+  const slot = CATEGORY_LABELS[itemSlot(item)] || item.category || '其它'
+  if (batchMode.value) {
+    return `${isSelected(item) ? '已选中' : '未选中'}，${name}，${slot}`
+  }
+  if (item.missing) return `${name}，${slot}，已下架不可穿戴`
+  return `${name}，${slot}，${isEquipped(item) ? '已穿戴' : '未穿戴'}`
 }
 
 /** 预览图 404 / 解码失败：记下来并退回首字占位（后端 asset_not_found 是合法返回） */
@@ -607,11 +740,15 @@ function markThumbBroken(cosmeticId: string): void {
 function cosmeticName(slot: string): string {
   const selected = selection.value[slot]
   if (!selected) return ''
-  // 先精确、再按 localId 兜底（catalog 简单 ID ↔ loadout 全局 ID 的历史数据）
+  // 先精确、再按 localId 兜底（衣柜简单 ID ↔ loadout 全局 ID 的历史数据）
   const item =
-    catalogMap.value.get(selected.cosmeticId) ||
-    catalogMap.value.get(localIdOf(selected.cosmeticId))
+    wardrobeMap.value.get(selected.cosmeticId) ||
+    wardrobeMap.value.get(localIdOf(selected.cosmeticId))
   if (item) return displayName(item)
+  // 衣柜只存「收藏」，正在穿戴的时装可能早就没收藏了（或本就不是从衣柜选的）：
+  // 此时用 loadout 响应里后端回填的 name 兜底，别把右侧面板退化成裸 ID
+  const fromLoadout = (loadoutLabels.value[slot] || '').trim()
+  if (fromLoadout) return fromLoadout
   return missingSlots.value.has(slot) ? `${selected.cosmeticId}（已下架）` : selected.cosmeticId
 }
 
@@ -631,14 +768,33 @@ function clearMissingSlot(slot: string): void {
   missingSlots.value = next
 }
 
-function equip(item: CatalogItem): void {
+/**
+ * 卡片激活：普通模式 = 穿戴；批量管理模式 = 勾选/取消。
+ *
+ * 为什么批量模式要接管卡片点击：让整张卡（含键盘 Enter/Space）都是勾选热区，
+ * 用户不必精确点中那个小复选框；单件删除的 ✕ 在批量模式下会被隐藏，避免误触。
+ */
+function onCardActivate(item: WardrobeItem): void {
+  if (batchMode.value) {
+    toggleSelect(item)
+    return
+  }
+  if (item.missing) {
+    // 已下架：不能穿戴，但可以删 —— 明确告诉用户还能做什么
+    ElMessage.warning('这件时装已下架，无法穿戴（仍可从衣柜移除）')
+    return
+  }
+  equip(item)
+}
+
+function equip(item: WardrobeItem): void {
   const slot = itemSlot(item)
   const existing = selection.value[slot]
   selection.value = {
     ...selection.value,
     [slot]: { cosmeticId: item.cosmeticId, scale: existing?.scale ?? 1 },
   }
-  // 目录里点得到的时装一定没下架。不清标记的话，保存时 save() 会把这件
+  // 衣柜里点得到的时装一定没下架。不清标记的话，保存时 save() 会把这件
   // 刚选好的时装当成「已下架」自动移除（只留一句误导性的警告），
   // 用户以为换装成功、进游戏却是旧的。
   clearMissingSlot(slot)
@@ -696,27 +852,217 @@ async function reloadIdentities(): Promise<void> {
   if (!identitiesError.value) await loadLoadout()
 }
 
-async function loadCatalog(): Promise<void> {
-  const seq = ++catalogSeq
-  loadingCatalog.value = true
-  catalogError.value = false
+/**
+ * 读我的衣柜。
+ *
+ * @param options.silent 静默刷新（删除成功后回读列表用）：不点亮面板 loading，
+ *        避免整块卡片闪一下遮罩 —— 删除本身已经有确认框和 toast 作为反馈。
+ */
+async function loadWardrobe(options: { silent?: boolean } = {}): Promise<void> {
+  const seq = ++wardrobeSeq
+  const silent = options.silent === true
+  if (!silent) loadingWardrobe.value = true
+  wardrobeError.value = false
   try {
-    const { data } = await fashionApi.catalog()
-    if (seq !== catalogSeq) return // 已被更新的请求取代，丢弃本次响应
-    catalog.value = data.items || []
+    const { data } = await fashionApi.wardrobe()
+    if (seq !== wardrobeSeq) return // 已被更新的请求取代，丢弃本次响应
+    wardrobe.value = data.items || []
     // B4（真 bug）：brokenThumbs 原来一旦标记就永不重置 —— 管理员补传资产后，
-    // 玩家必须硬刷新才看得到缩略图。目录重新拉成功 = 资产可能已经补齐，全部重试一次。
+    // 玩家必须硬刷新才看得到缩略图。衣柜重新拉成功 = 资产可能已经补齐，全部重试一次。
     brokenThumbs.value = new Set()
-    // 目录变短（下架）时把页码夹回有效范围，避免停在空页
-    const maxPage = Math.max(1, Math.ceil(filteredCatalog.value.length / pageSize))
-    if (catalogPage.value > maxPage) catalogPage.value = maxPage
+    // 选中集合里可能留着已经不存在的 id（本页刚删 / 别的标签页删的）：
+    // 不收敛的话「删除选中(n)」会带着幽灵 id 去请求，计数也会骗人
+    pruneSelection()
+    // 衣柜变短时把页码夹回有效范围，避免停在空页
+    const maxPage = Math.max(1, Math.ceil(filteredWardrobe.value.length / pageSize))
+    if (wardrobePage.value > maxPage) wardrobePage.value = maxPage
+    // 衣柜空了就没有可管理的东西，直接退出批量模式，别让工具栏停在空状态
+    if (wardrobe.value.length === 0 && batchMode.value) exitBatchMode()
   } catch (error) {
-    if (seq !== catalogSeq) return
-    catalogError.value = true
-    ElMessage.error(fashionErrorMessage(error, '读取时装目录失败'))
+    if (seq !== wardrobeSeq) return
+    wardrobeError.value = true
+    ElMessage.error(fashionErrorMessage(error, '读取我的衣柜失败'))
   } finally {
-    if (seq === catalogSeq) loadingCatalog.value = false
+    if (seq === wardrobeSeq) loadingWardrobe.value = false
   }
+}
+
+// ── 批量管理 / 删除 ────────────────────────────────────────────────────────
+
+function isSelected(item: WardrobeItem): boolean {
+  return selectedIds.value.has(item.cosmeticId)
+}
+
+function toggleSelect(item: WardrobeItem): void {
+  const next = new Set(selectedIds.value)
+  if (next.has(item.cosmeticId)) next.delete(item.cosmeticId)
+  else next.add(item.cosmeticId)
+  selectedIds.value = next
+}
+
+function enterBatchMode(): void {
+  if (wardrobe.value.length === 0) return
+  batchMode.value = true
+  selectedIds.value = new Set()
+}
+
+/** 退出批量管理：清空勾选，卡片恢复「点击即穿戴」 */
+function exitBatchMode(): void {
+  batchMode.value = false
+  selectedIds.value = new Set()
+}
+
+/** 全选作用于「当前筛选结果」（跨分页），而不是只有当前这一页 —— 与筛选语义一致 */
+const filteredIds = computed(() => filteredWardrobe.value.map((item) => item.cosmeticId))
+
+const allFilteredSelected = computed(
+  () => filteredIds.value.length > 0 && filteredIds.value.every((id) => selectedIds.value.has(id))
+)
+
+function selectAllFiltered(): void {
+  selectedIds.value = new Set(filteredIds.value)
+}
+
+function clearSelection(): void {
+  selectedIds.value = new Set()
+}
+
+/** 列表刷新后收敛选中集合：只保留还存在于衣柜里的 id */
+function pruneSelection(): void {
+  if (selectedIds.value.size === 0) return
+  const alive = new Set(wardrobe.value.map((item) => item.cosmeticId))
+  const next = new Set<string>()
+  for (const id of selectedIds.value) if (alive.has(id)) next.add(id)
+  if (next.size !== selectedIds.value.size) selectedIds.value = next
+}
+
+/**
+ * 把刚被移出衣柜的时装，从本地 `selection` 里清掉，并返回被清掉的槽位。
+ *
+ * 为什么只改本地、**不**自动调 putLoadout：
+ * 1) 删除是衣柜侧的动作，穿戴是另一份数据；自动提交会把用户其它没保存的
+ *    修改一并写上去，等于替他做了决定；
+ * 2) 衣柜页的模型一直是「本地改 → 点保存穿戴」，自动提交会绕过这个约定。
+ * 所以这里只清槽位 + 让 dirty 变 true，并明确提示用户去保存。
+ */
+function dropWornSelection(removedIds: Set<string>): string[] {
+  const dropped: string[] = []
+  const next = { ...selection.value }
+  for (const [slot, value] of Object.entries(selection.value)) {
+    for (const id of removedIds) {
+      if (sameCosmetic(value.cosmeticId, id)) {
+        delete next[slot]
+        dropped.push(slot)
+        break
+      }
+    }
+  }
+  if (dropped.length === 0) return []
+  selection.value = next
+  // 槽位已经空了，它就不再是「已下架条目」，标记必须一起清掉
+  const remaining = new Set(missingSlots.value)
+  for (const slot of dropped) remaining.delete(slot)
+  missingSlots.value = remaining
+  return dropped
+}
+
+/** 被清掉的槽位中文名，用于提示（「披风、翅膀」） */
+function slotLabelsOf(slots: string[]): string {
+  return slots.map((slot) => CATEGORY_LABELS[slot] || slot).join('、')
+}
+
+/** 单件移除：确认 → DELETE → 回读列表 */
+async function removeOne(item: WardrobeItem): Promise<void> {
+  if (deletingIds.value.has(item.cosmeticId) || batchDeleting.value) return
+  const name = displayName(item)
+  try {
+    await ElMessageBox.confirm(`确定从衣柜移除「${name}」？`, '移除时装', {
+      type: 'warning',
+      confirmButtonText: '移除',
+      cancelButtonText: '取消',
+    })
+  } catch {
+    return // 用户取消
+  }
+  deletingIds.value = new Set(deletingIds.value).add(item.cosmeticId)
+  try {
+    await fashionApi.removeFromWardrobe(item.cosmeticId)
+    // 服务端已确认删除 → 先本地摘掉这张卡；万一随后的回读失败，列表也不会
+    // 继续显示一件已经不存在的时装（回读成功会以服务端数据覆盖一次）
+    wardrobe.value = wardrobe.value.filter((row) => row.cosmeticId !== item.cosmeticId)
+    const dropped = dropWornSelection(new Set([item.cosmeticId]))
+    await loadWardrobe({ silent: true })
+    if (dropped.length > 0) {
+      ElMessage.warning(
+        `已从衣柜移除「${name}」，同时取消了${slotLabelsOf(dropped)}槽位的穿戴（记得点保存穿戴）`
+      )
+    } else {
+      ElMessage.success(`已从衣柜移除「${name}」`)
+    }
+  } catch (error) {
+    // 失败时列表原样保留（没做本地删除），用户可以直接重试
+    ElMessage.error(fashionErrorMessage(error, '移除失败'))
+  } finally {
+    const rest = new Set(deletingIds.value)
+    rest.delete(item.cosmeticId)
+    deletingIds.value = rest
+  }
+}
+
+/** 批量移除：确认 → batch-delete → 回读列表并退出管理模式 */
+async function batchDelete(): Promise<void> {
+  if (batchDeleting.value) return
+  const ids = [...selectedIds.value]
+  if (ids.length === 0) return
+  try {
+    await ElMessageBox.confirm(`确定从衣柜移除选中的 ${ids.length} 件时装？`, '批量移除', {
+      type: 'warning',
+      confirmButtonText: '移除',
+      cancelButtonText: '取消',
+    })
+  } catch {
+    return // 用户取消
+  }
+  batchDeleting.value = true
+  try {
+    const { data } = await fashionApi.batchRemoveFromWardrobe(ids)
+    // 后端可能只删掉其中一部分（别的标签页已删）：以它返回的 removed 为准显示数量
+    const removedCount = typeof data.removed === 'number' ? data.removed : ids.length
+    // 同单件删除：先本地摘掉，回读失败也不会留下「已经删掉却还在列表里」的卡片
+    const removedIdSet = new Set(ids)
+    wardrobe.value = wardrobe.value.filter((row) => !removedIdSet.has(row.cosmeticId))
+    const dropped = dropWornSelection(removedIdSet)
+    // 成功即退出管理模式（并在 loadWardrobe 里清掉勾选）：
+    // 一次批量清理通常就结束了，留在管理模式里只剩一个空选择没有意义
+    exitBatchMode()
+    await loadWardrobe({ silent: true })
+    if (dropped.length > 0) {
+      ElMessage.warning(
+        `已从衣柜移除 ${removedCount} 件，同时取消了${slotLabelsOf(dropped)}槽位的穿戴（记得点保存穿戴）`
+      )
+    } else {
+      ElMessage.success(`已从衣柜移除 ${removedCount} 件时装`)
+    }
+  } catch (error) {
+    // 失败保留勾选，用户可直接重试（不用重新挑一遍）
+    ElMessage.error(fashionErrorMessage(error, '批量移除失败'))
+  } finally {
+    batchDeleting.value = false
+  }
+}
+
+/**
+ * 批量管理模式下按 Esc 退出。
+ *
+ * 为什么：进入批量模式后卡片点击变成勾选，用户如果只是想「看一眼」，
+ * 需要一条不必精确点中「完成」小按钮的退路（键盘用户尤其需要）。
+ *
+ * 监听挂在页面根节点（模板上的 @keydown.esc）而不是 window：
+ * 确认框 / 详情弹窗打开时焦点在它们的遮罩里，Esc 不会冒泡到这里，
+ * 于是「关弹窗」和「退出批量模式」不会同时发生。
+ */
+function onEscape(): void {
+  if (batchMode.value) exitBatchMode()
 }
 
 async function loadLoadout(): Promise<void> {
@@ -726,6 +1072,7 @@ async function loadLoadout(): Promise<void> {
     loadingLoadout.value = false
     selection.value = {}
     missingSlots.value = new Set()
+    loadoutLabels.value = {}
     savedSnapshot.value = snapshot()
     return
   }
@@ -736,16 +1083,20 @@ async function loadLoadout(): Promise<void> {
     if (seq !== loadoutSeq) return // 已被更新的请求取代，丢弃本次响应
     const next: Record<string, { cosmeticId: string; scale: number }> = {}
     const missing = new Set<string>()
+    // 衣柜只存收藏，正在穿戴的时装可能不在衣柜里：名称用 loadout 回填的 name 兜底
+    const labels: Record<string, string> = {}
     for (const item of data.items || []) {
       // B10：未知 slot 不可见但会计入 equippedCount、并在保存时回传 ——
       // 后端 put_loadout 对未知 slot 是**整条 400 失败**，所以载入时直接丢弃。
       if (!validSlots.has(item.slot)) continue
       // B9：载入时夹紧 scale（后端两条写路径都夹，这里再兜一层，避免手改 DB 后自相矛盾）
       next[item.slot] = { cosmeticId: item.cosmeticId, scale: clampScale(item.scale ?? 1) }
+      labels[item.slot] = (item.name || '').trim()
       if (item.missing) missing.add(item.slot)
     }
     selection.value = next
     missingSlots.value = missing
+    loadoutLabels.value = labels
     savedSnapshot.value = snapshot()
   } catch (error) {
     if (seq !== loadoutSeq) return
@@ -754,6 +1105,7 @@ async function loadLoadout(): Promise<void> {
       noIdentity.value = true
       selection.value = {}
       missingSlots.value = new Set()
+      loadoutLabels.value = {}
       savedSnapshot.value = snapshot()
       return
     }
@@ -761,6 +1113,7 @@ async function loadLoadout(): Promise<void> {
     // 加载失败时清空选择，避免旧身份的穿戴被误存到当前身份
     selection.value = {}
     missingSlots.value = new Set()
+    loadoutLabels.value = {}
     savedSnapshot.value = snapshot()
     // 身份已失效（别处解绑 / 被转绑）：先回落到有效身份再读一次，
     // 否则「重试」会一直用同一个失效 identityId 失败，用户只能手动刷新页面
@@ -884,24 +1237,27 @@ onMounted(async () => {
   // 之后再 addEventListener 会留下一个永不释放的监听器（还会按旧状态弹刷新确认）
   window.addEventListener('beforeunload', onBeforeUnload)
   await loadIdentities()
-  await Promise.all([loadCatalog(), identitiesError.value ? Promise.resolve() : loadLoadout()])
+  await Promise.all([loadWardrobe(), identitiesError.value ? Promise.resolve() : loadLoadout()])
   applyStoreDeepLink()
 })
 
 /**
  * 「时装商店」的「去穿戴」深链：`/fashion/wardrobe?cosmeticId=xxx`。
  *
- * 只做定位提示（打开详情弹窗），**不强制穿戴** —— 用户仍可在目录里改选、调缩放，
+ * 只做定位提示（打开详情弹窗），**不强制穿戴** —— 用户仍可在衣柜里改选、调缩放，
  * 也不该因为从商店点进来就悄悄改掉他的穿戴。
  * 处理完把 query 删掉：否则刷新 / 前进后退都会再弹一次，且地址栏会挂着一个
  * 与当前状态无关的参数。
+ *
+ * 注意：商店只对「已在衣柜」的时装给「去穿戴」入口，所以正常情况下一定能命中；
+ * 命中不了说明这件在别的标签页被移出了衣柜 —— 提示去商店重新加入。
  */
 function applyStoreDeepLink(): void {
   const cosmeticId = typeof route.query.cosmeticId === 'string' ? route.query.cosmeticId : ''
   if (!cosmeticId) return
-  const item = catalogMap.value.get(cosmeticId) || catalogMap.value.get(localIdOf(cosmeticId))
+  const item = wardrobeMap.value.get(cosmeticId) || wardrobeMap.value.get(localIdOf(cosmeticId))
   if (item) openDetail(item)
-  else ElMessage.warning('商店里选中的时装已下架，可在目录里重新挑选')
+  else ElMessage.info('这件时装还没在你的衣柜里，可到「时装商店」点「加入衣柜」后再来穿戴')
   const query = { ...route.query }
   delete query.cosmeticId
   void router.replace({ query })
@@ -1035,13 +1391,13 @@ onBeforeRouteLeave(async () => {
   flex-wrap: wrap;
 }
 
-.catalog-search {
+.wardrobe-search {
   width: 200px;
   max-width: 100%;
 }
 
 /* 分类按钮在窄屏必须换行，否则横向溢出卡片 */
-.catalog-filters {
+.wardrobe-filters {
   display: flex;
   flex-wrap: wrap;
   row-gap: var(--space-2);
@@ -1064,28 +1420,45 @@ onBeforeRouteLeave(async () => {
   font-size: 12px;
 }
 
+/* 批量管理模式的操作提示：进模式后必须让用户知道「点卡片=勾选」这条规则变了 */
+.batch-hint {
+  margin: var(--space-2) 0 0;
+  font-size: 12px;
+  color: var(--accent);
+}
+
+/* 空衣柜引导文案（真正的空收藏，不是筛选筛空） */
+.empty-hint {
+  margin: 0 0 var(--space-3);
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
 .panel-error {
   margin-bottom: var(--space-3);
 }
 
-.catalog-body,
+.wardrobe-body,
 .loadout-body {
   min-height: 200px;
 }
 
-.catalog-grid {
+.wardrobe-cards {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(132px, 1fr));
   gap: var(--space-3);
 }
 
 .cosmetic-card {
+  /* ✕ 移除按钮与批量勾选框都绝对定位在卡片角上 */
+  position: relative;
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
   background: var(--bg-elevated);
   padding: var(--space-2);
   cursor: pointer;
-  transition: border-color 150ms var(--ease-out), transform 150ms var(--ease-out);
+  transition: border-color 150ms var(--ease-out), transform 150ms var(--ease-out),
+    background-color 150ms var(--ease-out);
 }
 
 .cosmetic-card:hover {
@@ -1102,6 +1475,92 @@ onBeforeRouteLeave(async () => {
 .cosmetic-card.equipped {
   border-color: var(--accent-active);
   box-shadow: 0 0 0 1px var(--accent-ring, var(--accent-active)) inset;
+}
+
+/* 批量管理中已勾选的卡片：底色 + 边框双重强调，避免只靠小复选框判断 */
+.cosmetic-card.selected {
+  border-color: var(--accent-active);
+  background: var(--accent-soft);
+}
+
+/* 已下架（missing）：可以看、可以删，但不能穿 —— 用灰度而不是整体降透明度，
+   否则角上的 ✕ 也会一起变淡，用户会以为它不可点。
+   `:not(.batch-mode)`：批量管理下点卡片是「勾选」，仍然可点，不能给禁止光标 */
+.cosmetic-card.missing:not(.batch-mode) {
+  cursor: not-allowed;
+}
+
+.cosmetic-card.missing:not(.batch-mode):hover {
+  transform: none;
+  border-color: var(--border-subtle);
+}
+
+/* 卡片内仍然可点的子元素（✕ / 详情）要拿回自己的光标 */
+.cosmetic-card.missing .card-remove,
+.cosmetic-card.missing .detail-link {
+  cursor: pointer;
+}
+
+.cosmetic-card.missing .cosmetic-thumb {
+  opacity: 0.55;
+}
+
+.cosmetic-card.missing .cosmetic-name {
+  color: var(--text-secondary);
+}
+
+/* 批量勾选框：叠在缩略图左上角，带底色保证在任何图片上都看得清 */
+.card-check {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  z-index: 1;
+  height: 22px;
+  padding: 0 4px;
+  border-radius: 4px;
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-sm);
+}
+
+/* 单件移除按钮：常显（不靠 hover 才出现），键盘用户也能 Tab 到 */
+.card-remove {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  z-index: 1;
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  font-size: 11px;
+  line-height: 1;
+  color: var(--text-secondary);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+  cursor: pointer;
+  opacity: 0.8;
+  transition: color 150ms var(--ease-out), border-color 150ms var(--ease-out),
+    opacity 150ms var(--ease-out);
+}
+
+.card-remove:hover {
+  color: var(--danger);
+  border-color: var(--danger);
+  opacity: 1;
+}
+
+.card-remove:focus-visible {
+  outline: 2px solid var(--accent-active);
+  outline-offset: 1px;
+  opacity: 1;
+}
+
+.card-remove:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
 }
 
 .cosmetic-thumb {
@@ -1140,6 +1599,8 @@ onBeforeRouteLeave(async () => {
   color: var(--text-secondary);
   display: flex;
   align-items: center;
+  /* 「已下架」+「已穿戴」+「无预览」可能同时出现，窄卡片里必须能换行 */
+  flex-wrap: wrap;
   gap: 6px;
   margin-top: 2px;
 }
@@ -1149,6 +1610,15 @@ onBeforeRouteLeave(async () => {
   background: var(--accent-soft);
   padding: 0 4px;
   border-radius: 4px;
+}
+
+/* 已下架角标：用危险色，和「已穿戴」的强调色区分开 */
+.missing-tag {
+  color: var(--danger);
+  background: var(--danger-bg);
+  padding: 0 4px;
+  border-radius: 4px;
+  white-space: nowrap;
 }
 
 .meta-tag {
@@ -1183,7 +1653,7 @@ onBeforeRouteLeave(async () => {
   border-radius: 2px;
 }
 
-.catalog-pager {
+.wardrobe-pager {
   display: flex;
   justify-content: flex-end;
   margin-top: var(--space-3);

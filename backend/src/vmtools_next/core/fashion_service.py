@@ -43,6 +43,7 @@ from vmtools_next.data.models.fashion import (
     FashionCatalogModel,
     FashionIdentityModel,
     FashionLoadoutModel,
+    FashionWardrobeModel,
 )
 from loguru import logger
 from sqlalchemy.exc import IntegrityError
@@ -972,6 +973,200 @@ def put_loadout(
         identity_id, sorted(keep), [item["cosmeticId"] for item in warnings],
     )
     return now, warnings
+
+
+# ── 我的衣柜（wardrobe 收藏） ────────────────────────────────────────────
+#
+# 与穿戴配置的区别：**衣柜是网站账号的收藏夹（user 维度）**，一个账号绑定的多个
+# MC 身份共享同一份；穿戴配置（fashion_loadout）才是身份维度。商店页「加入衣柜」
+# 走 add_*，衣柜页列表走 list_*，单件/批量删除走 remove_*。
+
+# 一次批量删除的上限：前端是分页勾选，500 足够覆盖「整页全选」；再放宽只会让
+# 一次请求携带超长 id 列表，收益为零。
+MAX_WARDROBE_BATCH_DELETE = 500
+
+
+def _wardrobe_rows(db: Any, user_id: str) -> list[Any]:
+    """某用户衣柜的全部行（不过滤目录状态 —— 目录没了也要能删掉）。"""
+    return (
+        db.query(FashionWardrobeModel)
+        .filter_by(user_id=str(user_id))
+        .all()
+        or []
+    )
+
+
+def _wardrobe_item_dict(
+    cosmetic_id: Any, added_at: Any, meta: Optional[dict]
+) -> dict:
+    """衣柜条目对外形状（camelCase，字段与 ``WardrobeItemOut`` 一一对应）。
+
+    ``meta`` 是目录条目（:func:`_catalog_row_to_dict` 的形状）。为 None 或
+    ``enabled=False`` 时标 ``missing=True``：**条目照常返回**，玩家才删得掉它；
+    目录被删除时没有任何残留元数据可用，name 等字段给空值。
+    """
+    item = {
+        "cosmeticId": str(cosmetic_id or ""),
+        "name": "",
+        "category": "other",
+        "packId": "",
+        "assetKey": "",
+        "sha256": "",
+        "bytes": 0,
+        "sortOrder": 0,
+        "addedAt": iso(added_at),
+        "missing": True,
+    }
+    if meta is not None:
+        item.update({
+            "name": meta.get("name", "") or "",
+            "category": meta.get("category", "other") or "other",
+            "packId": meta.get("packId", "") or "",
+            "assetKey": meta.get("assetKey", "") or "",
+            "sha256": meta.get("sha256", "") or "",
+            "bytes": int(meta.get("bytes", 0) or 0),
+            "sortOrder": int(meta.get("sortOrder", 0) or 0),
+            # 目录还在但被下架（enabled=False）同样算 missing：mod 不会再下发它
+            "missing": not bool(meta.get("enabled", True)),
+        })
+    return item
+
+
+def list_wardrobe(db: Any, user_id: str, *, settings: Any = None) -> list[dict]:
+    """我的衣柜（按加入时间**倒序**，最近加入的排最前）。"""
+    rows = _wardrobe_rows(db, user_id)
+    # 目录快照含 disabled：missing 要能区分「目录里被停用」和「目录里没有」
+    catalog = _catalog_map(db, enabled_only=False, settings=settings)
+    # 用 _dt_sort_key 排序：SQLite 读回的是 naive datetime，直接比较会 TypeError。
+    # cosmetic_id 作次键，保证同一时刻加入的条目顺序稳定（分页/前端 diff 不抖动）。
+    rows.sort(
+        key=lambda row: (
+            _dt_sort_key(getattr(row, "added_at", None)),
+            str(getattr(row, "cosmetic_id", "")),
+        ),
+        reverse=True,
+    )
+    return [
+        _wardrobe_item_dict(
+            getattr(row, "cosmetic_id", ""),
+            getattr(row, "added_at", None),
+            catalog.get(str(getattr(row, "cosmetic_id", ""))),
+        )
+        for row in rows
+    ]
+
+
+def add_wardrobe_item(db: Any, user_id: str, cosmetic_id: Any) -> tuple[dict, bool]:
+    """把一件时装加入衣柜；已收藏时幂等返回 ``(item, False)``。
+
+    Raises:
+        FashionServiceError: ``invalid_cosmetic_id``（空 / 超长 / 字符非法，400）、
+            ``cosmetic_not_found``（目录里没有或已停用，404）
+    """
+    # validate_cosmetic_id 同时挡掉空串与 >128 字符（COSMETIC_ID_RE 是 {1,128}）
+    cid, _pack_id = validate_cosmetic_id(cosmetic_id)
+    # _lookup_catalog_item 在 get_catalog_item 之上补了全局 ID ↔ 简单 ID 的别名
+    # 兜底（与 loadout 同一套规则）：商店页传目录里的原值，这里也能吃到历史数据
+    meta = _lookup_catalog_item(db, cid)
+    if meta is None or not bool(meta.get("enabled", True)):
+        raise FashionServiceError(
+            "cosmetic_not_found", "时装不存在或已下架", status_code=404
+        )
+    row = (
+        db.query(FashionWardrobeModel)
+        .filter_by(user_id=str(user_id), cosmetic_id=cid)
+        .first()
+    )
+    added = False
+    if row is None:
+        row = FashionWardrobeModel(
+            id=str(uuid_lib.uuid4()),
+            user_id=str(user_id),
+            cosmetic_id=cid,
+            added_at=utcnow(),
+        )
+        db.add(row)
+        try:
+            db.commit()
+        except IntegrityError:
+            # 并发双击「加入衣柜」：另一请求先插入了同一行，唯一约束兜底。
+            # 这是幂等接口，不该把 409 甩给前端 —— 回滚后按「已存在」处理。
+            db.rollback()
+            row = (
+                db.query(FashionWardrobeModel)
+                .filter_by(user_id=str(user_id), cosmetic_id=cid)
+                .first()
+            )
+            if row is None:  # pragma: no cover - 约束冲突却查不到行，说明库异常
+                raise FashionServiceError(
+                    "conflict", "数据已被其他请求修改，请重试", status_code=409
+                )
+        else:
+            added = True
+    return _wardrobe_item_dict(cid, getattr(row, "added_at", None), meta), added
+
+
+def remove_wardrobe_item(db: Any, user_id: str, cosmetic_id: Any) -> bool:
+    """从衣柜移除单件，返回是否真的删掉了（不存在返回 False，不算错误）。"""
+    cid = str(cosmetic_id or "").strip()
+    if not cid:
+        return False
+    row = (
+        db.query(FashionWardrobeModel)
+        .filter_by(user_id=str(user_id), cosmetic_id=cid)
+        .first()
+    )
+    if row is None:
+        return False
+    db.delete(row)
+    db.commit()
+    return True
+
+
+def normalize_wardrobe_ids(cosmetic_ids: Iterable[Any]) -> list[str]:
+    """批量入参规范化：去空白、丢空串与超长（>128 不可能存在于库里）、保序去重。"""
+    result: list[str] = []
+    seen: set[str] = set()
+    for raw in cosmetic_ids or []:
+        cid = str(raw or "").strip()
+        if not cid or len(cid) > 128 or cid in seen:
+            continue
+        seen.add(cid)
+        result.append(cid)
+    return result
+
+
+def remove_wardrobe_items(db: Any, user_id: str, cosmetic_ids: Iterable[Any]) -> int:
+    """批量移除衣柜条目，返回**真正删掉**的条数；不存在的 id 静默忽略。
+
+    Raises:
+        FashionServiceError: ``empty_selection``（去重后为空）、``too_many_items``
+            （去重后超过 :data:`MAX_WARDROBE_BATCH_DELETE`）
+    """
+    ids = normalize_wardrobe_ids(cosmetic_ids)
+    if not ids:
+        raise FashionServiceError("empty_selection", "请先选择要删除的时装")
+    if len(ids) > MAX_WARDROBE_BATCH_DELETE:
+        raise FashionServiceError(
+            "too_many_items", f"一次最多删除 {MAX_WARDROBE_BATCH_DELETE} 件时装"
+        )
+    wanted = set(ids)
+    # 单用户衣柜规模受目录规模约束（有界），先按 user 取回再按集合过滤：
+    # 比拼 500 个 IN 占位符的语句更简单，也不会踩 SQLite 的变量数上限。
+    rows = [
+        row
+        for row in _wardrobe_rows(db, user_id)
+        if str(getattr(row, "cosmetic_id", "")) in wanted
+    ]
+    for row in rows:
+        db.delete(row)
+    if rows:
+        db.commit()
+    logger.info(
+        "fashion wardrobe batch-remove user={} requested={} removed={}",
+        user_id, len(ids), len(rows),
+    )
+    return len(rows)
 
 
 # ── 批量解析（热路径） ──────────────────────────────────────────────────

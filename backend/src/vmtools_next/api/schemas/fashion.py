@@ -138,6 +138,60 @@ class LoadoutResponse(FashionSchema):
     items: list[LoadoutItemOut]
 
 
+# ── 我的衣柜（收藏） ────────────────────────────────────────────────────
+
+class WardrobeItemOut(FashionSchema):
+    """衣柜条目：目录元数据 + 加入时间。
+
+    ``missing=True`` 表示目录里已删除或已停用 —— 条目**仍会返回**（玩家才删得掉），
+    此时 name 等字段取目录残留值，目录整条没了就是空值。
+    """
+
+    cosmetic_id: str = Field(..., alias="cosmeticId")
+    name: str = ""
+    category: str = "other"
+    pack_id: str = Field(default="", alias="packId")
+    asset_key: str = Field(default="", alias="assetKey")
+    sha256: str = ""
+    bytes: int = 0
+    sort_order: int = Field(default=0, alias="sortOrder")
+    added_at: Optional[str] = Field(default=None, alias="addedAt")
+    missing: bool = False
+
+
+class WardrobeListResponse(FashionSchema):
+    items: list[WardrobeItemOut]
+
+
+class WardrobeAddRequest(FashionSchema):
+    # 缺省空串而不是必填：让「空 cosmeticId」落到服务层的 invalid_cosmetic_id(400)，
+    # 而不是 FastAPI 的 422 —— 前端只需要处理一种错误形状。
+    cosmetic_id: str = Field(default="", alias="cosmeticId")
+
+
+class WardrobeAddResponse(FashionSchema):
+    ok: bool = True
+    # False = 之前就在衣柜里（幂等重复添加，仍返回 200 和该条目）
+    added: bool = False
+    item: WardrobeItemOut
+
+
+class WardrobeRemoveResponse(FashionSchema):
+    ok: bool = True
+    # False = 本来就不在衣柜里（删除是幂等的）
+    removed: bool = False
+
+
+class WardrobeBatchDeleteRequest(FashionSchema):
+    cosmetic_ids: list[str] = Field(default_factory=list, alias="cosmeticIds")
+
+
+class WardrobeBatchDeleteResponse(FashionSchema):
+    ok: bool = True
+    # 真正删掉的条数（不存在的 id 静默忽略，不计入）
+    removed: int = 0
+
+
 class ResolvedItem(FashionSchema):
     """热路径返回项：只有 assetKey 级别元数据，不含资产内容。"""
 

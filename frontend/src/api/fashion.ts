@@ -49,6 +49,37 @@ export interface CatalogItem {
   sortOrder: number
 }
 
+/**
+ * 衣柜收藏条目（`GET /fashion/wardrobe`）。
+ *
+ * 和 `CatalogItem` 字段几乎一致，但它是**玩家收藏**而不是站点目录：
+ * 只有玩家在商店里主动「加入衣柜」的时装才会出现在这里。
+ *
+ * 两个额外字段：
+ * - `addedAt`：加入衣柜的时间（后端 naive UTC 字符串，展示走 `fmtApiTime`）；
+ * - `missing`：该 cosmeticId 在站点目录里已下架 / 停用 —— 仍要显示、仍要能删，
+ *   只是**不能穿戴**（提交上去也只会被后端 skip 掉）。
+ */
+export interface WardrobeItem {
+  cosmeticId: string
+  name: string
+  category: string
+  packId: string
+  assetKey: string
+  sha256: string
+  bytes: number
+  sortOrder: number
+  addedAt: string | null
+  missing: boolean
+}
+
+/** 「加入衣柜」结果：`added=false` 表示本来就在衣柜里（幂等重复点击，不算失败） */
+export interface WardrobeAddResult {
+  ok: boolean
+  added: boolean
+  item: WardrobeItem
+}
+
 export interface LoadoutItem {
   slot: string
   cosmeticId: string
@@ -188,6 +219,37 @@ export const fashionApi = {
   /** 时装目录（登录用户可读） */
   catalog(params?: { category?: string; pack_id?: string }) {
     return client.get<{ items: CatalogItem[] }>('/fashion/catalog', { params })
+  },
+  // ── 我的衣柜（收藏制：只有主动「加入衣柜」的时装才在这里）───────────────
+  /**
+   * 我的衣柜。
+   *
+   * 注意它**不是**目录的子集查询，而是玩家收藏：商店页拿它算「已在衣柜」集合，
+   * 衣柜页拿它当唯一数据源（不再展示全站目录）。
+   */
+  wardrobe() {
+    return client.get<{ items: WardrobeItem[] }>('/fashion/wardrobe')
+  },
+  /** 加入衣柜（幂等：已在衣柜时后端返回 `added: false`，不报错） */
+  addToWardrobe(cosmeticId: string) {
+    return client.post<WardrobeAddResult>('/fashion/wardrobe', { cosmeticId })
+  },
+  /** 从衣柜移除单件（`removed: false` = 本来就不在衣柜里） */
+  removeFromWardrobe(cosmeticId: string) {
+    return client.delete<{ ok: boolean; removed: boolean }>(
+      `/fashion/wardrobe/${encodeURIComponent(cosmeticId)}`
+    )
+  },
+  /**
+   * 批量从衣柜移除。
+   *
+   * 后端对空数组 / 超量分别返回 400 `empty_selection` / `too_many_items`，
+   * 调用方用 `fashionErrorMessage()` 取中文提示即可。
+   */
+  batchRemoveFromWardrobe(cosmeticIds: string[]) {
+    return client.post<{ ok: boolean; removed: number }>('/fashion/wardrobe/batch-delete', {
+      cosmeticIds,
+    })
   },
   /** 当前网页账号绑定的 MC 身份 */
   myIdentities() {
