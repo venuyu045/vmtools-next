@@ -122,11 +122,11 @@ npm install
 
 | 能力 | 说明 |
 | :--- | :--- |
-| **时装中心** | 顶栏「时装中心」入口 → 独立子应用，侧边栏只保留时装内容：**时装商店**（浏览全部目录）、**我的衣柜**（挑选 / 保存穿戴）、**时装管理**（仅 site_admin）；主站侧边栏不再出现时装入口，底部「返回主站」一键回主站 |
+| **时装中心** | 顶栏「时装中心」入口 → 独立子应用，侧边栏只保留时装内容：**时装商店**（浏览全部目录、加入衣柜）、**我的衣柜**（收藏管理 / 挑选穿戴）、**时装管理**（仅 site_admin）；主站侧边栏不再出现时装入口，底部「返回主站」一键回主站 |
 | **账号绑定** | 游戏内 `/vmfashion bind` 得到 6 位绑定码 → 本站「时装绑定」页输入 → 一个网站账号可绑多个 MC 账号 |
 | **双路认证** | 正版走 `sessionserver.mojang.com`，皮肤站走 Yggdrasil（**只信任白名单内的地址**，防 SSRF）；后端用 `hasJoined` 反查并**比对 UUID**，不做密码登录 |
-| **时装商店** | `/fashion/store`：目录网格（缩略图 / 槽位 / 所属时装包）、搜索、按槽位筛选、分页、详情大图；「去穿戴」深链到衣柜并定位该件时装 |
-| **网页衣柜** | `/fashion/wardrobe`：按槽位（披风/翅膀/头饰/背饰/宠物/光环）挑选、调缩放、保存；进游戏自动生效，游戏内换装也会实时回传；支持搜索、详情大图与分页 |
+| **时装商店** | `/fashion/store`：目录网格（缩略图 / 槽位 / 所属时装包）、搜索、按槽位筛选、分页、详情大图；卡片「加入衣柜」把时装收进自己的衣柜（已在衣柜则变为「去穿戴 →」深链到衣柜并定位该件时装） |
+| **网页衣柜** | `/fashion/wardrobe`：**只显示自己在商店里加入衣柜的时装**（收藏制，不再展示全站目录）；按槽位（披风/翅膀/头饰/背饰/宠物/光环）挑选、调缩放、保存；支持单件移除与**批量管理（勾选 / 全选 / 删除选中）**；进游戏自动生效，游戏内换装也会实时回传 |
 | **时装管理端** | `/fashion/admin`（仅 site_admin）：目录管理（增删改查 / 启用开关 / 排序 / 资产缺失徽标）、资产管理（上传 + 一键填入目录）、时装包（上传 zip 发布 / 下架，409 `pack_in_use` 有专门引导）；上传带进度 / 网速 / ETA 与大小预检 |
 | **批量解析** | 进服时 `POST /loadouts/resolve` 一次最多 200 个 UUID，只回 `assetKey` 级元数据（热路径，5 秒缓存） |
 | **时装包下发** | `GET /packs` 清单 + `GET /packs/{id}/{version}/download` 整包 zip：200 直出、`Content-Length` 精确、**不重定向**、可选 Ed25519 签名；客户端按 sha256 校验后安全解压 |
@@ -141,6 +141,7 @@ npm install
 - 后端路由：`backend/src/vmtools_next/api/routers/fashion.py`，前缀 **`/api/fashion`**
   - 公开：`/auth/challenge`、`/auth/verify`、`/packs`、`/packs/{id}/{version}/download`、`/assets/{assetKey}`
   - mod（Bearer token）：`/loadout`（PUT）、`/loadout/me`、`/loadouts/resolve`、`/catalog`、`/device/*`
+  - 网站（网页 JWT）：`/wardrobe`（GET/POST/DELETE）、`/wardrobe/batch-delete`、`/identities/me`、`/device/approve`
   - 管理端（site_admin）：`/admin/catalog`、`/admin/assets`、`/admin/packs`（上下架）
 - 完整契约（含每个端点的字段表、错误码、签名规范、curl 自测）：[`docs/fashion-api.md`](docs/fashion-api.md)
 
@@ -160,8 +161,8 @@ npm install
 
 ### 数据与迁移
 
-- 表：`fashion_identity`（已验证的 MC 身份）、`fashion_catalog`（时装目录）、`fashion_loadout`（穿戴，`(identity_id, slot)` 唯一）、`fashion_asset`（资产，按 sha256 去重；**时装包清单从 `.zip` 资产行派生，无需新表**）
-- 迁移：`backend/alembic/versions/20261028_fashion.py`（`alembic upgrade head`；`init_db()` 的 `create_all` 也会建表）
+- 表：`fashion_identity`（已验证的 MC 身份）、`fashion_catalog`（时装目录）、`fashion_loadout`（穿戴，`(identity_id, slot)` 唯一）、`fashion_asset`（资产，按 sha256 去重；**时装包清单从 `.zip` 资产行派生，无需新表**）、`fashion_wardrobe`（我的衣柜收藏，`(user_id, cosmetic_id)` 唯一；`cosmetic_id` 故意不做外键，删目录不清空玩家衣柜）
+- 迁移：`backend/alembic/versions/20261028_fashion.py`、`20261101_fashion_wardrobe.py`（`alembic upgrade head`；`init_db()` 的 `create_all` 也会建表）
 - 资产目录：`data/fashion-assets/`（见该目录下 README）
 
 ### 发布时装包（管理员）
