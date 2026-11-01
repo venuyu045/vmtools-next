@@ -192,8 +192,37 @@ class WardrobeBatchDeleteResponse(FashionSchema):
     removed: int = 0
 
 
+class WardrobeMeItemOut(FashionSchema):
+    """mod 端用的精简条目（契约见 docs/fashion-api.md §5.5）。
+
+    只给 mod 真正需要的 5 个字段：mod 拿它跟本地已装时装包比对，决定衣柜里
+    「哪几件已下载、哪几件点穿上时要先下发」。assetKey / sha256 / bytes 那些
+    资产元数据 mod 走 `/loadouts/resolve` 与包级下发，这里不重复下发。
+    """
+
+    cosmetic_id: str = Field(..., alias="cosmeticId")
+    name: str = ""
+    category: str = "other"
+    pack_id: str = Field(default="", alias="packId")
+    # 目录里已删除/已停用：mod 会显示但禁止穿戴（点了也只会被后端 skip）
+    missing: bool = False
+
+
+class WardrobeMeResponse(FashionSchema):
+    """``GET /wardrobe/me`` 的响应。
+
+    ``linked=False`` 表示这个 MC 身份还没绑定网站账号 —— 此时 ``items`` 一定是空，
+    **但客户端不能把它当成"衣柜是空的"**：mod 会退回「显示本地已装全部时装」，
+    否则没绑定的玩家打开衣柜会看到一片空白（还以为模组坏了）。
+    """
+
+    linked: bool = False
+    items: list[WardrobeMeItemOut] = Field(default_factory=list)
+
+
 class ResolvedItem(FashionSchema):
     """热路径返回项：只有 assetKey 级别元数据，不含资产内容。"""
+
 
     slot: str
     cosmetic_id: str = Field(..., alias="cosmeticId")

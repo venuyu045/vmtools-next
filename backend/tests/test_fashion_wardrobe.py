@@ -532,6 +532,8 @@ class TestWardrobeApiWiring(_Base):
         self.assertIn(("POST", "/wardrobe"), table)
         self.assertIn(("POST", "/wardrobe/batch-delete"), table)
         self.assertIn(("DELETE", "/wardrobe/{cosmetic_id}"), table)
+        # mod 端拉收藏（fashion token 或网页 JWT 都行）
+        self.assertIn(("GET", "/wardrobe/me"), table)
 
     def test_route_list_returns_items(self):
         self.add("cape_dragon")
@@ -593,6 +595,103 @@ class TestWardrobeApiWiring(_Base):
         )
         self.assertTrue(_attr(hit, "removed"))
         self.assertFalse(_attr(miss, "removed"), "删不存在的仍是 200，removed=False")
+
+
+# ── mod 端：GET /wardrobe/me ────────────────────────────────────────────
+
+class _Principal:
+    """``routers.get_principal`` 返回值的替身（路由只要 ``.user_id``）。
+
+    真实 principal 是 dataclass：identity_id / user_id / via / mc_uuid / mc_name。
+    """
+
+    def __init__(self, user_id=None, identity_id=None, via="mod"):
+        self.user_id = user_id
+        self.identity_id = identity_id
+        self.via = via
+        self.mc_uuid = "12345678-1234-5678-1234-567812345678"
+        self.mc_name = "Tester"
+
+
+class TestWardrobeMeForClient(_Base):
+    """mod 拉收藏：``linked`` 语义 + 精简字段（契约 docs/fashion-api.md §5.5）。"""
+
+    @classmethod
+    def setUpClass(cls):
+        try:
+            cls.api = _import_fashion_router()
+        except Exception as exc:  # pragma: no cover - 取决于离线 stub 的完整度
+            raise unittest.SkipTest(f"无法导入路由模块：{exc}")
+
+    def me(self, principal):
+        return self.api.my_wardrobe_for_client(principal=principal, db=self.db)
+
+    def test_unlinked_identity_returns_linked_false(self):
+        self.add("cape_dragon")
+        response = self.me(_Principal(user_id=None, identity_id="identity-1"))
+        self.assertFalse(_attr(response, "linked"), "没绑定网站账号 → linked=False")
+        self.assertEqual(_attr(response, "items"), [],
+                         "linked=False 时不能把「衣柜是空的」当成真话")
+
+    def test_linked_returns_compact_items(self):
+        self.add("cape_dragon")
+        self.add("wings_angel")
+        response = self.me(_Principal(user_id=USER_A, identity_id="identity-1"))
+
+        self.assertTrue(_attr(response, "linked"))
+        items = _attr(response, "items")
+        self.assertEqual(len(items), 2)
+        first = items[0]
+        self.assertEqual(_attr(first, "cosmetic_id", "cosmeticId"), "wings_angel")
+        self.assertEqual(_attr(first, "name"), "天使之翼")
+        self.assertEqual(_attr(first, "category"), "wings")
+        self.assertEqual(_attr(first, "pack_id", "packId"), "pack1")
+        self.assertFalse(_attr(first, "missing"))
+
+    def test_compact_items_do_not_leak_asset_metadata(self):
+        self.add("cape_dragon")
+        item = _attr(self.me(_Principal(user_id=USER_A)), "items")[0]
+        # mod 不需要资产元数据（走 /loadouts/resolve 与包级下发），别塞进来
+        self.assertIsNone(_attr(item, "asset_key", "assetKey"))
+        self.assertIsNone(_attr(item, "sha256"))
+        self.assertIsNone(_attr(item, "bytes"))
+        self.assertIsNone(_attr(item, "sort_order", "sortOrder"))
+        self.assertIsNone(_attr(item, "added_at", "addedAt"))
+
+    def test_linked_but_empty_wardrobe_stays_linked(self):
+        response = self.me(_Principal(user_id=USER_A))
+        self.assertTrue(_attr(response, "linked"),
+                        "已绑定但衣柜为空 → linked=True + 空列表（界面显示「衣柜是空的」引导）")
+        self.assertEqual(_attr(response, "items"), [])
+
+    def test_missing_flag_propagates(self):
+        self.add("cape_dragon")
+        svc.upsert_catalog_item(self.db, {"cosmeticId": "cape_dragon", "enabled": False})
+        item = _attr(self.me(_Principal(user_id=USER_A)), "items")[0]
+        self.assertTrue(_attr(item, "missing"), "已下架的条目要标 missing，mod 会禁止穿戴")
+
+    def test_isolated_per_user(self):
+        self.add("cape_dragon", USER_A)
+        self.add("wings_angel", USER_B)
+        ids_a = [
+            _attr(it, "cosmetic_id", "cosmeticId")
+            for it in _attr(self.me(_Principal(user_id=USER_A)), "items")
+        ]
+        ids_b = [
+            _attr(it, "cosmetic_id", "cosmeticId")
+            for it in _attr(self.me(_Principal(user_id=USER_B)), "items")
+        ]
+        self.assertEqual(ids_a, ["cape_dragon"])
+        self.assertEqual(ids_b, ["wings_angel"])
+
+    def test_web_principal_also_works(self):
+        """网页 JWT 走的也是 get_principal（via="web"），同样要能拉到自己的收藏。"""
+        self.add("hat_crown")
+        response = self.me(_Principal(user_id=USER_A, via="web"))
+        self.assertTrue(_attr(response, "linked"))
+        self.assertEqual(
+            _attr(_attr(response, "items")[0], "cosmetic_id", "cosmeticId"), "hat_crown"
+        )
 
 
 # ── alembic 迁移 ────────────────────────────────────────────────────────

@@ -140,7 +140,7 @@ npm install
 - 顶栏入口（`AppHeader`）：**理想乡官网** `/lixiangxiang`（访客可见）、**时装中心** `/fashion/store`（登录后可见）
 - 后端路由：`backend/src/vmtools_next/api/routers/fashion.py`，前缀 **`/api/fashion`**
   - 公开：`/auth/challenge`、`/auth/verify`、`/packs`、`/packs/{id}/{version}/download`、`/assets/{assetKey}`
-  - mod（Bearer token）：`/loadout`（PUT）、`/loadout/me`、`/loadouts/resolve`、`/catalog`、`/device/*`
+  - mod（Bearer token）：`/loadout`（PUT）、`/loadout/me`、`/loadouts/resolve`、`/catalog`、`/device/*`、`/wardrobe/me`（游戏内衣柜按收藏过滤）
   - 网站（网页 JWT）：`/wardrobe`（GET/POST/DELETE）、`/wardrobe/batch-delete`、`/identities/me`、`/device/approve`
   - 管理端（site_admin）：`/admin/catalog`、`/admin/assets`、`/admin/packs`（上下架）
 - 完整契约（含每个端点的字段表、错误码、签名规范、curl 自测）：[`docs/fashion-api.md`](docs/fashion-api.md)

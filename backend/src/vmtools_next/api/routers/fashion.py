@@ -18,6 +18,7 @@ mod（Bearer fashion token）::
     POST /api/fashion/loadouts/resolve
     POST /api/fashion/device/start               （生成 6 位绑定码）
     GET  /api/fashion/device/status              （轮询绑定结果）
+    GET  /api/fashion/wardrobe/me                （拉「我的衣柜」收藏：token 或网页 JWT 都行）
 
 网站（网页 JWT，与 mod token 二选一）::
 
@@ -96,6 +97,8 @@ from vmtools_next.api.schemas.fashion import (
     WardrobeBatchDeleteResponse,
     WardrobeItemOut,
     WardrobeListResponse,
+    WardrobeMeItemOut,
+    WardrobeMeResponse,
     WardrobeRemoveResponse,
 )
 from vmtools_next.core import fashion_service as svc
@@ -517,12 +520,14 @@ def resolve_loadouts(
     return ResolveResponse(**payload)
 
 
-# ── 我的衣柜（收藏，网页 JWT / user 维度） ──────────────────────────────
+# ── 我的衣柜（收藏，user 维度） ─────────────────────────────────────────
 #
 # 与 /loadout 的分工：loadout 是「穿在身上什么」（MC 身份维度，mod 也读写）；
-# wardrobe 是「我收藏了哪些时装」（网站账号维度），只服务商店页/衣柜页。
-# 一个账号绑定的多个 MC 身份共享同一份衣柜，所以鉴权只认网页 JWT（get_current_user），
-# 不接受 mod 的 fashion token —— mod 侧没有「收藏」概念。
+# wardrobe 是「我收藏了哪些时装」（网站账号维度）。
+# 一个账号绑定的多个 MC 身份共享同一份衣柜，所以：
+#   - 网页端（商店页 / 衣柜页）走 get_current_user（纯网页 JWT，只按账号）；
+#   - mod 端走 GET /wardrobe/me + get_principal（fashion token 或网页 JWT 都行），
+#     由 principal.user_id 反查账号；身份没绑账号时返回 linked=false 而不是空衣柜。
 
 @router.get("/wardrobe", response_model=WardrobeListResponse)
 def list_wardrobe(
@@ -532,6 +537,43 @@ def list_wardrobe(
     """我的衣柜（按加入时间倒序；目录已删除/已停用的条目仍返回并标 ``missing``）。"""
     items = svc.list_wardrobe(db, str(user.id))
     return WardrobeListResponse(items=[WardrobeItemOut(**item) for item in items])
+
+
+@router.get("/wardrobe/me", response_model=WardrobeMeResponse)
+def my_wardrobe_for_client(
+    principal: FashionPrincipal = Depends(get_principal),
+    db: Session = Depends(get_db),
+) -> WardrobeMeResponse:
+    """mod 端拉取「我的衣柜」收藏（mod fashion token 或网页 JWT 都接受）。
+
+    游戏内衣柜按这份清单过滤：只有收藏里的时装才显示。返回的是**精简条目**
+    （cosmeticId / name / category / packId / missing），mod 拿它跟本地已装包比对，
+    决定哪几件已经下载、哪几件点穿上时要先触发时装包下发。
+
+    ``linked=false`` 的两种情况（都返回 200，**不是错误**）：
+    - mod token 对应的 MC 身份还没绑定网站账号（``identity.user_id`` 为空）；
+    - 网页 JWT 指向的账号没有任何绑定身份。
+
+    客户端必须把 ``linked=false`` 理解成「没有衣柜可参照」→ 退回显示本地已装全部，
+    而不是当成"衣柜是空的"，否则没绑定的玩家打开衣柜会一片空白。
+    """
+    user_id = getattr(principal, "user_id", None)
+    if not user_id:
+        return WardrobeMeResponse(linked=False, items=[])
+    items = svc.list_wardrobe(db, str(user_id))
+    return WardrobeMeResponse(
+        linked=True,
+        items=[
+            WardrobeMeItemOut(
+                cosmetic_id=item.get("cosmeticId", "") or "",
+                name=item.get("name", "") or "",
+                category=item.get("category", "other") or "other",
+                pack_id=item.get("packId", "") or "",
+                missing=bool(item.get("missing", False)),
+            )
+            for item in items
+        ],
+    )
 
 
 @router.post("/wardrobe", response_model=WardrobeAddResponse)

@@ -349,6 +349,41 @@ sequenceDiagram
 
 ---
 
+### 5.5 `GET /wardrobe/me` —— mod 端拉收藏
+
+mod 的游戏内衣柜按这份清单过滤（只有网站衣柜里收藏的时装才显示）。鉴权用 **`get_principal`**：
+mod 的 fashion token 与网页 JWT 都接受，按 `principal.user_id` 反查网站账号。
+
+```http
+GET /api/fashion/wardrobe/me HTTP/1.1
+Authorization: Bearer <fashion token 或 网页 JWT>
+```
+
+响应 `200`（**精简条目**，只有 mod 需要的 5 个字段）：
+
+```json
+{ "linked": true,
+  "items": [ { "cosmeticId": "lw_angel:angel", "name": "Angel Wings",
+               "category": "wings", "packId": "lw_angel", "missing": false } ] }
+```
+
+| 字段 | 说明 |
+|---|---|
+| `linked` | 该 MC 身份是否已绑定网站账号。**`false` 时 `items` 必为空**，客户端必须理解成「没有衣柜可参照」→ 退回显示本地已装全部，而不是"衣柜是空的" |
+| `items[].cosmeticId` | 全局 ID `<packId>:<localId>` |
+| `items[].name` / `category` / `packId` | 供"本地没装包"时也能在界面列出这件时装 |
+| `items[].missing` | 目录里已删除/已停用：mod 显示但禁止穿戴 |
+
+客户端行为（`VMFashion-mod` 的 `WardrobeCollection` + `SyncService#refreshWardrobe`）：
+
+- 进服认证成功后拉一次；此后每 **5 分钟**最多一次；绑定成功后再拉一次（`linked` 会变）；
+- 401 → 走 mod 既有的重新认证流程，**只重试一次**（防认证风暴）；
+- 404/405/501（自建后端没实现这个端点）→ 记一次日志后本会话不再重试；
+- 其它失败 → 指数退避（30s 起，封顶 5min），**绝不清空**已有收藏；
+- 拉到后落盘 `config/vmfashion/wardrobe.json`（原子写），断网/后端挂了时用缓存过滤。
+
+---
+
 ## 6. 包级下发（时装包 zip）
 
 > 为什么需要这一层：`resolve` / `loadout/me` 是**按单件资源**设计的（`assetKey` 是单个文件），
