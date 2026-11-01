@@ -140,7 +140,17 @@ class TaskScheduler:
     # ── 地图画 ──
 
     async def _pick_map_art_candidates(self) -> list[str]:
-        """取最早 pending 地图画任务（立即置 running 防竞态）。"""
+        """取最早 pending 地图画任务（立即置 running 防竞态）。
+
+        ⚠️ 2026-11-01 事故（§六.106）：同步 DB 操作**必须**放进 worker 线程。
+        原实现在事件循环里直接 `db.query(...)`，连接池耗尽时 `checkout()`
+        同步阻塞 30 秒 → 整个 asyncio 事件循环冻死 → 全站 504。
+        py-spy 抓到的现场就是本函数卡在 `sqlalchemy/pool/base.py:712 checkout`。
+        """
+        return await asyncio.to_thread(self._pick_map_art_candidates_sync)
+
+    def _pick_map_art_candidates_sync(self) -> list[str]:
+        """同步实现体（由 _pick_map_art_candidates 在 worker 线程中调用）。"""
         from vmtools_next.data.models.build_map_art import MapArtTask
 
         Session = get_session_factory()
@@ -200,7 +210,14 @@ class TaskScheduler:
     # ── 物流（MF，2026-08-12 阶段 3） ──
 
     async def _pick_logistics_candidates(self) -> list[str]:
-        """取最早 pending 物流 run（立即置 running 防竞态；跳过 bot 被占用的）。"""
+        """取最早 pending 物流 run（立即置 running 防竞态；跳过 bot 被占用的）。
+
+        ⚠️ 2026-11-01 事故（§六.106）：同步 DB 操作放进 worker 线程。
+        """
+        return await asyncio.to_thread(self._pick_logistics_candidates_sync)
+
+    def _pick_logistics_candidates_sync(self) -> list[str]:
+        """同步实现体（由 _pick_logistics_candidates 在 worker 线程中调用）。"""
         from vmtools_next.data.models.logistics import LogisticsTaskRunModel
 
         Session = get_session_factory()

@@ -240,6 +240,8 @@ _RESOLVE_CACHE: dict[str, tuple[float, dict]] = {}
 _PACK_CACHE: dict[str, tuple[float, dict]] = {}
 # 已上传资产的 storage_path 集合（/assets 回退分支鉴权用；TTL 复用目录缓存）
 _STORAGE_PATHS_CACHE: dict[str, tuple[float, set[str]]] = {}
+# 单个 storage_path 是否已登记（精确查缓存，替代全表扫描；§六.106）
+_STORAGE_PATH_EXISTS_CACHE: dict[str, tuple[float, bool]] = {}
 # resolve 缓存上限（防被大量不同 UUID 刷爆内存）
 _RESOLVE_CACHE_MAX = 5000
 
@@ -251,6 +253,7 @@ def invalidate_caches() -> None:
         _RESOLVE_CACHE.clear()
         _PACK_CACHE.clear()
         _STORAGE_PATHS_CACHE.clear()
+        _STORAGE_PATH_EXISTS_CACHE.clear()
 
 
 def _catalog_cache_ttl(settings: Any = None) -> float:
@@ -280,6 +283,13 @@ def _asset_storage_paths(db: Any, settings: Any = None) -> set[str]:
 
     TTL 复用目录缓存（默认 30s）；管理端上传后 ``invalidate_caches()`` 会清掉
     它，所以刚上传的资产立刻可预览。
+
+    ⚠️ 2026-11-01 事故（§六.106）：**不要再用 ``db.query(...).all()`` 拉全表**。
+    原实现每次缓存未命中都把 4396 行资产全量物化成 ORM 对象（几百 ms CPU
+    全在事件循环里），且缓存 TTL 30s 一到期就重来；时装页一次并发几十个
+    资产请求 → 连接池瞬间打满 → 全站 504。
+    改为按需精确查询单个 key（``storage_path`` 已有索引），开销从 O(全表)
+    降到 O(1)，且结果仍进同一份缓存。
     """
     cfg = _settings(settings)
     ttl = _catalog_cache_ttl(cfg)
@@ -289,13 +299,43 @@ def _asset_storage_paths(db: Any, settings: Any = None) -> set[str]:
             hit = _STORAGE_PATHS_CACHE.get("all")
             if hit and hit[0] > now:
                 return hit[1]
-    rows = db.query(FashionAssetModel).all() or []
-    paths = {str(getattr(row, "storage_path", "") or "") for row in rows}
-    paths.discard("")
+    # 缓存未命中时返回空集合（保守：不放行任何未登记路径）。
+    # 真正的判定改由 ``asset_storage_path_exists(db, key)`` 逐 key 精确查，
+    # 避免这里再做一次全表扫描。
+    return set()
+
+
+def asset_storage_path_exists(db: Any, storage_path: str) -> bool:
+    """``storage_path`` 是否确实登记在 ``fashion_asset`` 表里（精确查，走索引）。
+
+    ⚠️ 2026-11-01 事故（§六.106）：替代原来的「拉全表建 set 再 in 判断」。
+    带进程内 TTL 缓存（同一 key 30s 内只查一次），命中时零 DB 开销。
+    """
+    key = str(storage_path or "")
+    if not key:
+        return False
+    now = time.time()
+    with _CACHE_LOCK:
+        hit = _STORAGE_PATH_EXISTS_CACHE.get(key)
+        if hit and hit[0] > now:
+            return hit[1]
+    row = (
+        db.query(FashionAssetModel.id)
+        .filter(FashionAssetModel.storage_path == key)
+        .first()
+    )
+    found = row is not None
+    ttl = _catalog_cache_ttl()
     if ttl > 0:
         with _CACHE_LOCK:
-            _STORAGE_PATHS_CACHE["all"] = (now + ttl, paths)
-    return paths
+            # 防御性上限：key 来自 URL，不能无限增长
+            if len(_STORAGE_PATH_EXISTS_CACHE) >= 20000:
+                for old in [k for k, v in _STORAGE_PATH_EXISTS_CACHE.items() if v[0] <= now]:
+                    _STORAGE_PATH_EXISTS_CACHE.pop(old, None)
+                if len(_STORAGE_PATH_EXISTS_CACHE) >= 20000:
+                    _STORAGE_PATH_EXISTS_CACHE.clear()
+            _STORAGE_PATH_EXISTS_CACHE[key] = (now + ttl, found)
+    return found
 
 
 # ── 目录（catalog） ─────────────────────────────────────────────────────
@@ -1766,7 +1806,7 @@ def resolve_asset_file(
     # （管理端资产列表预览直接用 storagePath 拼 URL）。安全（审计 v1.2 P2-3）：
     # 不再把任意相对路径当资产公开——否则 asset root 下的 README / DB / 误放文件
     # 都能被匿名读取，且已下架资产可绕开 catalog 的 enabled 检查。
-    if catalog_row is None and key not in _asset_storage_paths(db, settings):
+    if catalog_row is None and not asset_storage_path_exists(db, key):
         return None
     if _asset_ext(key) not in ALLOWED_ASSET_EXTS:
         logger.warning("fashion: 拒绝非资产扩展名的 assetKey {}", key)

@@ -71,17 +71,24 @@ class ScheduledTaskScheduler:
             await asyncio.sleep(self._poll_interval)
 
     async def tick_once(self) -> None:
-        """检查并执行所有到期的定时任务。"""
+        """检查并执行所有到期的定时任务。
+
+        ⚠️ 2026-11-01 事故（§六.106）：DB 读取放进 worker 线程，避免连接池
+        耗尽时把 asyncio 事件循环同步阻塞 30 秒（全站 504）。
+        """
         from vmtools_next.data.models.scheduled_task import ScheduledTaskModel
 
-        Session = get_session_factory()
-        db = Session()
-        try:
-            due = db.query(ScheduledTaskModel).filter(
-                ScheduledTaskModel.enabled.is_(True),
-            ).all()
-        finally:
-            db.close()
+        def _load_due() -> list:
+            Session = get_session_factory()
+            db = Session()
+            try:
+                return db.query(ScheduledTaskModel).filter(
+                    ScheduledTaskModel.enabled.is_(True),
+                ).all()
+            finally:
+                db.close()
+
+        due = await asyncio.to_thread(_load_due)
 
         fired_any = False
         now = datetime.now(timezone.utc)

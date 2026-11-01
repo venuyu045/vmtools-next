@@ -350,23 +350,33 @@ async def _mcp_reconcile_loop(interval: float = 30.0):
             from vmtools_next.data.db import get_session_factory
             from vmtools_next.data.models.mcc_remote import MccInstanceModel
 
-            Session = get_session_factory()
-            db = Session()
-            try:
-                instances = db.query(MccInstanceModel).filter(
-                    MccInstanceModel.deleted_at.is_(None),
-                    MccInstanceModel.status == "running",
-                    MccInstanceModel.bot_id.isnot(None),
-                ).all()
-                from vmtools_next.core.mcc_security import reveal_secret
-                rows = [
-                    (i.instance_id, i.bot_id, i.bot_engine or "mcc",
-                     i.mcp_host or "127.0.0.1", i.mcp_port or 33333,
-                     reveal_secret(i.mcp_auth_token_secret) or None)
-                    for i in instances
-                ]
-            finally:
-                db.close()
+            def _load_instances() -> list[tuple]:
+                """同步 DB 读取 —— 必须在 worker 线程里跑。
+
+                ⚠️ 2026-11-01 事故（§六.106）：本循环原先直接在事件循环里
+                `db.query(...).all()`。连接池只有 5+10 个连接，一旦被占满，
+                `checkout()` 会**同步阻塞 30 秒**，把整个 asyncio 事件循环
+                冻死 → 所有 HTTP 请求（含静态页）超时 → nginx 返回 504。
+                """
+                Session = get_session_factory()
+                db = Session()
+                try:
+                    instances = db.query(MccInstanceModel).filter(
+                        MccInstanceModel.deleted_at.is_(None),
+                        MccInstanceModel.status == "running",
+                        MccInstanceModel.bot_id.isnot(None),
+                    ).all()
+                    from vmtools_next.core.mcc_security import reveal_secret
+                    return [
+                        (i.instance_id, i.bot_id, i.bot_engine or "mcc",
+                         i.mcp_host or "127.0.0.1", i.mcp_port or 33333,
+                         reveal_secret(i.mcp_auth_token_secret) or None)
+                        for i in instances
+                    ]
+                finally:
+                    db.close()
+
+            rows = await asyncio.to_thread(_load_instances)
 
             now = _time.monotonic()
             for instance_id, bot_id, engine, host, port, token in rows:
@@ -411,45 +421,53 @@ async def _periodic_broadcast():
             from vmtools_next.data.db import sio, get_session_factory
             from vmtools_next.data.models.logistics import MccBotModel, LogisticsTaskRunModel
 
-            Session = get_session_factory()
-            db = Session()
-            try:
-                bots = []
-                import json as _json
-                for b in db.query(MccBotModel).all():
-                    try:
-                        _loc = _json.loads(b.current_location) if b.current_location else None
-                    except Exception:
-                        _loc = None
-                    bots.append({
-                        "bot_id": b.bot_id,
-                        "name": b.name,
-                        "status": b.status,
-                        "mc_username": b.mc_username,
-                        "current_health": b.current_health,
-                        "current_food": b.current_food,
-                        "current_location": _loc,
-                    })
+            def _load_broadcast() -> tuple[list, list]:
+                """同步 DB 读取 —— 必须在 worker 线程里跑（§六.106）。
 
-                active_runs = []
-                for r in db.query(LogisticsTaskRunModel).filter(
-                    LogisticsTaskRunModel.status.in_(["running", "paused"])
-                ).all():
-                    active_runs.append({
-                        "run_id": r.run_id,
-                        "template_id": r.template_id,
-                        "bot_id": r.bot_id,
-                        "status": r.status,
-                        "progress": r.progress,
-                    })
+                本循环每 5 秒一次，是连接池耗尽后**最先**把事件循环冻死的地方：
+                `checkout()` 等不到连接会同步阻塞 30s，期间全站无响应。
+                """
+                Session = get_session_factory()
+                db = Session()
+                try:
+                    import json as _json
+                    bots = []
+                    for b in db.query(MccBotModel).all():
+                        try:
+                            _loc = _json.loads(b.current_location) if b.current_location else None
+                        except Exception:
+                            _loc = None
+                        bots.append({
+                            "bot_id": b.bot_id,
+                            "name": b.name,
+                            "status": b.status,
+                            "mc_username": b.mc_username,
+                            "current_health": b.current_health,
+                            "current_food": b.current_food,
+                            "current_location": _loc,
+                        })
 
-                await sio.emit("sync_update", {
-                    "bots": bots,
-                    "active_task_runs": active_runs,
-                    "timestamp": time.time(),
-                })
-            finally:
-                db.close()
+                    active_runs = []
+                    for r in db.query(LogisticsTaskRunModel).filter(
+                        LogisticsTaskRunModel.status.in_(["running", "paused"])
+                    ).all():
+                        active_runs.append({
+                            "run_id": r.run_id,
+                            "template_id": r.template_id,
+                            "bot_id": r.bot_id,
+                            "status": r.status,
+                            "progress": r.progress,
+                        })
+                    return bots, active_runs
+                finally:
+                    db.close()
+
+            bots, active_runs = await asyncio.to_thread(_load_broadcast)
+            await sio.emit("sync_update", {
+                "bots": bots,
+                "active_task_runs": active_runs,
+                "timestamp": time.time(),
+            })
         except asyncio.CancelledError:
             break
         except Exception as e:

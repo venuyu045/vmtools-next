@@ -264,35 +264,44 @@ class ScanQueueManager:
             await asyncio.sleep(self._poll_interval)
 
     async def _schedule_once(self) -> None:
-        """启动 pending 队列项，直到达到并发上限。"""
-        from vmtools_next.data.models.warehouse import ScanQueueModel
+        """启动 pending 队列项，直到达到并发上限。
+
+        ⚠️ 2026-11-01 事故（§六.106）：DB 读写放进 worker 线程。
+        """
         from datetime import datetime, timezone
 
-        Session = get_session_factory()
-        db = Session()
-        items = []
-        try:
-            running = db.query(ScanQueueModel).filter(
-                ScanQueueModel.status == "running").count()
-            if running >= self._max_concurrent:
-                return
-            slot = self._max_concurrent - running
-            pending = db.query(ScanQueueModel).filter(
-                ScanQueueModel.status == "pending").order_by(
-                ScanQueueModel.priority.desc(),
-                ScanQueueModel.created_at.asc(),
-            ).limit(slot).all()
-            # 立即置为 running，防止调度器下一轮重复选中同一任务（_start_scan
-            # 内部容器发现等耗时阶段会保持 pending，产生竞态导致重复启动）
-            # 注意：commit 会 expire 所有 ORM 对象，session 关闭后不能再用这些对象，
-            # 因此只把 queue_id 传给 _start_scan，由它在新 session 内重新查询。
-            for q in pending:
-                q.status = "running"
-                q.started_at = datetime.now(timezone.utc)
-                db.commit()
-                items.append(q.queue_id)
-        finally:
-            db.close()
+        def _claim() -> list[str]:
+            """同步 DB 段：取 pending 并置 running（在 worker 线程里跑）。"""
+            from vmtools_next.data.models.warehouse import ScanQueueModel
+
+            Session = get_session_factory()
+            db = Session()
+            items: list[str] = []
+            try:
+                running = db.query(ScanQueueModel).filter(
+                    ScanQueueModel.status == "running").count()
+                if running >= self._max_concurrent:
+                    return items
+                slot = self._max_concurrent - running
+                pending = db.query(ScanQueueModel).filter(
+                    ScanQueueModel.status == "pending").order_by(
+                    ScanQueueModel.priority.desc(),
+                    ScanQueueModel.created_at.asc(),
+                ).limit(slot).all()
+                # 立即置为 running，防止调度器下一轮重复选中同一任务（_start_scan
+                # 内部容器发现等耗时阶段会保持 pending，产生竞态导致重复启动）
+                # 注意：commit 会 expire 所有 ORM 对象，session 关闭后不能再用这些对象，
+                # 因此只把 queue_id 传给 _start_scan，由它在新 session 内重新查询。
+                for q in pending:
+                    q.status = "running"
+                    q.started_at = datetime.now(timezone.utc)
+                    db.commit()
+                    items.append(q.queue_id)
+            finally:
+                db.close()
+            return items
+
+        items = await asyncio.to_thread(_claim)
 
         for queue_id in items:
             await self._start_scan(queue_id)

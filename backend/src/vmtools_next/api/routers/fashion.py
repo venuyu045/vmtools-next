@@ -528,17 +528,25 @@ def list_packs(response: Response, db: Session = Depends(get_db)) -> PacksRespon
 def download_pack(
     pack_id: str,
     version: str,
-    db: Session = Depends(get_db),
 ) -> FileResponse:
     """整包 zip 字节流（公开）。
 
     直接返回文件（``FileResponse`` 用 ``os.stat`` 填 Content-Length，精确且不缓冲），
     **绝不重定向**：客户端 ``HttpClient.Redirect.NEVER``，302 会被判定为下载失败。
-
     同时注册 HEAD：mod 文档 §8 的联调自测用 ``curl -sI``（HEAD）核对
     ``Content-Length`` / ``Content-Type`` / 有无 ``Location``，只注册 GET 会拿到 405。
+
+    ⚠️ 2026-11-01 事故（§六.106）：同 ``get_asset`` —— 不用 ``Depends(get_db)``，
+    否则整包 zip 传输期间会独占一个 DB 连接（大包能占几十秒）。
     """
-    pack = svc.get_pack_asset(db, pack_id, version)
+    from vmtools_next.data.db import get_session_factory
+
+    Session = get_session_factory()
+    db = Session()
+    try:
+        pack = svc.get_pack_asset(db, pack_id, version)
+    finally:
+        db.close()  # 必须在返回 FileResponse 之前关掉
     if not pack:
         raise HTTPException(
             status_code=404,
@@ -579,13 +587,27 @@ def download_pack(
 # ── 资产（公开，长缓存） ────────────────────────────────────────────────
 
 @router.get("/assets/{asset_key:path}")
-def get_asset(asset_key: str, db: Session = Depends(get_db)):
+def get_asset(asset_key: str):
     """下载资产文件。
 
     公开可读：资产按 sha256 内容寻址、本身不含隐私；且 ``<img src>`` 无法带
     Authorization 头，网页衣柜预览需要匿名可读。响应带 immutable 长缓存。
+
+    ⚠️ 2026-11-01 事故（§六.106）：**本端点不能依赖 ``Depends(get_db)``**。
+    FastAPI 0.139 把 `yield` 依赖挂在 ``request_stack`` 上，而该栈是在
+    ``await response(scope, receive, send)``（= FileResponse **整个文件流发完**）
+    之后才退出的。于是每下载一个资产文件都会**独占一个 DB 连接直到传完**；
+    时装页一次并发几十个资产 → 连接池（5+10）瞬间打满 → 全站 504。
+    改为「手动开短会话，查完立刻关」，文件流期间不再持有连接。
     """
-    asset = svc.resolve_asset_file(db, asset_key)
+    from vmtools_next.data.db import get_session_factory
+
+    Session = get_session_factory()
+    db = Session()
+    try:
+        asset = svc.resolve_asset_file(db, asset_key)
+    finally:
+        db.close()  # 必须在返回 FileResponse 之前关掉
     if not asset:
         raise HTTPException(
             status_code=404, detail={"code": "asset_not_found", "message": "资产不存在"}
